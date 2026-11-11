@@ -4,7 +4,7 @@ package main
 const (
 	n    = 1 << 16
 	taps = 16
-	reps = 4000
+	reps = 32000
 )
 
 func main() {

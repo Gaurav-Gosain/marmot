@@ -3,7 +3,7 @@ package main
 
 const (
 	n    = 2048
-	reps = 40
+	reps = 240
 )
 
 func main() {

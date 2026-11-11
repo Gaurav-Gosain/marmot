@@ -1,7 +1,7 @@
 // nbody: float math on structs. Prints energy before and after.
 package main
 
-const steps = 2000000
+const steps = 16000000
 
 type body struct {
 	x, y, z, vx, vy, vz, mass float64

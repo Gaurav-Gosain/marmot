@@ -1,7 +1,7 @@
 // bit manipulation: popcount by hand, bit reverse and a table-free CRC-32.
 package main
 
-const n = 30000000
+const n = 180000000
 
 func popcount(x uint64) int {
 	x = x - ((x >> 1) & 0x5555555555555555)

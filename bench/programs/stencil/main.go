@@ -3,7 +3,7 @@ package main
 
 const (
 	size  = 512
-	iters = 1000
+	iters = 40000
 )
 
 func main() {

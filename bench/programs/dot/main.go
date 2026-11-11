@@ -3,7 +3,7 @@ package main
 
 const (
 	n    = 1 << 14
-	reps = 200000
+	reps = 1200000
 )
 
 func dot(a, b []int64) int64 {

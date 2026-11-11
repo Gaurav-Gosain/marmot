@@ -1,7 +1,7 @@
 // mandelbrot: float loops with early exit. Counts points inside the set.
 package main
 
-const size = 5000
+const size = 15000
 
 func main() {
 	inside := 0

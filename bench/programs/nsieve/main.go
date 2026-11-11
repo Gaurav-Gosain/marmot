@@ -1,7 +1,10 @@
 // nsieve: sieve of Eratosthenes on a byte slice, bounds checks in the hot loop.
 package main
 
-const size = 150000000
+const (
+	size = 150000000
+	reps = 4
+)
 
 func sieve(n int) int {
 	flags := make([]bool, n+1)
@@ -18,5 +21,10 @@ func sieve(n int) int {
 }
 
 func main() {
-	println("nsieve", size, sieve(size), sieve(size/2))
+	a, b := 0, 0
+	for r := 0; r < reps; r++ {
+		a += sieve(size)
+		b += sieve(size/2 + r)
+	}
+	println("nsieve", size, a, b)
 }

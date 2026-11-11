@@ -1,7 +1,7 @@
 // spectral-norm: float loops over a virtual matrix.
 package main
 
-const n = 3500
+const n = 11000
 
 func sqrt(x float64) float64 {
 	z := x / 2

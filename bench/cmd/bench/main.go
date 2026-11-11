@@ -137,6 +137,10 @@ type Result struct {
 	OutputMatch  *bool  `json:"output_match,omitempty"`
 	// Load is the one minute load average when this program was measured.
 	Load float64 `json:"load_avg_1m"`
+	// LoadEnd is the load average when the measurement ended. Noisy is set when either value was
+	// above -max-load after all retries; the report drops the timing of noisy rows.
+	LoadEnd float64 `json:"load_avg_1m_end"`
+	Noisy   bool    `json:"noisy,omitempty"`
 }
 
 // Meta records the environment so a results file stands on its own.
@@ -181,6 +185,7 @@ var (
 	updateExp  = flag.Bool("update-expected", false, "rewrite bench/expected/ from stock go output")
 	timeoutSec = flag.Int("timeout", 120, "kill a program after this many seconds")
 	listOnly   = flag.Bool("list", false, "list programs and toolchains and exit")
+	maxLoad    = flag.Float64("max-load", 12, "retry a program when the load average is above this at start or end; 0 disables")
 	notes      = flag.String("notes", "", "free text stored in the results file")
 	sizeOnly   = flag.Bool("size-only", false, "build once and record size and output check only, no timing")
 	noSnapshot = flag.Bool("no-snapshot", false, "use the live tree for marmot instead of a snapshot (do not use for long runs)")
@@ -241,7 +246,7 @@ func main() {
 	for _, p := range progs {
 		for _, t := range tcl {
 			fmt.Fprintf(os.Stderr, "== %s / %s\n", p.Name, t.Name)
-			r := measure(p, t)
+			r := measureQuiet(p, t)
 			fmt.Fprintf(os.Stderr, "   %s run=%s size=%d\n", r.Status, fmtStat(r.Run), r.Size)
 			file.Results = append(file.Results, r)
 			// Write after every result so a crash or ctrl-c keeps the partial data.
@@ -507,14 +512,16 @@ func updateExpected(progs []Program) {
 			check(fmt.Errorf("%s: %v\n%s", p.Name, err, o))
 		}
 		// Run twice: a program with nondeterministic output cannot be a benchmark.
+		t0 := time.Now()
 		a, err := runOnce(out)
 		check(err)
+		el := time.Since(t0)
 		b2, _ := runOnce(out)
 		if a != b2 {
 			check(fmt.Errorf("%s: nondeterministic output", p.Name))
 		}
 		check(os.WriteFile(filepath.Join(dir, p.Name+".txt"), []byte(a), 0o644))
-		fmt.Println("expected", p.Name)
+		fmt.Printf("expected %s (go %.1fs)\n", p.Name, el.Seconds())
 	}
 }
 
@@ -724,4 +731,24 @@ func loadAvg1() float64 {
 	}
 	v, _ := strconv.ParseFloat(f[0], 64)
 	return v
+}
+
+// measureQuiet measures one program and retries (after a pause) when the machine load was above
+// -max-load at the start or the end of the measurement. After three tries the row is kept but
+// flagged noisy and its timing is dropped by the report.
+func measureQuiet(p Program, t Toolchain) Result {
+	var r Result
+	for try := 0; try < 3; try++ {
+		start := loadAvg1()
+		r = measure(p, t)
+		r.Load, r.LoadEnd = start, loadAvg1()
+		if *maxLoad <= 0 || (r.Load <= *maxLoad && r.LoadEnd <= *maxLoad) || r.Run == nil {
+			r.Noisy = false
+			return r
+		}
+		fmt.Fprintf(os.Stderr, "   load %.1f/%.1f above %.0f, retrying after a pause\n", r.Load, r.LoadEnd, *maxLoad)
+		time.Sleep(45 * time.Second)
+	}
+	r.Noisy = true
+	return r
 }

@@ -41,6 +41,8 @@ type Result struct {
 	RSS          int64   `json:"peak_rss_bytes"`
 	OutputMatch  *bool   `json:"output_match"`
 	Load         float64 `json:"load_avg_1m"`
+	LoadEnd      float64 `json:"load_avg_1m_end"`
+	Noisy        bool    `json:"noisy"`
 }
 
 type Meta struct {
@@ -248,6 +250,10 @@ func generate(paths []string) {
 	get := func(m Metric, prog, tool string) (float64, bool) {
 		r, ok := idx[prog+"|"+tool]
 		if !ok {
+			return 0, false
+		}
+		// Timings taken above the load limit are dropped, not averaged in.
+		if r.Noisy && (m.Key == "runtime" || m.Key == "rss") {
 			return 0, false
 		}
 		return m.Get(r)
@@ -719,7 +725,7 @@ func writeTargets(f File, idx map[string]Result, progs []string) {
 			l.status = "FAIL"
 		case m.Status == "mismatch":
 			l.status = "MISMATCH"
-		case !gok || g.Run == nil || m.Run == nil || m.Run.Median <= 0:
+		case !gok || g.Run == nil || m.Run == nil || m.Run.Median <= 0 || g.Noisy || m.Noisy:
 			l.status = "NO BASELINE"
 		default:
 			l.have = true

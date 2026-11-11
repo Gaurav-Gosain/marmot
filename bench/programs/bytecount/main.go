@@ -3,7 +3,7 @@ package main
 
 const (
 	n    = 1 << 20
-	reps = 4000
+	reps = 32000
 )
 
 func count(b []byte, c byte) int {

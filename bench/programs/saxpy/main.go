@@ -4,7 +4,7 @@ package main
 
 const (
 	n    = 1 << 14
-	reps = 100000
+	reps = 1800000
 )
 
 func saxpy(a float64, x, y []float64) {

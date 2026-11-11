@@ -3,7 +3,7 @@ package main
 
 const (
 	n    = 1 << 18
-	reps = 12000
+	reps = 72000
 )
 
 func main() {

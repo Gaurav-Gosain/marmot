@@ -12,7 +12,7 @@ func main() {
 		buf[i] = byte(i * 7)
 	}
 	var sum [32]byte
-	for r := 0; r < 1000; r++ {
+	for r := 0; r < 24000; r++ {
 		buf[0] = byte(r)
 		sum = sha256.Sum256(buf)
 		buf[1] = sum[0]

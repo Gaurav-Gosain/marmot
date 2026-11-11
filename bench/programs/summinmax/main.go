@@ -3,7 +3,7 @@ package main
 
 const (
 	n    = 1 << 16
-	reps = 30000
+	reps = 180000
 )
 
 func stats(a []int32) (int64, int32, int32) {

@@ -1,1 +1,1 @@
-mandelbrot 9934538
+mandelbrot 89404621
