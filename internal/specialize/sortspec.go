@@ -362,6 +362,9 @@ func (g *gen) lessStruct(e ast.Expr) (ast.Expr, bool) {
 		return nil, false
 	}
 	for name, path := range pkgNames {
+		if std, ok := tokenPaths[name]; ok && std != path {
+			return nil, false // the generated code reads name. as the standard package
+		}
 		if !g.importAs(path, name) {
 			return nil, false
 		}

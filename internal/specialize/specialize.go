@@ -39,7 +39,7 @@ type Input struct {
 const GenFile = "zz_marmot_spec.go"
 
 // Features are the specializations, each behind its own switch.
-var Features = []string{"fmt", "jsonenc", "jsondec", "sort"}
+var Features = []string{"fmt", "jsonenc", "jsondec", "sort", "regexp"}
 
 // releaseDefault lists the features on by default in release builds. A
 // feature joins it only after the full conformance matrix and a fuzz round
@@ -169,6 +169,7 @@ func RewriteWith(pkgs []*packages.Package, on map[string]bool) (*Result, error) 
 			rewriteFmt(g, f)
 			rewriteJSON(g, f)
 			rewriteSort(g, f)
+			rewriteRegexp(g, f)
 			if g.sites > before {
 				g.blankUnusedImports(f)
 			}
@@ -302,6 +303,7 @@ type gen struct {
 	on      map[string]bool // enabled features
 	sortT   *sortTemplates
 	named   map[string]string // import name -> path, for code moved from user files
+	raw     []string          // declarations not subject to usePkg rewriting
 }
 
 func newGen(p *packages.Package) *gen {
@@ -500,10 +502,22 @@ func (g *gen) source() string {
 		b.WriteString(d)
 		b.WriteString("\n")
 	}
+	for _, d := range g.raw {
+		b.WriteString(d)
+		b.WriteString("\n")
+	}
 	return b.String()
 }
 
-var pkgTokenRE = regexp.MustCompile(`\b(json|strconv|slices|bits|math)\.`)
+// tokenPaths are the package names generated code may use unqualified by
+// alias (rewritten by resolveTokens), with the packages they stand for.
+var tokenPaths = map[string]string{
+	"json": "encoding/json", "strconv": "strconv", "slices": "slices", "bits": "math/bits",
+	"math": "math", "regexp": "regexp", "strings": "strings", "utf8": "unicode/utf8",
+	"syntax": "regexp/syntax",
+}
+
+var pkgTokenRE = regexp.MustCompile(`\b(json|strconv|slices|bits|math|regexp|strings|utf8|syntax)\.`)
 
 // resolveTokens replaces the short package names registered with usePkg.
 func (g *gen) resolveTokens() {
