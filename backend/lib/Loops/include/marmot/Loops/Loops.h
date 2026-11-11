@@ -20,6 +20,7 @@ struct Options {
   bool parallel = true; // loop-parallelize: outline loops onto rt_parallel_for (-no-par)
   bool versioning = true; // bounds check versioning (-no-bcv)
   bool typeAlias = false; // go-type-alias: alias metadata from Go type classes (-type-alias); off until validated
+  bool gpu = false;       // offer parallel loops to the GPU (backend's -gpu; docs/gpu.md)
   bool fastFP = false;  // -ffast-fp: allow reordering floating point reductions
   bool remarks = false; // -loops-remarks: print why each loop was or was not transformed
 };

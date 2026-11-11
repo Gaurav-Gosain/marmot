@@ -32,6 +32,7 @@
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Scalar/SimplifyCFG.h"
 #include "llvm/Transforms/Utils/LCSSA.h"
@@ -46,7 +47,13 @@ namespace marmot {
 namespace loops {
 namespace {
 
-constexpr unsigned Lanes = 4;
+constexpr unsigned MaxLanes = 8;
+} // namespace
+static cl::opt<unsigned> MJLanes("loops-mj-lanes", cl::Hidden, cl::init(8),
+                                 cl::desc("Masked jam: lanes per joint loop"));
+static cl::opt<bool> MJVector("loops-mj-vector", cl::Hidden, cl::init(false),
+                              cl::desc("Masked jam: vector joint loop"));
+namespace {
 
 // Straight chain of blocks from `from` to `to` inclusive, all with one
 // successor except `to`. Empty when the region is not a chain.
@@ -89,7 +96,8 @@ bool speculatable(Instruction &I) {
 class MaskedJammer {
 public:
   MaskedJammer(Function &F, LoopInfo &LI, ScalarEvolution &SE, const Options &opts)
-      : F(F), LI(LI), SE(SE), opts(opts) {}
+      : F(F), LI(LI), SE(SE), opts(opts),
+        Lanes(std::min<unsigned>(std::max<unsigned>(2, MJLanes), MaxLanes)) {}
   bool tryLoop(Loop *X);
 
 private:
@@ -97,12 +105,23 @@ private:
   LoopInfo &LI;
   ScalarEvolution &SE;
   const Options &opts;
+  unsigned Lanes; // a power of two
   std::string why;
   bool reject(const Twine &m) {
     why = m.str();
     return false;
   }
   bool apply(Loop *X);
+  bool widenable(ArrayRef<BasicBlock *> wchain, ArrayRef<PHINode *> wphis,
+                 ArrayRef<PHINode *> ephis);
+  void buildScalarW(BasicBlock *mh, BasicBlock *mw, BasicBlock *ma, ArrayRef<BasicBlock *> wchain,
+                    ArrayRef<PHINode *> wphis, ArrayRef<PHINode *> ephis, BasicBlock *wpre,
+                    BasicBlock *wl, BasicBlock *E, ValueToValueMapTy *lane,
+                    SmallVectorImpl<SmallVector<Value *, 8>> &res);
+  void buildVectorW(BasicBlock *mh, BasicBlock *mw, BasicBlock *ma, ArrayRef<BasicBlock *> wchain,
+                    ArrayRef<PHINode *> wphis, ArrayRef<PHINode *> ephis, BasicBlock *wpre,
+                    BasicBlock *wl, BasicBlock *E, ValueToValueMapTy *lane,
+                    SmallVectorImpl<SmallVector<Value *, 8>> &res);
 };
 
 bool MaskedJammer::tryLoop(Loop *X) {
@@ -297,7 +316,7 @@ bool MaskedJammer::apply(Loop *X) {
     cphi.push_back(p);
   }
   // Fore per lane.
-  ValueToValueMapTy lane[Lanes];
+  ValueToValueMapTy lane[MaxLanes];
   for (unsigned u = 0; u < Lanes; u++) {
     Value *k = hb.CreateAdd(n, ConstantInt::get(i64, u));
     Value *kk = hb.CreateSExtOrTrunc(k, ivStep->getType());
@@ -314,91 +333,20 @@ bool MaskedJammer::apply(Loop *X) {
   }
   hb.CreateBr(mw);
 
-  // Joint W loop.
-  IRBuilder<> wb(mw);
-  struct LaneW {
-    SmallVector<PHINode *, 8> state; // per W header phi
-    PHINode *active;
-    SmallVector<PHINode *, 8> res;   // per E phi
-  };
+  // Joint W loop: vector form when every instruction of W has one,
+  // otherwise one scalar copy per lane.
   SmallVector<PHINode *, 8> wphis;
   for (PHINode &p : wh->phis())
     wphis.push_back(&p);
   SmallVector<PHINode *, 8> ephis;
   for (PHINode &p : E->phis())
     ephis.push_back(&p);
-  SmallVector<LaneW, Lanes> lw(Lanes);
-  for (unsigned u = 0; u < Lanes; u++) {
-    for (PHINode *p : wphis) {
-      PHINode *s = wb.CreatePHI(p->getType(), 2, p->getName() + ".l");
-      Value *init = p->getIncomingValueForBlock(wpre);
-      auto it = lane[u].find(init);
-      s->addIncoming(it != lane[u].end() ? static_cast<Value *>(it->second) : init, mh);
-      lw[u].state.push_back(s);
-    }
-    lw[u].active = wb.CreatePHI(i1, 2, "mj.active");
-    lw[u].active->addIncoming(ConstantInt::getTrue(C), mh);
-    for (PHINode *e : ephis) {
-      PHINode *r = wb.CreatePHI(e->getType(), 2, e->getName() + ".res");
-      // A real value, not poison: select(c, x, poison) may fold to x.
-      r->addIncoming(Constant::getNullValue(e->getType()), mh);
-      lw[u].res.push_back(r);
-    }
-  }
-  SmallVector<Value *, Lanes> act(Lanes), anyNext(Lanes);
-  SmallVector<SmallVector<Value *, 8>, Lanes> res(Lanes);
-  for (unsigned u = 0; u < Lanes; u++) {
-    ValueToValueMapTy &vm = lane[u];
-    for (size_t i = 0; i < wphis.size(); i++)
-      vm[wphis[i]] = lw[u].state[i];
-    act[u] = lw[u].active;
-    for (PHINode *r : lw[u].res)
-      res[u].push_back(r);
-    for (BasicBlock *bb : wchain) {
-      for (Instruction &I : *bb) {
-        if (isa<PHINode>(I) || I.isTerminator())
-          continue;
-        Instruction *c = I.clone();
-        wb.Insert(c);
-        RemapInstruction(c, vm, RF_IgnoreMissingLocals | RF_NoModuleLevelChanges);
-        vm[&I] = c;
-      }
-      auto *br = cast<BranchInst>(bb->getTerminator());
-      if (!br->isConditional())
-        continue;
-      // Exit taken from this block?
-      Value *cond = br->getCondition();
-      auto it = vm.find(cond);
-      Value *cv = it != vm.end() ? static_cast<Value *>(it->second) : cond;
-      Value *taken = br->getSuccessor(0) == E ? cv : wb.CreateNot(cv);
-      // select, not and: a lane that left may compute poison here.
-      Value *now = wb.CreateSelect(act[u], taken, ConstantInt::getFalse(C), "mj.exit");
-      for (size_t i = 0; i < ephis.size(); i++) {
-        Value *v = ephis[i]->getIncomingValueForBlock(bb);
-        auto vit = vm.find(v);
-        Value *mv = vit != vm.end() ? static_cast<Value *>(vit->second) : v;
-        res[u][i] = wb.CreateSelect(now, mv, res[u][i]);
-      }
-      act[u] = wb.CreateSelect(now, ConstantInt::getFalse(C), act[u], "mj.active");
-    }
-  }
-  Value *any = ConstantInt::getFalse(C);
-  for (unsigned u = 0; u < Lanes; u++) {
-    for (size_t i = 0; i < wphis.size(); i++) {
-      Value *nv = wphis[i]->getIncomingValueForBlock(wl);
-      auto it = lane[u].find(nv);
-      Value *mv = it != lane[u].end() ? static_cast<Value *>(it->second) : nv;
-      // A lane that left keeps computing (W has no effects and cannot trap);
-      // only its recorded exit values matter. Freezing the state with a
-      // select would put the exit test into the recurrence's critical path.
-      lw[u].state[i]->addIncoming(mv, mw);
-    }
-    lw[u].active->addIncoming(act[u], mw);
-    for (size_t i = 0; i < ephis.size(); i++)
-      lw[u].res[i]->addIncoming(res[u][i], mw);
-    any = wb.CreateSelect(act[u], ConstantInt::getTrue(C), any);
-  }
-  wb.CreateCondBr(any, mw, ma);
+  SmallVector<SmallVector<Value *, 8>, MaxLanes> res(Lanes);
+  bool vec = MJVector && widenable(wchain, wphis, ephis);
+  if (vec)
+    buildVectorW(mh, mw, ma, wchain, wphis, ephis, wpre, wl, E, lane, res);
+  else
+    buildScalarW(mh, mw, ma, wchain, wphis, ephis, wpre, wl, E, lane, res);
 
   // Aft per lane, in order.
   IRBuilder<> ab(ma);
@@ -479,6 +427,254 @@ bool MaskedJammer::apply(Loop *X) {
     p.addIncoming(r ? r : PoisonValue::get(p.getType()), skip);
   }
   return true;
+}
+
+
+// True when every instruction of W has a vector form (Lanes lanes).
+static bool widenableInst(Instruction &I) {
+  auto scalarTy = [](Type *t) { return t->isIntegerTy() || t->isFloatingPointTy(); };
+  if (isa<PHINode>(I) || I.isTerminator())
+    return scalarTy(I.getType()) || I.isTerminator();
+  if (!scalarTy(I.getType()))
+    return false;
+  if (isa<BinaryOperator>(I) || isa<UnaryOperator>(I) || isa<CmpInst>(I) || isa<SelectInst>(I))
+    return true;
+  if (auto *c = dyn_cast<CastInst>(&I))
+    return scalarTy(c->getSrcTy());
+  if (auto *ii = dyn_cast<IntrinsicInst>(&I)) {
+    switch (ii->getIntrinsicID()) {
+    case Intrinsic::fma: case Intrinsic::fmuladd: case Intrinsic::fabs:
+    case Intrinsic::sqrt: case Intrinsic::minnum: case Intrinsic::maxnum:
+    case Intrinsic::minimum: case Intrinsic::maximum: case Intrinsic::copysign:
+    case Intrinsic::floor: case Intrinsic::ceil: case Intrinsic::trunc:
+    case Intrinsic::round: case Intrinsic::rint: case Intrinsic::nearbyint:
+    case Intrinsic::smin: case Intrinsic::smax: case Intrinsic::umin: case Intrinsic::umax:
+    case Intrinsic::fptosi_sat: case Intrinsic::fptoui_sat:
+      return true;
+    default:
+      return false;
+    }
+  }
+  return false;
+}
+
+bool MaskedJammer::widenable(ArrayRef<BasicBlock *> wchain, ArrayRef<PHINode *> wphis,
+                             ArrayRef<PHINode *> ephis) {
+  for (BasicBlock *bb : wchain)
+    for (Instruction &I : *bb)
+      if (!widenableInst(I))
+        return false;
+  for (PHINode *p : ephis)
+    if (!p->getType()->isIntegerTy() && !p->getType()->isFloatingPointTy())
+      return false;
+  return true;
+}
+
+void MaskedJammer::buildScalarW(BasicBlock *mh, BasicBlock *mw, BasicBlock *ma,
+                                ArrayRef<BasicBlock *> wchain, ArrayRef<PHINode *> wphis,
+                                ArrayRef<PHINode *> ephis, BasicBlock *wpre, BasicBlock *wl,
+                                BasicBlock *E, ValueToValueMapTy *lane,
+                                SmallVectorImpl<SmallVector<Value *, 8>> &res) {
+  LLVMContext &C = F.getContext();
+  Type *i1 = Type::getInt1Ty(C);
+  IRBuilder<> wb(mw);
+  struct LaneW {
+    SmallVector<PHINode *, 8> state; // per W header phi
+    PHINode *active;
+    SmallVector<PHINode *, 8> res;   // per E phi
+  };
+  SmallVector<LaneW, MaxLanes> lw(Lanes);
+  for (unsigned u = 0; u < Lanes; u++) {
+    for (PHINode *p : wphis) {
+      PHINode *s = wb.CreatePHI(p->getType(), 2, p->getName() + ".l");
+      Value *init = p->getIncomingValueForBlock(wpre);
+      auto it = lane[u].find(init);
+      s->addIncoming(it != lane[u].end() ? static_cast<Value *>(it->second) : init, mh);
+      lw[u].state.push_back(s);
+    }
+    lw[u].active = wb.CreatePHI(i1, 2, "mj.active");
+    lw[u].active->addIncoming(ConstantInt::getTrue(C), mh);
+    for (PHINode *e : ephis) {
+      PHINode *r = wb.CreatePHI(e->getType(), 2, e->getName() + ".res");
+      // A real value, not poison: select(c, x, poison) may fold to x.
+      r->addIncoming(Constant::getNullValue(e->getType()), mh);
+      lw[u].res.push_back(r);
+    }
+  }
+  SmallVector<Value *, MaxLanes> act(Lanes);
+  for (unsigned u = 0; u < Lanes; u++) {
+    ValueToValueMapTy &vm = lane[u];
+    for (size_t i = 0; i < wphis.size(); i++)
+      vm[wphis[i]] = lw[u].state[i];
+    act[u] = lw[u].active;
+    for (PHINode *r : lw[u].res)
+      res[u].push_back(r);
+    for (BasicBlock *bb : wchain) {
+      for (Instruction &I : *bb) {
+        if (isa<PHINode>(I) || I.isTerminator())
+          continue;
+        Instruction *c = I.clone();
+        wb.Insert(c);
+        RemapInstruction(c, vm, RF_IgnoreMissingLocals | RF_NoModuleLevelChanges);
+        vm[&I] = c;
+      }
+      auto *br = cast<BranchInst>(bb->getTerminator());
+      if (!br->isConditional())
+        continue;
+      // Exit taken from this block?
+      Value *cond = br->getCondition();
+      auto it = vm.find(cond);
+      Value *cv = it != vm.end() ? static_cast<Value *>(it->second) : cond;
+      Value *taken = br->getSuccessor(0) == E ? cv : wb.CreateNot(cv);
+      // select, not and: a lane that left may compute poison here.
+      Value *now = wb.CreateSelect(act[u], taken, ConstantInt::getFalse(C), "mj.exit");
+      for (size_t i = 0; i < ephis.size(); i++) {
+        Value *v = ephis[i]->getIncomingValueForBlock(bb);
+        auto vit = vm.find(v);
+        Value *mv = vit != vm.end() ? static_cast<Value *>(vit->second) : v;
+        res[u][i] = wb.CreateSelect(now, mv, res[u][i]);
+      }
+      act[u] = wb.CreateSelect(now, ConstantInt::getFalse(C), act[u], "mj.active");
+    }
+  }
+  Value *any = ConstantInt::getFalse(C);
+  for (unsigned u = 0; u < Lanes; u++) {
+    for (size_t i = 0; i < wphis.size(); i++) {
+      Value *nv = wphis[i]->getIncomingValueForBlock(wl);
+      auto it = lane[u].find(nv);
+      Value *mv = it != lane[u].end() ? static_cast<Value *>(it->second) : nv;
+      // A lane that left keeps computing (W has no effects and cannot trap);
+      // only its recorded exit values matter. Freezing the state with a
+      // select would put the exit test into the recurrence's critical path.
+      lw[u].state[i]->addIncoming(mv, mw);
+    }
+    lw[u].active->addIncoming(act[u], mw);
+    for (size_t i = 0; i < ephis.size(); i++)
+      lw[u].res[i]->addIncoming(res[u][i], mw);
+    any = wb.CreateSelect(act[u], ConstantInt::getTrue(C), any);
+  }
+  wb.CreateCondBr(any, mw, ma);
+}
+
+// The joint loop on <Lanes x T> values: lane u of every vector is the value
+// lane u's scalar copy would have. Values W takes from Fore (one per lane)
+// are gathered with insertelement in mh, values from outside X are splats.
+void MaskedJammer::buildVectorW(BasicBlock *mh, BasicBlock *mw, BasicBlock *ma,
+                                ArrayRef<BasicBlock *> wchain, ArrayRef<PHINode *> wphis,
+                                ArrayRef<PHINode *> ephis, BasicBlock *wpre, BasicBlock *wl,
+                                BasicBlock *E, ValueToValueMapTy *lane,
+                                SmallVectorImpl<SmallVector<Value *, 8>> &res) {
+  LLVMContext &C = F.getContext();
+  Module &M = *F.getParent();
+  auto vty = [this](Type *t) { return FixedVectorType::get(t, Lanes); };
+  IRBuilder<> hb(mh->getTerminator());
+  DenseMap<Value *, Value *> vm;     // W value -> vector
+  DenseMap<Value *, Value *> outer;  // Fore or invariant value -> vector (built in mh)
+  auto widenOuter = [&](Value *v) -> Value * {
+    auto it = outer.find(v);
+    if (it != outer.end())
+      return it->second;
+    Value *r;
+    if (auto *c = dyn_cast<Constant>(v)) {
+      r = ConstantVector::getSplat(ElementCount::getFixed(Lanes), c);
+    } else if (lane[0].count(v)) {
+      r = PoisonValue::get(vty(v->getType()));
+      for (unsigned u = 0; u < Lanes; u++)
+        r = hb.CreateInsertElement(r, static_cast<Value *>(lane[u][v]), hb.getInt64(u));
+    } else {
+      r = hb.CreateVectorSplat(Lanes, v);
+    }
+    outer[v] = r;
+    return r;
+  };
+  auto W = [&](Value *v) -> Value * {
+    auto it = vm.find(v);
+    if (it != vm.end())
+      return it->second;
+    return widenOuter(v);
+  };
+  IRBuilder<> wb(mw);
+  SmallVector<PHINode *, 8> state;
+  for (PHINode *p : wphis) {
+    PHINode *s = wb.CreatePHI(vty(p->getType()), 2, p->getName() + ".v");
+    s->addIncoming(widenOuter(p->getIncomingValueForBlock(wpre)), mh);
+    vm[p] = s;
+    state.push_back(s);
+  }
+  Type *mty = vty(Type::getInt1Ty(C));
+  PHINode *active = wb.CreatePHI(mty, 2, "mj.active");
+  active->addIncoming(Constant::getAllOnesValue(mty), mh);
+  SmallVector<PHINode *, 8> rphi;
+  SmallVector<Value *, 8> rv;
+  for (PHINode *e : ephis) {
+    PHINode *r = wb.CreatePHI(vty(e->getType()), 2, e->getName() + ".res");
+    r->addIncoming(Constant::getNullValue(vty(e->getType())), mh);
+    rphi.push_back(r);
+    rv.push_back(r);
+  }
+  Value *act = active;
+  Constant *noLane = Constant::getNullValue(mty);
+  for (BasicBlock *bb : wchain) {
+    for (Instruction &I : *bb) {
+      if (isa<PHINode>(I) || I.isTerminator())
+        continue;
+      Value *nv;
+      if (auto *bo = dyn_cast<BinaryOperator>(&I)) {
+        nv = wb.CreateBinOp(bo->getOpcode(), W(bo->getOperand(0)), W(bo->getOperand(1)));
+        cast<Instruction>(nv)->copyIRFlags(bo);
+      } else if (auto *uo = dyn_cast<UnaryOperator>(&I)) {
+        nv = wb.CreateUnOp(uo->getOpcode(), W(uo->getOperand(0)));
+        cast<Instruction>(nv)->copyIRFlags(uo);
+      } else if (auto *ci = dyn_cast<CmpInst>(&I)) {
+        nv = wb.CreateCmp(ci->getPredicate(), W(ci->getOperand(0)), W(ci->getOperand(1)));
+        if (isa<FPMathOperator>(nv))
+          cast<Instruction>(nv)->copyFastMathFlags(ci);
+      } else if (auto *si = dyn_cast<SelectInst>(&I)) {
+        nv = wb.CreateSelect(W(si->getCondition()), W(si->getTrueValue()),
+                             W(si->getFalseValue()));
+      } else if (auto *ca = dyn_cast<CastInst>(&I)) {
+        nv = wb.CreateCast(ca->getOpcode(), W(ca->getOperand(0)), vty(ca->getType()));
+        cast<Instruction>(nv)->copyIRFlags(ca);
+      } else {
+        auto *ii = cast<IntrinsicInst>(&I);
+        SmallVector<Value *, 3> args;
+        for (Value *a : ii->args())
+          args.push_back(W(a));
+        SmallVector<Type *, 2> over;
+        Intrinsic::ID id = ii->getIntrinsicID();
+        if (id == Intrinsic::fptosi_sat || id == Intrinsic::fptoui_sat)
+          over = {vty(ii->getType()), vty(ii->getArgOperand(0)->getType())};
+        else
+          over = {vty(ii->getType())};
+        Function *fn = Intrinsic::getOrInsertDeclaration(&M, id, over);
+        nv = wb.CreateCall(fn, args);
+        if (isa<FPMathOperator>(nv))
+          cast<Instruction>(nv)->copyFastMathFlags(ii);
+      }
+      vm[&I] = nv;
+    }
+    auto *br = cast<BranchInst>(bb->getTerminator());
+    if (!br->isConditional())
+      continue;
+    Value *cv = W(br->getCondition());
+    Value *taken = br->getSuccessor(0) == E ? cv : wb.CreateNot(cv);
+    Value *now = wb.CreateSelect(act, taken, noLane, "mj.exit");
+    for (size_t i = 0; i < ephis.size(); i++)
+      rv[i] = wb.CreateSelect(now, W(ephis[i]->getIncomingValueForBlock(bb)), rv[i]);
+    act = wb.CreateSelect(now, noLane, act, "mj.active");
+  }
+  for (size_t i = 0; i < wphis.size(); i++)
+    state[i]->addIncoming(W(wphis[i]->getIncomingValueForBlock(wl)), mw);
+  active->addIncoming(act, mw);
+  for (size_t i = 0; i < ephis.size(); i++)
+    rphi[i]->addIncoming(rv[i], mw);
+  Value *any = wb.CreateOrReduce(act);
+  wb.CreateCondBr(any, mw, ma);
+  // Per lane exit values for Aft.
+  IRBuilder<> ab(ma);
+  for (unsigned u = 0; u < Lanes; u++)
+    for (size_t i = 0; i < ephis.size(); i++)
+      res[u].push_back(ab.CreateExtractElement(rv[i], ab.getInt64(u)));
 }
 
 class MaskedJamPass : public PassInfoMixin<MaskedJamPass> {

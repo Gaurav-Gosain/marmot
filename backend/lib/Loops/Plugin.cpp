@@ -16,6 +16,7 @@ static marmot::loops::Options pluginOptions() {
   marmot::loops::Options o;
   o.remarks = std::getenv("MARMOT_LOOPS_REMARKS") != nullptr;
   o.parallel = std::getenv("MARMOT_LOOPS_NOPAR") == nullptr;
+  o.gpu = std::getenv("MARMOT_LOOPS_GPU") != nullptr;
   return o;
 }
 

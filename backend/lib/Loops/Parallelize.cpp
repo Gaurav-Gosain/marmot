@@ -147,6 +147,14 @@ struct Plan {
   std::vector<Family> families;
   // Sources that rt_ranges_disjoint must find pairwise disjoint.
   std::vector<RangeSource> disjoint;
+  // GPU offer (docs/gpu.md): every access is in one of these whole-loop
+  // byte ranges [s, e); flags 1 read, 2 written. Empty when not offered.
+  struct GpuRange {
+    const SCEV *s, *e;
+    int64_t flags;
+  };
+  std::vector<GpuRange> gpuRanges;
+  bool gpuOK = false;
 };
 
 const char *kindName(RedKind k) {
@@ -420,6 +428,9 @@ bool Parallelizer::analyze(Loop *L, Plan &P) {
   for (auto &c : P.leChecks)
     if (!ok(c.first) || !ok(c.second))
       return reject("run time check not expandable");
+  for (auto &g : P.gpuRanges)
+    if (!ok(g.s) || !ok(g.e))
+      P.gpuOK = false;
   for (RangeSource &r : P.disjoint) {
     if (r.family < 0) {
       if (!ok(r.s) || !ok(r.e))
@@ -956,6 +967,20 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
       c.insts.push_back(a->inst);
     P.classes.push_back(std::move(c));
   }
+  // GPU offer: only plain objects with known whole-loop ranges.
+  P.gpuOK = true;
+  for (Unit &u : units) {
+    if (u.family >= 0 || u.variant || !u.s || !u.e) {
+      P.gpuOK = false;
+      break;
+    }
+    bool read = false;
+    for (Access *a : u.accs)
+      read |= !a->store;
+    P.gpuRanges.push_back({u.s, u.e, (read ? 1 : 0) | (u.store ? 2 : 0)});
+  }
+  if (!P.gpuOK)
+    P.gpuRanges.clear();
   return true;
 }
 
@@ -1333,6 +1358,15 @@ void Parallelizer::transform(Plan &P) {
     Value *disjoint = b.CreateOr(b.CreateICmpULE(e1, s2), b.CreateICmpULE(e2, s1));
     cond = b.CreateAnd(cond, disjoint, "par.noalias");
   }
+  // GPU ranges, expanded with the other conditions (before any block split).
+  bool gpu = opts.gpu && P.gpuOK && !P.gpuRanges.empty();
+  SmallVector<std::pair<Value *, Value *>, 8> gpuVals;
+  if (gpu)
+    for (auto &g : P.gpuRanges) {
+      Value *gs = exp.expandCodeFor(g.s, i64, at);
+      Value *ge = exp.expandCodeFor(g.e, i64, at);
+      gpuVals.push_back({gs, ge});
+    }
   if (!P.disjoint.empty()) {
     Value *rows = emitRowCheck(P, exp, at);
     // The row check split the preheader: `at` now ends the join block.
@@ -1365,7 +1399,39 @@ void Parallelizer::transform(Plan &P) {
                    pb.CreateStructGEP(ctxTy, ctx, P.liveIns.size() + i));
   FunctionCallee rpf = M.getOrInsertFunction(
       "rt_parallel_for", FunctionType::get(Type::getVoidTy(C), {i64, i64, ptr, ptr}, false));
-  pb.CreateCall(rpf, {tc, grain, body, ctx});
+  BasicBlock *last = par;
+  if (gpu) {
+    // Offer the loop to the GPU (docs/gpu.md); the backend turns the call
+    // into rt_gpu_for, or into false without a GPU target.
+    body->addFnAttr("marmot-gpu-body");
+    const DataLayout &DL = F.getDataLayout();
+    StructType *rty = StructType::get(C, {ptr, i64, i64});
+    ArrayType *aty = ArrayType::get(rty, gpuVals.size());
+    AllocaInst *ranges = eb.CreateAlloca(aty, nullptr, "par.ranges");
+    for (size_t i = 0; i < gpuVals.size(); i++) {
+      Value *slot = pb.CreateConstInBoundsGEP2_32(aty, ranges, 0, i);
+      pb.CreateStore(pb.CreateIntToPtr(gpuVals[i].first, ptr), pb.CreateStructGEP(rty, slot, 0));
+      pb.CreateStore(pb.CreateSub(gpuVals[i].second, gpuVals[i].first),
+                     pb.CreateStructGEP(rty, slot, 1));
+      pb.CreateStore(ConstantInt::get(i64, P.gpuRanges[i].flags), pb.CreateStructGEP(rty, slot, 2));
+    }
+    FunctionCallee gf = M.getOrInsertFunction(
+        "marmot_gpu_for",
+        FunctionType::get(Type::getInt1Ty(C), {ptr, i64, ptr, i64, ptr, i64, i64}, false));
+    Value *done = pb.CreateCall(
+        gf, {body, tc, ctx, ConstantInt::get(i64, DL.getTypeAllocSize(ctxTy)), ranges,
+             ConstantInt::get(i64, gpuVals.size()), ConstantInt::get(i64, P.costPerIter)});
+    BasicBlock *cpu = BasicBlock::Create(C, "par.cpu", &F, header);
+    BasicBlock *join = BasicBlock::Create(C, "par.done", &F, header);
+    pb.CreateCondBr(done, join, cpu);
+    IRBuilder<> cb(cpu);
+    cb.CreateCall(rpf, {tc, grain, body, ctx});
+    cb.CreateBr(join);
+    pb.SetInsertPoint(join);
+    last = join;
+  } else {
+    pb.CreateCall(rpf, {tc, grain, body, ctx});
+  }
   SmallVector<Value *, 4> results;
   for (unsigned i = 0; i < P.reds.size(); i++)
     results.push_back(pb.CreateLoad(P.reds[i].phi->getType(),
@@ -1378,7 +1444,7 @@ void Parallelizer::transform(Plan &P) {
     for (unsigned i = 0; i < P.reds.size(); i++)
       if (P.reds[i].next == v)
         r = results[i];
-    phi.addIncoming(r ? r : PoisonValue::get(phi.getType()), par);
+    phi.addIncoming(r ? r : PoisonValue::get(phi.getType()), last);
   }
 }
 
