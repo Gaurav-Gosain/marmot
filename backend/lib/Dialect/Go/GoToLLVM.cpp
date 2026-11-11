@@ -57,6 +57,9 @@ public:
                               .Case([&](NilCheckOp o) { return lower(o); })
                               .Case([&](IndexOp o) { return lower(o); })
                               .Case([&](SliceOp o) { return lower(o); })
+                              .Case([&](MakeIfaceOp o) { return lower(o); })
+                              .Case([&](IfaceCallOp o) { return lower(o); })
+                              .Case([&](TypeAssertOp o) { return lower(o); })
                               .Default([&](Operation *o) {
                                 return o->emitOpError("no lowering to llvm");
                               });
@@ -304,6 +307,144 @@ private:
     if (max)
       s = LLVM::InsertValueOp::create(b, loc, s, newCap, ArrayRef<int64_t>{2});
     op.replaceAllUsesWith(s);
+    op.erase();
+    return success();
+  }
+
+  // Splits the block before at and returns a value that is thenFn() when
+  // cond holds and elseVal otherwise. thenFn runs in a new block. Leaves the
+  // insertion point at at.
+  Value condValue(Operation *at, Value cond, function_ref<Value()> thenFn,
+                  Value elseVal) {
+    Location loc = at->getLoc();
+    Block *before = at->getBlock();
+    Block *cont = before->splitBlock(at);
+    Value result = cont->addArgument(elseVal.getType(), loc);
+    Block *thenBlk = new Block();
+    before->getParent()->getBlocks().insert(cont->getIterator(), thenBlk);
+    b.setInsertionPointToEnd(before);
+    LLVM::CondBrOp::create(b, loc, cond, thenBlk, ValueRange(), cont,
+                           ValueRange{elseVal});
+    b.setInsertionPointToEnd(thenBlk);
+    Value v = thenFn();
+    LLVM::BrOp::create(b, loc, ValueRange{v}, cont);
+    b.setInsertionPoint(at);
+    return result;
+  }
+
+  Value loadInvariant(Location loc, Type t, Value addr) {
+    return LLVM::LoadOp::create(b, loc, t, addr, /*alignment=*/0,
+                                /*isVolatile=*/false, /*isNonTemporal=*/false,
+                                /*isInvariant=*/true);
+  }
+
+  // The dynamic type of interface value x: word 0 for an empty interface;
+  // for a non-empty one, itab.typ (word 1 of the itab) or null for a nil tab.
+  Value dynamicType(Operation *at, Value x, bool fromIface) {
+    Location loc = at->getLoc();
+    Value w0 = LLVM::ExtractValueOp::create(b, loc, x, ArrayRef<int64_t>{0});
+    if (!fromIface)
+      return w0;
+    Value null = LLVM::ZeroOp::create(b, loc, ptrTy);
+    Value nonNil = icmp(loc, LLVM::ICmpPredicate::ne, w0, null);
+    return condValue(at, nonNil, [&] {
+      Value slot = LLVM::GEPOp::create(b, loc, ptrTy, ptrTy, w0,
+                                       ArrayRef<LLVM::GEPArg>{1});
+      return loadInvariant(loc, ptrTy, slot);
+    }, null);
+  }
+
+  Value makeIface(Location loc, Value tab, Value data) {
+    Value s = LLVM::PoisonOp::create(b, loc, ifaceType(b.getContext()));
+    s = LLVM::InsertValueOp::create(b, loc, s, tab, ArrayRef<int64_t>{0});
+    return LLVM::InsertValueOp::create(b, loc, s, data, ArrayRef<int64_t>{1});
+  }
+
+  LogicalResult lower(MakeIfaceOp op) {
+    auto tab = addressOf(op, op.getTabAttr());
+    if (failed(tab))
+      return failure();
+    op.replaceAllUsesWith(makeIface(op.getLoc(), *tab, op.getData()));
+    op.erase();
+    return success();
+  }
+
+  LogicalResult lower(IfaceCallOp op) {
+    Location loc = op.getLoc();
+    Value tab = LLVM::ExtractValueOp::create(b, loc, op.getIface(), ArrayRef<int64_t>{0});
+    Value data = LLVM::ExtractValueOp::create(b, loc, op.getIface(), ArrayRef<int64_t>{1});
+    Value null = LLVM::ZeroOp::create(b, loc, ptrTy);
+    Value ok = icmp(loc, LLVM::ICmpPredicate::ne, tab, null);
+    if (failed(emitCheck(op, ok, "panicnil", {})))
+      return failure();
+    // itab = {inter, typ, fun[N]}: method i is word i+2.
+    Value slot = LLVM::GEPOp::create(
+        b, loc, ptrTy, ptrTy, tab,
+        ArrayRef<LLVM::GEPArg>{static_cast<int32_t>(op.getMethod() + 2)});
+    Value fn = loadInvariant(loc, ptrTy, slot);
+    SmallVector<Type> params{ptrTy};
+    llvm::append_range(params, op.getArgs().getTypes());
+    Type res = op.getNumResults() ? op.getResult(0).getType()
+                                  : LLVM::LLVMVoidType::get(b.getContext());
+    auto fnTy = LLVM::LLVMFunctionType::get(res, params);
+    SmallVector<Value> args{fn, data};
+    llvm::append_range(args, op.getArgs());
+    auto call = LLVM::CallOp::create(b, loc, fnTy, args);
+    op.replaceAllUsesWith(call.getResults());
+    op.erase();
+    return success();
+  }
+
+  LogicalResult lower(TypeAssertOp op) {
+    Location loc = op.getLoc();
+    using P = LLVM::ICmpPredicate;
+    auto want = addressOf(op, op.getDescAttr());
+    auto src = addressOf(op, op.getSrcAttr());
+    if (failed(want) || failed(src))
+      return failure();
+    Value data = LLVM::ExtractValueOp::create(b, loc, op.getX(), ArrayRef<int64_t>{1});
+    Value have = dynamicType(op, op.getX(), op.getFromIface());
+    Value null = LLVM::ZeroOp::create(b, loc, ptrTy);
+    Value result, ok;
+    if (!op.getToIface() && !op.getToAny()) {
+      // Concrete target: type identity is pointer identity.
+      ok = icmp(loc, P::eq, have, *want);
+      if (op.getCommaok()) {
+        result = LLVM::SelectOp::create(b, loc, ok, data, null);
+      } else {
+        if (failed(emitCheck(op, ok, "panicTypeAssert", {have, *want, *src})))
+          return failure();
+        result = data;
+      }
+    } else if (op.getToAny()) {
+      ok = icmp(loc, P::ne, have, null);
+      if (!op.getCommaok() &&
+          failed(emitCheck(op, ok, "panicTypeAssert", {have, *want, *src})))
+        return failure();
+      result = makeIface(loc, have, data);
+    } else {
+      Value nonNil = icmp(loc, P::ne, have, null);
+      if (op.getCommaok()) {
+        auto fn = runtimeFunc(op, "assertE2I2", ptrTy, {ptrTy, ptrTy});
+        if (failed(fn))
+          return failure();
+        Value tab = condValue(op, nonNil, [&] {
+          return call(loc, *fn, {*want, have});
+        }, null);
+        ok = icmp(loc, P::ne, tab, null);
+        result = makeIface(loc, tab, LLVM::SelectOp::create(b, loc, ok, data, null));
+      } else {
+        if (failed(emitCheck(op, nonNil, "panicTypeAssert", {have, *want, *src})))
+          return failure();
+        auto fn = runtimeFunc(op, "assertE2I", ptrTy, {ptrTy, ptrTy});
+        if (failed(fn))
+          return failure();
+        result = makeIface(loc, call(loc, *fn, {*want, have}), data);
+      }
+    }
+    op.getResult().replaceAllUsesWith(result);
+    if (op.getOk())
+      op.getOk().replaceAllUsesWith(ok);
     op.erase();
     return success();
   }

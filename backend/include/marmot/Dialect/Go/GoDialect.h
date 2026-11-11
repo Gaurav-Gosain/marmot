@@ -13,6 +13,12 @@
 
 #include "marmot/Dialect/Go/GoDialect.h.inc"
 
+namespace marmot::go {
+/// !llvm.struct<(ptr, ptr)>, the type of every interface value.
+mlir::LLVM::LLVMStructType ifaceType(mlir::MLIRContext *ctx);
+bool isIfaceType(mlir::Type t);
+} // namespace marmot::go
+
 #define GET_OP_CLASSES
 #include "marmot/Dialect/Go/GoOps.h.inc"
 

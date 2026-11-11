@@ -96,4 +96,44 @@ def Go_SliceOp : Go_Op<"slice", [AllTypesMatch<["lo", "hi", "cap"]>,
   let hasVerifier = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// Interfaces family
+//===----------------------------------------------------------------------===//
+
+def Go_IfaceType : Type<CPred<"::marmot::go::isIfaceType($_self)">,
+    "Go interface value !llvm.struct<(ptr, ptr)>", "::mlir::LLVM::LLVMStructType">,
+    BuildableType<"::marmot::go::ifaceType($_builder.getContext())">;
+
+def Go_MakeIfaceOp : Go_Op<"make_iface", [Pure,
+    DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+  let summary = "build an interface value {tab, data}";
+  let arguments = (ins FlatSymbolRefAttr:$tab, LLVM_DefaultPointer:$data);
+  let results = (outs Go_IfaceType:$result);
+  let assemblyFormat = "$tab `,` $data attr-dict";
+}
+
+def Go_IfaceCallOp : Go_Op<"iface_call"> {
+  let summary = "call method number `method` of a non-empty interface value";
+  let arguments = (ins Go_IfaceType:$iface, I64Attr:$method,
+                       Variadic<AnyType>:$args);
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = [{
+    $iface `[` $method `]` `` `(` $args `)` attr-dict `:` functional-type($args, $results)
+  }];
+  let hasVerifier = 1;
+}
+
+def Go_TypeAssertOp : Go_Op<"type_assert", [InferTypeOpAdaptor]> {
+  let summary = "type assertion x.(T), optionally with comma-ok";
+  let arguments = (ins Go_IfaceType:$x, FlatSymbolRefAttr:$src,
+                       FlatSymbolRefAttr:$desc, UnitAttr:$from_iface,
+                       UnitAttr:$to_iface, UnitAttr:$to_any, UnitAttr:$commaok);
+  let results = (outs AnyType:$result, Optional<I1>:$ok);
+  let assemblyFormat = [{
+    $x `,` $src `->` $desc (`from_iface` $from_iface^)? (`to_iface` $to_iface^)?
+    (`to_any` $to_any^)? (`commaok` $commaok^)? attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
 #endif

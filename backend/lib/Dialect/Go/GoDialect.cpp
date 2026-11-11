@@ -91,5 +91,42 @@ LogicalResult SliceOp::verify() {
   return success();
 }
 
+//===----------------------------------------------------------------------===//
+// Interfaces family
+//===----------------------------------------------------------------------===//
+
+LLVM::LLVMStructType marmot::go::ifaceType(MLIRContext *ctx) {
+  Type p = LLVM::LLVMPointerType::get(ctx);
+  return LLVM::LLVMStructType::getLiteral(ctx, {p, p});
+}
+
+bool marmot::go::isIfaceType(Type t) { return t == ifaceType(t.getContext()); }
+
+LogicalResult IfaceCallOp::verify() {
+  if (getNumResults() > 1)
+    return emitOpError("has at most one result; return multiple values as a struct");
+  if (getMethod() < 0)
+    return emitOpError("method index must be non-negative");
+  return success();
+}
+
+LogicalResult TypeAssertOp::inferReturnTypes(MLIRContext *ctx, std::optional<Location>,
+                                             Adaptor adaptor,
+                                             SmallVectorImpl<Type> &results) {
+  if (adaptor.getToIface() || adaptor.getToAny())
+    results.push_back(ifaceType(ctx));
+  else
+    results.push_back(LLVM::LLVMPointerType::get(ctx));
+  if (adaptor.getCommaok())
+    results.push_back(IntegerType::get(ctx, 1));
+  return success();
+}
+
+LogicalResult TypeAssertOp::verify() {
+  if (getToIface() && getToAny())
+    return emitOpError("to_iface and to_any are exclusive");
+  return success();
+}
+
 #define GET_OP_CLASSES
 #include "marmot/Dialect/Go/GoOps.cpp.inc"

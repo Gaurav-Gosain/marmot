@@ -5,8 +5,10 @@
 #include <string.h>
 #ifdef __APPLE__
 #define SYM(name) __asm__("_runtime." name)
+#define SYM_TYPE(name) __asm__("_type:" name)
 #else
 #define SYM(name) __asm__("runtime." name)
+#define SYM_TYPE(name) __asm__("type:" name)
 #endif
 
 void *rt_newobject(void *t) SYM("newobject");
@@ -38,3 +40,4 @@ int main(int argc, char **argv) {
   printf("result %ld\n", test_main(argc > 1 ? atol(argv[1]) : 0));
   return 0;
 }
+
