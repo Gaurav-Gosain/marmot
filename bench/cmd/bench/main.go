@@ -254,6 +254,12 @@ func main() {
 		}
 	}
 	fmt.Fprintln(os.Stderr, "wrote", path)
+	// Keep scratch small: drop the snapshot, binaries and caches of this run.
+	for _, d := range []string{snapDir, filepath.Join(work, "out"), filepath.Join(work, "gocache")} {
+		if d != "" {
+			os.RemoveAll(d)
+		}
+	}
 }
 
 // Program is one benchmark directory.
