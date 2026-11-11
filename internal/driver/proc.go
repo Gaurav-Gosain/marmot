@@ -16,8 +16,12 @@ func maxJobs() int {
 	if n > 4 {
 		n = 4
 	}
-	if v, err := strconv.Atoi(os.Getenv("MARMOT_MAX_JOBS")); err == nil && v > 0 && v < n {
-		n = v
+	if v, err := strconv.Atoi(os.Getenv("MARMOT_MAX_JOBS")); err == nil && v > 0 {
+		if v < n {
+			n = v
+		}
+	} else if slotCount() > 0 && slotJobs < n {
+		n = slotJobs
 	}
 	return n
 }

@@ -157,6 +157,10 @@ func (b *build) run1() (string, error) {
 			return cfg.Output, nil
 		}
 	}
+	if err := acquireSlot(b.logf); err != nil {
+		return "", err
+	}
+	defer releaseSlot()
 	lp, err := loader.Load(loader.Config{
 		Dir: cfg.Dir, Root: cfg.Root, Tags: cfg.Tags, GOOS: goos, GOARCH: goarch, Patterns: cfg.Patterns,
 		Log: b.logf, Tests: cfg.Test,
