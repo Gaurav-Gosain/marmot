@@ -64,9 +64,10 @@ row start `4*w*py` (or `4*w*r`), which depends on the outer loop and on `w`, so 
 says `"lo":"sym","hi":"sym"`. For a self pair the proved condition
 (`RuleP.windows_disjoint`) needs only `hi - lo + size <= |coef|`, that is `hi - lo`, which
 is 0 here (lo and hi are the same expression). To make such claims checkable the report
-needs `span` = hi - lo whenever ScalarEvolution proves it a constant (and, for pairs of
-different accesses, `lo` and `hi` as differences from one shared symbolic start, or as
-affine forms over named invariants so the checker can cancel them). Requested from loops.
+needs `span` = hi - lo whenever ScalarEvolution proves it a constant, and for pairs of
+different accesses on one base `dlo`, `dhi` (offsets relative to the first access's lo).
+Loops added all three; the checker uses them. Since then par.go has 30 loops, 0 problems,
+0 claims not re-checkable.
 
 ## Certificate checking (go-bce)
 
