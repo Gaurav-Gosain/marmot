@@ -86,6 +86,11 @@ rt_g *rt_current(void);
 // (the gc runtime's goyield, for handing a lock to a woken waiter).
 void rt_gosched(void);
 void rt_yield(void);
+// For sync.Mutex active spinning (gc's sync_runtime_canSpin and
+// sync_runtime_doSpin): rt_can_spin(i) says whether spin round i (from 0)
+// is worthwhile; rt_procyield(n) executes n CPU pause hints (gc uses 30).
+int32_t rt_can_spin(int32_t iter);
+void rt_procyield(int32_t n);
 // Park the current goroutine until rt_ready(g) is called. If unlock is not
 // NULL it is called with lock after the goroutine is off its stack, so a
 // waker that holds the same lock cannot miss the park. unlock runs on the

@@ -1042,6 +1042,26 @@ RT_API void rt_gosched(void) {
   mcall(REQ_GOSCHED);
 }
 
+// Active spinning for sync.Mutex, as gc's sync_runtime_canSpin: only a few
+// rounds, only with several CPUs, only if another P is running (so the
+// holder can make progress) and this P has nothing else to run.
+static int32_t ncpu_cached;
+
+RT_API int32_t rt_can_spin(int32_t iter) {
+  if (iter >= 4) return 0;
+  if (!ncpu_cached) ncpu_cached = os_ncpu();
+  if (ncpu_cached <= 1) return 0;
+  if (atomic_load(&sched.nprocs) <= atomic_load(&sched.npidle) + atomic_load(&sched.nmspinning) + 1)
+    return 0;
+  rt_m *m = getm();
+  if (!m || !m->p || !runqempty(m->p)) return 0;
+  return 1;
+}
+
+RT_API void rt_procyield(int32_t n) {
+  for (int32_t i = 0; i < n; i++) cpu_relax_sched();
+}
+
 RT_API void rt_yield(void) {
   rt_safepoint();
   mcall(REQ_YIELD);
