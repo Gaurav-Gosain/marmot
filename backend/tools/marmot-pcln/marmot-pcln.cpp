@@ -11,6 +11,7 @@
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cstring>
 #include <map>
 
 using namespace llvm;
@@ -19,6 +20,9 @@ using namespace llvm::object;
 static cl::opt<std::string> input(cl::Positional, cl::desc("<binary or dSYM DWARF file>"),
                                   cl::Required);
 static cl::opt<std::string> output("o", cl::desc("Output table"), cl::Required);
+static cl::opt<std::string> mainPkg(
+    "main-pkg", cl::desc("Package path of the main package; its functions are named main.X, as gc "
+                         "names them"));
 static cl::opt<std::string> baseFrom(
     "base-from", cl::desc("Binary whose image base the table is relative to (default: input)"));
 
@@ -58,6 +62,54 @@ void u32(std::string &out, uint32_t v) {
 void u64(std::string &out, uint64_t v) {
   for (int i = 0; i < 8; ++i)
     out.push_back(char(v >> (8 * i)));
+}
+
+// "PKG.f" -> "main.f" for the main package, also inside type arguments
+// ("pkg.F[PKG.T]"): every occurrence that starts the string or follows a
+// character that cannot be part of a package path.
+std::string renameMain(const std::string &name) {
+  if (mainPkg.empty() || mainPkg == "main")
+    return name;
+  std::string from = mainPkg + ".", out;
+  size_t i = 0;
+  while (i < name.size()) {
+    bool boundary = i == 0 || strchr("[],*( ", name[i - 1]);
+    if (boundary && name.compare(i, from.size(), from) == 0) {
+      out += "main.";
+      i += from.size();
+    } else {
+      out += name[i++];
+    }
+  }
+  return out;
+}
+
+// Text symbols of a binary, as address -> (name, end of its section),
+// Mach-O names without the leading underscore.
+void textSymbols(const ObjectFile &obj,
+                 std::map<uint64_t, std::pair<std::string, uint64_t>> &out) {
+  bool macho = isa<MachOObjectFile>(&obj);
+  for (const SymbolRef &sym : obj.symbols()) {
+    auto type = sym.getType();
+    auto addr = sym.getAddress();
+    auto name = sym.getName();
+    auto sec = sym.getSection();
+    if (!type || !addr || !name || !sec) {
+      consumeError(type.takeError());
+      consumeError(addr.takeError());
+      consumeError(name.takeError());
+      consumeError(sec.takeError());
+      continue;
+    }
+    if (*type != SymbolRef::ST_Function || *sec == obj.section_end() || !(*sec)->isText())
+      continue;
+    StringRef n = *name;
+    if (macho && n.starts_with("_"))
+      n = n.drop_front();
+    if (n.empty() || n.starts_with("ltmp") || n.starts_with("l_") || n.starts_with(".L"))
+      continue;
+    out.try_emplace(*addr, n.str(), (*sec)->getAddress() + (*sec)->getSize());
+  }
 }
 
 struct Func {
@@ -133,6 +185,32 @@ int main(int argc, char **argv) {
       it->second.rows.push_back({row.Address.Address, row.Line, fileId(fname)});
     }
   }
+
+  // Every other text symbol (C runtime, assembly) gets an entry with a name
+  // and no lines, so that the range of the Go function before it ends there.
+  // Symbols inside a function with DWARF ranges are labels, not functions.
+  {
+    std::map<uint64_t, std::pair<std::string, uint64_t>> syms;
+    textSymbols(obj, syms);
+    if (!baseFrom.empty())
+      if (auto b = ObjectFile::createObjectFile(baseFrom))
+        textSymbols(*b->getBinary(), syms);
+    std::vector<uint64_t> add;
+    for (auto &[addr, sym] : syms) {
+      auto it = funcs.upper_bound(addr);
+      if (it == funcs.begin() || std::prev(it)->second.hi <= addr)
+        add.push_back(addr); // not inside (or at the start of) a DWARF function
+    }
+    for (uint64_t addr : add) {
+      auto &sym = syms[addr];
+      Func &f = funcs[addr];
+      f.lo = addr;
+      f.hi = sym.second; // only for the end of the table; lookups stop at the next start
+      f.name = sym.first;
+    }
+  }
+  for (auto &[lo, f] : funcs)
+    f.name = renameMain(f.name);
 
   // Version 2 (docs/pcln.md). Arm64 instructions are 4 bytes, so pc deltas
   // are stored in instructions there.

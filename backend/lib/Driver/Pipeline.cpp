@@ -443,6 +443,16 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
       return fail(err);
   }
   setTargetAttrs(lmod, tm, opts.optLevel);
+  // With line info (the pc table, tracebacks), Go functions keep their frames
+  // as gc does: no sibling calls and no tail recursion turned into loops, so a
+  // caller that ends with a call still shows up in a traceback. Runtime
+  // functions keep tail calls (tracebacks hide them; allocation wrappers that
+  // tail call mallocgc cost 10% on bintrees otherwise).
+  if (opts.debugLevel > 0)
+    for (llvm::Function &f : lmod)
+      if (!f.isDeclaration() && f.getSubprogram() && !f.getName().starts_with("runtime.") &&
+          !f.getName().starts_with("internal/"))
+        f.addFnAttr("disable-tail-calls", "true");
   keepRecoverFramesUnmerged(lmod);
   if (opts.initOptNone && opts.optLevel != '0')
     markInitOptNone(lmod);

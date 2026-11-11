@@ -54,6 +54,8 @@ class Table:
             if pc > off:
                 break
             best = (line, f)
+        if best[0] == 0:                     # name only (no DWARF lines)
+            return self.prefixed(name, self.pkgOff)
         file = self.prefixed(struct.unpack_from("<I", self.t, self.fileOff + 4 * best[1])[0], self.dirOff)
         return f"{self.prefixed(name, self.pkgOff)} {file}:{best[0]}"
 
