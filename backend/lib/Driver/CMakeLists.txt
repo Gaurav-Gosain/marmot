@@ -5,4 +5,4 @@ add_library(MarmotDriver STATIC
   Watchdog.cpp
   WholeProgram.cpp
 )
-target_link_libraries(MarmotDriver PUBLIC MarmotGoDialect ${MARMOT_LLVM_LIBS})
+target_link_libraries(MarmotDriver PUBLIC MarmotGoDialect MarmotLoops ${MARMOT_LLVM_LIBS})

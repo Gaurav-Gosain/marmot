@@ -188,7 +188,8 @@ void keepRecoverFramesUnmerged(llvm::Module &m) {
   }
 }
 
-void runLLVMPipeline(llvm::Module &m, llvm::TargetMachine &tm, char level) {
+void runLLVMPipeline(llvm::Module &m, llvm::TargetMachine &tm, char level,
+                     const loops::Options &lopts) {
   llvm::LoopAnalysisManager lam;
   llvm::FunctionAnalysisManager fam;
   llvm::CGSCCAnalysisManager cgam;
@@ -211,10 +212,13 @@ void runLLVMPipeline(llvm::Module &m, llvm::TargetMachine &tm, char level) {
   pb.crossRegisterProxies(lam, fam, cgam, mam);
   llvm::ModulePassManager mpm;
   llvm::OptimizationLevel ol = passLevel(level);
-  if (ol == llvm::OptimizationLevel::O0)
+  if (ol == llvm::OptimizationLevel::O0) {
     mpm = pb.buildO0DefaultPipeline(ol);
-  else
+  } else {
+    if (lopts.enable)
+      loops::registerLLVMPasses(pb, lopts);
     mpm = pb.buildPerModuleDefaultPipeline(ol);
+  }
   mpm.run(m, mam);
 }
 
@@ -388,7 +392,7 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
 
   if (opts.verifyEach && llvm::verifyModule(lmod, &errs))
     return fail("LLVM IR verification failed");
-  runLLVMPipeline(lmod, tm, opts.optLevel);
+  runLLVMPipeline(lmod, tm, opts.optLevel, opts.loops);
   times.opt += timer.lap();
 
   std::error_code ec;

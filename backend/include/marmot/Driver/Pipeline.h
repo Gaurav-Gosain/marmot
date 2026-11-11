@@ -2,6 +2,8 @@
 #ifndef MARMOT_DRIVER_PIPELINE_H
 #define MARMOT_DRIVER_PIPELINE_H
 
+#include "marmot/Loops/Loops.h"
+
 #include <memory>
 #include <string>
 
@@ -30,6 +32,7 @@ struct CompileOptions {
   bool singleThreaded = false; // disable MLIR context threading (batch mode)
   bool initOptNone = true;     // compile package init functions with optnone
   bool wpoImport = true;       // -wpo: import small functions across modules
+  loops::Options loops;        // loop optimizer (owner: loops), -O2 and -O3
   bool devirt = true;          // go-devirt at -O1 and up
   bool strings = true;         // go-strings at -O1 and up
   bool escape = true;          // go-escape at -O1 and up

@@ -79,6 +79,15 @@ static cl::opt<std::string> cacheDir(
     cl::value_desc("dir"), cl::cat(cat));
 static cl::opt<bool> noImport("no-import", cl::desc("-wpo without cross-module imports"),
                               cl::cat(cat));
+static cl::opt<bool> noLoops("no-loops", cl::desc("Disable the loop optimizer"), cl::cat(cat));
+static cl::opt<bool> noPar("no-par", cl::desc("Loop optimizer: no parallel-for"), cl::cat(cat));
+static cl::opt<bool> fastFP("ffast-fp",
+                            cl::desc("Loop optimizer: allow reordering floating point "
+                                     "reductions (changes results; opt-in)"),
+                            cl::cat(cat));
+static cl::opt<bool> loopsRemarks("loops-remarks",
+                                  cl::desc("Loop optimizer: explain each loop decision"),
+                                  cl::cat(cat));
 static cl::opt<bool> verifyEach("verify-each",
                                 cl::desc("Verify IR after every pass"), cl::cat(cat));
 
@@ -137,6 +146,10 @@ int main(int argc, char **argv) {
   opts.verifyEach = verifyEach;
   opts.initOptNone = initOptNone;
   opts.wpoImport = !noImport;
+  opts.loops.enable = !noLoops;
+  opts.loops.parallel = !noPar;
+  opts.loops.fastFP = fastFP;
+  opts.loops.remarks = loopsRemarks;
   opts.escape = !noEscape;
   opts.bce = !noBCE;
   opts.devirt = !noDevirt;
