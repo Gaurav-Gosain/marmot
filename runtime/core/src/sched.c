@@ -923,6 +923,16 @@ static void schedule_loop(rt_m *m) {
         goexit_final(g);
         if (m->p) gfput(m->p, g);
         break;
+      case REQ_YIELD:
+        atomic_store(&g->status, G_RUNNABLE);
+        if (m->p)
+          runqput(m->p, g, false);
+        else {
+          spin_lock(&sched.lock);
+          globrunqput(g);
+          spin_unlock(&sched.lock);
+        }
+        break;
       case REQ_HANDOFF: {
         void (*f)(void *) = m->unlockf;
         void *arg = m->unlockarg;
@@ -989,6 +999,11 @@ RT_API int64_t rt_goid(void) { return getm()->curg->id; }
 RT_API void rt_gosched(void) {
   rt_safepoint();
   mcall(REQ_GOSCHED);
+}
+
+RT_API void rt_yield(void) {
+  rt_safepoint();
+  mcall(REQ_YIELD);
 }
 
 RT_API void rt_park(void (*unlock)(void *), void *lock) {

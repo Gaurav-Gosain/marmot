@@ -182,11 +182,13 @@ typedef struct wbuf {
   uintptr_t obj[WBUF_N];
 } wbuf;
 
+// Each worker writes its gcw on every object: one cache line each (128
+// bytes on Apple silicon) so workers do not falsely share.
 typedef struct gcw {
   uintptr_t *stk;
   uintptr_t len, cap;
   uint64_t nscan;  // objects scanned this cycle (trace)
-} gcw;
+} __attribute__((aligned(128))) gcw;
 
 #define MAX_GCWORKERS 16
 static gcw workers[MAX_GCWORKERS];
@@ -232,7 +234,7 @@ static wbuf *wbuf_get_empty(void) {
 static _Atomic uint32_t wwork_gen;  // bumped when work is shared or marking ends
 static _Atomic int32_t wdone;
 static _Atomic int32_t wsleeping;   // idle workers blocked in the kernel
-static uint32_t gc_spin = 200;     // idle spins before sleeping (MARMOT_GCSPIN)
+static uint32_t gc_spin = 4000;    // idle spins before sleeping (MARMOT_GCSPIN)
 
 static void wbuf_put_full(wbuf *b) {
   spin_lock(&wlock);
@@ -353,7 +355,8 @@ static void drain_parallel(gcw *w) {
     while (w->len > 0) {
       scan_object(w, w->stk[--w->len]);
       w->nscan++;
-      if ((++k & 15) == 0 && w->len > 4 && atomic_load_explicit(&wnidle, memory_order_relaxed) > 0 &&
+      // Share half the stack when someone is idle and nothing is queued.
+      if ((++k & 31) == 0 && w->len > 4 && atomic_load_explicit(&wnidle, memory_order_relaxed) > 0 &&
           !atomic_load_explicit(&wfull, memory_order_relaxed))
         share(w);
     }

@@ -187,6 +187,7 @@ enum {
   REQ_EXIT,
   REQ_EXITSYSCALL,  // exitsyscall found no P: queue the goroutine globally
   REQ_HANDOFF,      // park and run m->handoff_g next on this M
+  REQ_YIELD,        // requeue at the tail of this P's run queue
 };
 
 enum {

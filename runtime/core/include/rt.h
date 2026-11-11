@@ -80,8 +80,12 @@ typedef struct rt_g rt_g; // opaque goroutine handle, GC visible
 void rt_go(void (*fn)(void *), void *arg);
 // The running goroutine.
 rt_g *rt_current(void);
-// Yield the processor; the goroutine stays runnable.
+// Yield the processor; the goroutine stays runnable. rt_gosched queues the
+// caller globally (runtime.Gosched); rt_yield queues it at the tail of this
+// thread's local run queue, behind anything rt_ready just made runnable
+// (the gc runtime's goyield, for handing a lock to a woken waiter).
 void rt_gosched(void);
+void rt_yield(void);
 // Park the current goroutine until rt_ready(g) is called. If unlock is not
 // NULL it is called with lock after the goroutine is off its stack, so a
 // waker that holds the same lock cannot miss the park. unlock runs on the
@@ -89,7 +93,11 @@ void rt_gosched(void);
 // but must only release locks (and call rt_ready); it must not allocate,
 // park, panic, or use rt_current/rt_gslot.
 void rt_park(void (*unlock)(void *), void *lock);
-// Make a parked goroutine runnable. Safe from any thread.
+// Make a parked goroutine runnable. Safe from any thread. Called on a thread
+// that runs goroutines, it puts g in that thread's run-next slot (the old
+// occupant moves to the run queue), so g runs as soon as the caller parks
+// or yields, with no wakeup; idle threads are woken only to steal other
+// work (the gc runtime's goready).
 void rt_ready(rt_g *g);
 // Ready target and park the caller, running target next on this thread with
 // no queueing or wakeup (direct handoff, for unbuffered channels and
