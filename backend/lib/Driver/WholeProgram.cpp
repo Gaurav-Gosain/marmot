@@ -54,7 +54,7 @@ namespace marmot {
 namespace {
 
 // Bump when the meaning of a cache entry changes.
-constexpr const char *kCacheVersion = "marmot-backend-cache-15";
+constexpr const char *kCacheVersion = "marmot-backend-cache-16";
 
 // Largest function, in LLVM instructions, imported into other modules.
 constexpr unsigned kImportLimit = 40;
@@ -126,6 +126,9 @@ struct Def {
   bool isFunc = false, local = false, importable = false;
   bool copyable = false; // linkonce or weak: any module may hold a copy
   std::vector<std::string> refs; // qualified names
+  // Type descriptors this definition uses for more than allocation (see
+  // descriptorEscapes); their reflection tables must stay.
+  std::vector<std::string> typeUses;
 };
 
 struct ModuleInfo {
@@ -201,6 +204,59 @@ std::string typeString(Type *t) {
   return out;
 }
 
+// A type descriptor symbol "type:T" (not one of its sub-tables).
+bool isDescriptor(StringRef n) {
+  if (!n.starts_with("type:"))
+    return false;
+  for (StringRef suf : {".fields", ".methods", ".uncommon", ".gcdata", ".imethods", ".params"})
+    if (n.ends_with(suf))
+      return false;
+  return true;
+}
+
+bool isAllocCallee(StringRef n) {
+  return n == "runtime.newobject" || n == "runtime.mallocgc" || n == "runtime.makeslice" ||
+         n == "runtime.makeslice64" || n == "runtime.growslice" || n == "runtime.makechan" ||
+         n == "runtime.makechan64" || n == "runtime.newarray";
+}
+
+// Descriptors gv uses for more than allocation: anything other than an
+// argument of a runtime allocation call (functions), or anything other than
+// the type's own pointer type and its own sub-tables (global initializers).
+// Those uses can reach getitab, typehash or typeequal (lib/src/runtime), which
+// read the fields and methods tables.
+void descriptorEscapes(const GlobalValue &gv, std::set<std::string> &out) {
+  SmallPtrSet<const GlobalValue *, 16> refs;
+  if (auto *f = dyn_cast<Function>(&gv)) {
+    for (const BasicBlock &bb : *f)
+      for (const Instruction &inst : bb) {
+        auto *cb = dyn_cast<CallBase>(&inst);
+        bool alloc = cb && cb->getCalledFunction() &&
+                     isAllocCallee(cb->getCalledFunction()->getName());
+        if (alloc)
+          continue;
+        SmallPtrSet<const Constant *, 16> seen;
+        for (const Use &op : inst.operands())
+          if (auto *c = dyn_cast<Constant>(op.get()))
+            collectRefs(c, refs, seen);
+      }
+  } else {
+    refsOf(gv, refs);
+  }
+  StringRef self = gv.getName();
+  for (const GlobalValue *r : refs) {
+    StringRef n = r->getName();
+    if (!isDescriptor(n))
+      continue;
+    StringRef t = n.drop_front(5); // "type:"
+    // The type's own sub-tables and its pointer type refer to it.
+    if (self.starts_with((n + ".").str()) || self == ("type:*" + t).str() ||
+        self.starts_with(("type:*" + t + ".").str()))
+      continue;
+    out.insert(n.str());
+  }
+}
+
 // Reference summary in cache form: "D\t<flags>\t<qname>" then "R\t<ref>"
 // lines; "X\t<root>" for appending-global roots. Names hold no tabs or
 // newlines.
@@ -233,6 +289,10 @@ std::string summarize(Module &m) {
        << qualifyRaw(gv) << "\n";
     for (const GlobalValue *r : refs)
       os << "R\t" << qualifyRaw(*r) << "\n";
+    std::set<std::string> uses;
+    descriptorEscapes(gv, uses);
+    for (const std::string &u : uses)
+      os << "E\t" << u << "\n";
   };
   for (Function &f : m)
     add(f);
@@ -270,6 +330,8 @@ void loadSummary(StringRef text, unsigned idx, ModuleInfo &info) {
       info.defs.push_back(std::move(d));
     } else if (tag == "R" && !info.defs.empty()) {
       info.defs.back().refs.push_back(localize(rest, idx));
+    } else if (tag == "E" && !info.defs.empty()) {
+      info.defs.back().typeUses.push_back(rest.str());
     } else if (tag == "X") {
       info.extraRoots.push_back(localize(rest, idx));
     } else if (tag == "A") {
@@ -298,7 +360,8 @@ std::string fingerprint(const CompileOptions &opts) {
   os << kCacheVersion << "|O" << opts.optLevel << "|" << int(opts.emit) << "|"
      << opts.triple << "|" << opts.cpu << "|" << opts.features << "|"
      << opts.strings << opts.devirt << opts.boolPack << opts.escape << opts.bce << opts.openDefers
-     << opts.initOptNone << opts.wpoImport << opts.wpoClosedWorld << "|loops" << opts.loops.enable
+     << opts.initOptNone << opts.wpoImport << opts.wpoClosedWorld << opts.wpoPruneTypes
+     << "|loops" << opts.loops.enable
      << opts.loops.parallel << opts.loops.fastFP << opts.loops.remarks
      << opts.loops.versioning << opts.loops.typeAlias << opts.loops.gpu << "|";
   if (opts.rtBitcode)
@@ -626,6 +689,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   }
 
   // Phase 2: definitions by name, roots, reachability.
+  std::string prunableKey;
   auto t2 = std::chrono::steady_clock::now();
   StringMap<std::vector<std::pair<unsigned, unsigned>>> defsByName;
   for (unsigned i = 0; i < mods.size(); ++i)
@@ -726,6 +790,42 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         for (const std::string &r : d.refs)
           shared.insert(r);
 
+  // Reflection tables (docs/passes.md): with no reflect, reflectlite or
+  // rtabi code live, a type whose descriptor is used only to allocate needs
+  // neither its fields table (typehash, typeequal) nor its methods table
+  // (getitab).
+  StringSet<> prunable;
+  {
+    bool reflectLive = false;
+    StringSet<> keep;
+    for (ModuleInfo &m : mods)
+      for (const Def &d : m.defs) {
+        if (!live.contains(d.qname))
+          continue;
+        StringRef n = d.qname;
+        if (d.isFunc && (n.starts_with("reflect.") || n.starts_with("internal/reflectlite.") ||
+                         n.starts_with("internal/rtabi.")))
+          reflectLive = true;
+        for (const std::string &u : d.typeUses)
+          keep.insert(u);
+      }
+    if (!reflectLive && opts.wpoPruneTypes)
+      for (ModuleInfo &m : mods)
+        for (const Def &d : m.defs)
+          if (!d.isFunc && isDescriptor(d.qname) && live.contains(d.qname) &&
+              !keep.contains(d.qname))
+            prunable.insert(d.qname);
+    std::vector<std::string> sorted;
+    for (auto &e : prunable)
+      sorted.push_back(e.getKey().str());
+    llvm::sort(sorted);
+    std::string k;
+    for (const std::string &n : sorted)
+      k += n + "\n";
+    prunableKey = hashHex(k);
+    stats.prunedTypes = prunable.size();
+  }
+
   // Indirect call candidates: address-taken functions by LLVM type.
   // A dead function cannot be the target of a live call. A linkonce or weak
   // candidate may be dropped by its defining module, so another module must
@@ -792,7 +892,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     // it internalizes, and the bitcode of every module it imports from.
     std::string key;
     if (cacheObjects) {
-      std::string k = info.keyB + "|wpo|" + byTypeKey + "|";
+      std::string k = info.keyB + "|wpo|" + byTypeKey + "|" + prunableKey + "|";
       std::vector<std::string> liveDefs;
       for (const Def &d : info.defs)
         if (live.contains(d.qname))
@@ -868,6 +968,42 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       es << info.job.in << ": " << toString(std::move(e)) << "\n";
       return;
     }
+    // Drop the fields and methods tables of prunable types: null the
+    // pointer and zero the count that follows it, in the descriptor
+    // (structtype.fields, nfields) and its uncommon part (methods, mcount,
+    // xcount). Every copy of a linkonce descriptor gets the same rewrite.
+    if (!prunable.empty())
+      for (GlobalVariable &v : m->globals()) {
+        if (!v.hasInitializer() || !v.getName().starts_with("type:"))
+          continue;
+        StringRef n = v.getName();
+        bool isUncommon = n.ends_with(".uncommon");
+        StringRef desc = isUncommon ? n.drop_back(strlen(".uncommon")) : n;
+        if (!prunable.contains(desc))
+          continue;
+        std::string table = (desc + (isUncommon ? ".methods" : ".fields")).str();
+        auto *cs = dyn_cast<ConstantStruct>(v.getInitializer());
+        if (!cs)
+          continue;
+        SmallVector<Constant *, 8> elems;
+        for (unsigned e = 0; e < cs->getNumOperands(); ++e)
+          elems.push_back(cs->getOperand(e));
+        bool changed = false;
+        for (unsigned e = 0; e < elems.size(); ++e) {
+          auto *g = dyn_cast<GlobalValue>(elems[e]->stripPointerCasts());
+          if (!g || g->getName() != table)
+            continue;
+          elems[e] = Constant::getNullValue(elems[e]->getType());
+          unsigned counts = isUncommon ? 2 : 1;
+          for (unsigned c = 1; c <= counts && e + c < elems.size(); ++c)
+            if (elems[e + c]->getType()->isIntegerTy())
+              elems[e + c] = Constant::getNullValue(elems[e + c]->getType());
+          changed = true;
+        }
+        if (changed)
+          v.setInitializer(ConstantStruct::get(cs->getType(), elems));
+      }
+
     // Imports.
     for (auto &[si, names] : imports[i]) {
       auto srcOr = getLazyBitcodeModule(MemoryBufferRef(mods[si].bitcode, mods[si].job.in), ctx);

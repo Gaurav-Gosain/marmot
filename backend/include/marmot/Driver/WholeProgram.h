@@ -21,7 +21,7 @@ struct WpoJob {
 struct WpoStats {
   unsigned functions = 0, liveFunctions = 0, internalized = 0, imported = 0;
   unsigned escapeRounds = 0, noEscapeParams = 0;
-  unsigned cacheHits = 0, cacheMisses = 0;
+  unsigned cacheHits = 0, cacheMisses = 0, prunedTypes = 0;
   std::atomic<unsigned> devirtualized{0};
 };
 

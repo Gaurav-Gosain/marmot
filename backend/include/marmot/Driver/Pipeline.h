@@ -33,6 +33,7 @@ struct CompileOptions {
   bool singleThreaded = false; // disable MLIR context threading (batch mode)
   bool initOptNone = true;     // compile package init functions with optnone
   bool wpoImport = true;       // -wpo: import small functions across modules
+  bool wpoPruneTypes = true;   // -wpo: drop reflection tables nobody can read
   bool wpoClosedWorld = true;  // -wpo: devirtualized indirect calls lose their fallback
   loops::Options loops;        // loop optimizer (owner: loops), -O2 and -O3
   std::string pgoUse;          // -pgo=FILE: indexed profile (llvm-profdata merge output)

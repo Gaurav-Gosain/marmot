@@ -82,6 +82,9 @@ static cl::opt<std::string> cacheDir(
 static cl::opt<bool> noClosedWorld(
     "no-closed-world",
     cl::desc("-wpo: keep the indirect fallback of devirtualized calls"), cl::cat(cat));
+static cl::opt<bool> noPruneTypes(
+    "no-prune-types", cl::desc("-wpo: keep every type's fields and methods tables"),
+    cl::cat(cat));
 static cl::opt<bool> noImport("no-import", cl::desc("-wpo without cross-module imports"),
                               cl::cat(cat));
 static cl::opt<bool> noLoops("no-loops", cl::desc("Disable the loop optimizer"), cl::cat(cat));
@@ -183,6 +186,7 @@ int main(int argc, char **argv) {
   opts.initOptNone = initOptNone;
   opts.wpoImport = !noImport;
   opts.wpoClosedWorld = !noClosedWorld;
+  opts.wpoPruneTypes = !noPruneTypes;
   opts.pgoUse = pgoUse;
   opts.debugLevel = debugLevel;
   opts.prepareOnly = prepareOnly;
@@ -290,9 +294,11 @@ int main(int argc, char **argv) {
     if (opts.timePhases)
       errs() << format("batch: %u functions, %u live, %u internalized, %u imported, "
                        "%u no-escape params after %u escape rounds, %u calls devirtualized, "
+                       "%u types without reflection tables, "
                        "cache %u hits %u misses\n",
                        st.functions, st.liveFunctions, st.internalized, st.imported,
                        st.noEscapeParams, st.escapeRounds, st.devirtualized.load(),
+                       st.prunedTypes,
                        st.cacheHits, st.cacheMisses);
   } else if (work.size() == 1) {
     runJob(work[0], false);
