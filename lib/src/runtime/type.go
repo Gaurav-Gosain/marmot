@@ -138,6 +138,11 @@ type method struct {
 	// the method parameters. It takes no hidden closure parameter. nil if
 	// the compiler proved the method is never called through an interface.
 	ifn unsafe.Pointer
+	// tfn is a func-value wrapper for the method, for reflect: it is
+	// called like a closure whose object is {tfn, recv} (recv is the
+	// interface data word) and calls ifn(recv, args...). nil when the
+	// program cannot call methods through reflect.
+	tfn unsafe.Pointer
 }
 
 // ptrtype describes *elem.
@@ -191,6 +196,11 @@ type functype struct {
 	outCount uint16
 	// variadic is 1 when the last parameter is ...T (its type is []T).
 	variadic uint8
+	// call is the reflect call adapter of this signature, with the C
+	// signature void call(void *closure, void *args, void *results): args
+	// and results point to the parameters and results laid out as Go
+	// structs. nil when the program cannot call through reflect.
+	call unsafe.Pointer
 }
 
 // imethod is one method of an interface type.

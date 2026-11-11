@@ -3,8 +3,10 @@
 // marmot overlay: the reflect API on marmot's type descriptors
 // (internal/rtabi, mirrored from runtime/type.go). Supported: type
 // inspection, values of every kind, setters, conversions, maps, slices,
-// channels, DeepEqual. Not supported: Value.Call, Value.Method,
-// MakeFunc, and creating new types (StructOf, FuncOf, ...), which panic.
+// channels, DeepEqual, and Value.Call and Value.Method through the
+// compiler's call adapters (functype.call, method.tfn). Not supported:
+// MakeFunc, Method(i).Func, and creating new types (StructOf, FuncOf,
+// ...), which panic.
 package reflect
 
 import (

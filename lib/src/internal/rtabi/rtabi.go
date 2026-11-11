@@ -74,6 +74,7 @@ type Method struct {
 	Name string
 	Mtyp *Type
 	Ifn  unsafe.Pointer
+	Tfn  unsafe.Pointer
 }
 
 // PtrType is runtime.ptrtype.
@@ -116,6 +117,7 @@ type FuncType struct {
 	InCount  uint16
 	OutCount uint16
 	Variadic uint8
+	Call     unsafe.Pointer
 }
 
 // Imethod is runtime.imethod.

@@ -746,27 +746,212 @@ func (v Value) NumMethod() int {
 	return v.typ_.NumMethod()
 }
 
-// Method is not supported by marmot (it needs dynamic calls).
+// Method returns a function value corresponding to v's i'th method. The
+// arguments to a Call on the returned function should not include a
+// receiver.
 func (v Value) Method(i int) Value {
-	panic("reflect.Value.Method: not supported by marmot")
+	if v.typ_ == nil {
+		panic(&ValueError{"reflect.Value.Method", Invalid})
+	}
+	if uint(i) >= uint(v.typ_.NumMethod()) {
+		panic("reflect: Method index out of range")
+	}
+	if v.typ_.Kind() == rtabi.Interface && v.IsNil() {
+		panic("reflect: Method on nil interface value")
+	}
+	return v.methodValue(toRType(v.typ_).Method(i).Name)
 }
 
-// MethodByName is not supported by marmot (it needs dynamic calls).
+// MethodByName returns a function value corresponding to the method of v
+// with the given name, or the zero Value if there is none.
 func (v Value) MethodByName(name string) Value {
+	if v.typ_ == nil {
+		panic(&ValueError{"reflect.Value.MethodByName", Invalid})
+	}
+	if v.typ_.Kind() == rtabi.Interface && v.IsNil() {
+		panic("reflect: MethodByName on nil interface value")
+	}
 	if _, ok := toRType(v.typ_).MethodByName(name); !ok {
 		return Value{}
 	}
-	panic("reflect.Value.MethodByName: not supported by marmot")
+	return v.methodValue(name)
 }
 
-// Call is not supported by marmot.
+//go:linkname mallocConservative runtime.mallocConservative
+func mallocConservative(size uintptr) unsafe.Pointer
+
+// methodValue builds a func Value for the exported method name of v's
+// dynamic type: a closure object {tfn, recv} where recv is the interface
+// data word of the receiver.
+func (v Value) methodValue(name string) Value {
+	if v.flag&flagRO != 0 {
+		panic("reflect: Method on value obtained from unexported field")
+	}
+	recv := v
+	if v.kind() == Interface {
+		recv = v.Elem()
+	}
+	x := packEface(recv)
+	e := (*rtabi.EmptyInterface)(unsafe.Pointer(&x))
+	u := e.Type.Uncommon()
+	if u != nil {
+		for j := 0; j < int(u.Mcount); j++ {
+			m := u.MethodAt(j)
+			if m.Name != name {
+				continue
+			}
+			if m.Tfn == nil {
+				panic("reflect: method " + name + " of " + e.Type.String() + " is not callable through reflect (no wrapper emitted)")
+			}
+			obj := (*[2]unsafe.Pointer)(mallocConservative(2 * unsafe.Sizeof(uintptr(0))))
+			obj[0] = m.Tfn
+			obj[1] = e.Data
+			return Value{m.Mtyp, unsafe.Pointer(obj), v.flag.ro() | flag(Func)}
+		}
+	}
+	panic("reflect: method " + name + " not found on " + e.Type.String())
+}
+
+// Call calls the function v with the input arguments in.
 func (v Value) Call(in []Value) []Value {
-	panic("reflect.Value.Call: not supported by marmot")
+	v.mustBe(Func)
+	v.mustBeExported()
+	return v.call("Call", in)
 }
 
-// CallSlice is not supported by marmot.
+// CallSlice calls the variadic function v with the input arguments in,
+// assigning the slice in[len(in)-1] to v's final variadic argument.
 func (v Value) CallSlice(in []Value) []Value {
-	panic("reflect.Value.CallSlice: not supported by marmot")
+	v.mustBe(Func)
+	v.mustBeExported()
+	return v.call("CallSlice", in)
+}
+
+func alignUp(n, a uintptr) uintptr {
+	if a == 0 {
+		return n
+	}
+	return (n + a - 1) &^ (a - 1)
+}
+
+// frameLayout computes the offsets of types laid out as a Go struct and
+// the total size.
+func frameLayout(ts []*rtabi.Type) ([]uintptr, uintptr) {
+	offs := make([]uintptr, len(ts))
+	var off, maxAlign uintptr = 0, 1
+	for i, t := range ts {
+		a := uintptr(t.Align_)
+		off = alignUp(off, a)
+		offs[i] = off
+		off += t.Size()
+		if a > maxAlign {
+			maxAlign = a
+		}
+	}
+	return offs, alignUp(off, maxAlign)
+}
+
+type callAdapter func(closure, args, results unsafe.Pointer)
+
+func (v Value) call(op string, in []Value) []Value {
+	ft := (*rtabi.FuncType)(unsafe.Pointer(v.typ_))
+	fn := v.pointer()
+	if fn == nil {
+		panic("reflect: call of nil function")
+	}
+	if ft.Call == nil {
+		panic("reflect." + op + ": no call adapter for " + v.typ_.String() + " (the compiler did not emit one)")
+	}
+	isSlice := op == "CallSlice"
+	n := int(ft.InCount)
+	isVariadic := ft.Variadic != 0
+	if isSlice {
+		if !isVariadic {
+			panic("reflect: CallSlice of non-variadic function")
+		}
+		if len(in) < n {
+			panic("reflect: CallSlice with too few input arguments")
+		}
+		if len(in) > n {
+			panic("reflect: CallSlice with too many input arguments")
+		}
+	} else {
+		if isVariadic {
+			n--
+		}
+		if len(in) < n {
+			panic("reflect: Call with too few input arguments")
+		}
+		if !isVariadic && len(in) > n {
+			panic("reflect: Call with too many input arguments")
+		}
+	}
+	for _, x := range in {
+		if x.Kind() == Invalid {
+			panic("reflect: " + op + " using zero Value argument")
+		}
+	}
+	if !isSlice && isVariadic {
+		// Pack the trailing arguments into a slice.
+		m := len(in) - n
+		slice := MakeSlice(toRType(ft.Param(n)), m, m)
+		elem := toRType(ft.Param(n)).Elem()
+		for i := 0; i < m; i++ {
+			x := in[n+i]
+			if xt := x.Type(); !xt.AssignableTo(elem) {
+				panic("reflect: cannot use " + xt.String() + " as type " + elem.String() + " in " + op)
+			}
+			slice.Index(i).Set(x)
+		}
+		origIn := in
+		in = make([]Value, n+1)
+		copy(in[:n], origIn)
+		in[n] = slice
+	}
+
+	nin := int(ft.InCount)
+	nout := int(ft.OutCount)
+	ins := make([]*rtabi.Type, nin)
+	for i := range ins {
+		ins[i] = ft.Param(i)
+	}
+	outs := make([]*rtabi.Type, nout)
+	for i := range outs {
+		outs[i] = ft.Param(nin + i)
+	}
+	inOffs, inSize := frameLayout(ins)
+	outOffs, outSize := frameLayout(outs)
+
+	var args, results unsafe.Pointer
+	if inSize > 0 {
+		args = mallocConservative(inSize)
+	}
+	if outSize > 0 {
+		results = mallocConservative(outSize)
+	}
+	for i, x := range in {
+		targ := ins[i]
+		x = x.assignTo("reflect.Value.Call", targ, nil)
+		dst := unsafe.Add(args, inOffs[i])
+		if x.flag&flagIndir != 0 {
+			typedmemmove(targ, dst, x.ptr)
+		} else {
+			*(*unsafe.Pointer)(dst) = x.ptr
+		}
+	}
+
+	// Call the adapter's code like a func value: the extra hidden closure
+	// parameter is ignored by the C calling convention.
+	adapterObj := &struct{ code unsafe.Pointer }{ft.Call}
+	adapterPtr := unsafe.Pointer(adapterObj)
+	call := *(*callAdapter)(unsafe.Pointer(&adapterPtr))
+	call(fn, args, results)
+
+	ret := make([]Value, nout)
+	for i, t := range outs {
+		ret[i] = copyVal(t, flag(t.Kind()), unsafe.Add(results, outOffs[i]))
+	}
+	return ret
 }
 
 // MakeFunc is not supported by marmot.
