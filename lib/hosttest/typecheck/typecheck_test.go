@@ -38,11 +38,24 @@ func (im *overlayImporter) ImportFrom(path, dir string, mode types.ImportMode) (
 		return types.Unsafe, nil
 	}
 	if p, ok := im.pkgs[path]; ok {
+		if p == nil {
+			return nil, fmt.Errorf("import cycle through %s", path)
+		}
 		return p, nil
 	}
 	odir := filepath.Join(im.root, filepath.FromSlash(path))
 	if hasGo(odir) {
 		return im.check(path, odir)
+	}
+	// Stock packages are type-checked here too, so that every package
+	// sees the overlay versions of its dependencies (a stock package that
+	// imports reflect must get the overlay reflect).
+	sdir := filepath.Join(im.ctx.GOROOT, "src", filepath.FromSlash(path))
+	if !hasGo(sdir) {
+		sdir = filepath.Join(im.ctx.GOROOT, "src", "vendor", filepath.FromSlash(path))
+	}
+	if hasGo(sdir) {
+		return im.checkDir(path, sdir)
 	}
 	return im.stock.ImportFrom(path, dir, mode)
 }
@@ -103,6 +116,13 @@ func (im *overlayImporter) check(path, dir string) (*types.Package, error) {
 	if err != nil {
 		return nil, err
 	}
+	return im.checkDir(path, dir)
+}
+
+// checkDir type-checks the package in dir. Errors in stock packages are
+// reported like errors in overlays: they mean an overlay broke a user.
+func (im *overlayImporter) checkDir(path, dir string) (*types.Package, error) {
+	im.pkgs[path] = nil // break import cycles in broken trees
 	bp, err := im.ctx.ImportDir(dir, 0)
 	if err != nil {
 		return nil, err
