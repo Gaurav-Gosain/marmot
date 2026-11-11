@@ -47,6 +47,9 @@ func (b *build) ldCommand(args, objs []string, out string) ([]string, bool) {
 			}
 			continue
 		}
+		if b.work != "" {
+			a = strings.ReplaceAll(a, b.work, workSentinel)
+		}
 		tmplArgs = append(tmplArgs, a)
 		key = append(key, a)
 	}
@@ -57,7 +60,7 @@ func (b *build) ldCommand(args, objs []string, out string) ([]string, bool) {
 	cacheFile := filepath.Join(dir, "ld-"+hex.EncodeToString(h.Sum(nil))[:24]+".json")
 	var tmpl []string
 	if data, err := os.ReadFile(cacheFile); err == nil && json.Unmarshal(data, &tmpl) == nil && len(tmpl) > 0 {
-		return expandLd(tmpl, sentinel, objs, out), true
+		return expandLd(tmpl, sentinel, objs, out, b.work), true
 	}
 	if !fileExists(sentinel) {
 		os.MkdirAll(dir, 0o755)
@@ -86,10 +89,10 @@ func (b *build) ldCommand(args, objs []string, out string) ([]string, bool) {
 		os.WriteFile(cacheFile+".tmp", data, 0o644)
 		os.Rename(cacheFile+".tmp", cacheFile)
 	}
-	return expandLd(tmpl, sentinel, objs, out), true
+	return expandLd(tmpl, sentinel, objs, out, b.work), true
 }
 
-func expandLd(tmpl []string, sentinel string, objs []string, out string) []string {
+func expandLd(tmpl []string, sentinel string, objs []string, out, work string) []string {
 	var cmd []string
 	for _, a := range tmpl {
 		switch a {
@@ -98,11 +101,15 @@ func expandLd(tmpl []string, sentinel string, objs []string, out string) []strin
 		case outSentinel:
 			cmd = append(cmd, out)
 		default:
-			cmd = append(cmd, a)
+			cmd = append(cmd, strings.ReplaceAll(a, workSentinel, work))
 		}
 	}
 	return cmd
 }
+
+// workSentinel stands for the build's work directory in ld templates.
+const workSentinel = "/marmot-work-sentinel"
+
 
 // parseQuoted splits a clang -### command line (each argument in double
 // quotes, backslash escapes).

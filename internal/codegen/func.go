@@ -27,6 +27,7 @@ type funcGen struct {
 	nblk    int
 	ctx     string // closure context parameter, "" if none
 	curPos  token.Pos
+	lastPos token.Pos // last valid curPos (locations)
 	failed  bool
 	blkName map[*ssa.BasicBlock]string
 
@@ -237,7 +238,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 		out.WriteString(f.body.String())
 	}
 	out.WriteString(f.cold.String())
-	out.WriteString("  }\n")
+	out.WriteString("  }" + f.m.loc(fn.Pos()) + "\n")
 	f.m.defs.WriteString(out.String())
 }
 
@@ -278,6 +279,7 @@ func (f *funcGen) newBlock() string {
 func (f *funcGen) emit(format string, args ...any) {
 	f.b.WriteString("    ")
 	fmt.Fprintf(f.b, format, args...)
+	f.b.WriteString(f.opLoc())
 	f.b.WriteByte('\n')
 }
 
@@ -288,6 +290,7 @@ func (f *funcGen) op(format string, args ...any) string {
 	f.b.WriteString(v)
 	f.b.WriteString(" = ")
 	fmt.Fprintf(f.b, format, args...)
+	f.b.WriteString(f.opLoc())
 	f.b.WriteByte('\n')
 	return v
 }

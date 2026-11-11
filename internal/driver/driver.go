@@ -42,6 +42,7 @@ type Config struct {
 	Test     bool   // build the package's test binary (go list -test main)
 	PGOGen   bool   // instrument for profile generation
 	PGO      string // indexed profile to optimize with
+	Strip    bool   // -s: no pc table
 	Tags     []string
 	Patterns []string
 	Stderr   io.Writer
@@ -199,7 +200,7 @@ func (b *build) run1() (string, error) {
 			ssaPkgs = append(ssaPkgs, sp)
 		}
 	}
-	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, GoDialect: cfg.Dialect == "go", Release: cfg.Release})
+	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, GoDialect: cfg.Dialect == "go", Release: cfg.Release, MergedGOROOT: lp.GOROOT})
 	if err != nil {
 		return "", err
 	}
@@ -442,6 +443,16 @@ func (b *build) link(objs []string, out string) error {
 	if b.cross() {
 		return b.linkBundle(objs, rt, out)
 	}
+	if b.wantPcln() {
+		return b.linkWithPcln(func(extra []string, o string) error {
+			return b.link1(objs, rt, o, extra)
+		}, out)
+	}
+	return b.link1(objs, rt, out, nil)
+}
+
+// link1 runs the linker once.
+func (b *build) link1(objs []string, rt, out string, extra []string) error {
 	args := []string{"-o", out}
 	args = append(args, objs...)
 	args = append(args, rt, "-lpthread")
@@ -458,10 +469,17 @@ func (b *build) link(objs []string, out string) error {
 		args = append(args, "-Wl,-dead_strip")
 		if os.Getenv("MARMOT_KEEP_SYMBOLS") == "" {
 			args = append(args, "-Wl,-x", "-Wl,-exported_symbol,_main")
+			if !b.wantPcln() {
+				args = append(args, "-Wl,-S") // no debug map
+			}
 		}
 	} else {
-		args = append(args, "-Wl,--gc-sections", "-s")
+		args = append(args, "-Wl,--gc-sections")
+		if !b.wantPcln() {
+			args = append(args, "-s")
+		}
 	}
+	args = append(args, extra...)
 	if os.Getenv("MARMOT_LINK_VIA_CLANG") == "" {
 		if ld, ok := b.ldCommand(args, objs, out); ok {
 			if err := b.run(ld[0], ld[1:]...); err == nil {

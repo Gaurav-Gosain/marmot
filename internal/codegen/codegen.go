@@ -26,6 +26,9 @@ type Options struct {
 	GoDialect bool
 	// Release enables release-only transforms (more devirtualization).
 	Release bool
+	// MergedGOROOT is where the loader's GOROOT symlinks live; source
+	// locations resolve them.
+	MergedGOROOT string
 }
 
 // Module is the MLIR text for one Go package (or the synthetic entry module).
@@ -71,6 +74,8 @@ type Program struct {
 	syms map[*ssa.Function]string
 
 	escMu     sync.Mutex
+	locMu     sync.Mutex
+	locFiles  map[string]string
 	esc       escapeState
 	regions   regionState
 	deep      deepState

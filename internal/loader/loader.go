@@ -39,12 +39,13 @@ type Config struct {
 
 // Program is the loaded and SSA built program.
 type Program struct {
-	SSA      *ssa.Program
-	Packages []*packages.Package // the root packages
-	All      []*packages.Package // every package in dependency order
-	SSAPkgs  map[*types.Package]*ssa.Package
-	GOROOT   string // the merged GOROOT
-	Sizes    types.Sizes
+	SSA        *ssa.Program
+	Packages   []*packages.Package // the root packages
+	All        []*packages.Package // every package in dependency order
+	SSAPkgs    map[*types.Package]*ssa.Package
+	GOROOT     string // the merged GOROOT
+	RealGOROOT string
+	Sizes      types.Sizes
 }
 
 // Load loads the packages and builds SSA for all of them.
@@ -215,7 +216,7 @@ func Load(cfg Config) (*Program, error) {
 	if sizes == nil {
 		sizes = types.SizesFor("gc", cfg.GOARCH)
 	}
-	return &Program{SSA: prog, Packages: pkgs, All: all, SSAPkgs: m, GOROOT: goroot, Sizes: sizes}, nil
+	return &Program{SSA: prog, Packages: pkgs, All: all, SSAPkgs: m, GOROOT: goroot, RealGOROOT: realRoot, Sizes: sizes}, nil
 }
 
 func goEnv(name string) (string, error) {

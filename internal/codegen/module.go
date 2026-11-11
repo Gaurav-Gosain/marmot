@@ -17,6 +17,8 @@ type moduleGen struct {
 	tm  *typeMapper
 
 	defs        strings.Builder // definitions: globals and functions
+	locs        map[string]int  // location aliases (locs.go)
+	locDefs     strings.Builder
 	decls       map[string]string
 	defined     map[string]bool
 	queue       []*ssa.Function
@@ -124,6 +126,7 @@ func (m *moduleGen) finish(name string) (Module, error) {
 	}
 	out.WriteString(m.defs.String())
 	out.WriteString("}\n")
+	out.WriteString(m.locDefs.String())
 	return Module{Name: name, Text: out.String()}, nil
 }
 

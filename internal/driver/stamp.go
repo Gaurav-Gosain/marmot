@@ -54,7 +54,7 @@ func (b *build) buildStamp(goos, goarch string) string {
 	for _, f := range files {
 		fileSig(h, f)
 	}
-	fmt.Fprintf(h, "pgo-gen=%v\n", b.cfg.PGOGen)
+	fmt.Fprintf(h, "pgo-gen=%v strip=%v %s\n", b.cfg.PGOGen, b.cfg.Strip, os.Getenv("MARMOT_STRIP"))
 	if b.cfg.PGO != "" {
 		fileSig(h, b.cfg.PGO)
 	}
