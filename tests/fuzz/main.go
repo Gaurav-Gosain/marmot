@@ -31,6 +31,7 @@ var (
 	flO    = flag.String("O", "", "marmot -O level")
 	flKeep = flag.Bool("keep", false, "keep all generated programs under .work/fuzz")
 	flShr  = flag.Bool("shrink", true, "shrink failing programs")
+	flRoot = flag.String("root", "", "MARMOT_ROOT to use (a snapshot made by tests/snapshot.sh); default is the live tree")
 	flGen  = flag.Int64("print", 0, "print the program for this seed and exit")
 	flExt  = flag.Bool("ext", true, "also generate maps, strings, floats and goroutines")
 )
@@ -324,9 +325,9 @@ func sh(timeout time.Duration, dir string, env []string, name string, args ...st
 }
 
 type runner struct {
-	root, work, marmot string
-	mu                 sync.Mutex
-	n                  int
+	root, mroot, work, marmot string
+	mu                        sync.Mutex
+	n                         int
 }
 
 // check compiles and runs src with both toolchains. It returns a description of the difference,
@@ -354,7 +355,7 @@ func (rn *runner) check(src string) string {
 		args = append(args, "-O", *flO)
 	}
 	args = append(args, file)
-	b, why := sh(2*time.Minute, rn.root, []string{"MARMOT_ROOT=" + rn.root}, rn.marmot, args...)
+	b, why := sh(2*time.Minute, rn.root, []string{"MARMOT_ROOT=" + rn.mroot}, rn.marmot, args...)
 	if why != "" || b.code != 0 {
 		return "compile error: " + firstLine(b.stdout+b.stderr+why)
 	}
@@ -427,12 +428,16 @@ func main() {
 	root, _ := os.Getwd()
 	work := filepath.Join(root, ".work", "fuzz")
 	os.MkdirAll(work, 0o755)
-	marmot := filepath.Join(root, "build", "bin", "marmot")
+	mroot := root
+	if *flRoot != "" {
+		mroot = *flRoot
+	}
+	marmot := filepath.Join(mroot, "build", "bin", "marmot")
 	if _, err := os.Stat(marmot); err != nil {
 		fmt.Fprintln(os.Stderr, "fuzz: build/bin/marmot not found (make frontend)")
 		os.Exit(2)
 	}
-	rn := &runner{root: root, work: work, marmot: marmot}
+	rn := &runner{root: root, mroot: mroot, work: work, marmot: marmot}
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, min(max(*flJ, 1), 4))
 	var mu sync.Mutex
