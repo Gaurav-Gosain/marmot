@@ -230,10 +230,13 @@ func (f *funcGen) builtin(b *ssa.Builtin, args []ssa.Value, instr ssa.Instructio
 	case "String": // unsafe.String
 		p := f.value(args[0])
 		n := f.toInt64(f.value(args[1]), args[1].Type())
+		f.rtcall("unsafestring", p, n)
 		return f.makeString(p, n)
 	case "Slice": // unsafe.Slice
 		p := f.value(args[0])
 		n := f.toInt64(f.value(args[1]), args[1].Type())
+		et := args[0].Type().Underlying().(*types.Pointer).Elem()
+		f.rtcall("unsafeslice", f.typeDesc(et), p, n)
 		return f.build(tSlice, p, n, n)
 	}
 	f.fail(token.NoPos, "builtin %s is not supported yet", b.Name())

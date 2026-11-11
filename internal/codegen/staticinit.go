@@ -5,6 +5,7 @@ import (
 	"go/constant"
 	"go/token"
 	"go/types"
+	"sort"
 	"strings"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
@@ -22,14 +23,15 @@ import (
 // into it in init is static and no location is stored twice.
 
 type staticInit struct {
-	m       *moduleGen
-	skip    map[ssa.Instruction]bool
-	cand    map[*ssa.Store]ssa.Value // candidate static stores and their roots
-	order   map[ssa.Instruction]int  // position in the run-once blocks
-	images  map[ssa.Value]*memImage  // *ssa.Global or heap *ssa.Alloc
-	objSyms map[*ssa.Alloc]string
-	dynamic map[ssa.Value]bool
-	loads   []*ssa.UnOp // loads of local literal objects used as static values
+	m         *moduleGen
+	skip      map[ssa.Instruction]bool
+	cand      map[*ssa.Store]ssa.Value // candidate static stores and their roots
+	order     map[ssa.Instruction]int  // position in the run-once blocks
+	lastStore map[ssa.Value]int        // position of the last candidate store per object
+	images    map[ssa.Value]*memImage  // *ssa.Global or heap *ssa.Alloc
+	objSyms   map[*ssa.Alloc]string
+	dynamic   map[ssa.Value]bool
+	loads     []*ssa.UnOp // loads of local literal objects used as static values
 }
 
 // memImage is the static content of a memory object of Go type t.
@@ -246,6 +248,7 @@ func (m *moduleGen) analyzeStaticInit(pkg *ssa.Package) *staticInit {
 		img.leaf = &v
 		s.skip[st.st] = true
 	}
+	s.removeDeadInit(pkg, blocks)
 	// Address computations used only by skipped stores are skipped too.
 	for _, b := range blocks {
 		for i := len(b.Instrs) - 1; i >= 0; i-- {
@@ -295,14 +298,19 @@ func (s *staticInit) storesBefore(a *ssa.Alloc, instr ssa.Instruction) bool {
 	if !ok {
 		return false
 	}
-	for st, root := range s.cand {
-		if root == ssa.Value(a) {
-			if p, ok := s.order[st]; !ok || p > pos {
-				return false
+	if s.lastStore == nil {
+		s.lastStore = map[ssa.Value]int{}
+		for st, root := range s.cand {
+			p, ok := s.order[st]
+			if !ok {
+				p = 1 << 30
+			}
+			if p > s.lastStore[root] {
+				s.lastStore[root] = p
 			}
 		}
 	}
-	return true
+	return s.lastStore[a] <= pos
 }
 
 // allocUsesStatic checks the uses of a literal object.
@@ -438,10 +446,16 @@ func (s *staticInit) staticValue(v ssa.Value) (cv, bool) {
 		}
 		return cAddr(m.funcValueSym(x)), true
 	case *ssa.Global:
+		if m.p.opts.Sizes.Sizeof(x.Type().(*types.Pointer).Elem()) == 0 {
+			return cAddr(m.zeroBase()), true
+		}
 		return cAddr(m.globalRef(x)), true
 	case *ssa.Alloc:
 		if !x.Heap || s.images[x] == nil {
 			return cv{}, false
+		}
+		if m.p.opts.Sizes.Sizeof(x.Type().(*types.Pointer).Elem()) == 0 {
+			return cAddr(m.zeroBase()), true
 		}
 		return cAddr(s.objSym(x)), true
 	case *ssa.UnOp:
@@ -501,7 +515,17 @@ func (s *staticInit) objSym(a *ssa.Alloc) string {
 
 // emitObjects defines the static literal objects.
 func (s *staticInit) emitObjects() {
-	for a, sym := range s.objSyms {
+	// Sorted by symbol so the module text is deterministic (object cache).
+	allocs := make([]*ssa.Alloc, 0, len(s.objSyms))
+	for a := range s.objSyms {
+		allocs = append(allocs, a)
+	}
+	sort.Slice(allocs, func(i, j int) bool {
+		return len(s.objSyms[allocs[i]]) < len(s.objSyms[allocs[j]]) ||
+			len(s.objSyms[allocs[i]]) == len(s.objSyms[allocs[j]]) && s.objSyms[allocs[i]] < s.objSyms[allocs[j]]
+	})
+	for _, a := range allocs {
+		sym := s.objSyms[a]
 		if s.dynamic[a] {
 			continue // referenced only by stores that stayed dynamic
 		}
@@ -546,3 +570,83 @@ func (m *moduleGen) constCV(c constant.Value, t types.Type) (cv, bool) {
 }
 
 var _ = token.NoPos
+
+// removeDeadInit drops the initialization of package variables that the
+// program never reads (like the gc linker's dead map initializers), along
+// with the side effect free computations that only feed them.
+func (s *staticInit) removeDeadInit(pkg *ssa.Package, blocks []*ssa.BasicBlock) {
+	p := s.m.p
+	cand := map[ssa.Instruction]bool{}
+	var list []ssa.Instruction
+	for _, b := range blocks {
+		for _, instr := range b.Instrs {
+			ok := false
+			switch x := instr.(type) {
+			case *ssa.Store:
+				root, _, isPath := addrPath(x.Addr)
+				if g, isG := root.(*ssa.Global); isPath && isG {
+					ok = g.Pkg == pkg && p.globalDead(g)
+				} else if _, isA := root.(*ssa.Alloc); isPath && isA {
+					ok = true // only if the object itself goes (checked below)
+				}
+			case *ssa.MakeMap, *ssa.MapUpdate, *ssa.MakeSlice, *ssa.Alloc, *ssa.MakeInterface,
+				*ssa.MakeClosure, *ssa.Slice, *ssa.IndexAddr, *ssa.FieldAddr, *ssa.Convert,
+				*ssa.ChangeType, *ssa.ChangeInterface, *ssa.Field, *ssa.Index, *ssa.Extract,
+				*ssa.DebugRef:
+				ok = true
+			case *ssa.UnOp:
+				ok = x.Op != token.ARROW
+			case *ssa.BinOp:
+				ok = x.Op != token.QUO && x.Op != token.REM
+			}
+			if ok {
+				cand[instr] = true
+				list = append(list, instr)
+			}
+		}
+	}
+	gone := func(i ssa.Instruction) bool { return cand[i] || s.skip[i] }
+	for changed := true; changed; {
+		changed = false
+		for _, instr := range list {
+			if !cand[instr] {
+				continue
+			}
+			keep := false
+			if v, ok := instr.(ssa.Value); ok {
+				if refs := v.Referrers(); refs != nil {
+					for _, r := range *refs {
+						if !gone(r) {
+							keep = true
+							break
+						}
+					}
+				}
+			}
+			switch x := instr.(type) {
+			case *ssa.Store:
+				root, _, _ := addrPath(x.Addr)
+				if a, isA := root.(*ssa.Alloc); isA && !cand[a] {
+					keep = true
+				}
+				if ai, ok := x.Addr.(ssa.Instruction); ok && !gone(ai) {
+					keep = true
+				}
+			case *ssa.MapUpdate:
+				if mi, ok := x.Map.(ssa.Instruction); !ok || !cand[mi] {
+					keep = true
+				}
+			}
+			if keep {
+				delete(cand, instr)
+				changed = true
+			}
+		}
+	}
+	for instr := range cand {
+		if _, isDebug := instr.(*ssa.DebugRef); isDebug {
+			continue
+		}
+		s.skip[instr] = true
+	}
+}

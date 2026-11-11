@@ -105,6 +105,8 @@ func (m *moduleGen) finish(name string) (Module, error) {
 		return Module{}, fmt.Errorf("%s", strings.Join(sb, "\n"))
 	}
 	var out strings.Builder
+	// Method pruning is whole-program: modules depend on its result.
+	fmt.Fprintf(&out, "// methods: %s\n", m.p.usedMethodsHash)
 	out.WriteString("module {\n")
 	keys := make([]string, 0, len(m.decls))
 	for k := range m.decls {

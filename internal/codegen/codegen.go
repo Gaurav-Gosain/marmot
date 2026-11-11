@@ -63,6 +63,13 @@ type Program struct {
 
 	mu   sync.Mutex
 	syms map[*ssa.Function]string
+
+	usedMethods     map[string]bool // method keys called through interfaces
+	usedMethodsHash string
+	keepExported    bool // reflect method lookups: keep all exported methods
+
+	globalRead  map[*ssa.Global]bool // globals read anywhere in the program
+	varLinkname map[string]bool      // pkgpath.name of variables named in //go:linkname
 }
 
 type pragma uint32
@@ -77,16 +84,17 @@ const (
 // NewProgram prepares code generation for all packages of prog.
 func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package][]*ast.File, opts Options) (*Program, error) {
 	p := &Program{
-		files:    files,
-		opts:     opts,
-		prog:     prog,
-		fset:     prog.Fset,
-		owner:    map[*ssa.Function]*ssa.Package{},
-		byPkg:    map[*ssa.Package][]*ssa.Function{},
-		linkname: map[*ssa.Function]string{},
-		dynamic:  map[string]string{},
-		pragmas:  map[*ssa.Function]pragma{},
-		syms:     map[*ssa.Function]string{},
+		files:       files,
+		opts:        opts,
+		prog:        prog,
+		fset:        prog.Fset,
+		owner:       map[*ssa.Function]*ssa.Package{},
+		byPkg:       map[*ssa.Package][]*ssa.Function{},
+		linkname:    map[*ssa.Function]string{},
+		dynamic:     map[string]string{},
+		varLinkname: map[string]bool{},
+		pragmas:     map[*ssa.Function]pragma{},
+		syms:        map[*ssa.Function]string{},
 	}
 	for _, pkg := range pkgs {
 		if pkg.Pkg.Path() == "runtime" {
@@ -100,6 +108,7 @@ func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package
 	for _, pkg := range p.pkgs {
 		p.collect(pkg)
 	}
+	p.computeUsedMethods()
 	return p, nil
 }
 
@@ -164,6 +173,13 @@ func (p *Program) collect(pkg *ssa.Package) {
 				}
 				fs := strings.Fields(c.Text)
 				if len(fs) < 2 {
+					continue
+				}
+				if len(fs) >= 3 {
+					p.varLinkname[fs[2]] = true // a variable of another package, by symbol
+				}
+				if g, ok := pkg.Members[fs[1]].(*ssa.Global); ok {
+					p.varLinkname[pkg.Pkg.Path()+"."+g.Name()] = true
 					continue
 				}
 				fn, ok := pkg.Members[fs[1]].(*ssa.Function)

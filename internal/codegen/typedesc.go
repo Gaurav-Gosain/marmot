@@ -75,7 +75,7 @@ func (p *Program) writeCanonical(b *strings.Builder, t types.Type) {
 		if u.Kind() == types.UnsafePointer {
 			b.WriteString("unsafe.Pointer")
 		} else {
-			b.WriteString(u.Name())
+			b.WriteString(types.Typ[u.Kind()].Name()) // byte -> uint8, rune -> int32
 		}
 	case *types.Named:
 		obj := u.Obj()
@@ -388,7 +388,11 @@ func ifaceMethodIndex(it *types.Interface, fn *types.Func) int {
 
 // uncommon emits the uncommontype of t if it needs one, returning its symbol.
 func (m *moduleGen) uncommon(sym string, t types.Type) string {
-	_, named := types.Unalias(t).(*types.Named)
+	var named bool
+	switch types.Unalias(t).(type) {
+	case *types.Named, *types.Basic:
+		named = true // defined and predeclared types carry ptrToThis
+	}
 	ms := m.p.methodSet(t)
 	if !named && len(ms) == 0 {
 		return ""
@@ -406,8 +410,10 @@ func (m *moduleGen) uncommon(sym string, t types.Type) string {
 				xcount++
 			}
 			ifn := cNull()
-			if s := m.ifaceFunc(t, sel); s != "" {
-				ifn = cAddr(s)
+			if m.p.methodLive(fn) {
+				if s := m.ifaceFunc(t, sel); s != "" {
+					ifn = cAddr(s)
+				}
 			}
 			es = append(es, cStruct(m.cString(methodName(fn)),
 				cAddr(m.typeDescSym(stripRecv(fn.Type().(*types.Signature)))), ifn))
@@ -517,7 +523,11 @@ func (m *moduleGen) itabSym(t, iface types.Type) string {
 		if sel == nil {
 			panic(fmt.Sprintf("itab: %v does not implement %v (missing %s)", t, iface, im.Name()))
 		}
-		funs[i] = cAddr(m.ifaceFunc(t, sel))
+		if m.p.methodLive(im) {
+			funs[i] = cAddr(m.ifaceFunc(t, sel))
+		} else {
+			funs[i] = cNull() // never called through an interface
+		}
 	}
 	m.constGlobal(sym, "linkonce_odr", true, cStruct(
 		cAddr(m.typeDescSym(iface)), cAddr(m.typeDescSym(t)), cInt(0, mlir.I32), cInt(0, mlir.I32),
@@ -640,8 +650,8 @@ func isRegularMemory(t types.Type, sizes types.Sizes) bool {
 		var end int64
 		for i := 0; i < u.NumFields(); i++ {
 			ft := u.Field(i).Type()
-			if offs[i] != end || !isRegularMemory(ft, sizes) {
-				return false
+			if u.Field(i).Name() == "_" || offs[i] != end || !isRegularMemory(ft, sizes) {
+				return false // blank fields are not compared
 			}
 			end = offs[i] + sizes.Sizeof(ft)
 		}
@@ -660,10 +670,10 @@ func runtimeTypeString(t types.Type) string {
 func writeRuntimeType(b *strings.Builder, t types.Type) {
 	switch u := types.Unalias(t).(type) {
 	case *types.Basic:
-		b.WriteString(u.Name())
 		if u.Kind() == types.UnsafePointer {
-			b.Reset()
 			b.WriteString("unsafe.Pointer")
+		} else {
+			b.WriteString(types.Typ[u.Kind()].Name()) // byte -> uint8, rune -> int32
 		}
 	case *types.Named:
 		if u.Obj().Pkg() != nil {

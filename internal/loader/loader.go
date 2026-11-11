@@ -10,8 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
+	"time"
 
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
@@ -26,6 +26,7 @@ type Config struct {
 	GOOS     string
 	GOARCH   string
 	Patterns []string
+	Log      func(format string, args ...any) // optional progress log
 }
 
 // Program is the loaded and SSA built program.
@@ -52,7 +53,8 @@ func Load(cfg Config) (*Program, error) {
 	if err != nil {
 		return nil, fmt.Errorf("merged GOROOT: %v", err)
 	}
-	tags := append([]string{"marmot"}, cfg.Tags...)
+	// purego selects the pure Go fallbacks of packages with assembly.
+	tags := append([]string{"marmot", "purego"}, cfg.Tags...)
 	env := append(os.Environ(),
 		"GOROOT="+goroot,
 		"CGO_ENABLED=0",
@@ -89,9 +91,13 @@ func Load(cfg Config) (*Program, error) {
 	} else {
 		patterns = append(patterns, "runtime")
 	}
+	t0 := time.Now()
 	pkgs, err := packages.Load(pcfg, patterns...)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.Log != nil {
+		cfg.Log("go list + type check: %v", time.Since(t0).Round(time.Millisecond))
 	}
 	userRuntime := false
 	for _, p := range cfg.Patterns {
@@ -116,28 +122,13 @@ func Load(cfg Config) (*Program, error) {
 	if len(pkgs) == 0 {
 		return nil, fmt.Errorf("no packages matched %v", cfg.Patterns)
 	}
-	// x/tools/go/ssa cannot build methods with their own type parameters
-	// (Go 1.27); report them instead of crashing.
-	var unsupported []string
-	for _, p := range all {
-		for id, obj := range p.TypesInfo.Defs {
-			fn, ok := obj.(*types.Func)
-			if !ok {
-				continue
-			}
-			sig := fn.Signature()
-			if sig.Recv() != nil && sig.TypeParams().Len() > 0 {
-				unsupported = append(unsupported, fmt.Sprintf("%s: generic method %s is not supported yet", p.Fset.Position(id.Pos()), fn.Name()))
-			}
-		}
-	}
-	if len(unsupported) > 0 {
-		sort.Strings(unsupported)
-		return nil, fmt.Errorf("%s", strings.Join(unsupported, "\n"))
-	}
+	t1 := time.Now()
 	prog, ssaPkgs, err := buildSSA(pkgs)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.Log != nil {
+		cfg.Log("ssa: %v", time.Since(t1).Round(time.Millisecond))
 	}
 	if !userRuntime {
 		var roots []*packages.Package

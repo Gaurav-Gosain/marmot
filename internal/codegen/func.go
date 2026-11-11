@@ -386,6 +386,9 @@ func (f *funcGen) value(v ssa.Value) string {
 	case *ssa.Const:
 		return f.constant(v.Value, v.Type())
 	case *ssa.Global:
+		if f.m.p.opts.Sizes.Sizeof(v.Type().(*types.Pointer).Elem()) == 0 {
+			return f.addressOf(f.m.zeroBase()) // all zero sized variables share an address
+		}
 		return f.addressOf(f.m.globalRef(v))
 	case *ssa.Function:
 		return f.funcValue(v)

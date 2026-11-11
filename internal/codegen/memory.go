@@ -2,8 +2,8 @@ package codegen
 
 import (
 	"go/token"
-	"strings"
 	"go/types"
+	"strings"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
 	"golang.org/x/tools/go/ssa"

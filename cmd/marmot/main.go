@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime/pprof"
 	"strings"
 	"syscall"
 
@@ -34,15 +35,26 @@ Run 'marmot build -h' for build flags.
 }
 
 func main() {
+	if p := os.Getenv("MARMOT_CPUPROFILE"); p != "" {
+		if f, err := os.Create(p); err == nil {
+			pprof.StartCPUProfile(f)
+		}
+	}
+	code := realMain()
+	pprof.StopCPUProfile()
+	os.Exit(code)
+}
+
+func realMain() int {
 	if len(os.Args) < 2 {
 		usage()
-		os.Exit(2)
+		return 2
 	}
 	switch os.Args[1] {
 	case "build":
-		os.Exit(cmdBuild(os.Args[2:], false))
+		return cmdBuild(os.Args[2:], false)
 	case "run":
-		os.Exit(cmdBuild(os.Args[2:], true))
+		return cmdBuild(os.Args[2:], true)
 	case "version":
 		fmt.Println(version)
 	case "help", "-h", "--help":
@@ -50,8 +62,9 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "marmot: unknown command %q\n", os.Args[1])
 		usage()
-		os.Exit(2)
+		return 2
 	}
+	return 0
 }
 
 func cmdBuild(args []string, run bool) int {

@@ -107,6 +107,7 @@ func Build(cfg Config) (string, error) {
 	goos, goarch := runtime.GOOS, runtime.GOARCH
 	lp, err := loader.Load(loader.Config{
 		Dir: cfg.Dir, Root: cfg.Root, Tags: cfg.Tags, GOOS: goos, GOARCH: goarch, Patterns: cfg.Patterns,
+		Log: b.logf,
 	})
 	if err != nil {
 		return "", err
@@ -259,6 +260,16 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 		objs[i] = out
 		jobs = append(jobs, job{in, out, cached})
 	}
+	b.logf("object cache: %d hits, %d misses", len(mods)-len(jobs), len(jobs))
+	if b.cfg.Verbose {
+		for _, j := range jobs {
+			for i, m := range mods {
+				if objs[i] == j.out {
+					b.logf("  compile %s", m.Name)
+				}
+			}
+		}
+	}
 	if len(jobs) == 0 {
 		return objs, nil
 	}
@@ -329,6 +340,9 @@ func (b *build) link(objs []string, out string) error {
 	args := []string{"-o", out}
 	args = append(args, objs...)
 	args = append(args, rt, "-lpthread")
+	if mp := os.Getenv("MARMOT_LINKMAP"); mp != "" && runtime.GOOS == "darwin" {
+		args = append(args, "-Wl,-map,"+mp)
+	}
 	if runtime.GOOS == "darwin" {
 		args = append(args, "-Wl,-dead_strip", "-Wl,-x")
 	} else {

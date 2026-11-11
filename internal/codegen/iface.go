@@ -88,8 +88,12 @@ func (f *funcGen) fromDataWord(data string, t types.Type) string {
 	return f.load(data, t)
 }
 
-// zeroBase is a symbol for the address of zero sized values.
+// zeroBase is the address of all zero sized values: runtime.zerobase,
+// which the allocator also returns for zero sized allocations.
 func (m *moduleGen) zeroBase() string {
+	if g, ok := m.p.runtime.Members["zerobase"].(*ssa.Global); ok {
+		return m.globalRef(g)
+	}
 	sym := "runtime.zerobase.marmot"
 	if !m.defined[sym] {
 		m.constGlobal(sym, "linkonce_odr", true, cInt(0, mlir.I64))
