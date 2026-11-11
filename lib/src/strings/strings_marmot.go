@@ -1,5 +1,6 @@
-// marmot overlay: GOROOT strings/strings.go with Count and LastIndex on
-// the C core's SIMD primitives.
+// marmot overlay: GOROOT strings/strings.go with Count, LastIndex and
+// Replace on the C core's SIMD primitives, and ASCII paths of ToUpper,
+// ToLower and Fields written so that LLVM vectorizes them.
 
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -16,6 +17,7 @@ import (
 	"math/bits"
 	"unicode"
 	"unicode/utf8"
+	"unsafe"
 )
 
 const maxInt = int(^uint(0) >> 1)
@@ -357,7 +359,12 @@ func Fields(s string) []string {
 	for i := 0; i < len(s); i++ {
 		r := s[i]
 		setBits |= r
-		isSpace := int(asciiSpace[r])
+		// marmot: asciiSpace[r] computed without a table load, so the
+		// loop vectorizes.
+		isSpace := 0
+		if r == ' ' || r-'\t' <= '\r'-'\t' {
+			isSpace = 1
+		}
 		n += wasSpace & ^isSpace
 		wasSpace = isSpace
 	}
@@ -651,82 +658,59 @@ func Repeat(s string, count int) string {
 
 // ToUpper returns s with all Unicode letters mapped to their upper case.
 func ToUpper(s string) string {
-	isASCII, hasLower := true, false
+	// marmot: a branch free scan and a single conversion pass into an
+	// uninitialized buffer; both loops vectorize.
+	var set, lower uint8
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if c >= utf8.RuneSelf {
-			isASCII = false
-			break
+		set |= c
+		if c-'a' < 26 {
+			lower = 1
 		}
-		hasLower = hasLower || ('a' <= c && c <= 'z')
 	}
-
-	if isASCII { // optimize for ASCII-only strings.
-		if !hasLower {
-			return s
-		}
-		var (
-			b   Builder
-			pos int
-		)
-		b.Grow(len(s))
-		for i := 0; i < len(s); i++ {
-			c := s[i]
-			if 'a' <= c && c <= 'z' {
-				c -= 'a' - 'A'
-				if pos < i {
-					b.WriteString(s[pos:i])
-				}
-				b.WriteByte(c)
-				pos = i + 1
-			}
-		}
-		if pos < len(s) {
-			b.WriteString(s[pos:])
-		}
-		return b.String()
+	if set >= utf8.RuneSelf {
+		return Map(unicode.ToUpper, s)
 	}
-	return Map(unicode.ToUpper, s)
+	if lower == 0 {
+		return s
+	}
+	b := bytealg.MakeNoZero(len(s))[:len(s)]
+	for i := 0; i < len(b) && i < len(s); i++ {
+		c := s[i]
+		if c-'a' < 26 {
+			c -= 'a' - 'A'
+		}
+		b[i] = c
+	}
+	return unsafe.String(unsafe.SliceData(b), len(b))
 }
 
 // ToLower returns s with all Unicode letters mapped to their lower case.
 func ToLower(s string) string {
-	isASCII, hasUpper := true, false
+	// marmot: as ToUpper.
+	var set, upper uint8
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if c >= utf8.RuneSelf {
-			isASCII = false
-			break
+		set |= c
+		if c-'A' < 26 {
+			upper = 1
 		}
-		hasUpper = hasUpper || ('A' <= c && c <= 'Z')
 	}
-
-	if isASCII { // optimize for ASCII-only strings.
-		if !hasUpper {
-			return s
-		}
-		var (
-			b   Builder
-			pos int
-		)
-		b.Grow(len(s))
-		for i := 0; i < len(s); i++ {
-			c := s[i]
-			if 'A' <= c && c <= 'Z' {
-				c += 'a' - 'A'
-				if pos < i {
-					b.WriteString(s[pos:i])
-				}
-				b.WriteByte(c)
-				pos = i + 1
-			}
-		}
-		if pos < len(s) {
-			b.WriteString(s[pos:])
-		}
-		return b.String()
+	if set >= utf8.RuneSelf {
+		return Map(unicode.ToLower, s)
 	}
-	return Map(unicode.ToLower, s)
+	if upper == 0 {
+		return s
+	}
+	b := bytealg.MakeNoZero(len(s))[:len(s)]
+	for i := 0; i < len(b) && i < len(s); i++ {
+		c := s[i]
+		if c-'A' < 26 {
+			c += 'a' - 'A'
+		}
+		b[i] = c
+	}
+	return unsafe.String(unsafe.SliceData(b), len(b))
 }
 
 // ToTitle returns a copy of the string s with all Unicode letters mapped to
@@ -1124,10 +1108,23 @@ func Replace(s, old, new string, n int) string {
 	}
 
 	// Compute number of replacements.
-	if m := Count(s, old); m == 0 {
+	m := Count(s, old)
+	if m == 0 {
 		return s // avoid allocation
 	} else if n < 0 || m < n {
 		n = m
+	}
+
+	// marmot: replacing every instance of a non-empty old is one pass of
+	// the C core's SIMD replace.
+	if len(old) > 0 && n == m {
+		size := len(s) + n*(len(new)-len(old))
+		if size == 0 {
+			return ""
+		}
+		buf := bytealg.MakeNoZero(size)[:size]
+		w := bytealg.MarmotReplaceInto(buf, s, old, new)
+		return unsafe.String(unsafe.SliceData(buf), w)
 	}
 
 	// Apply replacements to buffer.

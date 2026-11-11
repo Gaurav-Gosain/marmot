@@ -129,3 +129,13 @@ func MarmotCountString(s, sep string) int {
 func MarmotCount(s, sep []byte) int {
 	return rt_count_substr(sliceData(s), len(s), sliceData(sep), len(sep))
 }
+
+//go:linkname rt_replace_into rt_replace_into
+func rt_replace_into(dst unsafe.Pointer, src unsafe.Pointer, n int, old unsafe.Pointer, m int, new unsafe.Pointer, k int) int
+
+// MarmotReplaceInto writes s with every non-overlapping instance of old
+// (len(old) >= 1) replaced by new into dst, which has room for
+// len(s) + count*(len(new)-len(old)) bytes, and returns the bytes written.
+func MarmotReplaceInto(dst []byte, s, old, new string) int {
+	return rt_replace_into(sliceData(dst), stringData(s), len(s), stringData(old), len(old), stringData(new), len(new))
+}
