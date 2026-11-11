@@ -1,0 +1,21 @@
+0
+1
+2
+exhausted
+stopped at 2
+0 a
+1 b
+tick
+tick
+stopped at 3
+300
+0 0
+stopped at 1
+1 0
+stopped at 1
+stopped at 0
+stopped at 2
+exhausted
+loop defer 1
+loop defer 0
+deferred
