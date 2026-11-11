@@ -237,13 +237,25 @@ type Func struct {
 	name   string
 }
 
-// FuncForPC returns a *Func describing the function at pc, or nil.
+// FuncForPC returns a *Func describing the function at pc, or nil. If pc
+// is in code inlined from other functions, it describes the innermost
+// one, with the entry of the outermost (as gc). pc is often a return
+// address (from Caller or Callers): when pc itself is outside inlined
+// code but pc-1 (the call) is inside, the call decides.
 func FuncForPC(pc uintptr) *Func {
-	info, ok := pcLookup(pc)
-	if !ok {
+	var fr [maxInlineDepth]pcInfo
+	n := pcFrames(pc, fr[:])
+	if n == 0 {
 		return nil
 	}
-	return &Func{entry: info.entry, name: info.namePrefix + info.name}
+	if n == 1 && pc > fr[0].entry {
+		var fr1 [maxInlineDepth]pcInfo
+		if m := pcFrames(pc-1, fr1[:]); m > 1 && fr1[m-1].entry == fr[0].entry {
+			fr, n = fr1, m
+		}
+	}
+	inner := fr[0]
+	return &Func{entry: fr[n-1].entry, name: inner.namePrefix + inner.name}
 }
 
 // Name returns the name of the function.
