@@ -66,13 +66,17 @@ func (m *moduleGen) function(fn *ssa.Function, shared bool) {
 }
 
 func (f *funcGen) fail(pos token.Pos, format string, args ...any) {
-	if !pos.IsValid() {
-		pos = f.curPos
+	name := "compiler generated code"
+	if f.fn != nil {
+		name = f.fn.String()
+		if !pos.IsValid() {
+			pos = f.curPos
+		}
+		if !pos.IsValid() {
+			pos = f.fn.Pos()
+		}
 	}
-	if !pos.IsValid() {
-		pos = f.fn.Pos()
-	}
-	panic(f.m.p.errorf(pos, "%s: "+format, append([]any{f.fn.String()}, args...)...))
+	panic(f.m.p.errorf(pos, "%s: "+format, append([]any{name}, args...)...))
 }
 
 func (f *funcGen) gen(sym string, shared bool) {

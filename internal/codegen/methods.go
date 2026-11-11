@@ -72,8 +72,14 @@ func (p *Program) computeUsedMethods() {
 					if cc.IsInvoke() {
 						used[p.methodKey(cc.Method)] = true
 					}
-					if callee := cc.StaticCallee(); callee != nil && p.isReflectMethodLookup(callee) {
-						p.keepExported = true
+					if callee := cc.StaticCallee(); callee != nil {
+						if p.isReflectMethodLookup(callee) {
+							p.keepExported = true
+						}
+						if callee.Pkg != nil && callee.Pkg.Pkg.Path() == "reflect" &&
+							(callee.Name() == "Call" || callee.Name() == "CallSlice") {
+							p.reflectCall = true
+						}
 					}
 				}
 				if mi, ok := instr.(*ssa.MakeInterface); ok {
@@ -112,6 +118,9 @@ func (p *Program) computeUsedMethods() {
 			}
 			mset := p.prog.MethodSets.MethodSet(t)
 			for i := 0; i < mset.Len(); i++ {
+				if isGenericMethod(mset.At(i)) {
+					continue
+				}
 				m := mset.At(i).Obj().(*types.Func)
 				if used[p.methodKey(m)] || p.keepExported && m.Exported() {
 					push(p.prog.MethodValue(mset.At(i)))
@@ -127,6 +136,9 @@ func (p *Program) computeUsedMethods() {
 				}
 				mset := p.prog.MethodSets.MethodSet(t)
 				for i := 0; i < mset.Len(); i++ {
+					if isGenericMethod(mset.At(i)) {
+						continue
+					}
 					m := mset.At(i).Obj().(*types.Func)
 					if used[p.methodKey(m)] || p.keepExported && m.Exported() {
 						push(p.prog.MethodValue(mset.At(i)))
@@ -152,6 +164,9 @@ func (p *Program) computeUsedMethods() {
 	}
 	if p.keepExported {
 		h.Write([]byte("keepExported"))
+	}
+	if p.reflectCall {
+		h.Write([]byte("reflectCall"))
 	}
 	tkeys := make([]string, 0, len(ifaceTypes))
 	for k := range ifaceTypes {
@@ -228,7 +243,9 @@ func (p *Program) typeClosure(root types.Type, set map[string]bool) []types.Type
 		if p.keepExported {
 			mset := p.prog.MethodSets.MethodSet(t)
 			for i := 0; i < mset.Len(); i++ {
-				add(stripRecv(mset.At(i).Obj().Type().(*types.Signature)))
+				if !isGenericMethod(mset.At(i)) {
+					add(stripRecv(mset.At(i).Obj().Type().(*types.Signature)))
+				}
 			}
 		}
 	}

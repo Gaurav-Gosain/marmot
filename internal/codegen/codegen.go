@@ -67,6 +67,7 @@ type Program struct {
 	usedMethods     map[string]bool // method keys called through interfaces
 	usedMethodsHash string
 	keepExported    bool // reflect method lookups: keep all exported methods
+	reflectCall     bool // reflect.Value.Call reachable: emit call adapters
 
 	ifaceTypes  map[string]bool      // canonical names of types that can be in interfaces
 	mainPath    string               // import path of the main package

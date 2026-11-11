@@ -295,8 +295,12 @@ func (m *moduleGen) emitTypeDesc(sym string, t types.Type) {
 		if u.Variadic() {
 			variadic = 1
 		}
+		call := cNull()
+		if m.p.reflectCall {
+			call = cAddr(m.callAdapter(u))
+		}
 		desc = cStruct(header, params, cInt(int64(u.Params().Len()), mlir.I16),
-			cInt(int64(u.Results().Len()), mlir.I16), cInt(variadic, mlir.I8))
+			cInt(int64(u.Results().Len()), mlir.I16), cInt(variadic, mlir.I8), call)
 	case *types.Interface:
 		ms := sortedIfaceMethods(u)
 		methods := cNull()
@@ -401,26 +405,37 @@ func (m *moduleGen) uncommon(sym string, t types.Type) string {
 		ms = nil
 	}
 	methods := cNull()
+	tfns := cNull()
 	var xcount int64
 	if len(ms) > 0 {
-		var es []cv
+		var es, tfnEs []cv
 		for _, sel := range ms {
 			fn := sel.Obj().(*types.Func)
 			if fn.Exported() {
 				xcount++
 			}
 			ifn := cNull()
+			tfn := cNull()
 			if m.p.methodLive(fn, t) {
 				if s := m.ifaceFunc(t, sel); s != "" {
 					ifn = cAddr(s)
+					if m.p.reflectCall {
+						tfn = cAddr(m.methodValueWrapper(s, fn))
+					}
 				}
 			}
+			tfnEs = append(tfnEs, tfn)
 			es = append(es, cStruct(m.cString(methodName(fn)),
 				cAddr(m.typeDescSym(stripRecv(fn.Type().(*types.Signature)))), ifn))
 		}
 		msym := sym + ".methods"
 		m.constGlobal(msym, "linkonce_odr", true, cArray(mlir.Struct(tString, mlir.Ptr, mlir.Ptr), es...))
 		methods = cAddr(msym)
+		if m.p.reflectCall {
+			tsym := sym + ".tfns"
+			m.constGlobal(tsym, "linkonce_odr", true, cArray(mlir.Ptr, tfnEs...))
+			tfns = cAddr(tsym)
+		}
 	}
 	// ptrToThis: *T for a defined non-pointer type T.
 	ptrToThis := cNull()
@@ -431,7 +446,7 @@ func (m *moduleGen) uncommon(sym string, t types.Type) string {
 	}
 	usym := sym + ".uncommon"
 	m.constGlobal(usym, "linkonce_odr", true, cStruct(m.cString(pkgPathOf(t)), methods,
-		cInt(int64(len(ms)), mlir.I32), cInt(xcount, mlir.I32), ptrToThis))
+		cInt(int64(len(ms)), mlir.I32), cInt(xcount, mlir.I32), ptrToThis, tfns))
 	return usym
 }
 
@@ -440,6 +455,9 @@ func (p *Program) methodSet(t types.Type) []*types.Selection {
 	mset := p.prog.MethodSets.MethodSet(t)
 	var out []*types.Selection
 	for i := 0; i < mset.Len(); i++ {
+		if isGenericMethod(mset.At(i)) {
+			continue // not part of the runtime method set
+		}
 		out = append(out, mset.At(i))
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -806,3 +824,9 @@ var (
 	_ = token.NoPos
 	_ ssa.Value
 )
+
+// isGenericMethod reports whether a method has its own type parameters.
+// Such methods cannot satisfy interfaces and have no runtime entry.
+func isGenericMethod(sel *types.Selection) bool {
+	return sel.Obj().(*types.Func).Signature().TypeParams().Len() > 0
+}
