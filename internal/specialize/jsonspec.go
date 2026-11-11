@@ -514,6 +514,10 @@ func (jd *jsonDec) body(t types.Type, tsrc string) (string, bool) {
 			w("if d.Peek() != '\"' {")
 			w("\treturn false")
 			w("}")
+			w("if dry {")
+			w("\t_, ok := d.Bytes()")
+			w("\treturn ok")
+			w("}")
 			w("x, ok := d.Str()")
 		default:
 			return "", false
