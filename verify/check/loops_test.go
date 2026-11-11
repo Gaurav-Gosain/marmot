@@ -28,7 +28,7 @@ func TestLoopsReport(t *testing.T) {
 		  "pairs":[{"a":"s","b":"s","why":"strided"}]}`,
 	}
 	for _, s := range ok {
-		if bad := CheckLoop(loop(t, s)); len(bad) != 0 {
+		if bad, _ := CheckLoop(loop(t, s)); len(bad) != 0 {
 			t.Errorf("rejected a valid report: %v", bad)
 		}
 	}
@@ -48,7 +48,7 @@ func TestLoopsReport(t *testing.T) {
 		  "pairs":[{"a":"s","b":"s","why":"strided"}]}`,
 	}
 	for _, s := range reject {
-		if bad := CheckLoop(loop(t, s)); len(bad) == 0 {
+		if bad, _ := CheckLoop(loop(t, s)); len(bad) == 0 {
 			t.Errorf("accepted an invalid report: %s", s)
 		}
 	}

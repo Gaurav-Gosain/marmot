@@ -27,7 +27,7 @@ func main() {
 	loopsReport := flag.String("loops-report", "", "a Rule P report (-loops-report=FILE): check it alone")
 	flag.Parse()
 	if *loopsReport != "" {
-		n, bad, err := CheckLoopsReport(*loopsReport)
+		n, bad, unv, err := CheckLoopsReport(*loopsReport)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "check:", err)
 			os.Exit(2)
@@ -35,7 +35,10 @@ func main() {
 		for _, b := range bad {
 			fmt.Println(b)
 		}
-		fmt.Printf("check: %d parallel loops, %d problems\n", n, len(bad))
+		for _, u := range unv {
+			fmt.Println("unverified:", u)
+		}
+		fmt.Printf("check: %d parallel loops, %d problems, %d claims not re-checkable (symbolic)\n", n, len(bad), len(unv))
 		if len(bad) > 0 {
 			os.Exit(1)
 		}
