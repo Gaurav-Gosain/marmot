@@ -757,6 +757,17 @@ func writeTargets(f File, idx map[string]Result, progs []string) {
 	}
 	os.MkdirAll(filepath.Join(root, ".work"), 0o755)
 	os.WriteFile(filepath.Join(root, ".work", "slower.tsv"), []byte(slow.String()), 0o644)
+	var fails strings.Builder
+	for _, l := range lines {
+		if r, ok := idx[l.prog+"|"+tool]; ok && r.Status != "ok" {
+			msg := strings.Join(strings.Fields(strings.SplitN(strings.TrimSpace(r.Error), "\n", 2)[0]), " ")
+			if len(msg) > 300 {
+				msg = msg[:300]
+			}
+			fmt.Fprintf(&fails, "%s\t%s\t%s\n", l.prog, r.Status, msg)
+		}
+	}
+	os.WriteFile(filepath.Join(root, ".work", "failed.tsv"), []byte(fails.String()), 0o644)
 	w("\n## Scoreboard\n\n| Program | Class | Floor | Wall speedup | CPU speedup | Status | Owner | Reason |\n|---|---|---|---|---|---|---|---|\n")
 	sort.SliceStable(lines, func(i, j int) bool {
 		if lines[i].class != lines[j].class {
