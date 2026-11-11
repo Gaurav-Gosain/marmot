@@ -1,15 +1,16 @@
 // loop-parallelize decisions and the shape of the transformed code.
 // RUN: %backend -O2 -par -loops-remarks -emit=llvm -o %t.ll %s 2>&1 | %FileCheck %s --check-prefix=REMARK
 // RUN: %FileCheck %s --check-prefix=IR < %t.ll
+// RUN: %backend -O2 -par -loops-remarks -emit=llvm -o %t3.ll %s 2>&1 | %FileCheck %s --check-prefix=SCAN
 // RUN: %backend -O2 -no-par -loops-remarks -emit=llvm -o %t2.ll %s 2>&1 | %FileCheck %s --allow-empty --check-prefix=NOPAR
 // RUN: %FileCheck %s --check-prefix=NOPARIR < %t2.ll
 
 // REMARK: loops: sum: {{.*}}parallel, 1 reductions, 0 run time checks
 // REMARK: loops: scale: {{.*}}parallel, 0 reductions, 1 run time checks
-// REMARK: loops: prefix: scan loop split into parallel blocks
-// REMARK: loops: prefix: loop scan.p1{{.*}}parallel, 0 reductions
-// REMARK: loops: prefix: loop scan.p2{{.*}}parallel, 0 reductions
 // REMARK: loops: recur: {{.*}}not parallel
+// SCAN-DAG: loops: prefix: scan loop split into parallel blocks
+// SCAN-DAG: loops: prefix: loop scan.p1{{.*}}parallel, 0 reductions
+// SCAN-DAG: loops: prefix: loop scan.p2{{.*}}parallel, 0 reductions
 // REMARK: loops: fsum: {{.*}}not parallel: {{.*}}floating point reduction
 // REMARK: loops: search: {{.*}}not parallel: more than one exit
 // REMARK: loops: callsout: {{.*}}not parallel: call to ext
