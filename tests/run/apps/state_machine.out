@@ -1,0 +1,47 @@
+Idle + main.Coin -> HasMoney
+HasMoney + main.Coin: error: rejected coin 7
+HasMoney + main.Select: error: need 125 more for cola
+HasMoney + main.Select: error: need 25 more for cola
+HasMoney + main.Take: error: unhandled event main.Take in HasMoney
+HasMoney + main.Select -> Dispensing
+took gum
+Dispensing + main.Take -> HasMoney
+refunded 100
+HasMoney + main.Refund -> Idle
+Idle + main.Coin -> HasMoney
+HasMoney + main.Select -> Dispensing
+took gum
+Dispensing + main.Take -> Idle
+Idle + main.Select: error: need 100 more for chips
+Idle + main.Coin -> HasMoney
+HasMoney + main.Select -> Dispensing
+took chips
+Dispensing + main.Take -> Idle
+Idle + main.Coin -> HasMoney
+HasMoney + main.Select: error: chips sold out
+HasMoney + main.Select: error: no slot "Z9"
+refunded 100
+HasMoney + main.Refund -> Idle
+Idle + main.Kick -> OutOfOrder
+OutOfOrder + main.Coin: error: machine is broken
+OutOfOrder + main.Kick -> Idle
+Idle + main.Coin -> HasMoney
+refunded 50
+HasMoney + main.Refund -> Idle
+state: Idle credit: 0 bank: 200
+A1 cola stock=2
+A2 chips stock=0
+B1 gum stock=3
+6 events -> CLOSED err=<nil>
+  CLOSED-active_open->SYN_SENT SYN_SENT-syn_ack->ESTABLISHED ESTABLISHED-close->FIN_WAIT_1 FIN_WAIT_1-ack->FIN_WAIT_2 FIN_WAIT_2-fin->TIME_WAIT TIME_WAIT-timeout->CLOSED
+6 events -> CLOSED err=<nil>
+  CLOSED-passive_open->LISTEN LISTEN-syn->SYN_RCVD SYN_RCVD-ack->ESTABLISHED ESTABLISHED-fin->CLOSE_WAIT CLOSE_WAIT-close->LAST_ACK LAST_ACK-ack->CLOSED
+2 events -> CLOSED err=<nil>
+  CLOSED-active_open->SYN_SENT SYN_SENT-close->CLOSED
+2 events -> LISTEN err=invalid event "ack" in state LISTEN
+  CLOSED-passive_open->LISTEN
+5 events -> CLOSED err=<nil>
+  CLOSED-active_open->SYN_SENT SYN_SENT-syn_ack->ESTABLISHED ESTABLISHED-close->FIN_WAIT_1 FIN_WAIT_1-fin->TIME_WAIT TIME_WAIT-timeout->CLOSED
+0 events -> CLOSED err=<nil>
+  
+reachable states: 10 of 10 transitions: 17

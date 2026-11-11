@@ -1,0 +1,54 @@
+width 20: greedy 15 lines (rag 148), optimal 14 lines (rag 291)
+width 34: greedy 9 lines (rag 577), optimal 9 lines (rag 271)
+width 60: greedy 6 lines (rag 865), optimal 6 lines (rag 431)
++------------------------------------------+
+| The quick brown fox jumps over the lazy  |
+| dog while the five boxing wizards jump   |
+| quickly. Pack my box with five dozen     |
+| liquor jugs; sphinx of black quartz,     |
+| judge my vow. How vexingly quick daft    |
+| zebras jump!                             |
+| Supercalifragilisticexpialidocious words |
+| must be broken somewhere.                |
++------------------------------------------+
+
++------------------------------------------+
+| The quick brown fox jumps over           |
+| the lazy dog while the five boxing       |
+| wizards jump quickly. Pack my box        |
+| with five dozen liquor jugs; sphinx      |
+| of black quartz, judge my vow. How       |
+| vexingly quick daft zebras jump!         |
+| Supercalifragilisticexpialidocious words |
+| must be broken somewhere.                |
++------------------------------------------+
+
++------------------------------------------+
+| The   quick   brown   fox   jumps   over |
+| the  lazy  dog  while  the  five  boxing |
+| wizards   jump   quickly.  Pack  my  box |
+| with  five  dozen  liquor  jugs;  sphinx |
+| of  black  quartz,  judge  my  vow.  How |
+| vexingly   quick   daft   zebras   jump! |
+| Supercalifragilisticexpialidocious words |
+| must be broken somewhere.                |
++------------------------------------------+
+
++---------------------------+
+|        Title              |
+|        世界の言葉              |
+| toolongtitlethatoverflows |
++---------------------------+
+
+name  | qty     | note           
+------+---------+----------------
+apple | 3       | red            
+kiwi  | 12      | green and fuzzy
+日本語   | 7       |                
+é     | 1000000 | x              
+1: ["a" "b" "b" "c" "c" "c" "d" "d" "d" "d" "e" "e" "e" "e" "e" "f" "f" "f" "f" "f" "f"]
+2: ["a" "bb" "c-" "cc" "d-" "d-" "dd" "e-" "e-" "e-" "ee" "f-" "f-" "f-" "f-" "ff"]
+5: ["a bb" "ccc" "dddd" "eeeee" "ffff-" "ff"]
+[] []
+77 77 true
+200 200

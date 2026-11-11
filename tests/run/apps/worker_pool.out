@@ -1,0 +1,19 @@
+workers=1 count=500 errors=18 total=94848
+workers=2 count=500 errors=18 total=94848
+matches baseline: true
+workers=4 count=500 errors=18 total=94848
+matches baseline: true
+workers=8 count=500 errors=18 total=94848
+matches baseline: true
+  0 item000 sum=0 max=0 hash=991b2254 err=<nil>
+  1 item001 sum=79 max=48 hash=d03d9721 err=<nil>
+  2 item002 sum=237 max=96 hash=81198639 err=<nil>
+  3 item003 sum=174 max=93 hash=0ea32c5f err=<nil>
+  4 item004 sum=290 max=92 hash=631a8c19 err=<nil>
+  5 item005 sum=285 max=89 hash=fe236ef2 err=<nil>
+error: item022: strconv.Atoi: parsing "bad": invalid syntax
+max in [0,25): 27
+max in [25,50): 44
+max in [50,75): 73
+max in [75,100): 338
+peak concurrency <= 3: true active: 0
