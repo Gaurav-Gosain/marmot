@@ -65,11 +65,19 @@ func (p *Program) checkRegionFn(fn *ssa.Function) bool {
 	if res.Len() != 1 || !isPtrRepr(res.At(0).Type()) {
 		return false
 	}
-	region := map[ssa.Value]bool{}
+	// MUST: region objects and addresses inside them (allocations, results
+	// of cloneable calls, field and array element addresses of those),
+	// never values loaded from memory. MAY: everything that may point into
+	// the region: MUST plus pointers loaded out of MAY objects (which may
+	// also be heap pointers stored there earlier). Both are computed to a
+	// fixpoint before any use is checked (verify counterexample 2, rule
+	// Region.lean C and M).
+	must := map[ssa.Value]bool{}
+	may := map[ssa.Value]bool{}
 	var work []ssa.Value
-	add := func(v ssa.Value) {
-		if !region[v] {
-			region[v] = true
+	addMay := func(v ssa.Value) {
+		if !may[v] {
+			may[v] = true
 			work = append(work, v)
 		}
 	}
@@ -79,15 +87,18 @@ func (p *Program) checkRegionFn(fn *ssa.Function) bool {
 			switch x := instr.(type) {
 			case *ssa.Alloc:
 				if x.Heap {
-					add(x)
+					must[x] = true
+					addMay(x)
 					allocs++
 				}
 			case *ssa.Call:
 				if callee := x.Call.StaticCallee(); callee != nil && isPtrRepr(x.Type()) && !x.Call.IsInvoke() &&
 					callee != fn && p.regionCloneable(callee) {
-					add(x)
+					must[x] = true
+					addMay(x)
 				} else if callee == fn {
-					add(x)
+					must[x] = true
+					addMay(x)
 				}
 			case *ssa.Go, *ssa.Defer, *ssa.Select, *ssa.Send:
 				return false
@@ -97,45 +108,73 @@ func (p *Program) checkRegionFn(fn *ssa.Function) bool {
 	if allocs == 0 {
 		return false
 	}
-	isRegionAddr := func(a ssa.Value) bool {
-		for {
-			switch x := a.(type) {
-			case *ssa.FieldAddr:
-				a = x.X
-				continue
-			case *ssa.IndexAddr:
-				if _, ok := x.X.Type().Underlying().(*types.Pointer); !ok {
-					return false
-				}
-				a = x.X
-				continue
-			}
-			return region[a]
-		}
+	ptrArray := func(x *ssa.IndexAddr) bool {
+		_, ok := x.X.Type().Underlying().(*types.Pointer)
+		return ok
 	}
+	// Fixpoint of MAY (and of MUST through address arithmetic).
 	for len(work) > 0 {
 		v := work[len(work)-1]
 		work = work[:len(work)-1]
 		for _, r := range *v.Referrers() {
 			switch x := r.(type) {
-			case *ssa.DebugRef, *ssa.BinOp, *ssa.Return:
 			case *ssa.FieldAddr:
-				add(x)
+				if must[v] {
+					must[x] = true
+				}
+				addMay(x)
 			case *ssa.IndexAddr:
-				if _, ok := x.X.Type().Underlying().(*types.Pointer); !ok {
+				if !ptrArray(x) {
 					return false
 				}
-				add(x)
+				if must[v] {
+					must[x] = true
+				}
+				addMay(x)
+			case *ssa.UnOp:
+				if x.Op == token.MUL && len(ptrWords(x.Type(), p.opts.Sizes)) > 0 {
+					addMay(x) // loaded: may point into the region, never MUST
+				}
+			}
+		}
+	}
+	// MUST may have grown after a FieldAddr was first seen from a MAY-only
+	// base; recompute it as the closure of the roots under address steps.
+	for changed := true; changed; {
+		changed = false
+		for v := range may {
+			if must[v] {
+				continue
+			}
+			switch x := v.(type) {
+			case *ssa.FieldAddr:
+				if must[x.X] {
+					must[x], changed = true, true
+				}
+			case *ssa.IndexAddr:
+				if must[x.X] {
+					must[x], changed = true, true
+				}
+			}
+		}
+	}
+	for v := range may {
+		for _, r := range *v.Referrers() {
+			switch x := r.(type) {
+			case *ssa.DebugRef, *ssa.BinOp, *ssa.Return, *ssa.FieldAddr:
+			case *ssa.IndexAddr:
+				if !ptrArray(x) {
+					return false
+				}
 			case *ssa.UnOp:
 				if x.Op != token.MUL {
 					return false
 				}
-				if len(ptrWords(x.Type(), p.opts.Sizes)) > 0 {
-					add(x) // pointers loaded out of the graph may point into it
-				}
 			case *ssa.Store:
-				if x.Val == v && !isRegionAddr(x.Addr) {
-					return false // would let other memory point into the region
+				// A value that may point into the region may only be stored
+				// into a region object.
+				if x.Val == v && !must[x.Addr] {
+					return false
 				}
 			case *ssa.Call:
 				if x.Call.IsInvoke() {
@@ -150,7 +189,7 @@ func (p *Program) checkRegionFn(fn *ssa.Function) bool {
 						return false
 					}
 				}
-				if len(ptrWords(x.Type(), p.opts.Sizes)) > 0 && !region[x] {
+				if len(ptrWords(x.Type(), p.opts.Sizes)) > 0 && !may[x] {
 					return false
 				}
 			default:

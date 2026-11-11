@@ -144,19 +144,30 @@ func (p *Program) regionParam(fn *ssa.Function, i int) bool {
 }
 
 func (p *Program) checkRegionParam(fn *ssa.Function, pi int) bool {
-	// region: allocations of fn and pointers loaded from the parameter's
-	// memory (which point to region objects or are nil).
-	region := map[ssa.Value]bool{}
-	mem := map[ssa.Value]bool{fn.Params[pi]: true} // addresses into region-side memory
-	var work []ssa.Value
+	// PARAM: the parameter and field/element addresses derived from it
+	// without loads (the caller's frame object A). OBJ: fn's allocations
+	// (region objects, in a no-scan region) and addresses derived from them
+	// without loads. RVAL: values known to be region pointers: allocations
+	// and pointers loaded from OBJ memory (which by induction holds only
+	// region pointers or nil). Pointers loaded from PARAM memory are
+	// unknown: the caller may have stored heap pointers in A (verify
+	// counterexample 3). Rules: a store into OBJ memory stores a
+	// non-pointer, nil or an RVAL (no-scan region); a store into PARAM
+	// memory stores a non-pointer, nil, an RVAL or a pointer loaded from
+	// PARAM memory; an RVAL or a value derived from it is stored nowhere
+	// else and passed only to non-escaping parameters.
+	param := map[ssa.Value]bool{fn.Params[pi]: true}
+	obj := map[ssa.Value]bool{}
+	rval := map[ssa.Value]bool{}
+	fromParam := map[ssa.Value]bool{} // pointers loaded from PARAM memory
 	allocs := 0
 	for _, b := range fn.Blocks {
 		for _, instr := range b.Instrs {
 			switch x := instr.(type) {
 			case *ssa.Alloc:
 				if x.Heap {
-					region[x] = true
-					mem[x] = true
+					obj[x] = true
+					rval[x] = true
 					allocs++
 				}
 			case *ssa.Go, *ssa.Defer, *ssa.Select:
@@ -167,101 +178,134 @@ func (p *Program) checkRegionParam(fn *ssa.Function, pi int) bool {
 	if allocs == 0 {
 		return false
 	}
-	for v := range mem {
-		work = append(work, v)
+	ptrArray := func(x *ssa.IndexAddr) bool {
+		_, ok := x.X.Type().Underlying().(*types.Pointer)
+		return ok
 	}
-	isMem := func(a ssa.Value) bool {
-		for {
-			switch x := a.(type) {
-			case *ssa.FieldAddr:
-				a = x.X
-				continue
-			case *ssa.IndexAddr:
-				if _, ok := x.X.Type().Underlying().(*types.Pointer); !ok {
-					return false
-				}
-				a = x.X
-				continue
+	// Fixpoint of the address and value sets.
+	for changed := true; changed; {
+		changed = false
+		set := func(m map[ssa.Value]bool, v ssa.Value) {
+			if !m[v] {
+				m[v], changed = true, true
 			}
-			return mem[a]
 		}
-	}
-	// A pointer loaded from region-side memory is a region pointer (or nil),
-	// whatever order the walk reaches it in.
-	isRegionVal := func(x ssa.Value) bool {
-		if region[x] {
-			return true
-		}
-		u, ok := x.(*ssa.UnOp)
-		return ok && u.Op == token.MUL && isPtrRepr(u.Type()) && isMem(u.X)
-	}
-	visited := map[ssa.Value]bool{}
-	for len(work) > 0 {
-		v := work[len(work)-1]
-		work = work[:len(work)-1]
-		if visited[v] {
-			continue
-		}
-		visited[v] = true
-		for _, r := range *v.Referrers() {
-			switch x := r.(type) {
-			case *ssa.DebugRef, *ssa.BinOp:
-			case *ssa.FieldAddr:
-				work = append(work, x)
-			case *ssa.IndexAddr:
-				if _, ok := x.X.Type().Underlying().(*types.Pointer); !ok {
-					return false
-				}
-				work = append(work, x)
-			case *ssa.UnOp:
-				if x.Op != token.MUL {
-					return false
-				}
-				if len(ptrWords(x.Type(), p.opts.Sizes)) > 0 {
-					if !isPtrRepr(x.Type()) {
-						return false // aggregates holding pointers: keep it simple
+		for _, b := range fn.Blocks {
+			for _, instr := range b.Instrs {
+				switch x := instr.(type) {
+				case *ssa.FieldAddr:
+					if param[x.X] {
+						set(param, x)
 					}
-					region[x] = true
-					mem[x] = true
-					work = append(work, x)
-				}
-			case *ssa.Store:
-				if x.Val == v {
-					if !isMem(x.Addr) {
-						return false
+					if obj[x.X] {
+						set(obj, x)
 					}
-				} else if x.Addr == v || isMem(x.Addr) {
-					// Storing into region-side memory: the value must not be a
-					// heap pointer.
-					if len(ptrWords(x.Val.Type(), p.opts.Sizes)) > 0 && !isRegionVal(x.Val) {
-						if c, ok := x.Val.(*ssa.Const); !ok || !c.IsNil() {
-							return false
+				case *ssa.IndexAddr:
+					if ptrArray(x) {
+						if param[x.X] {
+							set(param, x)
+						}
+						if obj[x.X] {
+							set(obj, x)
+						}
+					}
+				case *ssa.UnOp:
+					if x.Op == token.MUL && isPtrRepr(x.Type()) {
+						if obj[x.X] {
+							set(rval, x)
+							set(obj, x) // a region pointer: its fields are region memory
+						} else if param[x.X] {
+							set(fromParam, x)
 						}
 					}
 				}
-			case *ssa.Call:
-				c := &x.Call
-				if c.IsInvoke() {
-					return false
-				}
-				callee := c.StaticCallee()
-				if callee == nil {
-					return false
-				}
-				for k, a := range c.Args {
-					if a == v && p.deepParamEscapes(callee, k) {
-						return false
-					}
-				}
-				if len(ptrWords(x.Type(), p.opts.Sizes)) > 0 {
-					return false
-				}
-			default:
-				return false
 			}
 		}
 	}
+	pointerFree := func(v ssa.Value) bool {
+		if len(ptrWords(v.Type(), p.opts.Sizes)) == 0 {
+			return true
+		}
+		c, ok := v.(*ssa.Const)
+		return ok && c.IsNil()
+	}
+	for _, b := range fn.Blocks {
+		for _, instr := range b.Instrs {
+			switch x := instr.(type) {
+			case *ssa.Store:
+				switch {
+				case obj[x.Addr]:
+					if !pointerFree(x.Val) && !rval[x.Val] {
+						return false
+					}
+				case param[x.Addr]:
+					if !pointerFree(x.Val) && !rval[x.Val] && !fromParam[x.Val] {
+						return false
+					}
+				default:
+					if rval[x.Val] || obj[x.Val] {
+						return false
+					}
+				}
+			case *ssa.UnOp:
+				if x.Op == token.MUL && (obj[x.X] || param[x.X]) && len(ptrWords(x.Type(), p.opts.Sizes)) > 0 && !isPtrRepr(x.Type()) {
+					return false // aggregates holding pointers: keep it simple
+				}
+			}
+		}
+	}
+	// Region values must not leave through calls, results, interfaces,
+	// closures or channels.
+	for v := range rval {
+		if leaksRegionValue(p, v, map[ssa.Value]bool{}) {
+			return false
+		}
+	}
+	for v := range obj {
+		if leaksRegionValue(p, v, map[ssa.Value]bool{}) {
+			return false
+		}
+	}
 	return true
+}
+
+// leaksRegionValue reports whether region value v can leave fn other than
+// through stores (checked separately), loads, address arithmetic,
+// comparisons, and non-escaping call parameters.
+func leaksRegionValue(p *Program, v ssa.Value, seen map[ssa.Value]bool) bool {
+	if seen[v] {
+		return false
+	}
+	seen[v] = true
+	for _, r := range *v.Referrers() {
+		switch x := r.(type) {
+		case *ssa.DebugRef, *ssa.BinOp, *ssa.Store, *ssa.FieldAddr, *ssa.IndexAddr:
+		case *ssa.UnOp:
+			if x.Op != token.MUL {
+				return true
+			}
+		case *ssa.Call:
+			c := &x.Call
+			if c.IsInvoke() {
+				return true
+			}
+			callee := c.StaticCallee()
+			if callee == nil {
+				return true
+			}
+			for k, a := range c.Args {
+				if a == v && p.deepParamEscapes(callee, k) {
+					return true
+				}
+			}
+			if len(ptrWords(x.Type(), p.opts.Sizes)) > 0 {
+				return true
+			}
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 // frameRoot returns the frame object an argument points into, if any.
