@@ -55,6 +55,27 @@ func toolchains() []Toolchain {
 			return append(a, "-o", out, pkg)
 		}
 	}
+	// dev is the default mode. release adds -release once the driver supports it; until then the
+	// default build (whole program step on) counts as release, as the maintainer decided.
+	releaseFlag := func(root string) []string {
+		out, _ := exec.Command(marmotBin(root), "build", "-h").CombinedOutput()
+		if bytes.Contains(out, []byte("-release")) {
+			return []string{"-release"}
+		}
+		return nil
+	}
+	marmotMode := func(release bool) func(root, pkg, out string, nocache bool) []string {
+		return func(root, pkg, out string, nocache bool) []string {
+			a := []string{marmotBin(root), "build"}
+			if release {
+				a = append(a, releaseFlag(root)...)
+			}
+			if nocache {
+				a = append(a, "-nocache")
+			}
+			return append(a, "-o", out, pkg)
+		}
+	}
 	return []Toolchain{
 		{Name: "go", Flags: "go build",
 			Build: func(r, p, o string, _ bool) []string { return []string{"go", "build", "-o", o, p} },
@@ -68,6 +89,10 @@ func toolchains() []Toolchain {
 		{Name: "tinygo-Oz", Flags: "tinygo build -opt=z",
 			Build: func(r, p, o string, _ bool) []string { return []string{"tinygo", "build", "-opt=z", "-o", o, p} },
 			Clean: tgClean},
+		{Name: "marmot-dev", Flags: "marmot build (dev mode, default flags)", Build: marmotMode(false),
+			Clean: func(string, string) string { return "" }},
+		{Name: "marmot-release", Flags: "marmot build -release (default flags until -release exists)", Build: marmotMode(true),
+			Clean: func(string, string) string { return "" }},
 		{Name: "marmot-O2", Flags: "marmot build -O 2", Build: marmot("2"),
 			Clean: func(string, string) string { return "" }},
 		{Name: "marmot-Oz", Flags: "marmot build -O z", Build: marmot("z"),
