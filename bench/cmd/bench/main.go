@@ -82,6 +82,9 @@ type Stat struct {
 	Mean   float64 `json:"mean"`
 	Stddev float64 `json:"stddev"`
 	Runs   int     `json:"runs"`
+	// CPU is the median user plus system CPU time in milliseconds. It exceeds the wall time when
+	// the program uses more than one core.
+	CPU float64 `json:"cpu_median,omitempty"`
 }
 
 // Result is one program on one toolchain.
@@ -375,6 +378,7 @@ func hyperfine(args []string, command string, env []string, dir string) (*Stat, 
 					Count                     int
 					Mean, Stddev, Median, Min float64
 				} `json:"time_wall_clock"`
+				CPU struct{ Median float64 } `json:"time_cpu"`
 			}
 		}
 	}
@@ -382,7 +386,8 @@ func hyperfine(args []string, command string, env []string, dir string) (*Stat, 
 		return nil, fmt.Errorf("bad hyperfine output")
 	}
 	h := doc.Results[0].Summary.Wall
-	return &Stat{Min: h.Min * 1000, Median: h.Median * 1000, Mean: h.Mean * 1000, Stddev: h.Stddev * 1000, Runs: h.Count}, nil
+	return &Stat{Min: h.Min * 1000, Median: h.Median * 1000, Mean: h.Mean * 1000, Stddev: h.Stddev * 1000, Runs: h.Count,
+		CPU: doc.Results[0].Summary.CPU.Median * 1000}, nil
 }
 
 func shellJoin(argv []string) string {

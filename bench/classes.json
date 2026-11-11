@@ -1,0 +1,28 @@
+{
+  "floors": {"A": 10, "B": 4, "C": 5, "D": 2},
+  "owners": {"A": "loops", "B": "spec", "C": "rtcore", "D": "backend"},
+  "programs": {
+    "mandelbrot": {"class": "A"}, "matmul": {"class": "A"}, "nbody": {"class": "A"},
+    "spectralnorm": {"class": "A"}, "nsieve": {"class": "A"}, "sha256": {"class": "A"},
+    "bits": {"class": "A"}, "dot": {"class": "A"}, "saxpy": {"class": "A"},
+    "summinmax": {"class": "A"}, "histogram": {"class": "A"}, "prefixsum": {"class": "A"},
+    "stencil": {"class": "A"}, "bytecount": {"class": "A"}, "transpose": {"class": "A"},
+    "conv": {"class": "A"},
+
+    "jsonenc": {"class": "B", "floor": 10}, "jsondec": {"class": "B", "floor": 10},
+    "fmtout": {"class": "B", "floor": 10}, "fmtlog": {"class": "B", "floor": 10},
+    "regexpbench": {"class": "B", "floor": 10}, "sortslice": {"class": "B", "floor": 10},
+    "parse": {"class": "B"}, "stringsearch": {"class": "B", "owner": "rtgo"},
+    "mapint": {"class": "B", "owner": "rtgo"}, "mapstr": {"class": "B", "owner": "rtgo"},
+    "mapstruct": {"class": "B", "owner": "rtgo"}, "wordfreq": {"class": "B"},
+    "strconcat": {"class": "B", "owner": "rtgo"},
+
+    "bintrees": {"class": "C"}, "pingpong": {"class": "C", "owner": "rtgo"},
+    "workerpool": {"class": "C", "owner": "rtgo"}, "selectpipe": {"class": "C", "owner": "rtgo"},
+    "deferloop": {"class": "C", "owner": "frontend"}, "generic": {"class": "C", "owner": "frontend"},
+
+    "closure": {"class": "D"}, "iface": {"class": "D"}, "fib": {"class": "D"},
+    "fannkuch": {"class": "D"}, "quicksort": {"class": "D"}, "heapsort": {"class": "D"},
+    "structcopy": {"class": "D"}
+  }
+}
