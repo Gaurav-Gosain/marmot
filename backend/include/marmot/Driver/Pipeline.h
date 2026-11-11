@@ -6,6 +6,9 @@
 #include <string>
 
 namespace llvm {
+class LLVMContext;
+class Module;
+class TargetMachine;
 class raw_ostream;
 } // namespace llvm
 
@@ -26,6 +29,7 @@ struct CompileOptions {
   bool timePhases = false;
   bool singleThreaded = false; // disable MLIR context threading (batch mode)
   bool initOptNone = true;     // compile package init functions with optnone
+  bool wpoImport = true;       // -wpo: import small functions across modules
   bool devirt = true;          // go-devirt at -O1 and up
   bool strings = true;         // go-strings at -O1 and up
   bool escape = true;          // go-escape at -O1 and up
@@ -36,10 +40,10 @@ struct CompileOptions {
 };
 
 struct PhaseTimes {
-  double parse = 0, mlirPasses = 0, translate = 0, linkRt = 0, opt = 0,
+  double parse = 0, mlirPasses = 0, translate = 0, link = 0, linkRt = 0, opt = 0,
          codegen = 0, write = 0;
   double total() const {
-    return parse + mlirPasses + translate + linkRt + opt + codegen + write;
+    return parse + mlirPasses + translate + link + linkRt + opt + codegen + write;
   }
   void add(const PhaseTimes &o);
   void print(llvm::raw_ostream &os, const std::string &label) const;
@@ -50,6 +54,22 @@ struct PhaseTimes {
 bool compileFile(const std::string &input, const std::string &output,
                  const CompileOptions &opts, PhaseTimes &times,
                  llvm::raw_ostream &errs);
+
+// The two halves of compileFile, for the whole-program mode.
+std::unique_ptr<llvm::TargetMachine> createTargetMachine(const CompileOptions &opts,
+                                                         std::string &err);
+// Parse, go passes, lowering, translation. With mlirOutput set, writes the
+// lowered MLIR there and returns null.
+std::unique_ptr<llvm::Module> translateFile(const std::string &input,
+                                            const CompileOptions &opts,
+                                            llvm::TargetMachine &tm,
+                                            llvm::LLVMContext &lctx, PhaseTimes &times,
+                                            llvm::raw_ostream &errs,
+                                            const std::string *mlirOutput = nullptr);
+// Runtime bitcode import, function attributes, LLVM pipeline, emission.
+bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::string &input,
+                     const std::string &output, const CompileOptions &opts,
+                     PhaseTimes &times, llvm::raw_ostream &errs);
 
 // Validates the -O value. Returns false for an unknown level.
 bool parseOptLevel(const std::string &s, char &level);

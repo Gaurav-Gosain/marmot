@@ -208,6 +208,7 @@ void PhaseTimes::add(const PhaseTimes &o) {
   parse += o.parse;
   mlirPasses += o.mlirPasses;
   translate += o.translate;
+  link += o.link;
   linkRt += o.linkRt;
   opt += o.opt;
   codegen += o.codegen;
@@ -215,9 +216,9 @@ void PhaseTimes::add(const PhaseTimes &o) {
 }
 
 void PhaseTimes::print(llvm::raw_ostream &os, const std::string &label) const {
-  os << llvm::format("%-24s parse %7.2f  mlir %7.2f  translate %7.2f  link-rt %7.2f"
-                     "  opt %7.2f  codegen %7.2f  write %6.2f  total %8.2f ms\n",
-                     label.c_str(), parse, mlirPasses, translate, linkRt, opt,
+  os << llvm::format("%-24s parse %7.2f  mlir %7.2f  translate %7.2f  wpo %7.2f"
+                     "  link-rt %7.2f  opt %7.2f  codegen %7.2f  write %6.2f  total %8.2f ms\n",
+                     label.c_str(), parse, mlirPasses, translate, link, linkRt, opt,
                      codegen, write, total());
 }
 
@@ -228,13 +229,22 @@ bool parseOptLevel(const std::string &s, char &level) {
   return true;
 }
 
-bool compileFile(const std::string &input, const std::string &output,
-                 const CompileOptions &opts, PhaseTimes &times,
-                 llvm::raw_ostream &errs) {
+std::unique_ptr<llvm::TargetMachine> createTargetMachine(const CompileOptions &opts,
+                                                         std::string &err) {
+  llvm::Triple triple;
+  return makeTargetMachine(opts, triple, err);
+}
+
+std::unique_ptr<llvm::Module> translateFile(const std::string &input,
+                                            const CompileOptions &opts,
+                                            llvm::TargetMachine &tm,
+                                            llvm::LLVMContext &lctx, PhaseTimes &times,
+                                            llvm::raw_ostream &errs,
+                                            const std::string *mlirOutput) {
   PhaseTimer timer;
-  auto fail = [&](const llvm::Twine &msg) {
+  auto fail = [&](const llvm::Twine &msg) -> std::unique_ptr<llvm::Module> {
     errs << input << ": " << msg << "\n";
-    return false;
+    return nullptr;
   };
 
   // Parse. The parser verifies the module once.
@@ -280,46 +290,49 @@ bool compileFile(const std::string &input, const std::string &output,
   }
   times.mlirPasses += timer.lap();
 
-  if (opts.emit == Emit::MLIR) {
+  if (mlirOutput) {
     std::error_code ec;
-    llvm::ToolOutputFile out(output, ec, llvm::sys::fs::OF_None);
+    llvm::ToolOutputFile out(*mlirOutput, ec, llvm::sys::fs::OF_None);
     if (ec)
-      return fail(output + ": " + ec.message());
+      return fail(*mlirOutput + ": " + ec.message());
     module->print(out.os());
     out.keep();
     times.write += timer.lap();
-    return true;
+    return nullptr;
   }
 
-  // Target machine, translate.
-  std::string err;
-  llvm::Triple triple;
-  std::unique_ptr<llvm::TargetMachine> tm = makeTargetMachine(opts, triple, err);
-  if (!tm)
-    return fail(err);
-  llvm::LLVMContext lctx;
   std::unique_ptr<llvm::Module> lmod =
       mlir::translateModuleToLLVMIR(*module, lctx, input);
   if (!lmod)
     return fail("failed to translate to LLVM IR");
-  lmod->setTargetTriple(triple);
-  lmod->setDataLayout(tm->createDataLayout());
-  module = nullptr; // free MLIR memory before the LLVM pipeline
+  lmod->setTargetTriple(tm.getTargetTriple());
+  lmod->setDataLayout(tm.createDataLayout());
   times.translate += timer.lap();
+  return lmod;
+}
 
+bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::string &input,
+                     const std::string &output, const CompileOptions &opts,
+                     PhaseTimes &times, llvm::raw_ostream &errs) {
+  PhaseTimer timer;
+  auto fail = [&](const llvm::Twine &msg) {
+    errs << input << ": " << msg << "\n";
+    return false;
+  };
+  std::string err;
   // Runtime bitcode is only useful when the optimizer can inline it.
   if (opts.rtBitcode && opts.optLevel != '0') {
-    if (!linkRuntimeBitcode(*lmod, *opts.rtBitcode, err))
+    if (!linkRuntimeBitcode(lmod, *opts.rtBitcode, err))
       return fail(err);
   }
-  setTargetAttrs(*lmod, *tm, opts.optLevel);
+  setTargetAttrs(lmod, tm, opts.optLevel);
   if (opts.initOptNone && opts.optLevel != '0')
-    markInitOptNone(*lmod);
+    markInitOptNone(lmod);
   times.linkRt += timer.lap();
 
-  if (opts.verifyEach && llvm::verifyModule(*lmod, &errs))
+  if (opts.verifyEach && llvm::verifyModule(lmod, &errs))
     return fail("LLVM IR verification failed");
-  runLLVMPipeline(*lmod, *tm, opts.optLevel);
+  runLLVMPipeline(lmod, tm, opts.optLevel);
   times.opt += timer.lap();
 
   std::error_code ec;
@@ -330,10 +343,10 @@ bool compileFile(const std::string &input, const std::string &output,
     return fail(output + ": " + ec.message());
   switch (opts.emit) {
   case Emit::LLVM:
-    lmod->print(out.os(), nullptr);
+    lmod.print(out.os(), nullptr);
     break;
   case Emit::BC:
-    llvm::WriteBitcodeToFile(*lmod, out.os());
+    llvm::WriteBitcodeToFile(lmod, out.os());
     break;
   case Emit::Obj:
   case Emit::Asm: {
@@ -343,9 +356,9 @@ bool compileFile(const std::string &input, const std::string &output,
       llvm::legacy::PassManager cg;
       auto ft = opts.emit == Emit::Obj ? llvm::CodeGenFileType::ObjectFile
                                        : llvm::CodeGenFileType::AssemblyFile;
-      if (tm->addPassesToEmitFile(cg, bos, nullptr, ft))
+      if (tm.addPassesToEmitFile(cg, bos, nullptr, ft))
         return fail("target cannot emit this file type");
-      cg.run(*lmod);
+      cg.run(lmod);
     }
     times.codegen += timer.lap();
     out.os().write(buf.data(), buf.size());
@@ -357,6 +370,30 @@ bool compileFile(const std::string &input, const std::string &output,
   out.keep();
   times.write += timer.lap();
   return true;
+}
+
+bool compileFile(const std::string &input, const std::string &output,
+                 const CompileOptions &opts, PhaseTimes &times,
+                 llvm::raw_ostream &errs) {
+  std::string err;
+  std::unique_ptr<llvm::TargetMachine> tm = createTargetMachine(opts, err);
+  if (!tm) {
+    errs << input << ": " << err << "\n";
+    return false;
+  }
+  llvm::LLVMContext lctx;
+  if (opts.emit == Emit::MLIR) {
+    // Prints the MLIR after the go passes; a null result with no error.
+    std::string msgs;
+    llvm::raw_string_ostream es(msgs);
+    translateFile(input, opts, *tm, lctx, times, es, &output);
+    errs << msgs;
+    return msgs.empty();
+  }
+  std::unique_ptr<llvm::Module> lmod = translateFile(input, opts, *tm, lctx, times, errs);
+  if (!lmod)
+    return false;
+  return optimizeAndEmit(*lmod, *tm, input, output, opts, times, errs);
 }
 
 } // namespace marmot

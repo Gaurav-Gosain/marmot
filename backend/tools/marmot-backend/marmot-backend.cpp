@@ -6,6 +6,7 @@
 #include "marmot/Driver/Pipeline.h"
 #include "marmot/Driver/RuntimeBitcode.h"
 #include "marmot/Driver/Watchdog.h"
+#include "marmot/Driver/WholeProgram.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/CommandLine.h"
@@ -69,6 +70,12 @@ static cl::opt<bool> noOpenDefers("no-open-defers",
 static cl::opt<bool> noStrings("no-strings", cl::desc("Disable the go-strings pass"),
                                cl::cat(cat));
 static cl::opt<bool> noBCE("no-bce", cl::desc("Disable the go-bce pass"), cl::cat(cat));
+static cl::opt<bool> wpo("wpo",
+                         cl::desc("Batch mode: compile the jobs as one program (drop "
+                                  "unreachable code, internalize, import across modules)"),
+                         cl::cat(cat));
+static cl::opt<bool> noImport("no-import", cl::desc("-wpo without cross-module imports"),
+                              cl::cat(cat));
 static cl::opt<bool> verifyEach("verify-each",
                                 cl::desc("Verify IR after every pass"), cl::cat(cat));
 
@@ -126,6 +133,7 @@ int main(int argc, char **argv) {
   opts.features = targetAttrs;
   opts.verifyEach = verifyEach;
   opts.initOptNone = initOptNone;
+  opts.wpoImport = !noImport;
   opts.escape = !noEscape;
   opts.bce = !noBCE;
   opts.devirt = !noDevirt;
@@ -185,16 +193,33 @@ int main(int argc, char **argv) {
     total.add(t);
   };
 
-  if (work.size() == 1) {
+  // SPEC rule 10: at most MARMOT_MAX_JOBS (default 4) threads, whatever -j says.
+  unsigned cap = 4;
+  if (const char *e = std::getenv("MARMOT_MAX_JOBS"))
+    if (unsigned v = std::strtoul(e, nullptr, 10))
+      cap = v;
+  unsigned n = jobs ? unsigned(jobs) : std::thread::hardware_concurrency();
+  n = std::max(1u, std::min({n, cap, unsigned(work.size())}));
+
+  if (wpo) {
+    if (emitKind != marmot::Emit::Obj && emitKind != marmot::Emit::Asm &&
+        emitKind != marmot::Emit::LLVM && emitKind != marmot::Emit::BC) {
+      errs() << "marmot-backend: -wpo needs -emit=obj, asm, llvm or bc\n";
+      return 1;
+    }
+    std::vector<marmot::WpoJob> wjobs;
+    for (const Job &j : work)
+      wjobs.push_back({j.in, j.out});
+    marmot::CompileOptions o = opts;
+    o.singleThreaded = true;
+    marmot::WpoStats st;
+    ok = marmot::compileWholeProgram(wjobs, o, n, total, st, errs());
+    if (opts.timePhases)
+      errs() << format("wpo: %u functions, %u live, %u internalized, %u imported\n",
+                       st.functions, st.liveFunctions, st.internalized, st.imported);
+  } else if (work.size() == 1) {
     runJob(work[0], false);
   } else {
-    // SPEC rule 10: at most MARMOT_MAX_JOBS (default 4) threads, whatever -j says.
-    unsigned cap = 4;
-    if (const char *e = std::getenv("MARMOT_MAX_JOBS"))
-      if (unsigned v = std::strtoul(e, nullptr, 10))
-        cap = v;
-    unsigned n = jobs ? unsigned(jobs) : std::thread::hardware_concurrency();
-    n = std::max(1u, std::min({n, cap, unsigned(work.size())}));
     DefaultThreadPool pool(hardware_concurrency(n));
     for (const Job &job : work)
       pool.async([&, job] { runJob(job, true); });

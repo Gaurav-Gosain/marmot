@@ -92,6 +92,13 @@ bool prepareRuntimeBitcode(const std::string &path, RuntimeLib &lib,
   }
   Module &m = **modOr;
 
+  for (Function &f : m)
+    if (f.isDeclaration() && !f.isIntrinsic())
+      lib.referenced.insert(f.getName());
+  for (GlobalVariable &v : m.globals())
+    if (v.isDeclaration())
+      lib.referenced.insert(v.getName());
+
   Classifier cls;
   SmallVector<Function *, 64> toDeclare;
   for (Function &f : m) {

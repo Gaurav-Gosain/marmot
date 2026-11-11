@@ -18,7 +18,14 @@ namespace marmot {
 struct RuntimeLib {
   std::unique_ptr<llvm::MemoryBuffer> bitcode;
   llvm::StringSet<> importable;
+  // Symbols the runtime core uses but does not define (Go code it calls,
+  // such as marmot_main): roots of the whole-program mode.
+  llvm::StringSet<> referenced;
 };
+
+inline const llvm::StringSet<> &runtimeReferencedSymbols(const RuntimeLib &lib) {
+  return lib.referenced;
+}
 
 // Loads rtcore.bc and rewrites it once into an import library:
 //  - external function definitions that are safe to copy are kept; after
