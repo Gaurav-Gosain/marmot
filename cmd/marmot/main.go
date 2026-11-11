@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime/pprof"
 	"strings"
 	"syscall"
 
@@ -35,13 +34,9 @@ Run 'marmot build -h' for build flags.
 }
 
 func main() {
-	if p := os.Getenv("MARMOT_CPUPROFILE"); p != "" {
-		if f, err := os.Create(p); err == nil {
-			pprof.StartCPUProfile(f)
-		}
-	}
+	stop := startProfile()
 	code := realMain()
-	pprof.StopCPUProfile()
+	stop()
 	os.Exit(code)
 }
 

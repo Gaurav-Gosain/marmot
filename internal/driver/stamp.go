@@ -124,8 +124,10 @@ func (b *build) packageKeys(lp *loader.Program, cg *codegen.Program, pkgs []*ssa
 		}
 		memo[p.PkgPath] = "" // cycle guard
 		h := sha256.New()
-		fmt.Fprintf(h, "pkg v1 %s %s\n", base, p.PkgPath)
-		files := append([]string{}, p.CompiledGoFiles...)
+		fmt.Fprintf(h, "pkg v2 %s %s\n", base, p.PkgPath)
+		// GoFiles: the loader does not request CompiledGoFiles.
+		files := append(append([]string{}, p.GoFiles...), p.CompiledGoFiles...)
+		files = append(files, p.EmbedFiles...)
 		sort.Strings(files)
 		for _, f := range files {
 			fileSig(h, f)
