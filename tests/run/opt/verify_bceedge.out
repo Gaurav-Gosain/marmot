@@ -1,0 +1,8 @@
+le panic: runtime error: index out of range [200] with length 200
+negStart panic: runtime error: index out of range [-1]
+9900
+step2 ok
+otherLen panic: runtime error: index out of range [10] with length 10
+4950
+reslice ok
+narrow panic: runtime error: index out of range [-128]
