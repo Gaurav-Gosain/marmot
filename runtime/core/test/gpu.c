@@ -1,7 +1,7 @@
 // GPU runtime: clean absence without CUDA; with a GPU, hand-written PTX
 // kernels must match the CPU bit for bit (CPU side without FMA contraction).
 // expect-stdout: ok
-// env: GOMAXPROCS=4
+// env: GOMAXPROCS=4 MARMOT_GPU=1
 #include "rtest.h"
 #include <stdio.h>
 
@@ -42,6 +42,8 @@ void marmot_main(void) {
     CHECK(rt_gpu_module(ptx, sizeof ptx) == 0 && rt_gpu_alloc(64) == 0);
     CHECK(rt_gpu_launch(0, 10, 0, 0, 0) == -1 && rt_gpu_should_offload(1 << 30, 100, 8, 8) == 0);
     CHECK(rt_gpu_break_even(10, 8, 8) == -1);
+    rt_gpu_range rg = {0, 0, 0};
+    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", 100, &rg, 8, &rg, 1, 1000000));
     out("ok\n");
     return;
   }
@@ -107,6 +109,25 @@ void marmot_main(void) {
       for (uint64_t k = 0; k < m; k++) s = s + A[r * m + k] * B[k * m + c];
       CHECK(u64f(C[r * m + c]) == u64f(s));
     }
+  // rt_gpu_for: ranges overlap (x is the first half of a buffer, y the
+  // second half and also listed whole), pointers in ctx rewritten, the
+  // reduction slot comes back, untouched bytes stay.
+  {
+    int64_t m2 = 1000003;
+    double *buf = rt_alloc((uintptr_t)(2 * m2 + 1) * 8, RT_ALLOC_NOSCAN, 0, 0);
+    double *exp = rt_alloc((uintptr_t)m2 * 8, RT_ALLOC_NOSCAN, 0, 0);
+    for (int64_t i = 0; i < 2 * m2 + 1; i++) buf[i] = (double)i / 7.0;
+    double av = 1.25;
+    for (int64_t i = 0; i < m2; i++) exp[i] = av * buf[i] + buf[m2 + i];
+    struct { double a; double *x; double *y; uint64_t count; } c = {av, buf, buf + m2, 5};
+    rt_gpu_range rg[3] = {{buf, m2 * 8, 1}, {buf + m2, m2 * 8, 3}, {buf, (2 * m2 + 1) * 8, 1}};
+    CHECK(rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", m2, &c, sizeof c, rg, 3, 100000));
+    CHECK(c.count == 5 + (uint64_t)m2 && c.x == buf && c.y == buf + m2 && c.a == av);
+    for (int64_t i = 0; i < m2; i++) CHECK(u64f(buf[m2 + i]) == u64f(exp[i]) && u64f(buf[i]) == u64f((double)i / 7.0));
+    CHECK(buf[2 * m2] == (double)(2 * m2) / 7.0);
+    // Too little work: the cost model declines.
+    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", 10, &c, sizeof c, rg, 3, 1));
+  }
   // Pool reuse.
   void *p1 = rt_gpu_alloc(5000);
   rt_gpu_free(p1, 5000);

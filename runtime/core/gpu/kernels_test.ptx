@@ -179,3 +179,39 @@ KDONE:
   st.global.f64 [rd13], fd0;
   ret;
 }
+
+// rt_gpu_for convention: kernel(ptr ctx, i64 n). ctx = {f64 a; ptr x; ptr y;
+// u64 count}: y[i] = a*x[i] + y[i], and count += 1 per iteration (a
+// reduction slot updated with an atomic).
+.visible .entry saxpy_ctx(.param .u64 ctx, .param .u64 n)
+{
+  .reg .pred p;
+  .reg .b32 r<3>;
+  .reg .b64 rd<12>;
+  .reg .f64 fd<3>;
+  mov.u32 r0, %ctaid.x;
+  mov.u32 r1, %ntid.x;
+  mov.u32 r2, %tid.x;
+  cvt.u64.u32 rd0, r0;
+  cvt.u64.u32 rd1, r1;
+  cvt.u64.u32 rd2, r2;
+  mad.lo.u64 rd0, rd0, rd1, rd2;
+  ld.param.u64 rd3, [n];
+  setp.ge.u64 p, rd0, rd3;
+  @p ret;
+  ld.param.u64 rd4, [ctx];
+  ld.global.f64 fd0, [rd4];
+  ld.global.u64 rd5, [rd4+8];
+  ld.global.u64 rd6, [rd4+16];
+  shl.b64 rd7, rd0, 3;
+  add.u64 rd8, rd5, rd7;
+  ld.global.f64 fd1, [rd8];
+  add.u64 rd9, rd6, rd7;
+  ld.global.f64 fd2, [rd9];
+  mul.rn.f64 fd1, fd0, fd1;
+  add.rn.f64 fd2, fd1, fd2;
+  st.global.f64 [rd9], fd2;
+  add.u64 rd10, rd4, 24;
+  atom.global.add.u64 rd11, [rd10], 1;
+  ret;
+}
