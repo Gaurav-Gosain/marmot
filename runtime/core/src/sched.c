@@ -709,6 +709,16 @@ static void goexit_final(rt_g *g) {
   glive_set(g, false);
 }
 
+INLINE void cpu_relax_sched(void) {
+#if RT_ARCH_ARM64
+  __asm__ volatile("yield");
+#else
+  __asm__ volatile("pause");
+#endif
+}
+
+_Atomic int64_t pfor_last;  // monotonic time of the last rt_parallel_for
+
 static void resetspinning(rt_m *m) {
   m->spinning = false;
   if (atomic_fetch_sub(&sched.nmspinning, 1) == 1) wakep();
@@ -796,6 +806,28 @@ top:
         atomic_fetch_add(&sched.nmspinning, 1);
       }
       if ((g = stealwork(m)) != NULL) goto found;
+    }
+    // Fork-join loops (rt_parallel_for) run in quick succession: right
+    // after one, keep looking for work for a short while instead of parking,
+    // so the next loop's helpers start without a thread wakeup.
+    if (np > 1 && os_nanotime() - atomic_load_explicit(&pfor_last, memory_order_relaxed) < 500000) {
+      if (!m->spinning) {
+        m->spinning = true;
+        atomic_fetch_add(&sched.nmspinning, 1);
+      }
+      int64_t until = os_nanotime() + 100000;
+      while (os_nanotime() < until) {
+        if (atomic_load(&sched.gcwaiting)) goto top;
+        if ((g = runqget(p)) != NULL) goto found;
+        if (sched.runqsize > 0) {
+          spin_lock(&sched.lock);
+          g = globrunqget(p, 0);
+          spin_unlock(&sched.lock);
+          if (g) goto found;
+        }
+        if ((g = stealwork(m)) != NULL) goto found;
+        for (int k = 0; k < 32; k++) cpu_relax_sched();
+      }
     }
     // Nothing to do: release the P.
     spin_lock(&sched.lock);

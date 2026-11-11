@@ -23,6 +23,18 @@ void marmot_main(void) {
   int64_t t2 = rt_nanotime();
   printf("compute loop: sequential %.1f ms, parallel %.1f ms on %d procs (%.1fx)\n", (t1 - t0) / 1e6,
          (t2 - t1) / 1e6, rt_gomaxprocs(0), (double)(t1 - t0) / (double)(t2 - t1));
+  // Short loops repeated 2000 times, at three sizes.
+  long sizes[3] = {400, 2000, 20000};
+  for (int z = 0; z < 3; z++) {
+    long sn = sizes[z];
+    int64_t s0 = rt_nanotime();
+    for (int r = 0; r < 2000; r++) work(0, 0, sn);
+    int64_t s1 = rt_nanotime();
+    for (int r = 0; r < 2000; r++) rt_parallel_for(sn, 0, work, 0);
+    int64_t s2 = rt_nanotime();
+    printf("short loops (%.1f us each): sequential %.1f ms, parallel %.1f ms (%.1fx)\n",
+           (s1 - s0) / 2000.0 / 1e3, (s1 - s0) / 1e6, (s2 - s1) / 1e6, (double)(s1 - s0) / (double)(s2 - s1));
+  }
   int reps = 20000;
   t0 = rt_nanotime();
   for (int r = 0; r < reps; r++) rt_parallel_for(1024, 64, nop, 0);

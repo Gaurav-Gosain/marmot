@@ -8,6 +8,8 @@
 
 #include "internal.h"
 
+extern _Atomic int64_t pfor_last;
+
 typedef struct pfor {
   void (*body)(void *ctx, int64_t lo, int64_t hi);
   void *ctx;
@@ -54,6 +56,7 @@ RT_API void rt_parallel_for(int64_t n, int64_t grain,
     grain = n / ((int64_t)procs * 4);
     if (grain < 1) grain = 1;
   }
+  atomic_store_explicit(&pfor_last, os_nanotime(), memory_order_relaxed);
   int64_t chunks = (n + grain - 1) / grain;
   int64_t helpers = chunks - 1;
   if (helpers > procs - 1) helpers = procs - 1;
