@@ -256,3 +256,36 @@ func synctest_release(any) {}
 
 //go:linkname synctest_inBubble internal/synctest.inBubble
 func synctest_inBubble(b any, f func()) { f() }
+
+// Functions that standard packages pull by their runtime name
+// (//go:linkname local runtime.name).
+
+func rand() uint64              { return cheaprand64() }
+func randn(n uint32) uint32     { return cheaprandn(n) }
+func fastrand() uint32          { return cheaprand() }
+func fastrandn(n uint32) uint32 { return cheaprandn(n) }
+func fastrand64() uint64        { return cheaprand64() }
+
+// write is used by internal/godebug.
+func write(fd uintptr, p unsafe.Pointer, n int32) int32 {
+	return int32(rt_write(int32(fd), p, uintptr(n)))
+}
+
+// overflowError and divideError are used by math/bits.
+var (
+	overflowError = error(errorString("integer overflow"))
+	divideError   = error(errorString("integer divide by zero"))
+)
+
+// internal/godebug.
+
+//go:linkname godebug_setUpdate internal/godebug.setUpdate
+func godebug_setUpdate(update func(string, string)) {
+	update("", gogetenv("GODEBUG"))
+}
+
+//go:linkname godebug_registerMetric internal/godebug.registerMetric
+func godebug_registerMetric(name string, read func() uint64) {}
+
+//go:linkname godebug_setNewIncNonDefault internal/godebug.setNewIncNonDefault
+func godebug_setNewIncNonDefault(newIncNonDefault func(string) func()) {}

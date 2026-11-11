@@ -96,3 +96,14 @@ func syscall_RawSyscall(num, a1, a2, a3 uintptr) (r1, r2, err uintptr) {
 func syscall_RawSyscall6(num, a1, a2, a3, a4, a5, a6 uintptr) (r1, r2, err uintptr) {
 	return trapSyscall(num, a1, a2, a3, a4, a5, a6)
 }
+
+// fcntl is used by internal/syscall/unix.
+func fcntl(fd, cmd, arg int32) (ret int32, errno int32) {
+	args := [3]uintptr{uintptr(fd), uintptr(cmd), uintptr(arg)}
+	var e int32
+	r := rt_libcall(unsafe.Pointer(abi.FuncPCABI0(libc_fcntl_trampoline)), unsafe.Pointer(&args[0]), 3, 2, &e)
+	if int32(r) == -1 {
+		return -1, e
+	}
+	return int32(r), 0
+}
