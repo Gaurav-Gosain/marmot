@@ -420,6 +420,17 @@ func appendN(s []int64, n int) []int64 {
 	return s
 }
 
+// Values used after a parallel loop: the induction and values computed from
+// it are recomputed for the last iteration.
+//go:noinline
+func lastIndexOf(a []int64) (int, int64) {
+	i := 0
+	for i = 0; i < len(a); i++ {
+		a[i] = int64(i) * 5
+	}
+	return i, a[i-1] + int64(i)*7
+}
+
 func main() {
 	a := make([]int64, n)
 	fill(a, 42)
@@ -577,5 +588,8 @@ func main() {
 	println("append-fit", len(ap), sum(ap), shared[10], shared[150009])
 	ap2 := appendN(ap, 100000) // grows: the first 50000 still go to shared
 	println("append-grow", len(ap2), sum(ap2), shared[150010], shared[199999], len(appendN(nil, 777)))
+	lp := make([]int64, 400001)
+	li, lv := lastIndexOf(lp)
+	println("lastindex", li, lv, sum(lp))
 	println("transpose-overlap", sum(tb), tb[5*900+7], tb[699*900+949])
 }

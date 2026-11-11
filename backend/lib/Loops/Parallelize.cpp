@@ -175,6 +175,9 @@ struct Plan {
     IntegerType *elem;
   };
   std::vector<Private> privs;
+  // Values of L used after it that depend only on (affine) inductions and
+  // invariants: recomputed for the last iteration after the parallel run.
+  std::vector<Instruction *> liveOutVals;
   // Certificate for verify (-loops-report): the accesses and, for every
   // (store, other access) pair Rule P checked, why they cannot conflict.
   std::vector<Access> accesses;
@@ -307,6 +310,7 @@ private:
   bool decompose(const SCEV *S, Loop *L, const SCEV *&coef, const SCEV *&lo,
                  const SCEV *&hi);
   bool liveOuts(Loop *L, Plan &P);
+  bool recomputable(Loop *L, Plan &P, Instruction *I);
   uint64_t cost(Loop *L);
   void transform(Plan &P);
   void writeReport(Plan &P);
@@ -619,33 +623,18 @@ bool Parallelizer::analyzeHeaderPhis(Loop *L, Plan &P) {
         else if (bo->getOperand(1) == &phi)
           step = bo->getOperand(0);
         if (step && L->isLoopInvariant(step) && phi.getType()->isIntegerTy()) {
-          // An add chain that is also a reduction (sum += c) is fine either way;
-          // treat it as an induction only when the phi has no use outside.
-          bool usedOutside = false;
-          for (User *u : bo->users())
-            if (auto *ui = dyn_cast<Instruction>(u); ui && !L->contains(ui))
-              usedOutside = true;
-          for (User *u : phi.users())
-            if (auto *ui = dyn_cast<Instruction>(u); ui && !L->contains(ui))
-              usedOutside = true;
-          if (!usedOutside) {
-            P.ivs.push_back({&phi, start, step, nullptr});
-            continue;
-          }
+          // Uses after the loop are recomputed for the last iteration
+          // (liveOuts).
+          P.ivs.push_back({&phi, start, step, nullptr});
+          continue;
         }
       }
     }
     if (auto *gep = dyn_cast<GetElementPtrInst>(next)) {
       if (gep->getPointerOperand() == &phi && gep->getNumIndices() == 1 &&
           L->isLoopInvariant(gep->getOperand(1)) && L->contains(gep)) {
-        bool usedOutside = false;
-        for (User *u : phi.users())
-          if (auto *ui = dyn_cast<Instruction>(u); ui && !L->contains(ui))
-            usedOutside = true;
-        if (!usedOutside) {
-          P.ivs.push_back({&phi, start, gep->getOperand(1), gep->getSourceElementType()});
-          continue;
-        }
+        P.ivs.push_back({&phi, start, gep->getOperand(1), gep->getSourceElementType()});
+        continue;
       }
     }
     // Any other integer recurrence of degree at most 2 in L, like the
@@ -1325,9 +1314,38 @@ bool Parallelizer::liveOuts(Loop *L, Plan &P) {
         for (Reduction &R : P.reds)
           if (R.next == &I)
             ok = true;
+        if (!ok && recomputable(L, P, &I)) {
+          if (!is_contained(P.liveOutVals, &I))
+            P.liveOutVals.push_back(&I);
+          ok = true;
+        }
         if (!ok)
           return reject("value " + I.getName() + " is used after the loop");
       }
+  return true;
+}
+
+// A value of L that depends only on affine inductions (not polynomial ones)
+// and invariants, through instructions without memory access or effects.
+bool Parallelizer::recomputable(Loop *L, Plan &P, Instruction *I) {
+  SmallVector<Instruction *, 16> work{I};
+  SmallPtrSet<Instruction *, 16> seen;
+  while (!work.empty()) {
+    Instruction *x = work.pop_back_val();
+    if (!seen.insert(x).second || !L->contains(x))
+      continue;
+    if (auto *p = dyn_cast<PHINode>(x)) {
+      bool iv = any_of(P.ivs, [&](const IndVar &v) { return v.phi == p && !v.poly; });
+      if (!iv)
+        return false;
+      continue;
+    }
+    if (x->mayReadOrWriteMemory() || x->mayHaveSideEffects() || isa<CallBase>(x))
+      return false;
+    for (Value *o : x->operands())
+      if (auto *oi = dyn_cast<Instruction>(o))
+        work.push_back(oi);
+  }
   return true;
 }
 
@@ -1818,6 +1836,41 @@ void Parallelizer::transform(Plan &P) {
     results.push_back(pb.CreateLoad(P.reds[i].phi->getType(),
                                     pb.CreateStructGEP(ctxTy, ctx, P.liveIns.size() + i),
                                     P.reds[i].phi->getName() + ".par"));
+  // Live-out values: recompute them for the last iteration k = tc - 1.
+  ValueToValueMapTy lastIt;
+  if (!P.liveOutVals.empty()) {
+    Value *k = pb.CreateSub(tc, ConstantInt::get(i64, 1), "par.last");
+    for (IndVar &iv : P.ivs) {
+      if (iv.poly)
+        continue;
+      Value *v;
+      if (iv.gepElemTy)
+        v = pb.CreateGEP(iv.gepElemTy, iv.start, pb.CreateMul(k, pb.CreateSExtOrTrunc(iv.step, i64)));
+      else
+        v = pb.CreateAdd(iv.start,
+                         pb.CreateMul(iv.step, pb.CreateSExtOrTrunc(k, iv.step->getType())));
+      lastIt[iv.phi] = v;
+    }
+    // Clone each value's slice in dominance order.
+    SmallVector<Instruction *, 16> order;
+    SmallPtrSet<Instruction *, 16> seen;
+    std::function<void(Instruction *)> visit = [&](Instruction *x) {
+      if (!L->contains(x) || isa<PHINode>(x) || !seen.insert(x).second)
+        return;
+      for (Value *o : x->operands())
+        if (auto *oi = dyn_cast<Instruction>(o))
+          visit(oi);
+      order.push_back(x);
+    };
+    for (Instruction *I : P.liveOutVals)
+      visit(I);
+    for (Instruction *x : order) {
+      Instruction *c = x->clone();
+      pb.Insert(c);
+      RemapInstruction(c, lastIt, RF_IgnoreMissingLocals | RF_NoModuleLevelChanges);
+      lastIt[x] = c;
+    }
+  }
   pb.CreateBr(exitBB);
   for (PHINode &phi : exitBB->phis()) {
     Value *v = phi.getIncomingValueForBlock(latch);
@@ -1825,6 +1878,13 @@ void Parallelizer::transform(Plan &P) {
     for (unsigned i = 0; i < P.reds.size(); i++)
       if (P.reds[i].next == v)
         r = results[i];
+    if (!r) {
+      auto it = lastIt.find(v);
+      if (it != lastIt.end())
+        r = it->second;
+      else if (!L->contains(dyn_cast<Instruction>(v)))
+        r = v; // invariant
+    }
     phi.addIncoming(r ? r : PoisonValue::get(phi.getType()), last);
   }
 }
