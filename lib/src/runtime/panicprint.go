@@ -189,7 +189,12 @@ type _panic struct {
 	deferfp uintptr
 	// wrapped reports whether the deferred call being run is a compiler
 	// generated wrapper around a direct call (defer f(args)).
-	wrapped   bool
+	wrapped bool
+	// wrapfp is the frame address of the compiler wrapper (bound method
+	// value, value receiver interface method, ...) running as, or called
+	// directly by, the deferred function, so that the method it forwards
+	// to may recover. 0 when none. See recoverWrapEnter in panic.go.
+	wrapfp    uintptr
 	recovered bool
 	aborted   bool
 	goexit    bool

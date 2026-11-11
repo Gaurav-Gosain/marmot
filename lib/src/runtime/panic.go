@@ -161,7 +161,12 @@ func gorecover(fp uintptr) any {
 	if fp != 0 {
 		// The caller of recover must have been called by the code that
 		// runs deferred calls, either directly or (wrapped) through
-		// exactly one compiler generated thunk.
+		// exactly one compiler generated thunk, or by a compiler wrapper
+		// that recoverWrapEnter marked.
+		if p.wrapfp != 0 && parentfp(fp) == p.wrapfp {
+			p.recovered = true
+			return p.arg
+		}
 		caller := parentfp(fp)
 		if p.wrapped {
 			caller = parentfp(caller)
@@ -201,4 +206,41 @@ func goexit() {
 // calls.
 func Goexit() {
 	goexit()
+}
+
+// Compiler wrappers (bound method values, value receiver methods called
+// through interfaces, promoted methods, ...) are transparent to recover,
+// as in gc. A wrapper whose target may call recover runs
+//
+//	old := recoverWrapEnter(fp) // fp: the wrapper's frame address
+//	... the forwarded call ...
+//	recoverWrapExit(old)
+//
+// recoverWrapEnter marks the wrapper when it is the deferred function (or
+// is called directly by it through a thunk), or when it is called by a
+// wrapper already marked (a wrapper of a wrapper). gorecover then accepts
+// a caller whose parent frame is the marked wrapper. Both are a load and
+// a compare when no panic is running.
+
+func recoverWrapEnter(fp uintptr) uintptr {
+	p := getg()._panic
+	if p == nil || p.recovered || p.goexit {
+		return 0
+	}
+	old := p.wrapfp
+	parent := parentfp(fp)
+	caller := parent
+	if p.wrapped {
+		caller = parentfp(caller)
+	}
+	if caller == p.deferfp || parent == p.deferfp || old != 0 && parent == old {
+		p.wrapfp = fp
+	}
+	return old
+}
+
+func recoverWrapExit(old uintptr) {
+	if p := getg()._panic; p != nil {
+		p.wrapfp = old
+	}
 }
