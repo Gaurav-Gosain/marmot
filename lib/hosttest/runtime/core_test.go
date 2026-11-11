@@ -474,3 +474,22 @@ func main() {
 		t.Errorf("got %q want %q", got, want)
 	}
 }
+
+func TestIfaceeqDistinctItabs(t *testing.T) {
+	it := &interfacetype{typ: _type{kind: kindInterface}, mcount: 1}
+	tab1 := &itab{inter: it, typ: tInt}
+	tab2 := &itab{inter: it, typ: tInt}
+	a, b := 5, 5
+	x := iface{tab1, unsafe.Pointer(&a)}
+	y := iface{tab2, unsafe.Pointer(&b)}
+	if !ifaceeq(x, y) {
+		t.Errorf("equal values with distinct itabs compare unequal")
+	}
+	b = 6
+	if ifaceeq(x, y) {
+		t.Errorf("different values compare equal")
+	}
+	if ifaceeq(x, iface{}) || !ifaceeq(iface{}, iface{}) {
+		t.Errorf("nil interface comparison")
+	}
+}

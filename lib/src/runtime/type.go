@@ -80,8 +80,10 @@ type _type struct {
 	ptrdata uintptr
 	// gcdata is the pointer bitmap of one value: bit i (byte i/8, bit i%8,
 	// least significant bit first) is set when the pointer-sized word i
-	// holds a pointer. The bitmap covers ptrdata/ptrsize words, rounded up
-	// to a whole byte. nil with ptrdata != 0 asks the collector to scan
+	// holds a pointer. The bitmap covers all size/ptrsize words of the
+	// value (bits past ptrdata are 0), rounded up to a whole byte, as
+	// rt_alloc's precise mode reads it. nil with ptrdata != 0 asks the
+	// collector to scan
 	// values of this type conservatively; the compiler may do that for very
 	// large types to keep the binary small.
 	gcdata *byte
@@ -116,6 +118,11 @@ type uncommontype struct {
 	// before unexported ones because their names start with an upper case
 	// letter and unexported names are qualified (see method.name).
 	xcount uint32
+	// ptrToThis is the descriptor of *T for a defined type T that is not
+	// itself a pointer type, nil otherwise. reflect.New and
+	// reflect.PointerTo use it so that their results have the canonical
+	// descriptor.
+	ptrToThis *_type
 }
 
 // method is one entry of a method set.

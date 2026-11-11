@@ -195,6 +195,7 @@ func TestRtabiLayout(t *testing.T) {
 		{"imethod", "Imethod"}, {"interfacetype", "InterfaceType"},
 		{"structfield", "StructField"}, {"structtype", "StructType"}, {"itab", "Itab"},
 		{"eface", "EmptyInterface"}, {"iface", "NonEmptyInterface"},
+		{"hiter", "Hiter"}, {"scase", "Scase"},
 	}
 	for _, p := range pairs {
 		a := rt.Scope().Lookup(p[0]).Type().Underlying().(*types.Struct)

@@ -62,10 +62,11 @@ type Type struct {
 
 // UncommonType is runtime.uncommontype.
 type UncommonType struct {
-	PkgPath string
-	Methods *Method
-	Mcount  uint32
-	Xcount  uint32
+	PkgPath   string
+	Methods   *Method
+	Mcount    uint32
+	Xcount    uint32
+	PtrToThis *Type
 }
 
 // Method is runtime.method.
@@ -355,4 +356,24 @@ func Implements(it *InterfaceType, t *Type) bool {
 // TypeOf returns the type word of an interface{} value.
 func TypeOf(a any) *Type {
 	return (*EmptyInterface)(unsafe.Pointer(&a)).Type
+}
+
+// Hiter is runtime.hiter, the map iterator.
+type Hiter struct {
+	Key      unsafe.Pointer
+	Elem     unsafe.Pointer
+	T        unsafe.Pointer
+	M        unsafe.Pointer
+	Groups   unsafe.Pointer
+	Mask     uintptr
+	Start    uintptr
+	I        uintptr
+	ClearSeq uint32
+}
+
+// Scase is runtime.scase.
+type Scase struct {
+	C    unsafe.Pointer
+	Elem unsafe.Pointer
+	Send bool
 }

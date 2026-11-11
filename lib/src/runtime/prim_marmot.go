@@ -54,7 +54,8 @@ func mallocgc(size uintptr, typ *_type) unsafe.Pointer {
 	if typ == nil || typ.ptrdata == 0 {
 		return rt_alloc(size, rtAllocNoscan, nil, 0)
 	}
-	if typ.gcdata == nil {
+	if typ.gcdata == nil || typ.size&(ptrSize-1) != 0 {
+		// No bitmap, or an element size the precise mode cannot describe.
 		return rt_alloc(size, rtAllocConservative, nil, 0)
 	}
 	return rt_alloc(size, rtAllocPrecise, unsafe.Pointer(typ.gcdata), typ.size)

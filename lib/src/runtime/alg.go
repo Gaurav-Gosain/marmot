@@ -226,9 +226,7 @@ func typeequal(t *_type, p, q unsafe.Pointer) bool {
 			y := (*eface)(q)
 			return x.typ == y.typ && efaceeqT(x.typ, x.data, y.data)
 		}
-		x := (*iface)(p)
-		y := (*iface)(q)
-		return x.tab == y.tab && ifaceeqT(x.tab, x.data, y.data)
+		return ifaceeq(*(*iface)(p), *(*iface)(q))
 	case kindArray:
 		a := (*arraytype)(unsafe.Pointer(t))
 		for i := uintptr(0); i < a.len; i++ {
@@ -293,9 +291,16 @@ func efaceeq(x, y eface) bool {
 
 // ifaceeq implements x == y for two non-empty interface values of the same
 // interface type.
+//
+// The itab words may differ for equal values: the compiler emits itabs for
+// static conversions and the runtime builds its own in assertE2I, so the
+// dynamic types are compared, not the itab pointers.
 func ifaceeq(x, y iface) bool {
-	if x.tab != y.tab {
+	if x.tab == y.tab {
+		return ifaceeqT(x.tab, x.data, y.data)
+	}
+	if x.tab == nil || y.tab == nil || x.tab.typ != y.tab.typ {
 		return false
 	}
-	return ifaceeqT(x.tab, x.data, y.data)
+	return efaceeqT(x.tab.typ, x.data, y.data)
 }
