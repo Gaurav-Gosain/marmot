@@ -539,3 +539,76 @@ func MarmotEncoderWrite(enc *Encoder, b []byte) error {
 	}
 	return nil
 }
+
+// marmotSizeClasses is the runtime's size class table (internal/runtime/gc).
+var marmotSizeClasses = [...]uint16{0, 8, 16, 24, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240, 256, 288, 320, 352, 384, 416, 448, 480, 512, 576, 640, 704, 768, 896, 1024, 1152, 1280, 1408, 1536, 1792, 2048, 2304, 2688, 3072, 3200, 3456, 4096, 4864, 5376, 6144, 6528, 6784, 6912, 8192, 9472, 9728, 10240, 10880, 12288, 13568, 14336, 16384, 18432, 19072, 20480, 21760, 24576, 27264, 28672, 32768}
+
+// marmotRoundupsize is runtime.roundupsize.
+func marmotRoundupsize(size uintptr, noscan bool) uintptr {
+	const maxSmall, header, minHeader, page = 32768, 8, 512, 8192
+	req := size
+	if req <= maxSmall-header {
+		if !noscan && req > minHeader {
+			req += header
+		}
+		for _, c := range marmotSizeClasses {
+			if uintptr(c) >= req {
+				return uintptr(c) - (req - size)
+			}
+		}
+	}
+	req += page - 1
+	if req < size {
+		return size
+	}
+	return req &^ (page - 1)
+}
+
+// MarmotGrownCap returns the capacity a slice of capacity c reaches when
+// elements of the given size are appended one at a time (each append that
+// finds len == cap grows by runtime.growslice) until it holds n elements.
+func MarmotGrownCap(c, n int, size uintptr, noscan bool) int {
+	if size == 0 {
+		if n > c {
+			return n
+		}
+		return c
+	}
+	for c < n {
+		newLen := c + 1
+		nc := c + c
+		if newLen > nc {
+			nc = newLen
+		} else if c >= 256 {
+			nc = c
+			for nc < newLen {
+				nc += (nc + 3*256) >> 2
+			}
+		}
+		c = int(marmotRoundupsize(uintptr(nc)*size, noscan) / size)
+	}
+	return c
+}
+
+// CountRest counts the elements from the current position to the end of
+// the array (the closing ']' is not consumed); -1 if the input is not
+// well formed there.
+func (d *MarmotDecoder) CountRest() int {
+	save, sdepth := d.pos, d.depth
+	defer func() { d.pos, d.depth = save, sdepth }()
+	n := 0
+	for {
+		if !d.Skip() {
+			return -1
+		}
+		n++
+		switch d.Peek() {
+		case ',':
+			d.pos++
+		case ']':
+			return n
+		default:
+			return -1
+		}
+	}
+}

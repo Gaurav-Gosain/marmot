@@ -372,6 +372,35 @@ func main() {
 	show("fresh", fresh, err0)
 	err0 = json.Unmarshal([]byte(` + "`" + `{"I8":3,"S":5}` + "`" + `), &fresh)
 	show("fresh-bad", fresh, err0)
+	for _, n := range []int{0, 1, 2, 3, 5, 9, 17, 63, 64, 65, 255, 256, 257, 300, 513, 1000, 1025, 4099, 10000} {
+		arr := func(elem func(i int) string) []byte {
+			var sb2 strings.Builder
+			sb2.WriteString("[")
+			for i := 0; i < n; i++ {
+				if i > 0 {
+					sb2.WriteString(",")
+				}
+				sb2.WriteString(elem(i))
+			}
+			sb2.WriteString("]")
+			return []byte(sb2.String())
+		}
+		var ints []int
+		var i8 []int8
+		var strs []string
+		var its []Item
+		var nums []Nums
+		pre := make([]int, 2, 3)
+		alias := pre[:3]
+		num := func(i int) string { return fmt.Sprint(i % 100) }
+		e1 := json.Unmarshal(arr(num), &ints)
+		e2 := json.Unmarshal(arr(num), &i8)
+		e3 := json.Unmarshal(arr(func(i int) string { return fmt.Sprintf("%q", fmt.Sprint("s", i)) }), &strs)
+		e4 := json.Unmarshal(arr(func(i int) string { return fmt.Sprintf("{\"id\":%d}", i) }), &its)
+		e5 := json.Unmarshal(arr(func(i int) string { return fmt.Sprintf("{\"I8\":1,\"S\":\"%d\"}", i) }), &nums)
+		e6 := json.Unmarshal(arr(num), &pre)
+		fmt.Fprintln(&out, "caps", n, len(ints), cap(ints), cap(i8), cap(strs), cap(its), cap(nums), len(pre), cap(pre), alias, e1 == nil, e2 == nil, e3 == nil, e4 == nil, e5 == nil, e6 == nil)
+	}
 	var nilp *Item
 	show("nilptr", nilp, json.Unmarshal([]byte("{}"), nilp))
 	m := map[string][]int{}

@@ -596,6 +596,7 @@ func (jd *jsonDec) body(t types.Type, tsrc string) (string, bool) {
 		w("s := *v")
 		w("s = s[:cap(s)]")
 		w("n := 0")
+		w("total := -1")
 		w("for i := 0; ; i++ {")
 		w("\tmore, ok := d.Next(']', i)")
 		w("\tif !ok {")
@@ -604,10 +605,24 @@ func (jd *jsonDec) body(t types.Type, tsrc string) (string, bool) {
 		w("\tif !more {")
 		w("\t\tbreak")
 		w("\t}")
+		// At the first growth, count the rest of the array and allocate
+		// the capacity one-at-a-time appends would reach; elements before
+		// this point stay in the old array, as with append.
+		_, scalarElem := u.Elem().Underlying().(*types.Basic)
 		w("\tif n == len(s) {")
-		w("\t\tvar zero %s", jd.g.typeExpr(u.Elem()))
-		w("\t\ts = append(s, zero)")
-		w("\t\ts = s[:cap(s)]")
+		w("\t\tif total < 0 && %v {", scalarElem)
+		w("\t\t\tif r := d.CountRest(); r > 0 {")
+		w("\t\t\t\ttotal = n + r")
+		w("\t\t\t\tns := make([]%s, json.MarmotGrownCap(cap(s), total, %d, %v))", jd.g.typeExpr(u.Elem()), jd.g.pkg.TypesSizes.Sizeof(u.Elem()), !hasPointers(u.Elem()))
+		w("\t\t\t\tcopy(ns, s)")
+		w("\t\t\t\ts = ns")
+		w("\t\t\t}")
+		w("\t\t}")
+		w("\t\tif n == len(s) {")
+		w("\t\t\tvar zero %s", jd.g.typeExpr(u.Elem()))
+		w("\t\t\ts = append(s, zero)")
+		w("\t\t\ts = s[:cap(s)]")
+		w("\t\t}")
 		w("\t}")
 		w("\tif !%s(d, &s[n], false) {", elem)
 		w("\t\treturn false")
@@ -940,4 +955,23 @@ func (g *gen) jsonEncode(call *ast.CallExpr) {
 	g.usePkg("strconv", "strconv")
 	g.usePkg("slices", "slices")
 	g.replaceCall(call, name, []ast.Expr{sel.X, call.Args[0]})
+}
+
+// hasPointers reports whether values of t contain pointers (the runtime
+// allocates them as scan objects).
+func hasPointers(t types.Type) bool {
+	switch u := t.Underlying().(type) {
+	case *types.Basic:
+		return u.Info()&types.IsString != 0 || u.Kind() == types.UnsafePointer
+	case *types.Array:
+		return u.Len() > 0 && hasPointers(u.Elem())
+	case *types.Struct:
+		for i := 0; i < u.NumFields(); i++ {
+			if hasPointers(u.Field(i).Type()) {
+				return true
+			}
+		}
+		return false
+	}
+	return true
 }
