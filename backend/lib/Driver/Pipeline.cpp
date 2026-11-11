@@ -4,6 +4,7 @@
 #include "marmot/Driver/Pipeline.h"
 #include "marmot/Driver/RuntimeBitcode.h"
 #include "marmot/Driver/Targets.h"
+#include "marmot/Driver/Gpu.h"
 #include "marmot/Dialect/Go/Passes.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -191,6 +192,17 @@ void keepRecoverFramesUnmerged(llvm::Module &m) {
   }
 }
 
+struct GpuLoopsPass : llvm::PassInfoMixin<GpuLoopsPass> {
+  std::string arch;
+  explicit GpuLoopsPass(std::string a) : arch(std::move(a)) {}
+  llvm::PreservedAnalyses run(llvm::Module &m, llvm::ModuleAnalysisManager &) {
+    std::string err;
+    if (!lowerGpuLoops(m, arch, err))
+      llvm::report_fatal_error(llvm::Twine("gpu: ") + err);
+    return llvm::PreservedAnalyses::none();
+  }
+};
+
 void runLLVMPipeline(llvm::Module &m, llvm::TargetMachine &tm, char level,
                      const loops::Options &lopts, const CompileOptions &opts) {
   llvm::LoopAnalysisManager lam;
@@ -229,6 +241,12 @@ void runLLVMPipeline(llvm::Module &m, llvm::TargetMachine &tm, char level,
   } else {
     if (lopts.enable)
       loops::registerLLVMPasses(pb, lopts);
+    // GPU kernels start from the scalar outlined bodies: extract them right
+    // after the loop optimizer, before CPU vectorization (docs/gpu.md).
+    std::string gpuArch = opts.gpuArch;
+    pb.registerOptimizerEarlyEPCallback(
+        [gpuArch](llvm::ModulePassManager &mpm, llvm::OptimizationLevel,
+                  llvm::ThinOrFullLTOPhase) { mpm.addPass(GpuLoopsPass(gpuArch)); });
     mpm = pb.buildPerModuleDefaultPipeline(ol);
   }
   mpm.run(m, mam);
@@ -407,6 +425,9 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
   if (opts.verifyEach && llvm::verifyModule(lmod, &errs))
     return fail("LLVM IR verification failed");
   runLLVMPipeline(lmod, tm, opts.optLevel, opts.loops, opts);
+  // At -O0 (no pipeline) marmot_gpu_for calls may still be there: CPU path.
+  if (!lowerGpuLoops(lmod, "", err))
+    return fail(err);
   times.opt += timer.lap();
 
   std::error_code ec;

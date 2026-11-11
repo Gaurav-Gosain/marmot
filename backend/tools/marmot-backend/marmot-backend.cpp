@@ -110,6 +110,10 @@ static cl::opt<std::string> pgoGen(
     cl::desc("Instrument for profiling; the program writes PATTERN at exit "
              "(default default_%m.profraw)"),
     cl::value_desc("pattern"), cl::cat(cat));
+static cl::opt<std::string> gpuArch(
+    "gpu", cl::ValueOptional,
+    cl::desc("Offload marked parallel loops to an NVIDIA GPU (PTX for ARCH, default sm_86)"),
+    cl::value_desc("arch"), cl::cat(cat));
 static cl::opt<bool> verifyEach("verify-each",
                                 cl::desc("Verify IR after every pass"), cl::cat(cat));
 
@@ -170,6 +174,8 @@ int main(int argc, char **argv) {
   opts.wpoImport = !noImport;
   opts.wpoClosedWorld = !noClosedWorld;
   opts.pgoUse = pgoUse;
+  if (gpuArch.getNumOccurrences())
+    opts.gpuArch = gpuArch.empty() ? "sm_86" : std::string(gpuArch);
   if (pgoGen.getNumOccurrences())
     opts.pgoGen = pgoGen.empty() ? "default_%m.profraw" : std::string(pgoGen);
   if (!opts.pgoUse.empty() && !opts.pgoGen.empty()) {

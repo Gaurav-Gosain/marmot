@@ -4,5 +4,6 @@ add_library(MarmotDriver STATIC
   Targets.cpp
   Watchdog.cpp
   WholeProgram.cpp
+  Gpu.cpp
 )
 target_link_libraries(MarmotDriver PUBLIC MarmotGoDialect MarmotLoops ${MARMOT_LLVM_LIBS})
