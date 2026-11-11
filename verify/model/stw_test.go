@@ -56,7 +56,7 @@ type sg struct {
 	waits  bool   // sleeping in a lock (gc_mu or worldsema), woken by unlock
 	sig    bool   // a SIGURG is pending for its M
 	stop   int    // > 0: stopped in sched_stop_self, waiting for this world generation to end
-	seenGC bool   // exitsyscall: the gcwaiting value it read
+	stats  bool   // the stop is rt_gc_stats (no gc_mu)
 }
 
 type sstate struct {
@@ -94,7 +94,7 @@ func (s *sstate) key() string {
 				st = 2
 			}
 		}
-		fmt.Fprint(&b, g.pc, string(g.script), g.p, g.waits, g.sig, st, g.seenGC, ";")
+		fmt.Fprint(&b, g.pc, string(g.script), g.p, g.waits, g.sig, st, g.stats, ";")
 	}
 	return b.String()
 }
@@ -221,7 +221,12 @@ func (s *sstate) moves() []move {
 			tg.script = g.script[1:]
 			if a == 'g' {
 				tg.pc = gLockMu
+				tg.stats = false
 				add(fmt.Sprintf("g%d gc_collect", i), t)
+			} else if a == 'r' { // rt_gc_stats: stop_the_world without gc_mu
+				tg.pc = gLockWS
+				tg.stats = true
+				add(fmt.Sprintf("g%d rt_gc_stats", i), t)
 			} else { // rt_entersyscall
 				t.ps[g.p] = pSys
 				if t.gcwaiting {
@@ -332,6 +337,9 @@ func (s *sstate) moves() []move {
 				t.wakep()
 			}
 			t.gs[i].pc = gUnlockMu
+			if g.stats {
+				t.gs[i].pc = gRun
+			}
 			add(fmt.Sprintf("g%d start_the_world (work %v)", i, work), t)
 		case gUnlockMu:
 			t := s.clone()
@@ -532,7 +540,7 @@ func newSTW(scripts ...string) *sstate {
 	return s
 }
 
-var stwScripts = [][]string{{"g", "g"}, {"g", "s"}, {"gg", "g"}, {"g", "g", "s"}, {"gs", "sg"}, {"s", "s", "g"}}
+var stwScripts = [][]string{{"g", "g"}, {"g", "s"}, {"gg", "g"}, {"g", "g", "s"}, {"gs", "sg"}, {"s", "s", "g"}, {"g", "r"}, {"r", "r", "g"}, {"gr", "rg"}}
 
 // At HEAD (rtcore 5966c50) a goroutine that leaves a syscall while the world is stopped can
 // be queued after start_the_world looked for work, and nobody runs it. This test records
