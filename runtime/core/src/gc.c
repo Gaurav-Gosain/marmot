@@ -352,8 +352,22 @@ INLINE void cpu_relax(void) {
 static void drain_parallel(gcw *w) {
   for (;;) {
     uint32_t k = 0;
-    while (w->len > 0) {
-      scan_object(w, w->stk[--w->len]);
+    // Objects popped from the stack pass through a small FIFO and are
+    // prefetched on entry, so their cache misses overlap.
+    uintptr_t pf[8];
+    uint32_t ph = 0, pn = 0;
+    while (w->len > 0 || pn > 0) {
+      if (w->len > 0 && pn < 8) {
+        uintptr_t o = w->stk[--w->len];
+        __builtin_prefetch((const void *)o);
+        pf[(ph + pn) & 7] = o;
+        pn++;
+        continue;
+      }
+      uintptr_t o = pf[ph];
+      ph = (ph + 1) & 7;
+      pn--;
+      scan_object(w, o);
       w->nscan++;
       // Share half the stack when someone is idle and nothing is queued.
       if ((++k & 31) == 0 && w->len > 4 && atomic_load_explicit(&wnidle, memory_order_relaxed) > 0 &&
