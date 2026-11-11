@@ -5,6 +5,8 @@
 
 #include "internal.h"
 
+#pragma GCC visibility push(hidden)
+
 #define PAGE_SHIFT 13
 #define PAGE_SIZE ((uintptr_t)1 << PAGE_SHIFT)
 #define MAX_SMALL 32768
@@ -80,5 +82,7 @@ void gc_collect(bool forced);
 bool gc_has_finalizers(void);
 
 INLINE uintptr_t popcount64(uint64_t x) { return (uintptr_t)__builtin_popcountll(x); }
+
+#pragma GCC visibility pop
 
 #endif

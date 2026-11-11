@@ -50,6 +50,11 @@ void __tsan_switch_to_fiber(void *fiber, unsigned flags);
 #error "unsupported OS"
 #endif
 
+// Everything declared below is internal to the static library: hidden
+// visibility lets the compiler address globals directly instead of through
+// the GOT (one load instead of two on every access).
+#pragma GCC visibility push(hidden)
+
 typedef struct rt_m rt_m;
 typedef struct rt_p rt_p;
 typedef struct mcache mcache;
@@ -226,6 +231,7 @@ struct rt_m {
   rt_g g0;                  // scheduler context on the thread stack
   rt_g *curg;               // running goroutine or NULL
   rt_p *p;                  // attached P
+  mcache *mcache;           // p->mcache, cached for the allocation fast path
   rt_p *nextp;              // P handed over before wakeup
   rt_m *alllink;
   rt_m *idlelink;
@@ -375,5 +381,7 @@ void gc_scan_range(uintptr_t lo, uintptr_t hi);
 // Called by the allocator slow path when the heap reaches the trigger.
 void gc_maybe_start(void);
 extern int64_t rt_gcstress;  // collect every N allocations, 0 off
+
+#pragma GCC visibility pop
 
 #endif

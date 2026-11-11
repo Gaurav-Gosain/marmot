@@ -629,7 +629,7 @@ RT_API void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uint
                                 : rt_size_to_class128[(size - 1024 + 127) >> 7];
     rt_m *m = getm();
     m->locks++;
-    mspan *s = m->p->mcache->alloc[cls * NUM_KINDS + kind];
+    mspan *s = m->mcache->alloc[cls * NUM_KINDS + kind];
     uint64_t cache = s->alloc_cache;
     if (LIKELY(cache != 0)) {
       uint32_t b = (uint32_t)__builtin_ctzll(cache);

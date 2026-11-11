@@ -388,6 +388,7 @@ static rt_m *mget(void) {
 
 static void acquirep(rt_m *m, rt_p *p) {
   m->p = p;
+  m->mcache = p->mcache;
   p->m = m;
   atomic_store(&p->status, P_RUNNING);
 }
@@ -395,6 +396,7 @@ static void acquirep(rt_m *m, rt_p *p) {
 static rt_p *releasep(rt_m *m) {
   rt_p *p = m->p;
   m->p = NULL;
+  m->mcache = NULL;
   p->m = NULL;
   return p;
 }
@@ -1165,6 +1167,7 @@ RT_API void rt_exitsyscall(void) {
   }
   // The P was retaken. Try an idle one, else queue this goroutine.
   m->p = NULL;
+  m->mcache = NULL;
   spin_lock(&sched.lock);
   p = atomic_load(&sched.gcwaiting) ? NULL : pidleget();
   spin_unlock(&sched.lock);
