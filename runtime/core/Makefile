@@ -7,7 +7,12 @@
 #   make bench           build and run bench/*.c
 #   make check-targets   compile check for linux/amd64, linux/arm64, darwin/amd64
 
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
 LLVM    ?= /opt/homebrew/opt/llvm@22
+else
+LLVM    ?= /usr
+endif
 CC      := $(LLVM)/bin/clang
 AR      := $(LLVM)/bin/llvm-ar
 LINK    := $(LLVM)/bin/llvm-link
@@ -17,7 +22,6 @@ OUT     := $(ROOT)/build/lib
 OBJ     := $(ROOT)/build/rtcore
 TARGET  ?=
 
-UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
 SDK     := $(shell xcrun --show-sdk-path 2>/dev/null)
 SYSROOT := $(if $(SDK),-isysroot $(SDK),)
@@ -93,11 +97,14 @@ bench: all
 
 # ---- cross compile checks (untested targets) ----
 
+# Compile every source for another target (needs that target's C headers;
+# darwin targets use the macOS SDK). Example: make check-targets TARGETS=x86_64-apple-macosx
+TARGETS ?= x86_64-apple-macosx
 check-targets:
-	@for t in x86_64-linux-gnu aarch64-linux-gnu x86_64-apple-macosx; do \
+	@for t in $(TARGETS); do \
 		echo "== $$t"; \
 		for f in $(C_SRCS) $(S_SRCS); do \
-			$(CC) --target=$$t $(CFLAGS_COMMON) -O2 -fsyntax-only $$f 2>&1 | grep -v "^$$" ; \
+			$(CC) --target=$$t $(CFLAGS_COMMON) -O2 -c $$f -o /dev/null || exit 1; \
 		done; \
 	done
 
