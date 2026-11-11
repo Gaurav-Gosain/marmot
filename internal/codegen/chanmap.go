@@ -13,6 +13,10 @@ import (
 
 func (f *funcGen) send(v *ssa.Send) {
 	c := f.value(v.Chan)
+	if f.goOps() && !f.tm.isBig(v.X.Type()) {
+		f.emit("go.chan_send %s, %s : %s", c, f.value(v.X), f.tm.valType(v.X.Type()))
+		return
+	}
 	p := f.spill(f.value(v.X), v.X.Type())
 	f.rtcall("chansend1", c, p)
 }
@@ -20,6 +24,15 @@ func (f *funcGen) send(v *ssa.Send) {
 func (f *funcGen) recv(v *ssa.UnOp) string {
 	c := f.value(v.X)
 	et := v.X.Type().Underlying().(*types.Chan).Elem()
+	if f.goOps() && !f.tm.isBig(et) {
+		vt := f.tm.valType(et)
+		if v.CommaOk {
+			r, ok := f.newVal(), f.newVal()
+			f.emit("%s, %s = go.chan_recv %s commaok : %s", r, ok, c, vt)
+			return f.build(f.tm.valType(v.Type()), r, ok)
+		}
+		return f.op("go.chan_recv %s : %s", c, vt)
+	}
 	slot := f.zeroSlot(et)
 	if v.CommaOk {
 		ok := f.rtcall("chanrecv2", c, slot)
@@ -96,6 +109,10 @@ func (f *funcGen) makeMap(v *ssa.MakeMap) {
 	if v.Reserve != nil {
 		hint = f.toInt64(f.value(v.Reserve), v.Reserve.Type())
 	}
+	if f.goOps() {
+		f.vals[v] = f.op("go.make_map %s, %s", mlir.Symbol(f.m.typeDescSym(v.Type())), hint)
+		return
+	}
 	f.vals[v] = f.rtcall("makemap", f.typeDesc(v.Type()), hint)
 }
 
@@ -105,6 +122,19 @@ func (f *funcGen) lookup(v *ssa.Lookup) {
 		f.fail(v.Pos(), "string Lookup")
 	}
 	mt := mapTypeOf(v.X.Type())
+	if f.goOps() && !f.tm.isBig(mt.Key()) && !f.tm.isBig(mt.Elem()) {
+		kt, vt := f.tm.valType(mt.Key()), f.tm.valType(mt.Elem())
+		k := f.value(v.Index)
+		d := mlir.Symbol(f.m.typeDescSym(v.X.Type()))
+		if v.CommaOk {
+			r, ok := f.newVal(), f.newVal()
+			f.emit("%s, %s = go.map_lookup %s[%s], %s commaok : %s -> %s", r, ok, x, k, d, kt, vt)
+			f.vals[v] = f.build(f.tm.valType(v.Type()), r, ok)
+			return
+		}
+		f.vals[v] = f.op("go.map_lookup %s[%s], %s : %s -> %s", x, k, d, kt, vt)
+		return
+	}
 	key := f.spill(f.value(v.Index), mt.Key())
 	desc := f.typeDesc(v.X.Type())
 	if v.CommaOk {
@@ -123,6 +153,11 @@ func (f *funcGen) lookup(v *ssa.Lookup) {
 func (f *funcGen) mapUpdate(v *ssa.MapUpdate) {
 	m := f.value(v.Map)
 	mt := mapTypeOf(v.Map.Type())
+	if f.goOps() && !f.tm.isBig(mt.Key()) && !f.tm.isBig(mt.Elem()) {
+		f.emit("go.map_update %s[%s] = %s, %s : %s, %s", m, f.value(v.Key), f.value(v.Value),
+			mlir.Symbol(f.m.typeDescSym(v.Map.Type())), f.tm.valType(mt.Key()), f.tm.valType(mt.Elem()))
+		return
+	}
 	key := f.spill(f.value(v.Key), mt.Key())
 	val := f.value(v.Value)
 	slot := f.rtcall("mapassign", f.typeDesc(v.Map.Type()), m, key)
@@ -131,6 +166,10 @@ func (f *funcGen) mapUpdate(v *ssa.MapUpdate) {
 
 func (f *funcGen) mapDelete(mv, kv ssa.Value) {
 	mt := mapTypeOf(mv.Type())
+	if f.goOps() && !f.tm.isBig(mt.Key()) {
+		f.emit("go.map_delete %s[%s], %s : %s", f.value(mv), f.value(kv), mlir.Symbol(f.m.typeDescSym(mv.Type())), f.tm.valType(mt.Key()))
+		return
+	}
 	key := f.spill(f.value(kv), mt.Key())
 	f.rtcall("mapdelete", f.typeDesc(mv.Type()), f.value(mv), key)
 }

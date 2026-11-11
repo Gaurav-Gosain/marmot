@@ -61,6 +61,22 @@ func (f *funcGen) indirectCall(code string, args, params []string, ret string) s
 
 // invoke calls an interface method through the itab.
 func (f *funcGen) invoke(c *ssa.CallCommon) string {
+	if f.goOps() {
+		x := f.value(c.Value)
+		it := c.Value.Type().Underlying().(*types.Interface)
+		idx := ifaceMethodIndex(it, c.Method)
+		params, ret := f.m.sigTypes(stripRecv(c.Method.Type().(*types.Signature)), false)
+		args := make([]string, len(c.Args))
+		for i, a := range c.Args {
+			args[i] = f.value(a)
+		}
+		text := fmt.Sprintf("go.iface_call %s[%d](%s) : (%s) -> %s", x, idx, strings.Join(args, ", "), strings.Join(params, ", "), retOrVoid(ret))
+		if ret == "" {
+			f.emit("%s", text)
+			return ""
+		}
+		return f.op("%s", text)
+	}
 	x := f.value(c.Value)
 	tab := f.extractRaw(x, tIface, 0)
 	data := f.extractRaw(x, tIface, 1)

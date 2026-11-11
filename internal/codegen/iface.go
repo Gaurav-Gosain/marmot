@@ -20,6 +20,17 @@ func (f *funcGen) typeWord(t, iface types.Type) string {
 
 func (f *funcGen) makeInterface(v *ssa.MakeInterface) {
 	t := v.X.Type()
+	if f.goOps() {
+		var tab string
+		if isEmptyInterface(v.Type()) {
+			tab = f.m.typeDescSym(t)
+		} else {
+			tab = f.m.itabSym(t, v.Type())
+		}
+		data := f.boxValue(v.X)
+		f.vals[v] = f.op("go.make_iface %s, %s", mlir.Symbol(tab), data)
+		return
+	}
 	tw := f.typeWord(t, v.Type())
 	data := f.boxValue(v.X)
 	f.vals[v] = f.build(tIface, tw, data)
@@ -160,6 +171,10 @@ func (f *funcGen) dynType(x string, xt types.Type) string {
 }
 
 func (f *funcGen) typeAssert(v *ssa.TypeAssert) {
+	if f.goOps() {
+		f.typeAssertGo(v)
+		return
+	}
 	x := f.value(v.X)
 	xt := v.X.Type()
 	at := v.AssertedType
@@ -244,4 +259,53 @@ func (f *funcGen) changeInterface(v *ssa.ChangeInterface) {
 	r := f.newVal()
 	fmt.Fprintf(f.b, "  %s(%s: !llvm.ptr):\n", done, r)
 	f.vals[v] = f.build(tIface, r, f.extractRaw(x, tIface, 1))
+}
+
+// typeAssertGo emits go.type_assert.
+func (f *funcGen) typeAssertGo(v *ssa.TypeAssert) {
+	x := f.value(v.X)
+	xt := v.X.Type()
+	at := v.AssertedType
+	src := mlir.Symbol(f.m.typeDescSym(xt))
+	dst := mlir.Symbol(f.m.typeDescSym(at))
+	flags := ""
+	if !isEmptyInterface(xt) {
+		flags += " from_iface"
+	}
+	switch {
+	case isEmptyInterface(at):
+		flags += " to_any"
+	case isInterface(at):
+		flags += " to_iface"
+	}
+	if v.CommaOk {
+		flags += " commaok"
+	}
+	text := fmt.Sprintf("go.type_assert %s, %s -> %s%s", x, src, dst, flags)
+	if !v.CommaOk {
+		r := f.op("%s", text)
+		if isInterface(at) {
+			f.vals[v] = r
+		} else {
+			f.vals[v] = f.fromDataWord(r, at)
+		}
+		return
+	}
+	r, ok := f.newVal(), f.newVal()
+	f.emit("%s, %s = %s", r, ok, text)
+	if isInterface(at) {
+		f.vals[v] = f.build(f.tm.valType(v.Type()), r, ok)
+		return
+	}
+	// Concrete target: the data word is null on failure; only unbox on success.
+	vt := f.tm.valType(at)
+	yes, done := f.newBlock(), f.newBlock()
+	z := f.zeroOf(at)
+	f.emit("llvm.cond_br %s, %s, %s(%s : %s)", ok, yes, done, z, vt)
+	fmt.Fprintf(f.b, "  %s:\n", yes)
+	val := f.fromDataWord(r, at)
+	f.emit("llvm.br %s(%s : %s)", done, val, vt)
+	res := f.newVal()
+	fmt.Fprintf(f.b, "  %s(%s: %s):\n", done, res, vt)
+	f.vals[v] = f.build(f.tm.valType(v.Type()), res, ok)
 }

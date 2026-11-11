@@ -74,6 +74,9 @@ func (f *funcGen) binop(op token.Token, X, Y ssa.Value, t types.Type) string {
 	case isString(t):
 		switch op {
 		case token.ADD:
+			if f.goOps() {
+				return f.op("go.str_concat %s, %s", x, y)
+			}
 			return f.rtcall("concatstring2", x, y)
 		case token.LSS, token.LEQ, token.GTR, token.GEQ:
 			c := f.rtcall("cmpstring", x, y)
@@ -426,12 +429,18 @@ func (f *funcGen) convert(x string, from, to types.Type) string {
 			if isRuneElem(fu.Elem()) {
 				return f.rtcall("slicerunetostring", x)
 			}
+			if f.goOps() {
+				return f.op("go.bytes_to_str %s", x)
+			}
 			return f.rtcall("slicebytetostring", x)
 		}
 	case isString(from):
 		if s, ok := to.Underlying().(*types.Slice); ok {
 			if isRuneElem(s.Elem()) {
 				return f.rtcall("stringtoslicerune", x)
+			}
+			if f.goOps() {
+				return f.op("go.str_to_bytes %s", x)
 			}
 			return f.rtcall("stringtoslicebyte", x)
 		}

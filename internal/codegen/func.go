@@ -534,7 +534,13 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 	case *ssa.Go:
 		f.goStmt(v)
 	case *ssa.MakeChan:
-		f.vals[v] = f.rtcall("makechan", f.typeDesc(v.Type().Underlying().(*types.Chan).Elem()), f.toInt64(f.value(v.Size), v.Size.Type()))
+		et := v.Type().Underlying().(*types.Chan).Elem()
+		size := f.toInt64(f.value(v.Size), v.Size.Type())
+		if f.goOps() {
+			f.vals[v] = f.op("go.make_chan %s, %s", mlir.Symbol(f.m.typeDescSym(et)), size)
+		} else {
+			f.vals[v] = f.rtcall("makechan", f.typeDesc(et), size)
+		}
 	case *ssa.Send:
 		f.send(v)
 	case *ssa.Select:
