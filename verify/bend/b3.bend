@@ -238,3 +238,352 @@ def scan(es, entry, h, t, d, as, half, mod, sgn, rest, cur, ok, te, tv, pw, mt, 
       (+nu, +bu) = q2
       (+e, +pw2) = pw
       scan_con(es, h, t, d, sgn, half, pb, pi, pm, pnx, cb, ci, cm, blks(r2), L.eqn(h, cb), {==}, mt, nd, iu, mu, bu, e, ok, mt2 => nd2 => scan(es, entry, h, t, d, as, half, mod, sgn, r2, Ev{pb, pi, pm, pnx}, ok, te, tv2, pw2, mt2, nd2))
+
+# T occurs after the last H on a walk at a block T dominates (T1 with checked facts)
+law mt_at:
+  for +es: +List<G.Ed>
+  for +entry: Nat
+  for +h: Nat
+  for +t: Nat
+  for +St: +List<Nat>
+  for +x: Nat
+  for +ok: {G.predsok(es, h, t) == True{} : Bool}
+  for +te: {L.eqn(t, entry) == False{} : Bool}
+  for +dx: {G.domc(es, entry, t, St, x) == True{} : Bool}
+  for +w: +List<Nat>
+  for +pw: C.Valid(G.EE(es), entry, w)
+  for +hw: {L.hd(w) == x : Nat}
+  {L.mem(t, L.before(h, w)) == True{} : Bool}
+
+def mt_at(es, entry, h, t, St, x, ok, te, dx, w, pw, hw):
+  C.t_after_h(G.EE(es), entry, w, x, h, t, G.sp_of(es, h, t, ok), G.sp_of(es, h, t, ok), te, G.dom_of(es, entry, t, St, x, dx), pw, hw)
+
+def nd_at.go(+es: +List<G.Ed>, +entry: Nat, +h: Nat, +t: Nat, +d: Nat, +St: +List<Nat>, +Sd: +List<Nat>, +x: Nat, c: Bool, +ec: {c == L.eqn(d, h) : Bool}, +dc: {L.or(c, G.domc(es, entry, d, Sd, h)) == True{} : Bool}, +ok: {G.predsok(es, h, t) == True{} : Bool}, +te: {L.eqn(t, entry) == False{} : Bool}, +dx: {G.domc(es, entry, t, St, x) == True{} : Bool}, +w: +List<Nat>, +pw: C.Valid(G.EE(es), entry, w), +hw: {L.hd(w) == x : Nat}) -> {L.mem(d, L.before(h, w)) == False{} : Bool}:
+  match c:
+    case True{}:
+      +dh : {d == h : Nat} = L.eqn_true(d, h, Equal.sym(Bool, True{}, L.eqn(d, h), ec))
+      (%Equal.sym(Nat, d, h, dh) : {L.mem(_, L.before(h, w)) == False{} : Bool}; L.before_no(h, w))
+    case False{}:
+      C.d_after_h(G.EE(es), entry, w, x, h, t, d, Equal.sym(Bool, False{}, L.eqn(d, h), ec), G.dom_of(es, entry, d, Sd, h, dc), G.sp_of(es, h, t, ok), G.sp_of(es, h, t, ok), G.sp_of(es, h, t, ok), te, G.dom_of(es, entry, t, St, x, dx), pw, hw)
+
+# the block d that sets m is not visited after the last H (it is H, or T2 applies)
+law nd_at:
+  for +es: +List<G.Ed>
+  for +entry: Nat
+  for +h: Nat
+  for +t: Nat
+  for +d: Nat
+  for +St: +List<Nat>
+  for +Sd: +List<Nat>
+  for +x: Nat
+  for +dc: {L.or(L.eqn(d, h), G.domc(es, entry, d, Sd, h)) == True{} : Bool}
+  for +ok: {G.predsok(es, h, t) == True{} : Bool}
+  for +te: {L.eqn(t, entry) == False{} : Bool}
+  for +dx: {G.domc(es, entry, t, St, x) == True{} : Bool}
+  for +w: +List<Nat>
+  for +pw: C.Valid(G.EE(es), entry, w)
+  for +hw: {L.hd(w) == x : Nat}
+  {L.mem(d, L.before(h, w)) == False{} : Bool}
+
+def nd_at(es, entry, h, t, d, St, Sd, x, dc, ok, te, dx, w, pw, hw):
+  nd_at.go(es, entry, h, t, d, St, Sd, x, L.eqn(d, h), {==}, dc, ok, te, dx, w, pw, hw)
+
+# every add block is dominated by T (one certificate St for all of them)
+def alldomc(+es: +List<G.Ed>, +entry: Nat, +t: Nat, +S: +List<Nat>, as: +List<Nat>) -> Bool:
+  match as:
+    case Nil{}:
+      True{}
+    case Con{+a, r}:
+      L.and(G.domc(es, entry, t, S, a), alldomc(es, entry, t, S, r))
+
+def alldom_mem.go(+es: +List<G.Ed>, +entry: Nat, +t: Nat, +S: +List<Nat>, +a: Nat, +r: +List<Nat>, +b: Nat, c: Bool, +ec: {c == L.eqn(b, a) : Bool}, +ad: {L.and(G.domc(es, entry, t, S, a), alldomc(es, entry, t, S, r)) == True{} : Bool}, m: {L.or(c, L.mem(b, r)) == True{} : Bool}, rec: {alldomc(es, entry, t, S, r) == True{} : Bool} -> {L.mem(b, r) == True{} : Bool} -> {G.domc(es, entry, t, S, b) == True{} : Bool}) -> {G.domc(es, entry, t, S, b) == True{} : Bool}:
+  match c:
+    case True{}:
+      +ba : {b == a : Nat} = L.eqn_true(b, a, Equal.sym(Bool, True{}, L.eqn(b, a), ec))
+      (%Equal.sym(Nat, b, a, ba) : {G.domc(es, entry, t, S, _) == True{} : Bool}; L.and_l(G.domc(es, entry, t, S, a), alldomc(es, entry, t, S, r), ad))
+    case False{}:
+      rec(L.and_r(G.domc(es, entry, t, S, a), alldomc(es, entry, t, S, r), ad), m)
+
+law alldom_mem:
+  for +es: +List<G.Ed>
+  for +entry: Nat
+  for +t: Nat
+  for +S: +List<Nat>
+  for +as: +List<Nat>
+  for +b: Nat
+  for +ad: {alldomc(es, entry, t, S, as) == True{} : Bool}
+  for m: {L.mem(b, as) == True{} : Bool}
+  {G.domc(es, entry, t, S, b) == True{} : Bool}
+
+def alldom_mem(es, entry, t, S, as, b, ad, m):
+  match as:
+    case Nil{}:
+      Empty.absurd({G.domc(es, entry, t, S, b) == True{} : Bool}, L.ft(m))
+    case Con{a, r}:
+      alldom_mem.go(es, entry, t, S, a, r, b, L.eqn(b, a), {==}, ad, m, ad2 => m2 => alldom_mem(es, entry, t, S, r, b, ad2, m2))
+
+def all_mem.go(+x: Nat, +y: Nat, +r: +List<Nat>, +half: Nat, c: Bool, +ec: {c == L.eqn(x, y) : Bool}, +ly: N.LT(y, half), m: {L.or(c, L.mem(x, r)) == True{} : Bool}, rec: {L.mem(x, r) == True{} : Bool} -> N.LT(x, half)) -> N.LT(x, half):
+  match c:
+    case True{}:
+      +xy : {x == y : Nat} = L.eqn_true(x, y, Equal.sym(Bool, True{}, L.eqn(x, y), ec))
+      (%Equal.sym(Nat, x, y, xy) : N.LT(_, half); ly)
+    case False{}:
+      rec(m)
+
+law all_mem:
+  for +xs: +List<Nat>
+  for +x: Nat
+  for +half: Nat
+  for +ax: AllLT(xs, half)
+  for m: {L.mem(x, xs) == True{} : Bool}
+  N.LT(x, half)
+
+def all_mem(xs, x, half, ax, m):
+  match xs:
+    case Nil{}:
+      Empty.absurd(N.LT(x, half), L.ft(m))
+    case Con{y, r}:
+      (+ly, +ar) = ax
+      all_mem.go(x, y, r, half, L.eqn(x, y), {==}, ly, m, m2 => all_mem(r, x, half, ar, m2))
+
+law sel_lt:
+  for c: Bool
+  for +v: Nat
+  for +x: Nat
+  for +half: Nat
+  for +lv: N.LT(v, half)
+  for +lx: N.LT(x, half)
+  N.LT(sel(c, v, x), half)
+
+def sel_lt(c, v, x, half, lv, lx):
+  match c:
+    case True{}:
+      lv
+    case False{}:
+      lx
+
+law sel_lt_f:
+  for c: Bool
+  for +ec: {c == False{} : Bool}
+  for +v: Nat
+  for +x: Nat
+  for +half: Nat
+  for +lx: N.LT(x, half)
+  N.LT(sel(c, v, x), half)
+
+def sel_lt_f(c, ec, v, x, half, lx):
+  match c:
+    case True{}:
+      Empty.absurd(N.LT(v, half), L.tf(ec))
+    case False{}:
+      lx
+
+law nupd_yes:
+  for +as: +List<Nat>
+  for +xs: +List<Nat>
+  for +b: Nat
+  for +v: Nat
+  for +half: Nat
+  for +lv: N.LT(v, half)
+  for +ax: AllLT(xs, half)
+  AllLT(nupd(as, xs, b, v), half)
+
+def nupd_yes(as, xs, b, v, half, lv, ax):
+  match as:
+    case Nil{}:
+      Unit{}
+    case Con{a, as2}:
+      match xs:
+        case Nil{}:
+          Unit{}
+        case Con{x, xs2}:
+          (+lx, +ax2) = ax
+          (sel_lt(L.eqn(b, a), v, x, half, lv, lx), nupd_yes(as2, xs2, b, v, half, lv, ax2))
+
+law nupd_no:
+  for +as: +List<Nat>
+  for +xs: +List<Nat>
+  for +b: Nat
+  for +v: Nat
+  for +half: Nat
+  for +nm: {L.mem(b, as) == False{} : Bool}
+  for +ax: AllLT(xs, half)
+  AllLT(nupd(as, xs, b, v), half)
+
+def nupd_no(as, xs, b, v, half, nm, ax):
+  match as:
+    case Nil{}:
+      Unit{}
+    case Con{a, as2}:
+      match xs:
+        case Nil{}:
+          Unit{}
+        case Con{x, xs2}:
+          (+lx, +ax2) = ax
+          +nba : {L.eqn(b, a) == False{} : Bool} = L.or_false_l(L.eqn(b, a), L.mem(b, as2), nm)
+          +nm2 : {L.mem(b, as2) == False{} : Bool} = L.or_false_r(L.eqn(b, a), L.mem(b, as2), nm)
+          (sel_lt_f(L.eqn(b, a), nba, v, x, half, lx), nupd_no(as2, xs2, b, v, half, nm2, ax2))
+
+def inv_i(c: Bool, +half: Nat, +pi: Nat, +pnx: +List<Nat>, +ci: Nat, iu: IU(c, half, pi, pnx, ci), +lpi: N.LT(pi, half), +lpnx: AllLT(pnx, half)) -> N.LT(ci, half):
+  match c:
+    case True{}:
+      match iu:
+        case Inl{l}:
+          l
+        case Inr{m}:
+          all_mem(pnx, ci, half, lpnx, m)
+    case False{}:
+      (%Equal.sym(Nat, ci, pi, iu) : N.LT(_, half); lpi)
+
+def lw_fin(+mod: Nat, +half: Nat, +ci: Nat, +cm: Nat, +hm: N.LE(half, mod), sn: Sigma<&2, &2, N.LT(ci, cm), _ => N.LT(cm, half)>) -> N.LT(W.wrap1(mod, ci), half):
+  (+l1, +l2) = sn
+  +l3 : N.LT(1n+ci, half) = N.le_lt_trans(1n+ci, cm, half, l1, l2)
+  +l4 : N.LT(1n+ci, mod) = N.lt_le_trans(1n+ci, half, mod, l3, hm)
+  +w : {W.wrap1(mod, ci) == 1n+ci : Nat} = W.wrap1_small(mod, ci, l4)
+  (%Equal.sym(Nat, W.wrap1(mod, ci), 1n+ci, w) : N.LT(_, half); l3)
+
+# at a visit of an add block (signed compare, i non-negative): i + 1 stays below half
+law lw_of:
+  for +es: +List<G.Ed>
+  for +entry: Nat
+  for +h: Nat
+  for +t: Nat
+  for +d: Nat
+  for +as: +List<Nat>
+  for +half: Nat
+  for +mod: Nat
+  for +St: +List<Nat>
+  for +Sd: +List<Nat>
+  for +rest: +List<Ev>
+  for +cb: Nat
+  for +ci: Nat
+  for +cm: Nat
+  for +cnx: +List<Nat>
+  for +ok: {G.predsok(es, h, t) == True{} : Bool}
+  for +te: {L.eqn(t, entry) == False{} : Bool}
+  for +dc: {L.or(L.eqn(d, h), G.domc(es, entry, d, Sd, h)) == True{} : Bool}
+  for +ad: {alldomc(es, entry, t, St, as) == True{} : Bool}
+  for +hm: N.LE(half, mod)
+  for +tv: TV(h, t, d, as, half, mod, True{}, rest, Ev{cb, ci, cm, cnx})
+  for +pw: C.VW(G.EE(es), entry, cb, blks(rest))
+  for +lci: N.LT(ci, half)
+  for +m: {L.mem(cb, as) == True{} : Bool}
+  N.LT(W.wrap1(mod, ci), half)
+
+def lw_of(es, entry, h, t, d, as, half, mod, St, Sd, rest, cb, ci, cm, cnx, ok, te, dc, ad, hm, tv, pw, lci, m):
+  +dx : {G.domc(es, entry, t, St, cb) == True{} : Bool} = alldom_mem(es, entry, t, St, as, cb, ad, m)
+  +mt : {L.mem(t, L.before(h, Con{cb, blks(rest)})) == True{} : Bool} = mt_at(es, entry, h, t, St, cb, ok, te, dx, Con{cb, blks(rest)}, pw, {==})
+  +nd : {L.mem(d, L.before(h, Con{cb, blks(rest)})) == False{} : Bool} = nd_at(es, entry, h, t, d, St, Sd, cb, dc, ok, te, dx, Con{cb, blks(rest)}, pw, {==})
+  +sc : {W.slt(half, ci, cm) == True{} : Bool} = scan(es, entry, h, t, d, as, half, mod, True{}, rest, Ev{cb, ci, cm, cnx}, ok, te, tv, pw, mt, nd)
+  lw_fin(mod, half, ci, cm, hm, W.slt_nonneg(half, ci, cm, sc, lci))
+
+def inv_nx(+as: +List<Nat>, +pnx: +List<Nat>, +cb: Nat, +v: Nat, +half: Nat, c: Bool, +ec: {c == L.mem(cb, as) : Bool}, +lpnx: AllLT(pnx, half), k: {L.mem(cb, as) == True{} : Bool} -> N.LT(v, half)) -> AllLT(nupd(as, pnx, cb, v), half):
+  match c:
+    case True{}:
+      nupd_yes(as, pnx, cb, v, half, k(Equal.sym(Bool, True{}, L.mem(cb, as), ec)), lpnx)
+    case False{}:
+      nupd_no(as, pnx, cb, v, half, Equal.sym(Bool, False{}, L.mem(cb, as), ec), lpnx)
+
+def inv.fin(+es: +List<G.Ed>, +entry: Nat, +h: Nat, +t: Nat, +d: Nat, +as: +List<Nat>, +half: Nat, +mod: Nat, +St: +List<Nat>, +Sd: +List<Nat>, +pb: Nat, +pi: Nat, +pm: Nat, +pnx: +List<Nat>, +r2: +List<Ev>, +cb: Nat, +ci: Nat, +cm: Nat, +cnx: +List<Nat>, +ok: {G.predsok(es, h, t) == True{} : Bool}, +te: {L.eqn(t, entry) == False{} : Bool}, +dc: {L.or(L.eqn(d, h), G.domc(es, entry, d, Sd, h)) == True{} : Bool}, +ad: {alldomc(es, entry, t, St, as) == True{} : Bool}, +hm: N.LE(half, mod), +tv: TV(h, t, d, as, half, mod, True{}, Con{Ev{pb, pi, pm, pnx}, r2}, Ev{cb, ci, cm, cnx}), +pw: C.VW(G.EE(es), entry, cb, blks(Con{Ev{pb, pi, pm, pnx}, r2})), +iu: IU(L.eqn(h, cb), half, pi, pnx, ci), +nu: {cnx == nupd(as, pnx, cb, W.wrap1(mod, ci)) : +List<Nat>}, +ip: Inv(half, Ev{pb, pi, pm, pnx})) -> Inv(half, Ev{cb, ci, cm, cnx}):
+  (+lpi, +lpnx) = ip
+  +lci : N.LT(ci, half) = inv_i(L.eqn(h, cb), half, pi, pnx, ci, iu, lpi, lpnx)
+  +ln : AllLT(nupd(as, pnx, cb, W.wrap1(mod, ci)), half) = inv_nx(as, pnx, cb, W.wrap1(mod, ci), half, L.mem(cb, as), {==}, lpnx, m => lw_of(es, entry, h, t, d, as, half, mod, St, Sd, Con{Ev{pb, pi, pm, pnx}, r2}, cb, ci, cm, cnx, ok, te, dc, ad, hm, tv, pw, lci, m))
+  (lci, (%Equal.sym(+List<Nat>, cnx, nupd(as, pnx, cb, W.wrap1(mod, ci)), nu) : AllLT(_, half); ln))
+
+# INV (signed compare): at every visit, i and every increment are non-negative words.
+law inv:
+  for +es: +List<G.Ed>
+  for +entry: Nat
+  for +h: Nat
+  for +t: Nat
+  for +d: Nat
+  for +as: +List<Nat>
+  for +half: Nat
+  for +mod: Nat
+  for +St: +List<Nat>
+  for +Sd: +List<Nat>
+  for +rest: +List<Ev>
+  for +cur: Ev
+  for +ok: {G.predsok(es, h, t) == True{} : Bool}
+  for +te: {L.eqn(t, entry) == False{} : Bool}
+  for +dc: {L.or(L.eqn(d, h), G.domc(es, entry, d, Sd, h)) == True{} : Bool}
+  for +ad: {alldomc(es, entry, t, St, as) == True{} : Bool}
+  for +hm: N.LE(half, mod)
+  for +tv: TV(h, t, d, as, half, mod, True{}, rest, cur)
+  for +pw: C.VW(G.EE(es), entry, blk(cur), blks(rest))
+  Inv(half, cur)
+
+def inv(es, entry, h, t, d, as, half, mod, St, Sd, rest, cur, ok, te, dc, ad, hm, tv, pw):
+  match rest cur:
+    case Nil{} Ev{cb, ci, cm, cnx}:
+      tv
+    case Con{Ev{pb, pi, pm, pnx}, r2} Ev{cb, ci, cm, cnx}:
+      (+st, +tv2) = tv
+      (+iu, +q1) = st
+      (+mu, +q2) = q1
+      (+nu, +bu) = q2
+      (+e, +pw2) = pw
+      +ip : Inv(half, Ev{pb, pi, pm, pnx}) = inv(es, entry, h, t, d, as, half, mod, St, Sd, r2, Ev{pb, pi, pm, pnx}, ok, te, dc, ad, hm, tv2, pw2)
+      inv.fin(es, entry, h, t, d, as, half, mod, St, Sd, pb, pi, pm, pnx, r2, cb, ci, cm, cnx, ok, te, dc, ad, hm, (st, tv2), (e, pw2), iu, nu, ip)
+
+def b3.first(+half: Nat, +ci: Nat, +cm: Nat, p: Sigma<&2, &2, N.LT(ci, cm), _ => N.LT(cm, half)>) -> N.LT(ci, cm):
+  (+a, +b) = p
+  a
+
+def b3.signed(+half: Nat, +cb: Nat, +ci: Nat, +cm: Nat, +cnx: +List<Nat>, +sc: {W.slt(half, ci, cm) == True{} : Bool}, ip: Inv(half, Ev{cb, ci, cm, cnx})) -> N.LT(ci, cm):
+  (+lci, +lnx) = ip
+  b3.first(half, ci, cm, W.slt_nonneg(half, ci, cm, sc, lci))
+
+def b3.fin(+sgn: Bool, +es: +List<G.Ed>, +entry: Nat, +h: Nat, +t: Nat, +d: Nat, +as: +List<Nat>, +half: Nat, +mod: Nat, +St: +List<Nat>, +Sd: +List<Nat>, +rest: +List<Ev>, +cb: Nat, +ci: Nat, +cm: Nat, +cnx: +List<Nat>, +ok: {G.predsok(es, h, t) == True{} : Bool}, +te: {L.eqn(t, entry) == False{} : Bool}, +dc: {L.or(L.eqn(d, h), G.domc(es, entry, d, Sd, h)) == True{} : Bool}, +ad: {alldomc(es, entry, t, St, as) == True{} : Bool}, +hm: N.LE(half, mod), +tv: TV(h, t, d, as, half, mod, sgn, rest, Ev{cb, ci, cm, cnx}), +pw: C.VW(G.EE(es), entry, cb, blks(rest)), +sc: {W.cmp(sgn, half, ci, cm) == True{} : Bool}) -> N.LT(ci, cm):
+  match sgn:
+    case True{}:
+      b3.signed(half, cb, ci, cm, cnx, sc, inv(es, entry, h, t, d, as, half, mod, St, Sd, rest, Ev{cb, ci, cm, cnx}, ok, te, dc, ad, hm, tv, pw))
+    case False{}:
+      N.ltb_lt(ci, cm, sc)
+
+def LtAt(e: Ev) -> Data:
+  match e:
+    case Ev{b, +i, +m, nx}:
+      N.LT(i, m)
+
+# B3. Hypotheses, all checkable on the CFG:
+#   ok: every edge into t comes from h (t's only predecessor is h);
+#   te: t is not the entry block;
+#   dc: d (the block that sets the length) is h, or dominates h (certificate Sd);
+#   ad: t dominates every add block (certificate St);
+#   dx: t dominates the check block x (certificate St);
+#   hm: half <= mod (words: half = 2^(w-1), mod = 2^w).
+# For every consistent execution (tv, pw) now at x: i < m as unsigned words.
+law b3:
+  for +es: +List<G.Ed>
+  for +entry: Nat
+  for +h: Nat
+  for +t: Nat
+  for +d: Nat
+  for +as: +List<Nat>
+  for +half: Nat
+  for +mod: Nat
+  for +St: +List<Nat>
+  for +Sd: +List<Nat>
+  for +x: Nat
+  for +rest: +List<Ev>
+  for +cur: Ev
+  for +sgn: Bool
+  for +ok: {G.predsok(es, h, t) == True{} : Bool}
+  for +te: {L.eqn(t, entry) == False{} : Bool}
+  for +dc: {L.or(L.eqn(d, h), G.domc(es, entry, d, Sd, h)) == True{} : Bool}
+  for +ad: {alldomc(es, entry, t, St, as) == True{} : Bool}
+  for +dx: {G.domc(es, entry, t, St, x) == True{} : Bool}
+  for +hm: N.LE(half, mod)
+  for +tv: TV(h, t, d, as, half, mod, sgn, rest, cur)
+  for +pw: C.VW(G.EE(es), entry, blk(cur), blks(rest))
+  for +hx: {blk(cur) == x : Nat}
+  LtAt(cur)
+
+def b3(es, entry, h, t, d, as, half, mod, St, Sd, x, rest, cur, sgn, ok, te, dc, ad, dx, hm, tv, pw, hx):
+  match cur:
+    case Ev{cb, ci, cm, cnx}:
+      +mt : {L.mem(t, L.before(h, Con{cb, blks(rest)})) == True{} : Bool} = mt_at(es, entry, h, t, St, x, ok, te, dx, Con{cb, blks(rest)}, pw, hx)
+      +nd : {L.mem(d, L.before(h, Con{cb, blks(rest)})) == False{} : Bool} = nd_at(es, entry, h, t, d, St, Sd, x, dc, ok, te, dx, Con{cb, blks(rest)}, pw, hx)
+      +sc : {W.cmp(sgn, half, ci, cm) == True{} : Bool} = scan(es, entry, h, t, d, as, half, mod, sgn, rest, Ev{cb, ci, cm, cnx}, ok, te, tv, pw, mt, nd)
+      b3.fin(sgn, es, entry, h, t, d, as, half, mod, St, Sd, rest, cb, ci, cm, cnx, ok, te, dc, ad, hm, tv, pw, sc)
