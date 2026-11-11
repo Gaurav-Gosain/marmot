@@ -91,11 +91,17 @@ func main() {
 		paths = strings.Split(*in, ",")
 	} else {
 		m, _ := filepath.Glob(filepath.Join(root, "bench", "results", "*.json"))
-		sort.Strings(m)
 		if len(m) == 0 {
 			fatal("no results files")
 		}
-		paths = m[len(m)-1:]
+		// Merge every file, oldest first by modification time, so the newest row for each
+		// program and toolchain wins.
+		sort.Slice(m, func(i, j int) bool {
+			a, _ := os.Stat(m[i])
+			b, _ := os.Stat(m[j])
+			return a.ModTime().Before(b.ModTime())
+		})
+		paths = m
 	}
 	// Several files are merged. A later file replaces earlier rows for the same program and
 	// toolchain. Metadata comes from the first file; notes list every file.
@@ -116,6 +122,7 @@ func main() {
 				f.Meta.Flags[k] = v
 			}
 			f.Meta.GitRev = g.Meta.GitRev
+			f.Meta.Date = g.Meta.Date
 		}
 		for _, r := range g.Results {
 			k := r.Program + "|" + r.Toolchain
@@ -742,6 +749,14 @@ func writeTargets(f File, idx map[string]Result, progs []string) {
 		}
 		w("- Class %s: geometric mean %.2fx over %d programs (floor %.0fx)\n", c, math.Exp(s/float64(len(v))), len(v), cl.Floors[c])
 	}
+	var slow strings.Builder
+	for _, l := range lines {
+		if l.have && l.wall < 1 {
+			fmt.Fprintf(&slow, "%s\t%s\t%.2f\n", l.owner, l.prog, l.wall)
+		}
+	}
+	os.MkdirAll(filepath.Join(root, ".work"), 0o755)
+	os.WriteFile(filepath.Join(root, ".work", "slower.tsv"), []byte(slow.String()), 0o644)
 	w("\n## Scoreboard\n\n| Program | Class | Floor | Wall speedup | CPU speedup | Status | Owner | Reason |\n|---|---|---|---|---|---|---|---|\n")
 	sort.SliceStable(lines, func(i, j int) bool {
 		if lines[i].class != lines[j].class {
