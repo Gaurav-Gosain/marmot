@@ -347,11 +347,21 @@ ParsedModulePtr parseFile(const std::string &input, const CompileOptions &opts,
       }
       return mlir::WalkResult::advance();
     });
+    auto self = [&](mlir::Location l) {
+      auto fl = llvm::dyn_cast<mlir::FileLineColLoc>(l);
+      return fl && fl.getFilename() == file;
+    };
+    // Block arguments (phis) need no location.
+    mlir::Location none = mlir::UnknownLoc::get(pm->ctx.get());
     if (frontendLocs)
       pm->module->walk([&](mlir::Operation *op) {
-        if (auto fl = llvm::dyn_cast<mlir::FileLineColLoc>(op->getLoc());
-            fl && fl.getFilename() == file)
+        if (self(op->getLoc()))
           op->setLoc(unknown);
+        for (mlir::Region &r : op->getRegions())
+          for (mlir::Block &b : r)
+            for (mlir::BlockArgument a : b.getArguments())
+              if (self(a.getLoc()))
+                a.setLoc(none);
       });
   }
   return pm;

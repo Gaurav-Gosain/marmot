@@ -288,7 +288,8 @@ int main(int argc, char **argv) {
     if (unsigned v = std::strtoul(e, nullptr, 10))
       cap = v;
   unsigned n = jobs ? unsigned(jobs) : std::thread::hardware_concurrency();
-  n = std::max(1u, std::min({n, cap, unsigned(work.size())}));
+  // A split module (-split-large) has more groups than jobs: no job cap then.
+  n = std::max(1u, splitLarge ? std::min(n, cap) : std::min({n, cap, unsigned(work.size())}));
 
   // Batch with more than one job (or -wpo or a cache): summaries cross
   // modules. Same objects as compiling each job alone, plus escape facts.

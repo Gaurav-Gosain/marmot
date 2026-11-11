@@ -619,7 +619,10 @@ bool importBodies(Module &m, const std::map<unsigned, std::set<std::string>> &im
 // callees from other groups are copied in available_externally, so inlining
 // across groups stays. linkonce/weak definitions go to every group that may
 // use them (the linker keeps one). Appending globals (constructors, used)
-// stay in group 0. Returns the groups as bitcode.
+// stay in group 0. Returns the groups as bitcode. A group's cache key is its
+// bitcode: exact, and stable across edits elsewhere in the module because
+// unused declarations are dropped and no location refers to the input .mlir
+// (parseFile), so metadata numbering inside an unchanged group stays the same.
 std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback) {
   // Stable suffix: the smallest strong external definition of the module
   // (a symbol only this module defines).
@@ -689,6 +692,14 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback) 
         if (v.hasAppendingLinkage())
           v.eraseFromParent();
     // The key of a group is its bitcode: no temporary paths in it.
+    // Declarations nothing in the group uses would make every group depend
+    // on every function of the module (a new function changes all keys).
+    for (Function &f : make_early_inc_range(*part))
+      if (f.isDeclaration() && f.use_empty() && !f.isIntrinsic())
+        f.eraseFromParent();
+    for (GlobalVariable &v : make_early_inc_range(part->globals()))
+      if (v.isDeclaration() && v.use_empty())
+        v.eraseFromParent();
     part->setModuleIdentifier("");
     part->setSourceFileName("");
     raw_string_ostream os(out[g]);
@@ -1015,16 +1026,22 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         return;
       // Large module: split into groups, compiled below in parallel.
       if (opts.splitInstrs && opts.emit == Emit::Obj && opts.optLevel != '0') {
-        unsigned n = 0;
-        for (Function &f : **mOr)
+        unsigned n = 0, nfuncs = 0;
+        for (Function &f : **mOr) {
           n += f.getInstructionCount();
+          nfuncs += !f.isDeclaration();
+        }
         if (n > opts.splitInstrs) {
           auto t0 = std::chrono::steady_clock::now();
-          unsigned k = std::min(16u, (n + opts.splitInstrs / 2 - 1) / (opts.splitInstrs / 2));
-          std::vector<std::string> bcs = splitModule(**mOr, k, m.keyB);
+          unsigned half = std::max(1u, opts.splitInstrs / 2);
+          unsigned k = std::min({16u, nfuncs, (n + half - 1) / half});
+          auto bcs = splitModule(**mOr, k, m.keyB);
           std::string list;
           std::lock_guard<std::mutex> lock(mu);
           for (unsigned g = 0; g < k; ++g) {
+            if (const char *d = getenv("MARMOT_SPLIT_DUMP")) // debugging aid
+              writeFile((Twine(d) + "/" + sys::path::filename(m.job.in) + "." + Twine(g) + ".bc").str(),
+                        bcs[g]);
             std::string gk = hashHex(fp + "|group|" + bcs[g]);
             list += gk + "\n";
             groups.push_back({i, g, std::move(bcs[g]), gk});
