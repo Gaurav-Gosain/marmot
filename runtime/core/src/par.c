@@ -80,3 +80,46 @@ RT_API void rt_parallel_for(int64_t n, int64_t grain,
   pf.waiter = rt_current();
   rt_park(pfor_unlock, &pf.mu);
 }
+
+// ---- run time alias check for the loop parallelizer ----
+
+INLINE void rswap(uintptr_t *lo, uintptr_t *hi, int64_t a, int64_t b) {
+  uintptr_t t = lo[a];
+  lo[a] = lo[b];
+  lo[b] = t;
+  t = hi[a];
+  hi[a] = hi[b];
+  hi[b] = t;
+}
+
+static void sift(uintptr_t *lo, uintptr_t *hi, int64_t i, int64_t n) {
+  for (;;) {
+    int64_t c = 2 * i + 1;
+    if (c >= n) return;
+    if (c + 1 < n && lo[c + 1] > lo[c]) c++;
+    if (lo[i] >= lo[c]) return;
+    rswap(lo, hi, i, c);
+    i = c;
+  }
+}
+
+// 1 if the half-open ranges [lo[i], hi[i]) are pairwise disjoint (empty
+// ranges never conflict). Sorts the pairs by lo in place (heapsort, no
+// allocation).
+RT_API int32_t rt_ranges_disjoint(int64_t n, uintptr_t *lo, uintptr_t *hi) {
+  if (n <= 1) return 1;
+  for (int64_t i = n / 2 - 1; i >= 0; i--) sift(lo, hi, i, n);
+  for (int64_t end = n - 1; end > 0; end--) {
+    rswap(lo, hi, 0, end);
+    sift(lo, hi, 0, end);
+  }
+  uintptr_t maxhi = 0;
+  bool any = false;
+  for (int64_t i = 0; i < n; i++) {
+    if (hi[i] <= lo[i]) continue;  // empty
+    if (any && lo[i] < maxhi) return 0;
+    if (!any || hi[i] > maxhi) maxhi = hi[i];
+    any = true;
+  }
+  return 1;
+}

@@ -121,6 +121,12 @@ int32_t rt_numcpu(void);
 void rt_parallel_for(int64_t n, int64_t grain, void (*body)(void *ctx, int64_t lo, int64_t hi),
                      void *ctx);
 
+// 1 if the n half-open byte ranges [lo[i], hi[i]) are pairwise disjoint
+// (empty ranges never conflict), else 0. Reorders both arrays in place
+// (sorted by lo). No allocation. For run time alias checks before a loop
+// is parallelized.
+int32_t rt_ranges_disjoint(int64_t n, uintptr_t *lo, uintptr_t *hi);
+
 // ---- Regions ----
 //
 // Bump allocation for objects the compiler proves dead when the region is

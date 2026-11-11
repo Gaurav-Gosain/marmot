@@ -47,5 +47,23 @@ void marmot_main(void) {
   for (long i = 0; i < 200000; i++) CHECK(objs[i][0] == i);
   for (int i = 0; i < 1000 && rt_numgoroutine() != 1; i++) rt_sleep(1000000);
   CHECK(rt_numgoroutine() == 1);
+  // rt_ranges_disjoint against a quadratic check.
+  uint64_t rs = 12345;
+  for (int iter = 0; iter < 3000; iter++) {
+    uintptr_t lo[64], hi[64], lo2[64], hi2[64];
+    int64_t n = (int64_t)(iter % 64);
+    for (int64_t i = 0; i < n; i++) {
+      rs ^= rs << 13; rs ^= rs >> 7; rs ^= rs << 17;
+      lo[i] = (uintptr_t)(rs % 4000);
+      hi[i] = lo[i] + (uintptr_t)((rs >> 20) % (iter % 3 ? 40 : 3));
+      if (iter % 5 == 0) { lo[i] = (uintptr_t)i * 100; hi[i] = lo[i] + 100 - (uintptr_t)(rs % 2); }
+      lo2[i] = lo[i]; hi2[i] = hi[i];
+    }
+    int want = 1;
+    for (int64_t i = 0; i < n; i++)
+      for (int64_t j = i + 1; j < n; j++)
+        if (lo2[i] < hi2[i] && lo2[j] < hi2[j] && lo2[i] < hi2[j] && lo2[j] < hi2[i]) want = 0;
+    CHECK(rt_ranges_disjoint(n, lo, hi) == want);
+  }
   out("ok\n");
 }

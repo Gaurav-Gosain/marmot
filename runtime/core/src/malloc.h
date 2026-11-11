@@ -36,6 +36,7 @@ struct mspan {
   uint32_t nfree_cached;   // free objects when it was cached
   int32_t allidx;          // index in allspans
   uint32_t divmul;         // index = (offset * divmul) >> 32 for small spans
+  uint32_t swept_live;     // live objects found by the last sweep
   // Large precise objects: pointer map of one element.
   const uint8_t *ptrmap;
   uintptr_t ptrelem;       // element size

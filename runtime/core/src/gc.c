@@ -406,6 +406,10 @@ static void drain(void) {
   wactive = saved;
 }
 
+enum { PHASE_MARK = 0, PHASE_SWEEP = 1 };
+static _Atomic int32_t gc_phase;
+static void sweep_worker(void);
+
 static void gc_helper(void *arg) {
   gcw *w = arg;
   uint32_t seen = 0;
@@ -413,7 +417,10 @@ static void gc_helper(void *arg) {
     uint32_t g;
     while ((g = atomic_load(&helper_gen)) == seen) os_futex_wait(&helper_gen, seen, -1);
     seen = g;
-    drain_parallel(w);
+    if (atomic_load(&gc_phase) == PHASE_SWEEP)
+      sweep_worker();
+    else
+      drain_parallel(w);
     if (atomic_fetch_sub(&helpers_running, 1) == 1) {
       atomic_store(&helpers_done_futex, 1);
       os_futex_wake((_Atomic uint32_t *)&helpers_done_futex, true);
@@ -445,6 +452,20 @@ static void helpers_init(void) {
   }
 }
 
+// Start nh helpers on the given phase.
+static void helpers_start(int32_t phase, int32_t nh) {
+  atomic_store(&gc_phase, phase);
+  atomic_store(&helpers_running, nh);
+  atomic_store(&helpers_done_futex, 0);
+  atomic_fetch_add(&helper_gen, 1);
+  os_futex_wake(&helper_gen, true);
+}
+
+static void helpers_wait(void) {
+  while (atomic_load(&helpers_done_futex) == 0)
+    os_futex_wait((_Atomic uint32_t *)&helpers_done_futex, 0, -1);
+}
+
 // Drain the heap graph from worker 0's stack with all helpers.
 static void mark_parallel(void) {
   helpers_init();
@@ -454,16 +475,9 @@ static void mark_parallel(void) {
   wactive = nh + 1;
   atomic_store(&wnidle, 0);
   atomic_store(&wdone, 0);
-  if (nh > 0) {
-    atomic_store(&helpers_running, nh);
-    atomic_store(&helpers_done_futex, 0);
-    atomic_fetch_add(&helper_gen, 1);
-    os_futex_wake(&helper_gen, true);
-  }
+  if (nh > 0) helpers_start(PHASE_MARK, nh);
   drain_parallel(&workers[0]);
-  if (nh > 0)
-    while (atomic_load(&helpers_done_futex) == 0)
-      os_futex_wait((_Atomic uint32_t *)&helpers_done_futex, 0, -1);
+  if (nh > 0) helpers_wait();
   wactive = 1;
 }
 
@@ -523,35 +537,64 @@ static bool mark_finalizers(void) {
 
 // ---- sweeping ----
 
+// Sweeping runs in two passes. The parallel pass turns mark bits into
+// allocation bits span by span (spans are independent). The serial pass
+// frees empty spans and rebuilds the central lists, which is cheap.
+#define SWEEP_BATCH 128
+static _Atomic int32_t sweep_next;
+static _Atomic uint64_t sweep_freed_bytes, sweep_freed_objs;
+
+static void sweep_span(mspan *s, uint64_t *fb, uint64_t *fo) {
+  uint32_t nw = (s->nelems + 63) / 64;
+  uintptr_t freed = 0, live = 0;
+  for (uint32_t w = 0; w < nw; w++) {
+    freed += popcount64(s->allocbits[w] & ~s->markbits[w]);
+    live += popcount64(s->markbits[w]);
+  }
+  *fb += freed * s->elemsize;
+  *fo += freed;
+  uint64_t *t = s->allocbits;
+  s->allocbits = s->markbits;
+  s->markbits = t;
+  __builtin_memset(t, 0, nw * 8);
+  s->freeindex = 0;
+  s->alloc_cache = 0;
+  s->swept_live = (uint32_t)live;
+}
+
+static void sweep_worker(void) {
+  uint64_t fb = 0, fo = 0;
+  for (;;) {
+    int32_t i = atomic_fetch_add(&sweep_next, SWEEP_BATCH);
+    if (i >= nallspans) break;
+    int32_t end = i + SWEEP_BATCH < nallspans ? i + SWEEP_BATCH : nallspans;
+    for (int32_t j = i; j < end; j++) sweep_span(allspans[j], &fb, &fo);
+  }
+  atomic_fetch_add(&sweep_freed_bytes, fb);
+  atomic_fetch_add(&sweep_freed_objs, fo);
+}
+
 static void sweep_all(void) {
   spin_lock(&heap_lock);
   central_reset();
-  uint64_t freed_bytes = 0, freed_objs = 0;
+  atomic_store(&sweep_next, 0);
+  atomic_store(&sweep_freed_bytes, 0);
+  atomic_store(&sweep_freed_objs, 0);
+  int32_t nh = nallspans >= 4 * SWEEP_BATCH ? gc_nhelpers : 0;
+  if (nh > 0) helpers_start(PHASE_SWEEP, nh);
+  sweep_worker();
+  if (nh > 0) helpers_wait();
   for (int32_t i = nallspans - 1; i >= 0; i--) {
     mspan *s = allspans[i];
-    uint32_t nw = (s->nelems + 63) / 64;
-    uintptr_t freed = 0, live = 0;
-    for (uint32_t w = 0; w < nw; w++) {
-      freed += popcount64(s->allocbits[w] & ~s->markbits[w]);
-      live += popcount64(s->markbits[w]);
-    }
-    freed_bytes += freed * s->elemsize;
-    freed_objs += freed;
-    uint64_t *t = s->allocbits;
-    s->allocbits = s->markbits;
-    s->markbits = t;
-    __builtin_memset(t, 0, nw * 8);
-    s->freeindex = 0;
-    s->alloc_cache = 0;
-    if (live == 0) {
+    if (s->swept_live == 0) {
       span_free(s);
     } else if (s->cls) {
       s->needzero = 1;
       central_put(s);
     }
   }
-  atomic_fetch_sub(&heap_live, freed_bytes);
-  atomic_fetch_add(&stat_frees, freed_objs);
+  atomic_fetch_sub(&heap_live, atomic_load(&sweep_freed_bytes));
+  atomic_fetch_add(&stat_frees, atomic_load(&sweep_freed_objs));
   heap_scavenge();
   spin_unlock(&heap_lock);
 }
