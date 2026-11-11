@@ -154,7 +154,7 @@ func parseFormat(format string, nargs int, wrapErrs bool) ([]fmtOp, bool) {
 		set(precPresent, fPrecPresent)
 		set(minus, fMinus)
 		set(space, fSpace)
-		set(zero && false, fZero)
+		set(zero, fZero)
 		if verb == 'v' || verb == 'w' {
 			set(sharp, fSharpV)
 			set(plus, fPlusV)
