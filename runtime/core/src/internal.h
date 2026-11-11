@@ -18,6 +18,8 @@
 #define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
 #define NORETURN __attribute__((noreturn))
+// Conservative scanning reads arbitrary words (stack redzones, padding).
+#define NO_SANITIZE __attribute__((no_sanitize("address", "thread", "undefined")))
 
 #if defined(__aarch64__)
 #define RT_ARCH_ARM64 1

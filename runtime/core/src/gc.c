@@ -184,7 +184,7 @@ static void mstack_push(uintptr_t obj) {
 }
 
 // Find the object containing p. Returns its span and index, or NULL.
-INLINE mspan *find_object(uintptr_t p, uintptr_t *idxp) {
+NO_SANITIZE INLINE mspan *find_object(uintptr_t p, uintptr_t *idxp) {
   if (p - rt_arena_start >= rt_arena_used - rt_arena_start) return NULL;
   mspan *s = rt_pagemap[(p - rt_arena_start) >> PAGE_SHIFT];
   if (!s || s->state != SPAN_INUSE || p < s->base || p >= s->limit) return NULL;
@@ -195,7 +195,7 @@ INLINE mspan *find_object(uintptr_t p, uintptr_t *idxp) {
   return s;
 }
 
-INLINE void mark_ptr(uintptr_t p) {
+NO_SANITIZE INLINE void mark_ptr(uintptr_t p) {
   uintptr_t idx;
   mspan *s = find_object(p, &idx);
   if (!s) return;
@@ -206,12 +206,12 @@ INLINE void mark_ptr(uintptr_t p) {
   if (s->kind != RT_ALLOC_NOSCAN) mstack_push(s->base + idx * s->elemsize);
 }
 
-void gc_scan_range(uintptr_t lo, uintptr_t hi) {
+NO_SANITIZE void gc_scan_range(uintptr_t lo, uintptr_t hi) {
   lo = (lo + 7) & ~(uintptr_t)7;
   for (uintptr_t p = lo; p + 8 <= hi; p += 8) mark_ptr(*(uintptr_t *)p);
 }
 
-static void scan_object(uintptr_t obj) {
+NO_SANITIZE static void scan_object(uintptr_t obj) {
   mspan *s = rt_pagemap[(obj - rt_arena_start) >> PAGE_SHIFT];
   if (s->kind == RT_ALLOC_CONSERVATIVE) {
     gc_scan_range(obj, obj + s->elemsize);
