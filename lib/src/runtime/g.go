@@ -51,6 +51,8 @@ type sudog struct {
 	success bool
 	// caseIndex is the select case this sudog stands for.
 	caseIndex int
+	// ticket is the notify list ticket (sync.Cond).
+	ticket uint32
 }
 
 // cheaprand returns a pseudo random number from the per-goroutine state
