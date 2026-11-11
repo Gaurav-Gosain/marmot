@@ -338,6 +338,27 @@ int main(int argc, char **argv) {
         else
           segs.push_back({a, b, best + 1});
       }
+      // A call site without DW_AT_call_line (LLVM merged call locations):
+      // use the last line of the parent before the inlined code starts.
+      std::stable_sort(f.rows.begin(), f.rows.end());
+      auto nodeAt = [&](uint64_t pc) {
+        for (auto &[a, b, node] : segs)
+          if (a <= pc && pc < b)
+            return int(node) - 1;
+        return -1;
+      };
+      for (size_t k = 0; k < f.inl.size(); ++k) {
+        Inline &in = f.inl[k];
+        if (in.callLine || in.ranges.empty())
+          continue;
+        uint64_t start = std::min_element(in.ranges.begin(), in.ranges.end())->first;
+        for (auto r = f.rows.rbegin(); r != f.rows.rend(); ++r)
+          if (std::get<0>(*r) < start && nodeAt(std::get<0>(*r)) == in.parent) {
+            in.callLine = std::get<1>(*r);
+            in.callFile = std::get<2>(*r);
+            break;
+          }
+      }
       u32(inlIdx, funcIndex);
       u32(inlIdx, inl.size());
       ++ninl;
