@@ -176,6 +176,7 @@ int main(int argc, char **argv) {
   opts.pgoUse = pgoUse;
   if (gpuArch.getNumOccurrences())
     opts.gpuArch = gpuArch.empty() ? "sm_86" : std::string(gpuArch);
+  opts.loops.gpu = !opts.gpuArch.empty();
   if (pgoGen.getNumOccurrences())
     opts.pgoGen = pgoGen.empty() ? "default_%m.profraw" : std::string(pgoGen);
   if (!opts.pgoUse.empty() && !opts.pgoGen.empty()) {

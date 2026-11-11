@@ -300,7 +300,7 @@ std::string fingerprint(const CompileOptions &opts) {
      << opts.strings << opts.devirt << opts.escape << opts.bce << opts.openDefers
      << opts.initOptNone << opts.wpoImport << opts.wpoClosedWorld << "|loops" << opts.loops.enable
      << opts.loops.parallel << opts.loops.fastFP << opts.loops.remarks
-     << opts.loops.versioning << opts.loops.typeAlias << "|";
+     << opts.loops.versioning << opts.loops.typeAlias << opts.loops.gpu << "|";
   if (opts.rtBitcode)
     os << hashHex(opts.rtBitcode->bitcode->getBuffer());
   os << "|gpu=" << opts.gpuArch << "|pgo-gen=" << opts.pgoGen << "|pgo=";
