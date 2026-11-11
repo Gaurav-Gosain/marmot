@@ -2,7 +2,8 @@
 // backend: every check the pass removed must be justified by a rule of docs/passes.md as
 // proved in verify/bend.
 //
-//	check -before in.mlir -after out.mlir
+//	check -before in.mlir -after out.mlir [-report bce.report]
+//	check -loops-report loops.json
 //
 // in.mlir is the go dialect MLIR the frontend emits (marmot build -dialect=go -emit mlir),
 // out.mlir is `marmot-opt --go-bce in.mlir`. go.index checks are matched one to one (the
@@ -23,7 +24,23 @@ func main() {
 	after := flag.String("after", "", "the same after go-bce")
 	verbose := flag.Bool("v", false, "print every justified removal")
 	report := flag.String("report", "", "the certificate from --go-bce='report=FILE': validate the rule the pass names for each removal")
+	loopsReport := flag.String("loops-report", "", "a Rule P report (-loops-report=FILE): check it alone")
 	flag.Parse()
+	if *loopsReport != "" {
+		n, bad, err := CheckLoopsReport(*loopsReport)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "check:", err)
+			os.Exit(2)
+		}
+		for _, b := range bad {
+			fmt.Println(b)
+		}
+		fmt.Printf("check: %d parallel loops, %d problems\n", n, len(bad))
+		if len(bad) > 0 {
+			os.Exit(1)
+		}
+		return
+	}
 	if *before == "" || *after == "" {
 		flag.Usage()
 		os.Exit(2)
