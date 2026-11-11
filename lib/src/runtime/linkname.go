@@ -289,3 +289,74 @@ func godebug_registerMetric(name string, read func() uint64) {}
 
 //go:linkname godebug_setNewIncNonDefault internal/godebug.setNewIncNonDefault
 func godebug_setNewIncNonDefault(newIncNonDefault func(string) func()) {}
+
+// runtime/debug.
+
+//go:linkname debug_setGCPercent runtime/debug.setGCPercent
+func debug_setGCPercent(in int32) int32 { return rt_gc_set_percent(in) }
+
+//go:linkname debug_freeOSMemory runtime/debug.freeOSMemory
+func debug_freeOSMemory() { rt_gc_collect() }
+
+var maxStack = 1 << 30
+
+//go:linkname debug_setMaxStack runtime/debug.setMaxStack
+func debug_setMaxStack(in int) int {
+	old := maxStack
+	maxStack = in
+	return old
+}
+
+var maxThreads = 10000
+
+//go:linkname debug_setMaxThreads runtime/debug.setMaxThreads
+func debug_setMaxThreads(in int) int {
+	old := maxThreads
+	maxThreads = in
+	return old
+}
+
+var panicOnFault bool
+
+//go:linkname debug_setPanicOnFault runtime/debug.setPanicOnFault
+func debug_setPanicOnFault(new bool) bool {
+	old := panicOnFault
+	panicOnFault = new
+	return old
+}
+
+var memoryLimit int64 = 1<<63 - 1
+
+//go:linkname debug_setMemoryLimit runtime/debug.setMemoryLimit
+func debug_setMemoryLimit(in int64) int64 {
+	old := memoryLimit
+	if in >= 0 {
+		memoryLimit = in
+	}
+	return old
+}
+
+// debug_readGCStats fills the buffer as the gc runtime lays it out:
+// pauses, pause end times, then the time of the last GC, the number of
+// GCs and the total pause time. marmot records no individual pauses.
+//
+//go:linkname debug_readGCStats runtime/debug.readGCStats
+func debug_readGCStats(pauses *[]int64) {
+	var s rtMemstats
+	rt_gc_stats(&s)
+	p := (*pauses)[:0]
+	p = append(p, 0, int64(s.numGC), int64(s.pauseTotalNs))
+	*pauses = p
+}
+
+//go:linkname debug_modinfo runtime/debug.modinfo
+func debug_modinfo() string { return "" }
+
+//go:linkname debug_WriteHeapDump runtime/debug.WriteHeapDump
+func debug_WriteHeapDump(fd uintptr) {}
+
+//go:linkname debug_SetTraceback runtime/debug.SetTraceback
+func debug_SetTraceback(level string) {}
+
+// setCrashFD is pulled by runtime/debug.
+func setCrashFD(fd uintptr) uintptr { return ^uintptr(0) }
