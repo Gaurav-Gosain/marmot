@@ -7,6 +7,7 @@ package sha256
 import "unsafe"
 
 //go:linkname rt_sha256_block rt_sha256_block
+//go:noescape
 func rt_sha256_block(h *uint32, p unsafe.Pointer, n int)
 
 func block(dig *Digest, p []byte) {

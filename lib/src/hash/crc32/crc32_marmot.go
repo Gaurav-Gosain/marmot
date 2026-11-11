@@ -8,6 +8,7 @@ package crc32
 import "unsafe"
 
 //go:linkname rt_crc32_update rt_crc32_update
+//go:noescape
 func rt_crc32_update(crc uint32, p unsafe.Pointer, n int, kind int32) uint32
 
 func archAvailableIEEE() bool { return true }

@@ -76,9 +76,11 @@ const (
 )
 
 //go:linkname rt_base64_encode rt_base64_encode
+//go:noescape
 func rt_base64_encode(dst *byte, src unsafe.Pointer, n int, url int32) int
 
 //go:linkname rt_base64_decode rt_base64_decode
+//go:noescape
 func rt_base64_decode(dst *byte, src unsafe.Pointer, n int, url int32) int
 
 func NewEncoding(encoder string) *Encoding {

@@ -9,21 +9,27 @@ package bytealg
 import "unsafe"
 
 //go:linkname rt_index_byte rt_index_byte
+//go:noescape
 func rt_index_byte(p unsafe.Pointer, n int, c uint8) int
 
 //go:linkname rt_last_index_byte rt_last_index_byte
+//go:noescape
 func rt_last_index_byte(p unsafe.Pointer, n int, c uint8) int
 
 //go:linkname rt_count_byte rt_count_byte
+//go:noescape
 func rt_count_byte(p unsafe.Pointer, n int, c uint8) int
 
 //go:linkname rt_mem_equal rt_mem_equal
+//go:noescape
 func rt_mem_equal(a, b unsafe.Pointer, n int) int32
 
 //go:linkname rt_compare rt_compare
+//go:noescape
 func rt_compare(a unsafe.Pointer, an int, b unsafe.Pointer, bn int) int32
 
 //go:linkname rt_index rt_index
+//go:noescape
 func rt_index(p unsafe.Pointer, n int, sep unsafe.Pointer, m int) int
 
 func sliceData(b []byte) unsafe.Pointer  { return unsafe.Pointer(unsafe.SliceData(b)) }
@@ -103,9 +109,11 @@ func CompareString(a, b string) int {
 }
 
 //go:linkname rt_last_index rt_last_index
+//go:noescape
 func rt_last_index(p unsafe.Pointer, n int, sep unsafe.Pointer, m int) int
 
 //go:linkname rt_count_substr rt_count_substr
+//go:noescape
 func rt_count_substr(p unsafe.Pointer, n int, sep unsafe.Pointer, m int) int
 
 // MarmotLastIndexString returns the index of the last instance of sep in
@@ -131,6 +139,7 @@ func MarmotCount(s, sep []byte) int {
 }
 
 //go:linkname rt_replace_into rt_replace_into
+//go:noescape
 func rt_replace_into(dst unsafe.Pointer, src unsafe.Pointer, n int, old unsafe.Pointer, m int, new unsafe.Pointer, k int) int
 
 // MarmotReplaceInto writes s with every non-overlapping instance of old

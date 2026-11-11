@@ -7,6 +7,7 @@ package sha512
 import "unsafe"
 
 //go:linkname rt_sha512_block rt_sha512_block
+//go:noescape
 func rt_sha512_block(h *uint64, p unsafe.Pointer, n int)
 
 func block(dig *Digest, p []byte) {

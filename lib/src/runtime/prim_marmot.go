@@ -87,9 +87,11 @@ func memclrNoHeapPointers(p unsafe.Pointer, n uintptr) {
 }
 
 //go:linkname rt_mem_equal rt_mem_equal
+//go:noescape
 func rt_mem_equal(a, b unsafe.Pointer, n int) int32
 
 //go:linkname rt_compare rt_compare
+//go:noescape
 func rt_compare(a unsafe.Pointer, an int, b unsafe.Pointer, bn int) int32
 
 // memequal compares n bytes with the C core's SIMD primitive, which LLVM
@@ -228,6 +230,7 @@ func atomicXadd32(p *uint32, d int32) uint32           { return atomic.Xadd(p, d
 func atomicXadd64(p *uint64, d int64) uint64           { return atomic.Xadd64(p, d) }
 
 //go:linkname rt_hash_bytes rt_hash_bytes
+//go:noescape
 func rt_hash_bytes(p unsafe.Pointer, n int, seed uint64) uint64
 
 // hashBytes hashes n bytes at p with the C core's SIMD wyhash.

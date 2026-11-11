@@ -38,9 +38,11 @@ func Sort[S ~[]E, E cmp.Ordered](x S) {
 }
 
 //go:linkname rt_sort_i64 rt_sort_i64
+//go:noescape
 func rt_sort_i64(a unsafe.Pointer, n int)
 
 //go:linkname rt_sort_u64 rt_sort_u64
+//go:noescape
 func rt_sort_u64(a unsafe.Pointer, n int)
 
 // SortFunc sorts the slice x in ascending order as determined by the cmp

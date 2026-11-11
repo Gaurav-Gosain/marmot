@@ -48,9 +48,11 @@ func EncodedLen(n int) int { return n * 2 }
 // Encode implements hexadecimal encoding.
 //
 //go:linkname rt_hex_encode rt_hex_encode
+//go:noescape
 func rt_hex_encode(dst *byte, src unsafe.Pointer, n int)
 
 //go:linkname rt_hex_decode rt_hex_decode
+//go:noescape
 func rt_hex_decode(dst *byte, src unsafe.Pointer, n int) int
 
 func Encode(dst, src []byte) int {

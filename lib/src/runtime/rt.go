@@ -67,6 +67,7 @@ func rt_gc_add_roots(start, end unsafe.Pointer)
 func rt_gc_set_finalizer(obj unsafe.Pointer, fn unsafe.Pointer)
 
 //go:linkname rt_gc_stats rt_gc_stats
+//go:noescape
 func rt_gc_stats(out *rtMemstats)
 
 //go:linkname rt_gc_set_percent rt_gc_set_percent
@@ -133,6 +134,7 @@ func rt_unlock(m *rtMutex)
 func rt_nanotime() int64
 
 //go:linkname rt_walltime rt_walltime
+//go:noescape
 func rt_walltime(sec *int64, nsec *int32)
 
 //go:linkname rt_sleep rt_sleep
@@ -147,9 +149,11 @@ func rt_timer_stop(timer unsafe.Pointer) int32
 // Raw I/O.
 
 //go:linkname rt_write rt_write
+//go:noescape
 func rt_write(fd int32, buf unsafe.Pointer, n uintptr) int
 
 //go:linkname rt_read rt_read
+//go:noescape
 func rt_read(fd int32, buf unsafe.Pointer, n uintptr) int
 
 //go:linkname rt_open rt_open
@@ -221,4 +225,5 @@ func funcPC(fv unsafe.Pointer) unsafe.Pointer {
 }
 
 //go:linkname rt_pcln rt_pcln
+//go:noescape
 func rt_pcln(table *unsafe.Pointer, n *int, base *uintptr) int32

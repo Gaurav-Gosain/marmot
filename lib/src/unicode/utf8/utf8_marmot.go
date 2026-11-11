@@ -15,9 +15,11 @@ import "unsafe"
 // marmot: RuneCount and Valid run on the C core's SIMD primitives.
 
 //go:linkname rt_utf8_count rt_utf8_count
+//go:noescape
 func rt_utf8_count(p unsafe.Pointer, n int) int
 
 //go:linkname rt_utf8_valid rt_utf8_valid
+//go:noescape
 func rt_utf8_valid(p unsafe.Pointer, n int) int32
 
 // The conditions RuneError==unicode.ReplacementChar and
