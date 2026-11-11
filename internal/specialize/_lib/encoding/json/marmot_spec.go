@@ -523,3 +523,19 @@ func MarmotAppendInt(b []byte, v int64) []byte {
 	}
 	return MarmotAppendUint(b, uint64(v))
 }
+
+// MarmotEncoderPlain reports whether Encode on enc writes exactly the
+// Marshal output plus a newline: no earlier write error, default options
+// (HTML escaping on), no indentation.
+func MarmotEncoderPlain(enc *Encoder) bool {
+	return enc.err == nil && enc.opts == DefaultOptionsV1() && len(enc.indentPrefix)+len(enc.indentValue) == 0
+}
+
+// MarmotEncoderWrite is the write at the end of Encode.
+func MarmotEncoderWrite(enc *Encoder, b []byte) error {
+	if _, err := enc.w.Write(b); err != nil {
+		enc.err = err
+		return err
+	}
+	return nil
+}

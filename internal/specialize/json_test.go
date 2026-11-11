@@ -174,15 +174,33 @@ func main() {
 	}
 	b, err = json.Marshal(big)
 	fmt.Fprintln(&out, len(b), err, string(b[:200]), string(b[len(b)-200:]))
+	enc := json.NewEncoder(&out)
+	for i := range items {
+		fmt.Fprintln(&out, enc.Encode(items[i]))
+	}
+	fmt.Fprintln(&out, enc.Encode(Item{Price: math.NaN()}))
+	enc.SetEscapeHTML(false)
+	fmt.Fprintln(&out, enc.Encode(items[2]))
+	enc.SetEscapeHTML(true)
+	enc.SetIndent(">", "  ")
+	fmt.Fprintln(&out, enc.Encode(items[1]))
+	enc.SetIndent("", "")
+	fmt.Fprintln(&out, enc.Encode(omits[2]))
+	bad := json.NewEncoder(failWriter{})
+	fmt.Fprintln(&out, bad.Encode(items[0]), bad.Encode(items[1]))
 	os.Stdout.WriteString(out.String())
 }
+
+type failWriter struct{}
+
+func (failWriter) Write(p []byte) (int, error) { return 0, fmt.Errorf("write failed after %d", len(p)) }
 `
 
 func TestJSONDifferential(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds programs with the go tool")
 	}
-	diffTest(t, jsonProgram, 30)
+	diffTest(t, jsonProgram, 34)
 }
 
 // jsonDecodeProgram unmarshals many inputs, valid and not, into values that

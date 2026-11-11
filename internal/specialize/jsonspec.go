@@ -394,6 +394,10 @@ func rewriteJSON(g *gen, f *ast.File) {
 		if !ok {
 			return true
 		}
+		if g.on["jsonenc"] && len(call.Args) == 1 && !call.Ellipsis.IsValid() && isMethod(g.info, call, "encoding/json", "Encoder", "Encode") {
+			g.jsonEncode(call)
+			return true
+		}
 		fn := calleeFunc(g.info, call)
 		if fn == nil || fn.Pkg().Path() != "encoding/json" || !jsonFuncs[fn.Name()] || call.Ellipsis.IsValid() {
 			return true
@@ -833,4 +837,86 @@ func (g *gen) jsonUnmarshal(call *ast.CallExpr) {
 	}
 	g.usePkg("encoding/json", "json")
 	g.replaceCall(call, name, []ast.Expr{call.Args[0], call.Args[1]})
+}
+
+// isMethod reports whether call is a direct call of method name on
+// pointer type *pkg.typ.
+func isMethod(info *types.Info, call *ast.CallExpr, pkg, typ, name string) bool {
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	s, ok := info.Selections[sel]
+	if !ok || s.Kind() != types.MethodVal {
+		return false
+	}
+	fn, ok := s.Obj().(*types.Func)
+	if !ok || fn.Pkg() == nil || fn.Pkg().Path() != pkg || fn.Name() != name {
+		return false
+	}
+	recv := fn.Type().(*types.Signature).Recv()
+	if recv == nil {
+		return false
+	}
+	pt, ok := recv.Type().(*types.Pointer)
+	if !ok {
+		return false
+	}
+	n, ok := pt.Elem().(*types.Named)
+	return ok && n.Obj().Name() == typ && len(s.Index()) == 1
+}
+
+// jsonEncode specializes enc.Encode(x) like json.Marshal, for encoders in
+// their default state; any other state takes the general path.
+func (g *gen) jsonEncode(call *ast.CallExpr) {
+	t := g.info.Types[call.Args[0]].Type
+	if t == nil {
+		return
+	}
+	t = types.Default(t)
+	if _, isIface := t.Underlying().(*types.Interface); isIface {
+		return
+	}
+	if _, isTP := t.(*types.TypeParam); isTP {
+		return
+	}
+	tsrc := g.typeExpr(t)
+	if tsrc == "" {
+		return
+	}
+	if g.json == nil {
+		g.json = &jsonEnc{g: g}
+	}
+	enc, ok := g.json.encoder(t)
+	if !ok {
+		return
+	}
+	sel := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	// The receiver must be addressable or a pointer already: Encode has a
+	// pointer receiver, so x.Encode on an addressable Encoder value means
+	// (&x).Encode; only plain pointer receivers are handled.
+	if _, ok := g.info.Types[sel.X].Type.(*types.Pointer); !ok {
+		return
+	}
+	name := g.newName("json")
+	g.decls = append(g.decls, fmt.Sprintf(`func %s(e *json.Encoder, v %s) error {
+	if !json.MarmotEncoderPlain(e) {
+		return e.Encode(v)
+	}
+	p := json.MarmotGetBuf()
+	b, ok := %s(*p, &v, 0)
+	if !ok {
+		json.MarmotDropBuf(p, b)
+		return e.Encode(v)
+	}
+	b = append(b, '\n')
+	err := json.MarmotEncoderWrite(e, b)
+	json.MarmotDropBuf(p, b)
+	return err
+}
+`, name, tsrc, enc))
+	g.usePkg("encoding/json", "json")
+	g.usePkg("strconv", "strconv")
+	g.usePkg("slices", "slices")
+	g.replaceCall(call, name, []ast.Expr{sel.X, call.Args[0]})
 }
