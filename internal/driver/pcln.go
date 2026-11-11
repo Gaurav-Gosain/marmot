@@ -22,7 +22,7 @@ func (b *build) wantPcln() bool {
 
 // pclnV3 turns on version 3 tables (inlined frames) for dev builds and
 // -release -trace=full, once the runtime reads them (rtgo).
-const pclnV3 = false
+const pclnV3 = true
 
 // pclnArgs are the table builder's arguments before the inputs.
 // MARMOT_PCLN_VERSION overrides the version.
