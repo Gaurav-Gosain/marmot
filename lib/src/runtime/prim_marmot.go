@@ -77,18 +77,27 @@ func memclrNoHeapPointers(p unsafe.Pointer, n uintptr) {
 	}
 }
 
+//go:linkname rt_mem_equal rt_mem_equal
+func rt_mem_equal(a, b unsafe.Pointer, n int) int32
+
+//go:linkname rt_compare rt_compare
+func rt_compare(a unsafe.Pointer, an int, b unsafe.Pointer, bn int) int32
+
+// memequal compares n bytes with the C core's SIMD primitive, which LLVM
+// inlines from rtcore.bc.
 func memequal(a, b unsafe.Pointer, n uintptr) bool {
 	if a == b || n == 0 {
 		return true
 	}
-	return libc_memcmp(a, b, n) == 0
+	return rt_mem_equal(a, b, int(n)) != 0
 }
 
+// memcmp returns the sign of the bytewise comparison of n bytes.
 func memcmp(a, b unsafe.Pointer, n uintptr) int {
 	if n == 0 {
 		return 0
 	}
-	return int(libc_memcmp(a, b, n))
+	return int(rt_compare(a, int(n), b, int(n)))
 }
 
 func writeErr(p unsafe.Pointer, n uintptr) {

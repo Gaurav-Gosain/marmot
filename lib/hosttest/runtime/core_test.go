@@ -551,3 +551,18 @@ func boxString(p *string) any {
 	e.typ, e.data = tString, unsafe.Pointer(p)
 	return v
 }
+
+func TestSizeClassUp(t *testing.T) {
+	for n := uintptr(1); n <= maxSmallSize; n++ {
+		want := uintptr(0)
+		for _, c := range classToSize[1:] {
+			if uintptr(c) >= n {
+				want = uintptr(c)
+				break
+			}
+		}
+		if got := sizeClassUp(n); got != want {
+			t.Fatalf("sizeClassUp(%d) = %d, want %d", n, got, want)
+		}
+	}
+}
