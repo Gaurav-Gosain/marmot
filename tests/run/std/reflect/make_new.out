@@ -1,0 +1,6 @@
+{3 4} *main.P
+2 5 [a ]
+map[1:one] 1
+5 true 0
+main.P 2
+*int []int

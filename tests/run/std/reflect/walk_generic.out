@@ -1,0 +1,28 @@
+Name:
+ root
+Leaves:
+  N:
+   1
+  S:
+   a
+  N:
+   2
+  S:
+   b
+Children:
+ key c
+  Name:
+   child
+  Leaves:
+  Children:
+  Ptr:
+   nil
+  Any:
+   nil
+Ptr:
+ N:
+  9
+ S:
+  p
+Any:
+ 42

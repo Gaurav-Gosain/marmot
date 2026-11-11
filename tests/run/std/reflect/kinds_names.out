@@ -1,0 +1,23 @@
+int int int true
+int8 int8 int8 true
+uint uint uint true
+float64 float64 float64 true
+float32 float32 float32 true
+complex128 complex128 complex128 true
+string string string true
+bool bool bool true
+[]int slice  true
+[2]int array  true
+map[string]int map  true
+*main.S ptr  true
+main.S struct S true
+main.MyInt int MyInt true
+func() func  true
+chan int chan  true
+int32 int32 int32 true
+uintptr uintptr uintptr true
+struct {} struct  true
+*int ptr  true
+[0]int array  true
+interface main MyInt
+true
