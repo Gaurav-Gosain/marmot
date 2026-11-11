@@ -1,0 +1,6 @@
+interface conversion: interface {} is int, not string
+interface conversion: int is not main.I: missing method M
+interface conversion: interface {} is nil, not int
+interface conversion: interface is nil, not main.I
+interface conversion: interface {} is main.T, not *main.T
+interface conversion: main.T is not main.I: missing method M

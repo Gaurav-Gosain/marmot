@@ -1,0 +1,2 @@
+start
+panic: runtime error: comparing uncomparable type []int
