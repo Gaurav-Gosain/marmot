@@ -71,8 +71,8 @@ const (
 //
 // The alphabets the SIMD primitives implement.
 const (
-	encodeStd = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-	encodeURL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	marmotEncodeStd = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	marmotEncodeURL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 )
 
 //go:linkname rt_base64_encode rt_base64_encode
@@ -89,9 +89,9 @@ func NewEncoding(encoder string) *Encoding {
 	e := new(Encoding)
 	e.padChar = StdPadding
 	switch encoder {
-	case encodeStd:
+	case marmotEncodeStd:
 		e.simd = 1
-	case encodeURL:
+	case marmotEncodeURL:
 		e.simd = 2
 	}
 	copy(e.encode[:], encoder)

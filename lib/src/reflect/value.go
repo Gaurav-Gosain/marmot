@@ -1266,7 +1266,7 @@ func sliceOfElem(elem *rtabi.Type) *rtabi.Type {
 	case stringType:
 		return rtabi.TypeOf([]string(nil))
 	}
-	return nil
+	return SliceOf(toType(elem)).common()
 }
 
 // String returns the string v's underlying value, as a string. For other
