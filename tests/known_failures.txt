@@ -1,0 +1,3 @@
+# Tests that are expected to fail until the compiler catches up.
+# One test per line, path relative to tests/ without .go, for example: run/core/map_basic
+# The conform runner exits 0 when every failure is listed here. Remove lines as tests start passing.
