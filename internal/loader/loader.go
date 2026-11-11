@@ -74,7 +74,8 @@ func Load(cfg Config) (*Program, error) {
 	pcfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedImports |
 			packages.NeedDeps | packages.NeedSyntax | packages.NeedTypes |
-			packages.NeedTypesInfo | packages.NeedTypesSizes | packages.NeedModule,
+			packages.NeedTypesInfo | packages.NeedTypesSizes | packages.NeedModule |
+			packages.NeedEmbedFiles | packages.NeedEmbedPatterns,
 		Dir:   cfg.Dir,
 		Env:   env,
 		Tests: cfg.Tests,
@@ -100,10 +101,34 @@ func Load(cfg Config) (*Program, error) {
 	} else {
 		patterns = append(patterns, "runtime")
 	}
+	filePatterns := len(cfg.Patterns) > 0 && strings.HasSuffix(cfg.Patterns[0], ".go")
 	t0 := time.Now()
 	pkgs, err := packages.Load(pcfg, patterns...)
 	if err != nil {
 		return nil, err
+	}
+	// //go:embed: give the embed variables initializers and load again.
+	var embedAll []*packages.Package
+	packages.Visit(pkgs, nil, func(p *packages.Package) { embedAll = append(embedAll, p) })
+	over, helpers, err := embedOverlays(embedAll)
+	if err != nil {
+		return nil, err
+	}
+	if over != nil {
+		if pcfg.Overlay == nil {
+			pcfg.Overlay = map[string][]byte{}
+		}
+		for k, v := range over {
+			pcfg.Overlay[k] = v
+		}
+		for _, h := range helpers {
+			if filePatterns && filepath.Dir(h) == filepath.Dir(patterns[0]) {
+				patterns = append(patterns, h)
+			}
+		}
+		if pkgs, err = packages.Load(pcfg, patterns...); err != nil {
+			return nil, err
+		}
 	}
 	if cfg.Log != nil {
 		cfg.Log("go list + type check: %v", time.Since(t0).Round(time.Millisecond))
