@@ -1,0 +1,41 @@
+0 "Th"
+-1 "e"
+1 "at"
+0 " quick brown fox jump"
+-1 "s"
+1 "ed"
+0 " over "
+-1 "the"
+1 "a"
+0 " lazy dog"
+-1 "."
+1 "!"
+Th[31me[0m[32mat[0m quick brown fox jump[31ms[0m[32med[0m over [31mthe[0m[32ma[0m lazy dog[31m.[0m[32m![0m
+=2	-1	+at	=21	-1	+ed	=6	-3	+a	=9	-1	+! 8
+That quick brown fox jumped over a lazy dog! [true true true]
+@@ -1,11 +1,12 @@
+ Th
+-e
++at
+  quick b
+@@ -22,18 +22,17 @@
+ jump
+-s
++ed
+  over 
+-the
++a
+  laz
+@@ -40,5 +40,5 @@
+  dog
+-.
++!
+
+5
+[12 90 a z 345678]
+<span>a</span><del style="background:#ffe6e6;">&lt;</del><ins style="background:#e6ffe6;">&gt;</ins><span>b</span><ins style="background:#e6ffe6;">&amp;c</ins>
+[{Equal a
+} {Delete b
+} {Insert x
+} {Equal c
+}]

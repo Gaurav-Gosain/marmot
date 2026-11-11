@@ -1,0 +1,30 @@
+<nil> TOML éxample true 150 255 [lit multi
+line] [[1 2] [3 4 5]]
+alpha {10.0.0.1 8080 [a b]}
+beta {10.0.0.2 8081 []}
+15 true false 0
+<nil>
+title = "TOML éxample"
+debug = true
+ratio = 150.0
+matrix = [[1, 2], [3, 4, 5]]
+
+[servers]
+  [servers.alpha]
+    host = "10.0.0.1"
+    port = 8080
+    tags = ["a", "b"]
+  [servers.beta]
+    host = "10.0.0.2"
+    port = 8081
+    tags = []
+
+[limits]
+  max = 255
+  Names = ["lit", "multi\nline"]
+<nil> 1 [1 2.5] map[d:1979-05-27 07:32:00 +0000 UTC]
+"a = " -> toml: line 0 (last key "a"): unexpected EOF; expected value
+"a = 1\na = 2" -> toml: line 2 (last key "a"): Key 'a' has already been defined.
+"[x\n" -> toml: line 2: expected '.' or ']' to end table name, but got '\n' instead
+"a = 'unterminated" -> toml: line 0 (last key "a"): unexpected EOF; expected "'"
+"= 3" -> toml: line 1: unexpected '=': key name appears blank

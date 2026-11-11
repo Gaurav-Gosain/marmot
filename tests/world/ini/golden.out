@@ -1,0 +1,39 @@
+<nil>
+[DEFAULT server server.tls empty list]
+demo true
+localhost 8080 1.5 [/a /b /c] "quoted line one
+line two
+true /etc/${app_name}.pem
+[host port timeout paths motd multi] false 7
+6 host
+<nil> demo false  0
+; comment
+app_name = demo
+debug    = true
+
+[server]
+host    = localhost
+port    = 8080
+timeout = 1.5
+paths   = /a,/b ,/c
+# not a comment" ; trailing
+motd    = "quoted
+multi   = """line one
+line two"""
+
+[server.tls]
+enabled = yes
+cert    = /etc/${app_name}.pem
+
+[empty]
+
+[list]
+key[] = b
+
+[nosuch]
+x = 7
+
+[new]
+k = v
+unclosed section: [unclosed
+

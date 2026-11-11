@@ -1,0 +1,12 @@
+"" "" 0
+"a" "" 1
+"" "abc" 3
+"kitten" "sitting" 3
+"flaw" "lawn" 2
+"saturday" "sunday" 3
+"héllo" "hello" 1
+"日本語" "日本" 1
+"abcdefghijklmnopqrstuvwxyz" "zyxwvutsrqponmlkjihgfedcba" 26
+"same" "same" 0
+"a😀b" "ab" 1
+276 150

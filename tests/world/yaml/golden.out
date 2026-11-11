@@ -1,0 +1,38 @@
+<nil> 42 2 {apple 3 [fruit red] 0.5} {kiwi 12 [] 1.25} multi
+line
+
+[quoted key source]
+<nil>
+id: 42
+items:
+    - name: apple
+      qty: 3
+      tags:
+        - fruit
+        - red
+      price: 0.5
+    - name: kiwi
+      qty: 12
+      price: 1.25
+meta:
+    quoted key: single
+    source: web
+note: |
+    multi
+    line
+<nil> map[base:map[x:1] copy:map[x:1]]
+<nil> 1 4
+"a: [1, 2" -> yaml: line 1: did not find expected ',' or ']'
+"a: b: c" -> yaml: mapping values are not allowed in this context
+"\tx: 1" -> yaml: found character that cannot start any token
+"- a\nb: 1" -> yaml: line 1: did not find expected '-' indicator
+"a: 1\na: 2" -> yaml: unmarshal errors:
+  line 2: mapping key "a" already defined at line 1
+int 1
+float64 1.5
+bool true
+<nil> <nil>
+string str
+int 31
+time.Time 2001-12-14 00:00:00 +0000 UTC
+<nil> <nil>

@@ -1,0 +1,28 @@
+"*.go"                 "main.go"      true <nil>
+"*.go"                 "dir/main.go"  false <nil>
+"**/*.go"              "a/b/c.go"     true <nil>
+"**/*.go"              "c.go"         true <nil>
+"a/**/b"               "a/b"          true <nil>
+"a/**/b"               "a/x/y/b"      true <nil>
+"{a,b}/*.txt"          "b/x.txt"      true <nil>
+"[a-c]?[!d]"           "bxe"          true <nil>
+"[a-c]?[!d]"           "bxd"          false <nil>
+"a/*/c"                "a/b/c"        true <nil>
+"a/*/c"                "a/b/d/c"      false <nil>
+"\\*"                  "*"            true <nil>
+"**"                   ""             true <nil>
+""                     ""             true <nil>
+"file[0-9].{txt,log}"  "file7.log"    true <nil>
+"日本*"                  "日本語"          true <nil>
+"a?c"                  "a/c"          false <nil>
+"{a,b{c,d}}x"          "bdx"          true <nil>
+syntax error in pattern true
+true false
+**/*.go [top.go a/x.go a/b/y.go a/b/c/z.go d/.hidden/q.go] <nil>
+a/** [a a/b a/b/c a/b/c/w.txt a/b/c/z.go a/b/y.go a/x.go] <nil>
+a/*/*.go [a/b/y.go] <nil>
+{a,d}/**/*.go [a/x.go a/b/y.go a/b/c/z.go d/.hidden/q.go] <nil>
+*.txt [] <nil>
+a/b/c/* [a/b/c/w.txt a/b/c/z.go] <nil>
+5
+true a/b */c/**/d

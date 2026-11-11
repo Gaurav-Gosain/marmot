@@ -1,0 +1,13 @@
+"" "" true zero length string
+"a" "2g" true <nil>
+"abc" "ZiCa" true <nil>
+"Hello World!" "2NEpo7TZRRrLZSi2U" true <nil>
+"\x00\x00hello" "11Cn8eVZg" true <nil>
+"\x00" "1" true <nil>
+"\xff\xff\xff\xff" "7YXq9G" true <nil>
+"0OIl" [] invalid base58 digit ('0')
+"abc!" [] invalid base58 digit ('!')
+"1111" [0 0 0 0] <nil>
+" " [] invalid base58 digit (' ')
+3cnUF5 35
+1365 true

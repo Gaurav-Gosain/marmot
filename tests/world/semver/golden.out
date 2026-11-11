@@ -1,0 +1,27 @@
+0.9.10 0 9 10   0.9.10
+1.0.0-alpha 1 0 0 alpha  1.0.0-alpha
+1.0.0-alpha.1 1 0 0 alpha.1  1.0.0-alpha.1
+1.0.0-alpha.beta 1 0 0 alpha.beta  1.0.0-alpha.beta
+1.0.0-rc.1+build5 1 0 0 rc.1 build5 1.0.0-rc.1+build5
+1.2.3-beta.1 1 2 3 beta.1  v1.2.3-beta.1
+1.2.3 1 2 3   1.2.3
+1.2.3+meta 1 2 3  meta 1.2.3+meta
+1.10.0 1 10 0   1.10.0
+2.0.0 2 0 0   2.0.0
+1.2.3 1.3.0 2.0.0
+>=1.2.0, <2.0.0 [1.2.2 1.2.3 1.2.9 1.3.0]
+~1.2 [1.2.2 1.2.3 1.2.9]
+^1.2.3 [1.2.3 1.2.9 1.3.0]
+1.x [1.2.2 1.2.3 1.2.9 1.3.0]
+!=1.2.3 [1.2.2 1.2.9 1.3.0 2.0.0 1.0.1-rc.1]
+>1.0.0-0 [1.2.2 1.2.3 1.2.9 1.3.0 2.0.0 1.0.1-rc.1]
+1.2.3 || 2.0.0 [1.2.3 2.0.0]
+=1.2.3 [1.2.3]
+* [1.2.2 1.2.3 1.2.9 1.3.0 2.0.0]
+"" Invalid Semantic Version | Version string empty
+"1" <nil> | Invalid Semantic Version
+"1.2.3.4" Invalid Semantic Version | Invalid characters in version
+"a.b.c" Invalid Semantic Version | Invalid characters in version
+"1.2.3-" Invalid Semantic Version | <nil>
+"01.2.3" <nil> | Version segment starts with 0
+-1 true false

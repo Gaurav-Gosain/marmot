@@ -1,0 +1,15 @@
+9073926b-929f-31c2-abc9-fad77ae3e8eb cfbff0d1-9375-5685-968c-48ce8b15ae17 VERSION_3 VERSION_5 RFC4122
+true <nil> urn:uuid:6ba7b810-9dad-11d1-80b4-00c04fd430c8 1806153744
+00000000-0000-0000-0000-000000000000 invalid UUID length: 0
+00000000-0000-0000-0000-000000000000 invalid UUID length: 3
+6ba7b810-9dad-11d1-80b4-00c04fd430c8 <nil>
+6ba7b810-9dad-11d1-80b4-00c04fd430c8 <nil>
+6ba7b810-9dad-11d1-80b4-00c04fd430c8 <nil>
+6ba7b810-9dad-11d1-80b4-00c04fd43000 invalid UUID format
+00000000-0000-0000-0000-000000000000 true ffffffff-ffff-ffff-ffff-ffffffffffff
+9073926b-929f-31c2-abc9-fad77ae3e8eb <nil> true
+VERSION_7 36
+true VERSION_4
+9073926b-929f-31c2-abc9-fad77ae3e8eb
+<nil> true
+00000000-0000-0000-0000-000000000001

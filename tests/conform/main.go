@@ -229,8 +229,37 @@ func discover(testsDir, dir string, filter *regexp.Regexp) []string {
 			return nil
 		})
 	}
+	// world tier: tests/world/NAME is a module directory with main.go and golden.* files.
+	if ents, err := os.ReadDir(filepath.Join(testsDir, "world")); err == nil {
+		for _, e := range ents {
+			if !e.IsDir() {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(testsDir, "world", e.Name(), "main.go")); err != nil {
+				continue
+			}
+			rel := "world/" + e.Name()
+			if dir != "" && !inDirs(rel, dir) && !inDirs(rel+"/x", dir) {
+				continue
+			}
+			if filter != nil && !filter.MatchString(rel) {
+				continue
+			}
+			out = append(out, rel)
+		}
+	}
 	sort.Strings(out)
 	return out
+}
+
+// goldenBase returns the path prefix of the golden files and the build target for a test.
+// Single file tests keep NAME.out next to NAME.go. World tests keep golden.out in the module dir.
+func goldenBase(testsDir, name string) (golden string, srcDir string, target string) {
+	if strings.HasPrefix(name, "world/") {
+		d := filepath.Join(testsDir, name)
+		return filepath.Join(d, "golden"), d, "."
+	}
+	return filepath.Join(testsDir, name), testsDir, filepath.Join(testsDir, name+".go")
 }
 
 func loadKnown(path string) map[string]bool {
@@ -338,15 +367,15 @@ func runOne(root, testsDir, work, marmot, name string, cfg config) result {
 	r := result{Name: display, Dir: filepath.ToSlash(filepath.Dir(name)), Status: "fail"}
 	defer func() { r.Seconds = time.Since(start).Seconds() }()
 
-	src := filepath.Join(testsDir, name+".go")
-	wantOut, err := os.ReadFile(filepath.Join(testsDir, name+".out"))
+	gbase, srcDir, src := goldenBase(testsDir, name)
+	wantOut, err := os.ReadFile(gbase + ".out")
 	if err != nil {
-		r.Reason, r.Detail = "no golden", "missing "+name+".out (run go run ./tests/conform -update)"
+		r.Reason, r.Detail = "no golden", "missing "+gbase+".out (run go run ./tests/conform -update)"
 		return r
 	}
-	wantErr, _ := os.ReadFile(filepath.Join(testsDir, name+".err"))
+	wantErr, _ := os.ReadFile(gbase + ".err")
 	wantExit := 0
-	if b, err := os.ReadFile(filepath.Join(testsDir, name+".exit")); err == nil {
+	if b, err := os.ReadFile(gbase + ".exit"); err == nil {
 		fmt.Sscanf(strings.TrimSpace(string(b)), "%d", &wantExit)
 	}
 
@@ -365,7 +394,7 @@ func runOne(root, testsDir, work, marmot, name string, cfg config) result {
 		args = append(args, "-O", cfg.o)
 	}
 	args = append(args, src)
-	bo, err := execute(*flBuildTO, root, append([]string{"MARMOT_ROOT=" + root}, cfg.env...), marmot, args...)
+	bo, err := execute(*flBuildTO, buildDir(root, srcDir, name), append([]string{"MARMOT_ROOT=" + root}, cfg.env...), marmot, args...)
 	if err != nil {
 		r.Reason, r.Detail = "compile error", err.Error()
 		return r
@@ -436,7 +465,7 @@ func update(root, testsDir, work string, tests []string) {
 }
 
 func updateOne(testsDir, work, name string) error {
-	src := filepath.Join(testsDir, name+".go")
+	gbase, srcDir, src := goldenBase(testsDir, name)
 	tdir := filepath.Join(work, "ref_"+strings.ReplaceAll(name, "/", "_"))
 	os.RemoveAll(tdir)
 	if err := os.MkdirAll(tdir, 0o755); err != nil {
@@ -444,7 +473,11 @@ func updateOne(testsDir, work, name string) error {
 	}
 	defer os.RemoveAll(tdir)
 	exe := filepath.Join(tdir, "ref")
-	bo, err := execute(*flBuildTO, testsDir, nil, "go", "build", "-o", exe, src)
+	var refEnv []string
+	if strings.HasPrefix(name, "world/") {
+		refEnv = []string{"GOFLAGS=-mod=vendor"}
+	}
+	bo, err := execute(*flBuildTO, srcDir, refEnv, "go", "build", "-o", exe, src)
 	if err != nil {
 		return err
 	}
@@ -458,7 +491,7 @@ func updateOne(testsDir, work, name string) error {
 	if ro.timedOut {
 		return fmt.Errorf("stock go run timed out")
 	}
-	base := filepath.Join(testsDir, name)
+	base := gbase
 	write := func(ext, content string) error {
 		if content == "" {
 			err := os.Remove(base + ext)
@@ -672,4 +705,13 @@ func inDirs(rel, dirs string) bool {
 		}
 	}
 	return false
+}
+
+// buildDir is the working directory for a compile: the module directory for world tests,
+// the compiler tree otherwise.
+func buildDir(root, srcDir, name string) string {
+	if strings.HasPrefix(name, "world/") {
+		return srcDir
+	}
+	return root
 }
