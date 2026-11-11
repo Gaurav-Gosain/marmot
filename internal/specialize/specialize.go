@@ -39,7 +39,7 @@ type Input struct {
 const GenFile = "zz_marmot_spec.go"
 
 // Features are the specializations, each behind its own switch.
-var Features = []string{"fmt", "jsonenc", "jsondec", "sort", "regexp"}
+var Features = []string{"fmt", "jsonenc", "jsondec", "sort", "regexp", "mapkey"}
 
 // releaseDefault lists the features on by default in release builds. A
 // feature joins it only after the full conformance matrix and a fuzz round
@@ -164,12 +164,14 @@ func RewriteWith(pkgs []*packages.Package, on map[string]bool) (*Result, error) 
 		}
 		g := newGen(p)
 		g.on = on
+		g.allPkgs = pkgs
 		for _, f := range p.Syntax {
 			before := g.sites
 			rewriteFmt(g, f)
 			rewriteJSON(g, f)
 			rewriteSort(g, f)
 			rewriteRegexp(g, f)
+			rewriteMapKey(g, f)
 			if g.sites > before {
 				g.blankUnusedImports(f)
 			}
@@ -290,20 +292,22 @@ func (f importerFunc) Import(path string) (*types.Package, error) { return f(pat
 
 // gen collects the generated declarations for one package.
 type gen struct {
-	pkg     *packages.Package
-	info    *types.Info
-	sites   int
-	n       int
-	imports map[string]string // path -> local name in the generated file
-	decls   []string
-	undos   []func()
-	tokens  map[string]string // short package name used in decls -> import path
-	json    *jsonEnc
-	jdec    *jsonDec
-	on      map[string]bool // enabled features
-	sortT   *sortTemplates
-	named   map[string]string // import name -> path, for code moved from user files
-	raw     []string          // declarations not subject to usePkg rewriting
+	pkg          *packages.Package
+	info         *types.Info
+	sites        int
+	n            int
+	imports      map[string]string // path -> local name in the generated file
+	decls        []string
+	undos        []func()
+	tokens       map[string]string // short package name used in decls -> import path
+	json         *jsonEnc
+	jdec         *jsonDec
+	on           map[string]bool // enabled features
+	sortT        *sortTemplates
+	named        map[string]string // import name -> path, for code moved from user files
+	raw          []string          // declarations not subject to usePkg rewriting
+	allPkgs      []*packages.Package
+	needMapBytes bool
 }
 
 func newGen(p *packages.Package) *gen {
@@ -519,6 +523,9 @@ func (g *gen) source() string {
 	for _, d := range g.raw {
 		b.WriteString(d)
 		b.WriteString("\n")
+	}
+	if g.needMapBytes {
+		b.WriteString("//go:linkname marmot_mapassign_faststr_bytes runtime.mapassign_faststr_bytes\nfunc marmot_mapassign_faststr_bytes(t, m unsafe.Pointer, b []byte) unsafe.Pointer\n")
 	}
 	return b.String()
 }
