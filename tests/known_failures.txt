@@ -20,3 +20,5 @@ run/std/template/pipelines_funcs
 run/opt/fma_fusion_gc  # gc fuses x*y+z on arm64, marmot does not (spec allows both)
 run/opt/panic_in_loop@Oz  # recovered panic then nil deref panic is not recoverable at -Oz
 run/opt/fma_cases  # NaN sign bit differs for z-x*y and -(x*y)+z (marmot negates the NaN operand before fusing)
+run/std/runtime/goroutines_gc  # runtime.Caller unsupported (no pc to file:line table yet)
+run/std/log/basic  # runtime.Caller unsupported, log.Lshortfile prints ???:0
