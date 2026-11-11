@@ -1,0 +1,8 @@
+map index 44
+append [7 8 2]
+multi 13 2 13
+args 100 1 100
+slice literal [100 1 100]
+receive between 102
+assertion between 104
+string index 120
