@@ -248,14 +248,18 @@ func (m *moduleGen) analyzeStaticInit(pkg *ssa.Package) *staticInit {
 		img.leaf = &v
 		s.skip[st.st] = true
 	}
-	s.removeDeadInit(pkg, blocks)
+	if optDeadInit {
+		s.removeDeadInit(pkg, blocks)
+	}
 	// Address computations used only by skipped stores are skipped too.
 	for _, b := range blocks {
 		for i := len(b.Instrs) - 1; i >= 0; i-- {
 			instr := b.Instrs[i]
 			switch x := instr.(type) {
 			case *ssa.IndexAddr, *ssa.FieldAddr:
-				if allSkipped(s.skip, *x.(ssa.Value).Referrers()) {
+				// Never one that can panic (index out of range, nil base):
+				// skipping it would drop the panic (spec audit, deadinit_*).
+				if allSkipped(s.skip, *x.(ssa.Value).Referrers()) && !s.m.p.instrMayPanic(instr, map[ssa.Value]bool{}) {
 					s.skip[instr] = true
 				}
 			case *ssa.Alloc:
@@ -571,6 +575,34 @@ func (m *moduleGen) constCV(c constant.Value, t types.Type) (cv, bool) {
 
 var _ = token.NoPos
 
+// deadInitSafe reports whether instr cannot panic, so dropping it with an
+// unused initializer cannot change behavior.
+func deadInitSafe(p *Program, instr ssa.Instruction) bool {
+	switch x := instr.(type) {
+	case *ssa.MapUpdate:
+		// The map is a candidate make (checked by the caller); only the key
+		// can panic, by being an interface holding an uncomparable value.
+		return !containsInterface(x.Key.Type(), 0)
+	case *ssa.MakeSlice:
+		// Constant sizes still panic when too large (make([]byte, 1<<62)
+		// compiles); accept only sizes far below any allocation limit.
+		lc, ok1 := x.Len.(*ssa.Const)
+		cc, ok2 := x.Cap.(*ssa.Const)
+		if !ok1 || !ok2 || lc.Value == nil || cc.Value == nil {
+			return false
+		}
+		n, exact := constant.Int64Val(cc.Value)
+		elem := x.Type().Underlying().(*types.Slice).Elem()
+		size := types.SizesFor("gc", "amd64").Sizeof(elem)
+		return exact && n >= 0 && n <= 1<<24 && size <= 1<<12
+	case *ssa.Store:
+		// Stores into the dead variable or a literal object (both non-nil
+		// addresses); the address computation is judged on its own.
+		return true
+	}
+	return !p.instrMayPanic(instr, map[ssa.Value]bool{})
+}
+
 // removeDeadInit drops the initialization of package variables that the
 // program never reads (like the gc linker's dead map initializers), along
 // with the side effect free computations that only feed them.
@@ -598,6 +630,13 @@ func (s *staticInit) removeDeadInit(pkg *ssa.Package, blocks []*ssa.BasicBlock) 
 				ok = x.Op != token.ARROW
 			case *ssa.BinOp:
 				ok = x.Op != token.QUO && x.Op != token.REM
+			}
+			// Dropping an initializer must not drop a panic (spec audit,
+			// tests/run/audit/deadinit_*): only computations the may-panic
+			// rules clear go, plus map updates with keys that cannot be
+			// uncomparable and slices made with constant sizes.
+			if ok && !deadInitSafe(p, instr) {
+				ok = false
 			}
 			if ok {
 				cand[instr] = true
