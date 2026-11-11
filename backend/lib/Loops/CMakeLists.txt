@@ -25,6 +25,7 @@ add_library(MarmotLoops STATIC
   MaskedJam.cpp
   Parallelize.cpp
   Register.cpp
+  Tile.cpp
 )
 target_include_directories(MarmotLoops PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if(NOT MARMOT_LOOPS_STANDALONE)

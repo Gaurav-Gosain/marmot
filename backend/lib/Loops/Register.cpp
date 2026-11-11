@@ -30,6 +30,7 @@ void registerLLVMPasses(PassBuilder &pb, const Options &opts) {
       return;
     addInterchange(fpm, opts);
     addMaskedJam(fpm, opts);
+    addTile(fpm, opts);
     addJam(fpm, opts);
   });
 }
