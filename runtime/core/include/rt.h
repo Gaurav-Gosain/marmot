@@ -258,6 +258,14 @@ intptr_t rt_base64_decode(uint8_t *dst, const void *src, intptr_t n, int32_t url
 uint64_t rt_hash_bytes(const void *p, intptr_t n, uint64_t seed);
 uint64_t rt_hash_u64(uint64_t x, uint64_t seed);
 
+// Sort a slice of numbers ascending in place, with Go's order: for floats
+// NaNs first (sort.Float64s, slices.Sort); the order of -0 and +0 is not
+// specified (they compare equal). Radix sort for large inputs, parallel
+// above 1M elements.
+void rt_sort_i64(int64_t *a, intptr_t n);
+void rt_sort_u64(uint64_t *a, intptr_t n);
+void rt_sort_f64(double *a, intptr_t n);
+
 // SHA-256 and SHA-512 block functions with the Go block() contract: update
 // state h with the n/64 (n/128) complete blocks at p, in order. ARMv8 SHA2
 // instructions on arm64, SHA-NI on x86-64 when present, portable C else.
