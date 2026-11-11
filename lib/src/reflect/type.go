@@ -361,6 +361,12 @@ func structField(st *rtabi.StructType, i int) StructField {
 }
 
 func isExportedName(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	if c := s[0]; c < utf8.RuneSelf {
+		return 'A' <= c && c <= 'Z'
+	}
 	r, _ := utf8.DecodeRuneInString(s)
 	return unicode.IsUpper(r)
 }

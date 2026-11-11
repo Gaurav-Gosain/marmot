@@ -1,0 +1,13 @@
+-sha256block_386.s
+-sha256block_amd64.go
+-sha256block_amd64.s
+-sha256block_arm64.go
+-sha256block_arm64.s
+-sha256block_asm.go
+-sha256block_loong64.s
+-sha256block_noasm.go
+-sha256block_ppc64x.go
+-sha256block_ppc64x.s
+-sha256block_riscv64.s
+-sha256block_s390x.go
+-sha256block_s390x.s

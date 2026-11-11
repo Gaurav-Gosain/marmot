@@ -1,0 +1,12 @@
+-sha512block_amd64.go
+-sha512block_amd64.s
+-sha512block_arm64.go
+-sha512block_arm64.s
+-sha512block_asm.go
+-sha512block_loong64.s
+-sha512block_noasm.go
+-sha512block_ppc64x.go
+-sha512block_ppc64x.s
+-sha512block_riscv64.s
+-sha512block_s390x.go
+-sha512block_s390x.s
