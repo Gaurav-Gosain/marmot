@@ -1,0 +1,5 @@
+b defer 3
+b defer 1
+a recovered from b defer
+main continues
+rec second

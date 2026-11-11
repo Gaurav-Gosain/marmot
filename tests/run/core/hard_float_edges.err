@@ -1,0 +1,10 @@
+false true false false
+4 3 5
+false true true
++Inf false true
+true
+2.5 2.5 2.5
++Inf -Inf true
+0 true true
+true false
+false 0.30000000000000004
