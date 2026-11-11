@@ -169,6 +169,10 @@ var deferRecordType = types.NewStruct([]*types.Var{
 
 func (f *funcGen) goStmt(v *ssa.Go) {
 	fv, _ := f.callClosure(&v.Call, false)
+	if f.goOps() {
+		f.emit("go.go %s", fv)
+		return
+	}
 	f.rtcall("newproc", fv)
 }
 

@@ -472,6 +472,10 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 		f.ret(v)
 	case *ssa.Panic:
 		x := f.value(v.X)
+		if f.goOps() {
+			f.emit("go.panic %s", x)
+			break
+		}
 		f.rtcall("gopanic", x)
 		f.emit("llvm.unreachable")
 	case *ssa.Alloc:
