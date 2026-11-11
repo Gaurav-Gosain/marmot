@@ -500,6 +500,12 @@ static void mark_parallel(void) {
   atomic_store(&wdone, 0);
   if (nh > 0) helpers_start(PHASE_MARK, nh);
   drain_parallel(&workers[0]);
+  // The collector may return without wdone when it finished alone; helpers
+  // that joined after that must see marking as done, or they wait for work
+  // forever while helpers_wait waits for them.
+  atomic_store(&wdone, 1);
+  atomic_fetch_add(&wwork_gen, 1);
+  os_futex_wake(&wwork_gen, true);
   if (nh > 0) helpers_wait();
 }
 

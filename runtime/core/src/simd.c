@@ -572,3 +572,108 @@ RT_API intptr_t rt_hex_decode(uint8_t *dst, const void *src, intptr_t n) {
   }
   return n;
 }
+
+// ---- base64 ----
+
+INLINE uint8_t b64_char(uint8_t v, int url) {
+  // A-Z a-z 0-9 then +/ or -_, computed (no table: keeps this inlinable).
+  if (v < 26) return (uint8_t)('A' + v);
+  if (v < 52) return (uint8_t)('a' + v - 26);
+  if (v < 62) return (uint8_t)('0' + v - 52);
+  return v == 62 ? (url ? '-' : '+') : (url ? '_' : '/');
+}
+
+INLINE int b64_val(uint8_t c, int url) {
+  if (c >= 'A' && c <= 'Z') return c - 'A';
+  if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+  if (c >= '0' && c <= '9') return c - '0' + 52;
+  if (c == (url ? '-' : '+')) return 62;
+  if (c == (url ? '_' : '/')) return 63;
+  return -1;
+}
+
+#if RT_NEON
+// Map 6-bit values to characters arithmetically: add an offset chosen by range.
+INLINE uint8x16_t b64_enc_vec(uint8x16_t v, int url) {
+  uint8x16_t off = vdupq_n_u8('A');
+  off = vbslq_u8(vcgeq_u8(v, vdupq_n_u8(26)), vdupq_n_u8((uint8_t)('a' - 26)), off);
+  off = vbslq_u8(vcgeq_u8(v, vdupq_n_u8(52)), vdupq_n_u8((uint8_t)('0' - 52)), off);
+  off = vbslq_u8(vceqq_u8(v, vdupq_n_u8(62)), vdupq_n_u8((uint8_t)((url ? '-' : '+') - 62)), off);
+  off = vbslq_u8(vceqq_u8(v, vdupq_n_u8(63)), vdupq_n_u8((uint8_t)((url ? '_' : '/') - 63)), off);
+  return vaddq_u8(v, off);
+}
+
+// Characters to 6-bit values; 0xFF lanes for invalid characters.
+INLINE uint8x16_t b64_dec_vec(uint8x16_t c, int url) {
+  uint8x16_t r = vdupq_n_u8(0xFF);
+  uint8x16_t up = vsubq_u8(c, vdupq_n_u8('A'));
+  r = vbslq_u8(vcltq_u8(up, vdupq_n_u8(26)), up, r);
+  uint8x16_t lo = vsubq_u8(c, vdupq_n_u8('a'));
+  r = vbslq_u8(vcltq_u8(lo, vdupq_n_u8(26)), vaddq_u8(lo, vdupq_n_u8(26)), r);
+  uint8x16_t dg = vsubq_u8(c, vdupq_n_u8('0'));
+  r = vbslq_u8(vcltq_u8(dg, vdupq_n_u8(10)), vaddq_u8(dg, vdupq_n_u8(52)), r);
+  r = vbslq_u8(vceqq_u8(c, vdupq_n_u8(url ? '-' : '+')), vdupq_n_u8(62), r);
+  r = vbslq_u8(vceqq_u8(c, vdupq_n_u8(url ? '_' : '/')), vdupq_n_u8(63), r);
+  return r;
+}
+#endif
+
+// Encode the complete 3-byte groups of src[0:n] (n/3*3 bytes) into dst
+// (4 characters per group, no padding; the caller encodes the tail).
+// Returns the number of source bytes consumed. url selects - and _.
+RT_API intptr_t rt_base64_encode(uint8_t *dst, const void *src, intptr_t n, int32_t url) {
+  bp s = src;
+  intptr_t i = 0, o = 0;
+#if RT_NEON
+  for (; i + 48 <= n; i += 48, o += 64) {
+    uint8x16x3_t in = vld3q_u8(s + i);
+    uint8x16_t a = in.val[0], b = in.val[1], c = in.val[2];
+    uint8x16x4_t out;
+    out.val[0] = b64_enc_vec(vshrq_n_u8(a, 2), url);
+    out.val[1] = b64_enc_vec(vorrq_u8(vshlq_n_u8(vandq_u8(a, vdupq_n_u8(3)), 4), vshrq_n_u8(b, 4)), url);
+    out.val[2] = b64_enc_vec(vorrq_u8(vshlq_n_u8(vandq_u8(b, vdupq_n_u8(15)), 2), vshrq_n_u8(c, 6)), url);
+    out.val[3] = b64_enc_vec(vandq_u8(c, vdupq_n_u8(63)), url);
+    vst4q_u8(dst + o, out);
+  }
+#endif
+  for (; i + 3 <= n; i += 3, o += 4) {
+    uint32_t v = (uint32_t)s[i] << 16 | (uint32_t)s[i + 1] << 8 | s[i + 2];
+    dst[o] = b64_char((uint8_t)(v >> 18), url);
+    dst[o + 1] = b64_char((uint8_t)((v >> 12) & 63), url);
+    dst[o + 2] = b64_char((uint8_t)((v >> 6) & 63), url);
+    dst[o + 3] = b64_char((uint8_t)(v & 63), url);
+  }
+  return i;
+}
+
+// Decode complete 4-character groups of src[0:n] into dst (3 bytes each),
+// stopping before the first group that holds a character outside the
+// alphabet (padding, newline, error). Returns the number of source
+// characters consumed (a multiple of 4); the caller decodes the rest.
+RT_API intptr_t rt_base64_decode(uint8_t *dst, const void *src, intptr_t n, int32_t url) {
+  bp s = src;
+  intptr_t i = 0, o = 0;
+#if RT_NEON
+  for (; i + 64 <= n; i += 64, o += 48) {
+    uint8x16x4_t in = vld4q_u8(s + i);
+    uint8x16_t v0 = b64_dec_vec(in.val[0], url), v1 = b64_dec_vec(in.val[1], url);
+    uint8x16_t v2 = b64_dec_vec(in.val[2], url), v3 = b64_dec_vec(in.val[3], url);
+    if (vmaxvq_u8(vorrq_u8(vorrq_u8(v0, v1), vorrq_u8(v2, v3))) == 0xFF) break;
+    uint8x16x3_t out;
+    out.val[0] = vorrq_u8(vshlq_n_u8(v0, 2), vshrq_n_u8(v1, 4));
+    out.val[1] = vorrq_u8(vshlq_n_u8(v1, 4), vshrq_n_u8(v2, 2));
+    out.val[2] = vorrq_u8(vshlq_n_u8(v2, 6), v3);
+    vst3q_u8(dst + o, out);
+  }
+#endif
+  for (; i + 4 <= n; i += 4, o += 3) {
+    int a = b64_val(s[i], url), b = b64_val(s[i + 1], url), c = b64_val(s[i + 2], url),
+        d = b64_val(s[i + 3], url);
+    if ((a | b | c | d) < 0) break;
+    uint32_t v = (uint32_t)a << 18 | (uint32_t)b << 12 | (uint32_t)c << 6 | (uint32_t)d;
+    dst[o] = (uint8_t)(v >> 16);
+    dst[o + 1] = (uint8_t)(v >> 8);
+    dst[o + 2] = (uint8_t)v;
+  }
+  return i;
+}

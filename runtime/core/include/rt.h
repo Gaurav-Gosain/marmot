@@ -247,6 +247,13 @@ void rt_hex_encode(uint8_t *dst, const void *src, intptr_t n);
 // Decode src[0:2n] into dst[0:n] [hex.Decode]: returns n, or -(i+1) for the
 // first invalid character at src index i.
 intptr_t rt_hex_decode(uint8_t *dst, const void *src, intptr_t n);
+// base64 cores [encoding/base64], url != 0 for the URL alphabet. Encode the
+// n/3*3 leading bytes (no padding) and return how many source bytes were
+// used; decode leading 4-character groups up to the first character outside
+// the alphabet (padding, newline, error) and return how many characters were
+// used. The caller handles tails, padding and error reporting.
+intptr_t rt_base64_encode(uint8_t *dst, const void *src, intptr_t n, int32_t url);
+intptr_t rt_base64_decode(uint8_t *dst, const void *src, intptr_t n, int32_t url);
 // wyhash (final v4): fast, good distribution, not a cryptographic hash.
 uint64_t rt_hash_bytes(const void *p, intptr_t n, uint64_t seed);
 uint64_t rt_hash_u64(uint64_t x, uint64_t seed);

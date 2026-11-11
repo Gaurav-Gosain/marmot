@@ -146,6 +146,29 @@ void marmot_main(void) {
       CHECK(rt_hex_decode(back, hx, n) == -(bad + 1));
     }
   }
+  // base64 against a scalar reference.
+  for (int iter = 0; iter < 5000; iter++) {
+    int url = iter & 1;
+    const char *alpha = url ? "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+                            : "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    uint8_t raw[300], enc[400], dec[300];
+    intptr_t n = (intptr_t)(rnd() % 300);
+    for (intptr_t i = 0; i < n; i++) raw[i] = (uint8_t)rnd();
+    intptr_t used = rt_base64_encode(enc, raw, n, url);
+    CHECK(used == n / 3 * 3);
+    for (intptr_t g = 0; g < used / 3; g++) {
+      uint32_t v = (uint32_t)raw[3 * g] << 16 | (uint32_t)raw[3 * g + 1] << 8 | raw[3 * g + 2];
+      CHECK(enc[4 * g] == alpha[v >> 18] && enc[4 * g + 1] == alpha[(v >> 12) & 63] &&
+            enc[4 * g + 2] == alpha[(v >> 6) & 63] && enc[4 * g + 3] == alpha[v & 63]);
+    }
+    intptr_t chars = used / 3 * 4;
+    intptr_t bad = -1;
+    if (chars && iter % 3 == 0) { bad = (intptr_t)(rnd() % (uint64_t)chars); enc[bad] = (uint8_t)"=\n*. "[rnd() % 5]; }
+    intptr_t got = rt_base64_decode(dec, enc, chars, url);
+    intptr_t want = bad < 0 ? chars : bad / 4 * 4;
+    CHECK(got == want);
+    CHECK(memcmp(dec, raw, (size_t)(got / 4 * 3)) == 0);
+  }
   // Valid multibyte text.
   const char *txt = "h\xc3\xa9llo w\xc3\xb6rld \xe4\xb8\x96\xe7\x95\x8c \xf0\x9f\x98\x80 end";
   intptr_t tn = (intptr_t)strlen(txt);
