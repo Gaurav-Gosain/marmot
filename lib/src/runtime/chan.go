@@ -126,7 +126,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool) bool {
 
 	// Block until a receiver takes the value.
 	gp := getg()
-	mysg := acquireSudog()
+	mysg := acquireSudog(gp)
 	mysg.elem = ep
 	mysg.g = gp
 	mysg.isSelect = false
@@ -138,7 +138,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool) bool {
 	closed := !mysg.success
 	gp.param = nil
 	mysg.c = nil
-	releaseSudog(mysg)
+	releaseSudog(gp, mysg)
 	if closed {
 		if c.closed == 0 {
 			throw("chansend: spurious wakeup")
@@ -284,7 +284,7 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 	}
 
 	gp := getg()
-	mysg := acquireSudog()
+	mysg := acquireSudog(gp)
 	mysg.elem = ep
 	mysg.g = gp
 	mysg.isSelect = false
@@ -296,7 +296,7 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 	success := mysg.success
 	gp.param = nil
 	mysg.c = nil
-	releaseSudog(mysg)
+	releaseSudog(gp, mysg)
 	return true, success
 }
 
@@ -412,17 +412,22 @@ func (q *waitq) dequeueSudoG(sgp *sudog) {
 	}
 }
 
-func acquireSudog() *sudog {
+// acquireSudog returns a sudog for gp, from gp's free list when possible.
+func acquireSudog(gp *g) *sudog {
+	if s := gp.sudogcache; s != nil {
+		gp.sudogcache = s.next
+		s.next = nil
+		return s
+	}
 	return (*sudog)(mallocConservative(unsafe.Sizeof(sudog{})))
 }
 
-func releaseSudog(s *sudog) {
-	s.g = nil
-	s.elem = nil
-	s.c = nil
-	s.next = nil
-	s.prev = nil
-	s.waitlink = nil
+// releaseSudog clears s and puts it on gp's free list. gp is the goroutine
+// that acquired s; only it uses the list, so no lock is needed.
+func releaseSudog(gp *g, s *sudog) {
+	*s = sudog{}
+	s.next = gp.sudogcache
+	gp.sudogcache = s
 }
 
 // typedmemmove copies a value of type t from src to dst.

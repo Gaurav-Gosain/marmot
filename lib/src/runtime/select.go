@@ -205,7 +205,7 @@ func selectgo(cases *scase, ncases int, block bool) (chosen int, recvOK bool) {
 		casi := int(casei)
 		cas := cases.at(casi)
 		c := cas.c
-		sg := acquireSudog()
+		sg := acquireSudog(gp)
 		sg.g = gp
 		sg.isSelect = true
 		sg.elem = cas.elem
@@ -243,7 +243,7 @@ func selectgo(cases *scase, ncases int, block bool) (chosen int, recvOK bool) {
 		} else {
 			cas.c.recvq.dequeueSudoG(sg)
 		}
-		releaseSudog(sg)
+		releaseSudog(gp, sg)
 		sg = next
 	}
 	if winCase == nil {

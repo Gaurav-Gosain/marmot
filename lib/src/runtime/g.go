@@ -32,6 +32,8 @@ type g struct {
 	waiting *sudog
 	// selectDone is set to 1 by the first channel that wins a select.
 	selectDone uint32
+	// sudogcache is a free list of sudogs owned by this goroutine.
+	sudogcache *sudog
 }
 
 // sudog is a goroutine waiting on a channel.

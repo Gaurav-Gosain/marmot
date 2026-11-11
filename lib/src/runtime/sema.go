@@ -51,7 +51,7 @@ func semacquire1(addr *uint32, lifo bool) {
 		return
 	}
 	gp := getg()
-	s := acquireSudog()
+	s := acquireSudog(gp)
 	s.g = gp
 	s.elem = unsafe.Pointer(addr)
 	if lifo && root.head != nil {
@@ -69,7 +69,7 @@ func semacquire1(addr *uint32, lifo bool) {
 	}
 	gopark(parkunlock, unsafe.Pointer(&root.lock))
 	// semrelease handed the unit to this waiter.
-	releaseSudog(s)
+	releaseSudog(gp, s)
 }
 
 // semrelease1 increments *addr, or wakes one waiter on addr and gives it
@@ -128,8 +128,9 @@ func notifyListWait(l *notifyList, t uint32) {
 		unlock(&l.lock)
 		return
 	}
-	s := acquireSudog()
-	s.g = getg()
+	gp := getg()
+	s := acquireSudog(gp)
+	s.g = gp
 	s.ticket = t
 	if l.tail == nil {
 		l.head = s
@@ -138,7 +139,7 @@ func notifyListWait(l *notifyList, t uint32) {
 	}
 	l.tail = s
 	gopark(parkunlock, unsafe.Pointer(&l.lock))
-	releaseSudog(s)
+	releaseSudog(gp, s)
 }
 
 func notifyListNotifyAll(l *notifyList) {
