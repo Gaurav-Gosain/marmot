@@ -392,6 +392,24 @@ func poly16(buf []int16) {
 	}
 }
 
+// Scans (Rule D): block sums, offsets, block rescans, tail.
+//go:noinline
+func scanAdd(a []int64) {
+	for i := 1; i < len(a); i++ {
+		a[i] += a[i-1]
+	}
+}
+
+//go:noinline
+func scanXor(dst, src []uint32, seed uint32) uint32 {
+	r := seed
+	for i := range src {
+		r ^= src[i] * 2654435761
+		dst[i] = r
+	}
+	return r
+}
+
 func main() {
 	a := make([]int64, n)
 	fill(a, 42)
@@ -525,5 +543,23 @@ func main() {
 	p16 := make([]int16, 1<<20)
 	poly16(p16)
 	println("poly16", p16[65535], p16[65536], p16[1<<19], p16[1<<20-1])
+	scA := make([]int64, 1<<20+77)
+	for i := range scA {
+		scA[i] = int64(i%29) - 13
+	}
+	scanAdd(scA)
+	println("scanadd", scA[0], scA[65535], scA[1<<19+5], scA[len(scA)-1])
+	scB := scA[:5000]
+	for i := range scB {
+		scB[i] = int64(i % 7)
+	}
+	scanAdd(scB)
+	println("scanadd-small", scB[4999])
+	xs := make([]uint32, 1<<20+3)
+	xd := make([]uint32, len(xs))
+	for i := range xs {
+		xs[i] = uint32(i * 7)
+	}
+	println("scanxor", scanXor(xd, xs, 99), xd[0], xd[70000], xd[len(xd)-1])
 	println("transpose-overlap", sum(tb), tb[5*900+7], tb[699*900+949])
 }
