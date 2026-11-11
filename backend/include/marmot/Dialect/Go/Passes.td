@@ -53,4 +53,9 @@ def GoBCE : Pass<"go-bce", "::mlir::ModuleOp"> {
   }];
 }
 
+def GoDevirt : Pass<"go-devirt", "::mlir::ModuleOp"> {
+  let summary = "Devirtualize interface calls and fold type assertions on known itabs";
+  let dependentDialects = ["::mlir::LLVM::LLVMDialect"];
+}
+
 #endif

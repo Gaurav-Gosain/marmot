@@ -4,6 +4,7 @@ add_library(MarmotGoDialect STATIC
   Escape.cpp
   AggregateCopies.cpp
   BCE.cpp
+  Devirt.cpp
 )
 add_dependencies(MarmotGoDialect MarmotGoOpsIncGen MarmotGoPassesIncGen)
 target_link_libraries(MarmotGoDialect PUBLIC ${MARMOT_LLVM_LIBS})

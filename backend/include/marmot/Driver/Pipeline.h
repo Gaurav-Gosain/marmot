@@ -26,6 +26,7 @@ struct CompileOptions {
   bool timePhases = false;
   bool singleThreaded = false; // disable MLIR context threading (batch mode)
   bool initOptNone = true;     // compile package init functions with optnone
+  bool devirt = true;          // go-devirt at -O1 and up
   bool escape = true;          // go-escape at -O1 and up
   bool bce = true;             // go-bce at -O1 and up
   // Prepared runtime bitcode (see RuntimeBitcode.h), shared by all jobs.

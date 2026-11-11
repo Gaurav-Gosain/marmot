@@ -62,6 +62,8 @@ static cl::opt<bool> initOptNone(
     cl::desc("Do not optimize Go package init functions (they run once)"), cl::cat(cat));
 static cl::opt<bool> noEscape("no-escape", cl::desc("Disable the go-escape pass"),
                               cl::cat(cat));
+static cl::opt<bool> noDevirt("no-devirt", cl::desc("Disable the go-devirt pass"),
+                              cl::cat(cat));
 static cl::opt<bool> noBCE("no-bce", cl::desc("Disable the go-bce pass"), cl::cat(cat));
 static cl::opt<bool> verifyEach("verify-each",
                                 cl::desc("Verify IR after every pass"), cl::cat(cat));
@@ -119,6 +121,7 @@ int main(int argc, char **argv) {
   opts.initOptNone = initOptNone;
   opts.escape = !noEscape;
   opts.bce = !noBCE;
+  opts.devirt = !noDevirt;
   opts.timePhases = timePhases;
 
   marmot::RuntimeLib rt;
