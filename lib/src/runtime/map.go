@@ -15,8 +15,8 @@
 // the key up in the current table to see whether the entry still exists and
 // to get its current element.
 //
-// Maps with 4 or 8 byte plain memory keys and string keys use fast paths
-// for hashing and key comparison. Pure file.
+// Maps with 4, 8 or 16 byte plain memory keys and string keys use fast
+// paths for hashing and key comparison. Pure file.
 
 package runtime
 
@@ -35,6 +35,7 @@ const (
 	keyMem32   = 1
 	keyMem64   = 2
 	keyString  = 3
+	keyMem128  = 4 // 16 byte plain memory keys, slots 8 byte aligned
 
 	// maxZero is the size of the shared zero value returned by mapaccess1
 	// for missing keys.
@@ -102,6 +103,10 @@ func makemap(t *maptype, hint int) *hmap {
 	if kalign == 0 {
 		kalign = 1
 	}
+	if k.tflag&tflagRegularMemory != 0 && k.size == 16 {
+		// keyMem128 reads the key as two words.
+		kalign = max(kalign, 8)
+	}
 	m.elemOff = alignUp(k.size, ealign)
 	m.slotSize = alignUp(m.elemOff+e.size, max(kalign, ealign))
 	m.groupSize = 8 + groupSlots*m.slotSize
@@ -116,6 +121,8 @@ func makemap(t *maptype, hint int) *hmap {
 		m.keyKind = keyMem32
 	case k.tflag&tflagRegularMemory != 0 && k.size == 8:
 		m.keyKind = keyMem64
+	case k.tflag&tflagRegularMemory != 0 && k.size == 16:
+		m.keyKind = keyMem128
 	}
 	if hint > 0 {
 		m.resize(groupsForCount(uintptr(hint)))
@@ -270,6 +277,9 @@ func (m *hmap) hash(k unsafe.Pointer) uintptr {
 		return fmix64(uint64(*(*uint32)(k)) ^ uint64(m.seed))
 	case keyMem64:
 		return fmix64(*(*uint64)(k) ^ uint64(m.seed))
+	case keyMem128:
+		kk := (*[2]uint64)(k)
+		return hash128(kk[0], kk[1], m.seed)
 	case keyString:
 		ss := (*stringStruct)(k)
 		return hashBytes(ss.str, uintptr(ss.len), m.seed)
@@ -284,6 +294,8 @@ func (m *hmap) keyEqual(a, b unsafe.Pointer) bool {
 		return *(*uint32)(a) == *(*uint32)(b)
 	case keyMem64:
 		return *(*uint64)(a) == *(*uint64)(b)
+	case keyMem128:
+		return *(*[2]uint64)(a) == *(*[2]uint64)(b)
 	case keyString:
 		return *(*string)(a) == *(*string)(b)
 	}
@@ -325,6 +337,32 @@ func (m *hmap) find64(key uint64) unsafe.Pointer {
 			slot := unsafe.Add(grp, 8+firstSlot(b)*m.slotSize)
 			if *(*uint64)(slot) == key {
 				return unsafe.Add(slot, m.elemOff)
+			}
+		}
+		if matchEmpty(ctrl) != 0 {
+			return nil
+		}
+		g = (g + i) & m.mask
+	}
+}
+
+// hash128 hashes a 16 byte plain memory key given as two words.
+func hash128(k0, k1 uint64, seed uintptr) uintptr {
+	return fmix64((k0^uint64(seed))*0x9e3779b97f4a7c15 ^ k1)
+}
+
+// find128 is find for 16 byte plain memory keys.
+func (m *hmap) find128(k0, k1 uint64) unsafe.Pointer {
+	hash := hash128(k0, k1, m.seed)
+	h2 := hash & 0x7f
+	g := (hash >> 7) & m.mask
+	for i := uintptr(1); ; i++ {
+		grp := unsafe.Add(m.groups, g*m.groupSize)
+		ctrl := *(*uint64)(grp)
+		for b := matchH2(ctrl, h2); b != 0; b &= b - 1 {
+			slot := (*[2]uint64)(unsafe.Add(grp, 8+firstSlot(b)*m.slotSize))
+			if slot[0] == k0 && slot[1] == k1 {
+				return unsafe.Add(unsafe.Pointer(slot), m.elemOff)
 			}
 		}
 		if matchEmpty(ctrl) != 0 {
@@ -390,6 +428,9 @@ func (m *hmap) lookup(k unsafe.Pointer) unsafe.Pointer {
 	switch m.keyKind {
 	case keyMem64:
 		return m.find64(*(*uint64)(k))
+	case keyMem128:
+		kk := (*[2]uint64)(k)
+		return m.find128(kk[0], kk[1])
 	case keyMem32:
 		return m.find32(*(*uint32)(k))
 	case keyString:
@@ -453,6 +494,9 @@ func mapassign(t *maptype, m *hmap, key unsafe.Pointer) unsafe.Pointer {
 	switch m.keyKind {
 	case keyMem64:
 		return m.assign64(*(*uint64)(key))
+	case keyMem128:
+		kk := (*[2]uint64)(key)
+		return m.assign128(kk[0], kk[1])
 	case keyMem32:
 		return m.assign32(*(*uint32)(key))
 	case keyString:
@@ -563,6 +607,44 @@ func (m *hmap) assign64(key uint64) unsafe.Pointer {
 		}
 		if slot := m.insertAt(insGrp, insSlot, h2); slot != nil {
 			*(*uint64)(slot) = key
+			return unsafe.Add(slot, m.elemOff)
+		}
+		m.grow()
+	}
+}
+
+// assign128 is mapassign for 16 byte plain memory keys.
+func (m *hmap) assign128(k0, k1 uint64) unsafe.Pointer {
+	hash := hash128(k0, k1, m.seed)
+	h2 := hash & 0x7f
+	for {
+		if m.groups == nil {
+			m.resize(1)
+		}
+		g := (hash >> 7) & m.mask
+		var insGrp unsafe.Pointer
+		var insSlot uintptr
+		for i := uintptr(1); ; i++ {
+			grp := unsafe.Add(m.groups, g*m.groupSize)
+			ctrl := *(*uint64)(grp)
+			for b := matchH2(ctrl, h2); b != 0; b &= b - 1 {
+				slot := (*[2]uint64)(unsafe.Add(grp, 8+firstSlot(b)*m.slotSize))
+				if slot[0] == k0 && slot[1] == k1 {
+					return unsafe.Add(unsafe.Pointer(slot), m.elemOff)
+				}
+			}
+			if insGrp == nil {
+				if b := matchEmptyOrDeleted(ctrl); b != 0 {
+					insGrp, insSlot = grp, firstSlot(b)
+				}
+			}
+			if matchEmpty(ctrl) != 0 {
+				break
+			}
+			g = (g + i) & m.mask
+		}
+		if slot := m.insertAt(insGrp, insSlot, h2); slot != nil {
+			*(*[2]uint64)(slot) = [2]uint64{k0, k1}
 			return unsafe.Add(slot, m.elemOff)
 		}
 		m.grow()
@@ -894,6 +976,53 @@ func mapdelete_fast64(t *maptype, m *hmap, key uint64) {
 	mapdelete(t, m, unsafe.Pointer(&key))
 }
 
+// 16 byte plain memory keys (integer arrays and structs without padding),
+// passed as the first and second 8 bytes of the key in memory.
+
+func mapaccess1_fast128(t *maptype, m *hmap, k0, k1 uint64) unsafe.Pointer {
+	if m != nil && m.keyKind != keyMem128 {
+		key := [2]uint64{k0, k1}
+		return mapaccess1(t, m, unsafe.Pointer(&key))
+	}
+	if m != nil && m.count != 0 {
+		if e := m.find128(k0, k1); e != nil {
+			return e
+		}
+	}
+	return zeroFor(t.elem)
+}
+
+func mapaccess2_fast128(t *maptype, m *hmap, k0, k1 uint64) (unsafe.Pointer, bool) {
+	if m != nil && m.keyKind != keyMem128 {
+		key := [2]uint64{k0, k1}
+		return mapaccess2(t, m, unsafe.Pointer(&key))
+	}
+	if m != nil && m.count != 0 {
+		if e := m.find128(k0, k1); e != nil {
+			return e, true
+		}
+	}
+	return zeroFor(t.elem), false
+}
+
+func mapassign_fast128(t *maptype, m *hmap, k0, k1 uint64) unsafe.Pointer {
+	if m == nil {
+		panicnilmap()
+	}
+	if m.keyKind != keyMem128 {
+		// Not a two word key map (the compiler and makemap disagree on
+		// the key type): take the generic path.
+		key := [2]uint64{k0, k1}
+		return mapassign(t, m, unsafe.Pointer(&key))
+	}
+	return m.assign128(k0, k1)
+}
+
+func mapdelete_fast128(t *maptype, m *hmap, k0, k1 uint64) {
+	key := [2]uint64{k0, k1}
+	mapdelete(t, m, unsafe.Pointer(&key))
+}
+
 func mapaccess1_faststr(t *maptype, m *hmap, key string) unsafe.Pointer {
 	if m != nil && m.count != 0 {
 		if e := m.findstr(key); e != nil {
@@ -921,4 +1050,31 @@ func mapassign_faststr(t *maptype, m *hmap, key string) unsafe.Pointer {
 
 func mapdelete_faststr(t *maptype, m *hmap, key string) {
 	mapdelete(t, m, unsafe.Pointer(&key))
+}
+
+// Lookups of string keyed maps by a byte slice, without allocating the
+// key. The compiler and spec rewrites reach them by linkname (for example
+// m[strings.ToUpper(w)]++ built in a scratch buffer).
+
+// mapaccess_faststr_bytes returns the element slot of key string(b), or
+// nil if it is absent.
+func mapaccess_faststr_bytes(t *maptype, m *hmap, b []byte) unsafe.Pointer {
+	if m == nil || m.count == 0 {
+		return nil
+	}
+	return m.findstr(unsafe.String(unsafe.SliceData(b), len(b)))
+}
+
+// mapassign_faststr_bytes is m[string(b)] = v: it returns the element
+// slot and allocates the key string only when the key is new.
+func mapassign_faststr_bytes(t *maptype, m *hmap, b []byte) unsafe.Pointer {
+	if m == nil {
+		panicnilmap()
+	}
+	if m.count != 0 {
+		if e := m.findstr(unsafe.String(unsafe.SliceData(b), len(b))); e != nil {
+			return e
+		}
+	}
+	return m.assignstr(string(b))
 }

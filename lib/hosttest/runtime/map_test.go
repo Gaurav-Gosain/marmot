@@ -390,3 +390,62 @@ func TestGroupGCBits(t *testing.T) {
 		t.Errorf("bitmap not shared per map type")
 	}
 }
+
+// 16 byte plain keys: the fast128 entries and the generic entries must
+// agree on one map (hash, equality, growth, deletion, iteration).
+func TestMapFast128(t *testing.T) {
+	k16 := basicType(16, kindArray, false, tflagComparable|tflagRegularMemory)
+	mt := mapType(k16, tInt)
+	m := makemap(mt, 0)
+	if m.keyKind != keyMem128 {
+		t.Fatalf("keyKind %d", m.keyKind)
+	}
+	const n = 5000
+	for i := 0; i < n; i++ {
+		*(*int)(mapassign_fast128(mt, m, uint64(i), uint64(i*7))) = i
+	}
+	for i := 0; i < n; i += 2 {
+		k := [2]uint64{uint64(i), uint64(i * 7)}
+		mapdelete(mt, m, unsafe.Pointer(&k))
+	}
+	for i := 1; i < n; i += 4 {
+		mapdelete_fast128(mt, m, uint64(i), uint64(i*7))
+	}
+	if maplen(m) != n/4 {
+		t.Fatalf("len %d", maplen(m))
+	}
+	for i := 0; i < n; i++ {
+		want := i%4 == 3
+		e, ok := mapaccess2_fast128(mt, m, uint64(i), uint64(i*7))
+		k := [2]uint64{uint64(i), uint64(i * 7)}
+		e2, ok2 := mapaccess2(mt, m, unsafe.Pointer(&k))
+		if ok != want || ok2 != want || (ok && (*(*int)(e) != i || e != e2)) {
+			t.Fatalf("key %d: ok %v %v", i, ok, ok2)
+		}
+		if _, ok := mapaccess2_fast128(mt, m, uint64(i), uint64(i*7+1)); ok {
+			t.Fatalf("key %d: second word ignored", i)
+		}
+	}
+	if *(*int)(mapaccess1_fast128(mt, nil, 1, 2)) != 0 {
+		t.Fatal("nil map lookup")
+	}
+}
+
+func TestMapStrBytes(t *testing.T) {
+	mt := mapType(tString, tInt)
+	m := makemap(mt, 0)
+	if mapaccess_faststr_bytes(mt, m, []byte("a")) != nil {
+		t.Fatal("empty map hit")
+	}
+	buf := []byte("word")
+	for i := 0; i < 3; i++ {
+		*(*int)(mapassign_faststr_bytes(mt, m, buf))++
+	}
+	buf[0] = 'W' // the stored key must not alias buf
+	if e := mapaccess_faststr_bytes(mt, m, []byte("word")); e == nil || *(*int)(e) != 3 {
+		t.Fatal("count of word")
+	}
+	if maplen(m) != 1 || *(*int)(mapaccess1_faststr(mt, m, "word")) != 3 {
+		t.Fatal("string lookup")
+	}
+}
