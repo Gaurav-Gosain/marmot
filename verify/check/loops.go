@@ -74,6 +74,8 @@ type Pair struct {
 	A   ID     `json:"a"`
 	B   ID     `json:"b"`
 	Why string `json:"why"`
+	Dlo *Num   `json:"dlo"` // b.lo - a.lo when constant
+	Dhi *Num   `json:"dhi"` // b.hi - a.lo when constant
 }
 
 var redOps = map[string]bool{"add": true, "sub": true, "xor": true, "or": true, "and": true,
@@ -122,7 +124,11 @@ func CheckLoop(r LoopReport) (bad, unverified []string) {
 		covered[[2]ID{p.B, p.A}] = true
 		switch p.Why {
 		case "window":
-			if why := windowOK(a, b); strings.HasPrefix(why, "symbolic") {
+			if why := windowRel(a, b, p); why != "?" {
+				if why != "" {
+					bad = append(bad, fmt.Sprintf("pair %s/%s window: %s", p.A, p.B, why))
+				}
+			} else if why := windowOK(a, b); strings.HasPrefix(why, "symbolic") {
 				unverified = append(unverified, fmt.Sprintf("pair %s/%s window: %s", p.A, p.B, why))
 			} else if why != "" {
 				bad = append(bad, fmt.Sprintf("pair %s/%s window: %s", p.A, p.B, why))
@@ -157,6 +163,23 @@ func CheckLoop(r LoopReport) (bad, unverified []string) {
 		}
 	}
 	return bad, unverified
+}
+
+// windowRel: the window inequalities from offsets relative to a.lo (span of a, dlo and dhi
+// of the pair), for symbolic lo and hi. "?" when the report does not give them.
+//
+//	hi_a + size_a - lo_b = span_a + size_a - dlo
+//	hi_b + size_b - lo_a = dhi + size_b
+func windowRel(a, b Access, p Pair) string {
+	if a.ID == b.ID || a.Base != b.Base || a.Span == nil || a.Span.Sym || p.Dlo == nil || p.Dlo.Sym ||
+		p.Dhi == nil || p.Dhi.Sym || a.Coef.Sym || b.Coef.Sym || a.Coef.V != b.Coef.V || a.Coef.V == 0 {
+		return "?"
+	}
+	c := abs(a.Coef.V)
+	if a.Span.V+a.Size-p.Dlo.V > c || p.Dhi.V+b.Size > c {
+		return fmt.Sprintf("windows overlap (span %d, dlo %d, dhi %d, sizes %d %d, |coef| %d)", a.Span.V, p.Dlo.V, p.Dhi.V, a.Size, b.Size, c)
+	}
+	return ""
 }
 
 // windowOK: RuleP.windows_disjoint, hi_X + size_X - lo_Y <= |coef| and the converse.
