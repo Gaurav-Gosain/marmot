@@ -41,9 +41,11 @@ type funcGen struct {
 	regionFree        map[ssa.Instruction][]*regionPlan // free these regions after the instruction
 	frameCalls        map[ssa.Instruction]bool          // calls that allocate into the frame region
 	frameSlot         string                            // holds the frame region (nil until first use)         // heap Allocs and closures that live in the frame
-	appendElems       map[*ssa.Slice][]ssa.Value        // append(s, a, b): elements by varargs slice
-	skipInstr         map[ssa.Instruction]bool          // instructions folded into others
-	forceUnsafe       bool                              // the access goes through a locally punned pointer
+	reuseAppend       map[ssa.Instruction]bool          // appends whose old array can be freed on growth
+	reuseNow          bool
+	appendElems       map[*ssa.Slice][]ssa.Value // append(s, a, b): elements by varargs slice
+	skipInstr         map[ssa.Instruction]bool   // instructions folded into others
+	forceUnsafe       bool                       // the access goes through a locally punned pointer
 	implicitRunDefers bool
 	curArgs           []ssa.Value        // SSA arguments of a call being expanded as an intrinsic
 	volatile          map[ssa.Value]bool // stack slots that live across setjmp
@@ -165,6 +167,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 	f.stackOK = f.m.p.stackAllocs(fn)
 	f.findRegionCalls()
 	f.findFrameRegionCalls()
+	f.findReusableAppends()
 	if od := openDefersFor(fn); od != nil && os.Getenv("MARMOT_NO_OPENDEFER") == "" {
 		f.open = od
 		f.setupOpenDefers()

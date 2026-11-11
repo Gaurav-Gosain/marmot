@@ -371,6 +371,9 @@ func (f *funcGen) append(sv, tv ssa.Value) string {
 	f.b = &f.cold
 	f.b.WriteString("  " + growB + ":\n")
 	g := f.rtcall("growslice", f.typeDesc(et), p, l, c, newLen)
+	if f.reuseNow {
+		f.freeOldArray(p, c, et) // the old array is unreachable now
+	}
 	gp := f.extractRaw(g, tSlice, 0)
 	gc := f.extractRaw(g, tSlice, 2)
 	f.emit("llvm.br %s(%s, %s : !llvm.ptr, i64)", done, gp, gc)
@@ -405,6 +408,9 @@ func (f *funcGen) appendValues(sv ssa.Value, elems []ssa.Value) string {
 	f.b = &f.cold
 	f.b.WriteString("  " + growB + ":\n")
 	g := f.rtcall("growslice", f.typeDesc(et), p, l, c, newLen)
+	if f.reuseNow {
+		f.freeOldArray(p, c, et)
+	}
 	f.emit("llvm.br %s(%s, %s : !llvm.ptr, i64)", done, f.extractRaw(g, tSlice, 0), f.extractRaw(g, tSlice, 2))
 	f.b = saved
 	np, nc := f.newVal(), f.newVal()

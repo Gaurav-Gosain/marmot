@@ -214,7 +214,10 @@ func (f *funcGen) builtin(b *ssa.Builtin, args []ssa.Value, instr ssa.Instructio
 		f.print(b.Name() == "println", args)
 		return ""
 	case "append":
-		return f.append(args[0], args[1])
+		f.reuseNow = f.reuseAppend[instr]
+		r := f.append(args[0], args[1])
+		f.reuseNow = false
+		return r
 	case "copy":
 		dst := f.value(args[0])
 		src := f.value(args[1])
