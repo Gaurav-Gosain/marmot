@@ -280,7 +280,12 @@ func (g *gen) sortSlice(call *ast.CallExpr, stable bool) {
 // struct type whose Less method is the literal's body, with each captured
 // variable reached through a pointer field. It fails when the literal
 // cannot move to package level unchanged.
-func (g *gen) lessStruct(e ast.Expr) (ast.Expr, bool) {
+func (g *gen) lessStruct(e ast.Expr) (ast.Expr, bool) { return g.closureStruct(e, "Less") }
+
+// closureStruct turns a function literal into a value of a generated
+// struct type whose method (named method) is the literal's body, with each
+// captured variable reached through a pointer field.
+func (g *gen) closureStruct(e ast.Expr, method string) (ast.Expr, bool) {
 	lit, ok := ast.Unparen(e).(*ast.FuncLit)
 	if !ok {
 		return nil, false
@@ -354,7 +359,7 @@ func (g *gen) lessStruct(e ast.Expr) (ast.Expr, bool) {
 	}
 	var body, sig bytes.Buffer
 	err1 := printer.Fprint(&body, g.pkg.Fset, lit.Body)
-	err2 := printer.Fprint(&sig, g.pkg.Fset, &ast.FuncType{Params: lit.Type.Params})
+	err2 := printer.Fprint(&sig, g.pkg.Fset, &ast.FuncType{Params: lit.Type.Params, Results: lit.Type.Results})
 	for i, id := range idents {
 		id.Name = saved[i]
 	}
@@ -370,9 +375,9 @@ func (g *gen) lessStruct(e ast.Expr) (ast.Expr, bool) {
 		}
 	}
 	params := strings.TrimPrefix(sig.String(), "func")
-	tname := g.newName("less")
-	g.decls = append(g.decls, fmt.Sprintf("type %s struct {\n\t%s\n}\n\nfunc (marmot_l %s) Less%s bool %s\n",
-		tname, strings.Join(fields, "\n\t"), tname, params, body.String()))
+	tname := g.newName("closure")
+	g.decls = append(g.decls, fmt.Sprintf("type %s struct {\n\t%s\n}\n\nfunc (marmot_l %s) %s%s %s\n",
+		tname, strings.Join(fields, "\n\t"), tname, method, params, body.String()))
 	lt := &ast.CompositeLit{Type: ast.NewIdent(tname)}
 	for _, fv := range frees {
 		lt.Elts = append(lt.Elts, &ast.UnaryExpr{Op: token.AND, X: ast.NewIdent(fv.obj.Name())})
