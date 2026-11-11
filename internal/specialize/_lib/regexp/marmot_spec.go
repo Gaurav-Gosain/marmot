@@ -9,6 +9,7 @@ package regexp
 
 import (
 	"regexp/syntax"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -49,4 +50,21 @@ func MarmotEmpty(s string, pos int, op syntax.EmptyOp) bool {
 type MarmotJob struct {
 	PC  int
 	Pos int
+}
+
+var marmotJobs = sync.Pool{New: func() any { s := make([]MarmotJob, 0, 256); return &s }}
+
+// MarmotGetJobs returns an empty job stack for a matcher call.
+func MarmotGetJobs() *[]MarmotJob {
+	p := marmotJobs.Get().(*[]MarmotJob)
+	*p = (*p)[:0]
+	return p
+}
+
+// MarmotPutJobs returns the job stack j (grown from p) to the pool.
+func MarmotPutJobs(p *[]MarmotJob, j []MarmotJob) {
+	if cap(j) <= 1<<16 {
+		*p = j[:0]
+		marmotJobs.Put(p)
+	}
 }

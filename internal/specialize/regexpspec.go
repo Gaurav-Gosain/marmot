@@ -102,7 +102,8 @@ func (g *gen) regexpMatcher(expr string) (string, string, bool) {
 	w("\tfor i := range capa {")
 	w("\t\tcapa[i] = -1")
 	w("\t}")
-	w("\tjobs := make([]regexp.MarmotJob, 0, 32)")
+	w("\tjp := regexp.MarmotGetJobs()")
+	w("\tjobs := *jp")
 	w("\tbudget := 4096 + %d*(end-pos+1)", 16*len(prog.Inst))
 	w("\tsteps := 0")
 	w("\tvar (")
@@ -116,6 +117,7 @@ func (g *gen) regexpMatcher(expr string) (string, string, bool) {
 	w("\tfor ; start <= end && width != 0; start += width {")
 	if prefix != "" && cond&syntax.EmptyBeginText == 0 {
 		w("\t\tif adv := strings.Index(s[start:], %s); adv < 0 {", strconv.Quote(prefix))
+		w("\t\t\tregexp.MarmotPutJobs(jp, jobs)")
 		w("\t\t\treturn nil, true")
 		w("\t\t} else {")
 		w("\t\t\tstart += adv")
@@ -157,6 +159,7 @@ func (g *gen) regexpMatcher(expr string) (string, string, bool) {
 		}
 		w("\tL%d:", pc)
 		w("\t\tif steps++; steps > budget {")
+		w("\t\t\tregexp.MarmotPutJobs(jp, jobs)")
 		w("\t\t\treturn nil, false")
 		w("\t\t}")
 		switch in.Op {
@@ -183,6 +186,7 @@ func (g *gen) regexpMatcher(expr string) (string, string, bool) {
 			w("\t\tif ncap > 1 {")
 			w("\t\t\tcapa[1] = p")
 			w("\t\t}")
+			w("\t\tregexp.MarmotPutJobs(jp, jobs)")
 			w("\t\treturn append(dstCap, capa[:ncap]...), true")
 		case syntax.InstRune1:
 			r0 := in.Rune[0]
@@ -266,6 +270,7 @@ func (g *gen) regexpMatcher(expr string) (string, string, bool) {
 		w("\t\tbreak // anchored at the start of the text")
 	}
 	w("\t}")
+	w("\tregexp.MarmotPutJobs(jp, jobs)")
 	w("\treturn nil, true")
 	w("}")
 	g.usePkg("unicode/utf8", "utf8")
