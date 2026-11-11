@@ -21,7 +21,8 @@ struct rt_timer {
   rt_timer *next;   // fire queue
   int32_t idx;      // heap index, -1 when not in the heap
   uint8_t state;
-  uint8_t sleep;    // rt_sleep timer: arg is the goroutine to ready
+  uint8_t inl;      // internal timer: fn runs inside timers_check
+  _Atomic uint8_t running;  // internal timer: fn executing
 };
 
 _Atomic int64_t timer_next_when = INT64_MAX;
@@ -132,8 +133,9 @@ int64_t timers_check(int64_t now) {
   while (tlen > 0 && theap[0]->when <= now) {
     rt_timer *t = theap[0];
     heap_remove(t);
-    if (t->sleep) {
+    if (t->inl) {
       t->state = T_DONE;
+      atomic_store(&t->running, 1);
       t->next = ready;
       ready = t;
     } else {
@@ -157,7 +159,8 @@ int64_t timers_check(int64_t now) {
     rt_timer *t = ready;
     ready = t->next;
     t->next = NULL;
-    rt_ready((rt_g *)t->arg);
+    t->fn(t->arg);
+    atomic_store(&t->running, 0);
   }
   if (wake) rt_ready(timer_g);
   return next;
@@ -206,13 +209,45 @@ static void sleep_park(void *gp) {
   timer_add(g->sleeptimer);
 }
 
+static void sleep_wake(void *gp) { rt_ready((rt_g *)gp); }
+
+rt_timer *itimer_new(void) {
+  rt_timer *t = persistent_alloc(sizeof(rt_timer), 8);
+  t->inl = 1;
+  t->idx = -1;
+  return t;
+}
+
+void itimer_start(rt_timer *t, int64_t when, void (*fn)(void *), void *arg) {
+  t->when = when;
+  t->fn = fn;
+  t->arg = arg;
+  timer_add(t);
+}
+
+// Returns once the timer can no longer fire: if its function is running on
+// another thread, waits for it to finish.
+bool itimer_stop(rt_timer *t) {
+  bool r = false;
+  spin_lock(&tlock);
+  if (t->state == T_PENDING) {
+    heap_remove(t);
+    update_next();
+    t->state = T_STOPPED;
+    r = true;
+  }
+  spin_unlock(&tlock);
+  while (atomic_load(&t->running)) os_yield();
+  return r;
+}
+
 RT_API void rt_sleep(int64_t ns) {
   if (ns <= 0) return;
   rt_m *m = getm();
   rt_g *g = m->curg;
   if (!g->sleeptimer) {
-    g->sleeptimer = persistent_alloc(sizeof(rt_timer), 8);
-    g->sleeptimer->sleep = 1;
+    g->sleeptimer = itimer_new();
+    g->sleeptimer->fn = sleep_wake;
     g->sleeptimer->arg = g;
   }
   g->sleeptimer->when = os_nanotime() + ns;

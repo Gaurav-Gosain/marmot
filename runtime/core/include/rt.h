@@ -134,6 +134,19 @@ intptr_t rt_write(int32_t fd, const void *buf, uintptr_t n);
 intptr_t rt_read(int32_t fd, void *buf, uintptr_t n);
 intptr_t rt_open(const char *path, int32_t flags, uint32_t mode);
 intptr_t rt_close(int32_t fd);
+// I/O poller (kqueue, epoll). The caller makes fd non-blocking, registers it
+// once, and after a read or write fails with EAGAIN calls rt_poll_wait.
+// Readiness is edge triggered: retry the call until EAGAIN before waiting
+// again. Waiting parks only the goroutine, never the thread.
+void *rt_poll_open(int32_t fd);  // NULL on failure
+// Wake waiters with "closed" and unregister; call before close(fd).
+void rt_poll_close(void *pd);
+// Park until fd is ready for mode ('r' or 'w'), the monotonic deadline
+// passes (deadline 0: none), or rt_poll_evict. Returns 0 ready, 1 timed
+// out, 2 evicted.
+int32_t rt_poll_wait(void *pd, int32_t mode, int64_t deadline);
+// Wake all waiters on pd with 2 (closing); later waits return 2 at once.
+void rt_poll_evict(void *pd);
 // Generic escape hatch for the syscall package. num is the host's system call
 // number (on darwin this goes through libc syscall(); prefer the dedicated
 // wrappers). Returns -errno on failure.

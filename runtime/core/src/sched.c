@@ -405,6 +405,7 @@ static void checkdead(void) {
   if (atomic_load(&timer_next_when) != INT64_MAX) return;
   if (sched.runqsize > 0) return;
   if (signal_waiting()) return;  // a signal may still arrive
+  if (atomic_load(&netpoll_waiters) > 0) return;  // I/O may still arrive
   if (sched.main_exited && atomic_load(&sched.ngoroutines) == 0)
     rt_throw("no goroutines (main called runtime.Goexit) - deadlock!");
   rt_throw("all goroutines are asleep - deadlock!");
@@ -510,6 +511,7 @@ static void handoffp(rt_p *p) {
 }
 
 void sched_timer_added(int64_t when) {
+  if (atomic_load(&netpoll_blocked)) netpoll_break();
   spin_lock(&sched.lock);
   rt_m *tm = sched.timer_m;
   if (tm && when < sched.timer_until) {
@@ -751,6 +753,9 @@ top:
       spin_unlock(&sched.lock);
       if (g) goto found;
     }
+    if (atomic_load(&netpoll_waiters) > 0 && !atomic_load(&netpoll_blocked) && netpoll(0) > 0 &&
+        (g = runqget(p)) != NULL)
+      goto found;
     int32_t np = atomic_load(&sched.nprocs);
     if (np > 1 && (m->spinning ||
                    2 * atomic_load(&sched.nmspinning) < np - atomic_load(&sched.npidle))) {
@@ -802,6 +807,27 @@ top:
   }
 stop:
   for (;;) {
+    // Goroutines wait for I/O and nobody polls: block in the poller, with a
+    // timeout for the next timer.
+    int32_t zero = 0;
+    if (atomic_load(&netpoll_waiters) > 0 &&
+        atomic_compare_exchange_strong(&netpoll_blocked, &zero, 1)) {
+      int64_t next = atomic_load(&timer_next_when);
+      int64_t now = os_nanotime();
+      int64_t timeout = next == INT64_MAX ? -1 : (next > now ? next - now : 0);
+      if (atomic_load(&netpoll_waiters) > 0 && !atomic_load(&sched.gcwaiting)) netpoll(timeout);
+      atomic_store(&netpoll_blocked, 0);
+      if (atomic_load(&timer_next_when) <= os_nanotime()) timers_check(os_nanotime());
+      spin_lock(&sched.lock);
+      rt_p *p = NULL;
+      if (!atomic_load(&sched.gcwaiting)) p = pidleget();
+      spin_unlock(&sched.lock);
+      if (p) {
+        acquirep(m, p);
+        goto top;
+      }
+      continue;
+    }
     spin_lock(&sched.lock);
     int64_t timeout = -1;
     int64_t next = atomic_load(&timer_next_when);
@@ -1105,6 +1131,9 @@ static void sysmon(void *arg) {
     if (atomic_load(&sched.gcwaiting)) continue;
     int64_t now = os_nanotime();
     int got = retake(now);
+    if (atomic_load(&netpoll_waiters) > 0 && !atomic_load(&netpoll_blocked) &&
+        now - atomic_load(&netpoll_last) > 10000000 && netpoll(0) > 0)
+      got++;
     // Timers overdue while no M is waiting for them.
     int64_t next = atomic_load(&timer_next_when);
     if (next != INT64_MAX && next <= now && sched.timer_m == NULL) {

@@ -320,6 +320,13 @@ bool signal_deliver(void);
 bool signal_waiting(void);
 void sysmon_start(void);
 void sysmon_kick(void);
+// netpoll.c
+bool netpoll_inited(void);
+int32_t netpoll(int64_t ns);  // ns < 0 blocks; returns events handled
+void netpoll_break(void);
+extern _Atomic int32_t netpoll_waiters;
+extern _Atomic int32_t netpoll_blocked;
+extern _Atomic int64_t netpoll_last;
 
 // ---- Timers (timer.c) ----
 
@@ -329,6 +336,11 @@ int64_t timers_check(int64_t now);
 int64_t timers_next(void);
 void timers_scan_roots(void (*scan)(uintptr_t lo, uintptr_t hi));
 extern _Atomic int64_t timer_next_when;  // INT64_MAX when no timers
+// Internal timers (not GC memory). fn runs inside timers_check on whichever
+// M checks timers: it must be short and only take spin locks or rt_ready.
+rt_timer *itimer_new(void);
+void itimer_start(rt_timer *t, int64_t when, void (*fn)(void *), void *arg);
+bool itimer_stop(rt_timer *t);  // true if stopped before firing
 // Called by timer code after adding a timer that fires at when.
 void sched_timer_added(int64_t when);
 
