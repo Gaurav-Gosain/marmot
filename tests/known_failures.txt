@@ -18,3 +18,4 @@ run/std/runtime/goroutines_gc  # runtime.Caller unsupported (no pc to file:line 
 run/std/log/basic  # runtime.Caller unsupported, log.Lshortfile prints ???:0
 world/ulid  # return id, parse(&id): gc reads variables after calls (see core/eval_order_var_after_call)
 run/mem/regionstore@lifetime  # MARMOT_LIFETIME=all: region store use-after-free, expected until fixed (frontend)
+world/audit_unexported  # unexported methods of different packages are confused in itabs (frontend iface.go, rtgo itab builder)
