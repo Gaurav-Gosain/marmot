@@ -1,0 +1,16 @@
+hello 42 3.5 true <nil> 120
+42    42 42   | 00042 ff FF 10 101 A U+1F600
+str "q"          r|l         | v
+3.141590 3.14    3.142 1.234568e+03 1.234e-06 1E+21
+true false
+{1 2 n} {X:1 Y:2 N:n} main.P{X:1, Y:2, N:"n"}
+[1 2] map[a:1 b:2] [true false]
+int string main.P []string
+S! S!
+&{1 2 p} [3 4]
+6869 6869 61 62 63
+%|  2.50|+5|{}
+%!d(string=str) %!s(int=5)
+%!d(MISSING)
+1 2
+%!(EXTRA int=3)

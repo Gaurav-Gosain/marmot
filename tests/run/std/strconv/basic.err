@@ -1,0 +1,14 @@
+-12345 0
+987 true
+strconv.Atoi: parsing "12x": invalid syntax
+strconv.Atoi: parsing "": invalid syntax
+-255 true
+strconv.ParseInt: parsing "300": value out of range
+18446744073709551615
+true
+3.25
+-11111111 ff z
+"hi\n\"x\"\t世" "\u4e16"
+a	b true
+1.50 1.235e+03 0.1
+false n=42

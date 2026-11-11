@@ -1,0 +1,18 @@
+0 true
+1 true
+-1 true
+0.1 true
+0.3333333333333333 true
+1e+21 true
+1e-07 true
+1.23456789125e+08 true
+5e-324 true
+1.7976931348623157e+308 true
+2.5 true
+100 true
+0.1 true
+1.6777216e+07 true
+3.4028235e+38 true
+1e-45 true
+strconv.ParseFloat: parsing "1e999": value out of range
+true true
