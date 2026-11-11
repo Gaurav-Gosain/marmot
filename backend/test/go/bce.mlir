@@ -1,4 +1,12 @@
 // RUN: %marmot-opt --go-bce %s | %FileCheck %s
+// RUN: rm -f %t.rep && %marmot-opt --go-bce='report=%t.rep' %s -o /dev/null
+// RUN: %FileCheck %s --check-prefix=REP --match-full-lines < %t.rep
+// REP: consts	0	B1
+// REP-NEXT: consts	1	B1
+// REP-NEXT: dominated	1	B2	0
+// REP-NEXT: loop	0	B3
+// REP-NEXT: nils	0	N1
+// REP-NEXT: nils	2	N2	1
 !slice = !llvm.struct<(ptr, i64, i64)>
 module {
   llvm.mlir.global external constant @"type:int"() : !llvm.array<56 x i8>

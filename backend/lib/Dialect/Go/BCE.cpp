@@ -7,6 +7,8 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/Matchers.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/raw_ostream.h"
 
 namespace marmot::go {
 #define GEN_PASS_DEF_GOBCE
@@ -122,14 +124,32 @@ bool knownNonNil(Value p) {
 }
 
 struct GoBCEPass : marmot::go::impl::GoBCEBase<GoBCEPass> {
+  using GoBCEBase::GoBCEBase;
   void runOnOperation() override {
+    // -report: "<func>\t<walk index>\t<rule>[\t<walk index of the dominating check>]" per
+    // removed check. The walk index counts go.bounds_check, go.index (also those already
+    // nocheck) and go.nil_check ops in pre-order walk order within the function.
+    std::string lines;
+    llvm::raw_string_ostream rep(lines);
     getOperation().walk([&](LLVM::LLVMFuncOp fn) {
       if (fn.isExternal())
         return;
       DominanceInfo dom(fn);
       SmallVector<Operation *> kept;     // checks that stay, in walk order
       SmallVector<Operation *> toErase;
+      DenseMap<Operation *, unsigned> index;
+      unsigned next = 0;
+      auto note = [&](Operation *op, StringRef rule, Operation *dominator) {
+        if (report.empty())
+          return;
+        rep << fn.getName() << '\t' << index[op] << '\t' << rule;
+        if (dominator)
+          rep << '\t' << index[dominator];
+        rep << '\n';
+      };
       fn.walk([&](Operation *op) {
+        if (isa<BoundsCheckOp, IndexOp, NilCheckOp>(op))
+          index[op] = next++;
         Value i, n;
         if (auto bc = dyn_cast<BoundsCheckOp>(op)) {
           i = bc.getIndex();
@@ -142,11 +162,14 @@ struct GoBCEPass : marmot::go::impl::GoBCEBase<GoBCEPass> {
         } else if (auto nc = dyn_cast<NilCheckOp>(op)) {
           Value p = nc.getPtr();
           bool remove = knownNonNil(p);
+          if (remove)
+            note(op, "N1", nullptr);
           // N2: a nil check of the same pointer dominates this one.
           for (Operation *k : kept)
             if (!remove)
               if (auto knc = dyn_cast<NilCheckOp>(k))
-                remove = knc.getPtr() == p && dom.properlyDominates(k, op);
+                if ((remove = knc.getPtr() == p && dom.properlyDominates(k, op)))
+                  note(op, "N2", k);
           if (remove)
             toErase.push_back(op);
           else
@@ -155,7 +178,14 @@ struct GoBCEPass : marmot::go::impl::GoBCEBase<GoBCEPass> {
         } else {
           return;
         }
-        bool remove = constantInRange(i, n) || inductionInRange(i, n, op, dom);
+        bool remove = false;
+        if (constantInRange(i, n)) {
+          remove = true;
+          note(op, "B1", nullptr);
+        } else if (inductionInRange(i, n, op, dom)) {
+          remove = true;
+          note(op, "B3", nullptr);
+        }
         // B2: a bounds check of the same index and length dominates this one.
         for (Operation *k : kept) {
           if (remove)
@@ -171,6 +201,8 @@ struct GoBCEPass : marmot::go::impl::GoBCEBase<GoBCEPass> {
             continue;
           }
           remove = sameValue(ki, i) && sameValue(kn, n) && dom.properlyDominates(k, op);
+          if (remove)
+            note(op, "B2", k);
         }
         if (!remove) {
           kept.push_back(op);
@@ -190,6 +222,15 @@ struct GoBCEPass : marmot::go::impl::GoBCEBase<GoBCEPass> {
       for (Operation *op : toErase)
         op->erase();
     });
+    if (!report.empty() && !lines.empty()) {
+      std::error_code ec;
+      llvm::raw_fd_ostream os(report, ec, llvm::sys::fs::OF_Append);
+      if (ec) {
+        getOperation().emitError("go-bce: cannot write report ") << report << ": " << ec.message();
+        return signalPassFailure();
+      }
+      os << lines;
+    }
   }
 };
 

@@ -51,6 +51,11 @@ def GoBCE : Pass<"go-bce", "::mlir::ModuleOp"> {
     Removes go.bounds_check and go.nil_check ops, and marks go.index
     `nocheck`, when a rule in docs/passes.md proves the check cannot fail.
   }];
+  let options = [
+    Option<"report", "report", "std::string", /*default=*/"\"\"",
+           "Append one line per removed check to this file: func, walk index, rule, "
+           "and for B2/N2 the walk index of the dominating check">
+  ];
 }
 
 def GoDevirt : Pass<"go-devirt", "::mlir::ModuleOp"> {
