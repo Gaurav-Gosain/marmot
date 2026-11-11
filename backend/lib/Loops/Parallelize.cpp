@@ -360,7 +360,26 @@ void Parallelizer::writeReport(Plan &P) {
   raw_string_ostream os(j);
   Loop *L = P.loop;
   const SCEV *btc = tripBtc;
-  os << "{\"func\":" << jsonStr(F.getName()) << ",\"loop\":" << jsonStr(L->getHeader()->getName())
+  // Loops often have unnamed headers: name them by their preorder position.
+  std::string lname = L->getHeader()->getName().str();
+  if (lname.empty()) {
+    unsigned idx = 0;
+    for (Loop *x : LI.getLoopsInPreorder()) {
+      if (x == L)
+        break;
+      idx++;
+    }
+    lname = "loop" + std::to_string(idx) + "@depth" + std::to_string(L->getLoopDepth());
+  }
+  auto constDiff = [&](const SCEV *a, const SCEV *b) -> std::string {
+    if (!a || !b || a->getType() != b->getType())
+      return "null";
+    if (auto *c = dyn_cast<SCEVConstant>(SE.getMinusSCEV(a, b)))
+      if (c->getAPInt().getSignificantBits() <= 64)
+        return std::to_string(c->getAPInt().getSExtValue());
+    return "null";
+  };
+  os << "{\"func\":" << jsonStr(F.getName()) << ",\"loop\":" << jsonStr(lname)
      << ",\"btc\":" << (isa_and_nonnull<SCEVConstant>(btc) ? scevJSON(btc) : "null") << ",\"phis\":[";
   bool first = true;
   for (IndVar &iv : P.ivs) {
@@ -385,15 +404,22 @@ void Parallelizer::writeReport(Plan &P) {
     os << (i ? "," : "") << "{\"id\":" << i << ",\"base\":" << jsonStr(bn)
        << ",\"store\":" << (a.store ? "true" : "false") << ",\"size\":" << a.size
        << ",\"coef\":" << scevJSON(a.coef) << ",\"lo\":" << scevJSON(a.lo)
-       << ",\"hi\":" << scevJSON(a.hi) << ",\"row\":" << (a.family >= 0 ? "true" : "false");
+       << ",\"hi\":" << scevJSON(a.hi) << ",\"span\":" << constDiff(a.hi, a.lo)
+       << ",\"row\":" << (a.family >= 0 ? "true" : "false");
     if (a.stride)
       os << ",\"stride\":" << scevJSON(a.stride) << ",\"count\":" << scevJSON(tripBtc);
     os << "}";
   }
   os << "],\"pairs\":[";
-  for (size_t i = 0; i < P.pairs.size(); i++)
+  for (size_t i = 0; i < P.pairs.size(); i++) {
+    Access &x = P.accesses[P.pairs[i].a], &y = P.accesses[P.pairs[i].b];
     os << (i ? "," : "") << "{\"a\":" << P.pairs[i].a << ",\"b\":" << P.pairs[i].b
-       << ",\"why\":\"" << P.pairs[i].why << "\"}";
+       << ",\"why\":\"" << P.pairs[i].why << "\"";
+    // Offsets of b relative to a's lo, when both are on one base and constant.
+    if (x.baseValue && x.baseValue == y.baseValue)
+      os << ",\"dlo\":" << constDiff(y.lo, x.lo) << ",\"dhi\":" << constDiff(y.hi, x.lo);
+    os << "}";
+  }
   os << "]}\n";
   static std::mutex mu; // batch mode compiles modules on several threads
   std::lock_guard<std::mutex> lock(mu);
