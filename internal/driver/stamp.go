@@ -178,3 +178,30 @@ func (b *build) savePackageObject(k, obj string) {
 		os.Rename(tmp, b.pkgCacheFile(k))
 	}
 }
+
+// cachedWPO returns the objects of a previous whole-program build.
+func (b *build) cachedWPO(k string, n int) ([]string, bool) {
+	data, err := os.ReadFile(filepath.Join(b.cfg.Root, "build", "cache", "wpo-"+k))
+	if err != nil {
+		return nil, false
+	}
+	keys := strings.Fields(string(data))
+	if len(keys) != n {
+		return nil, false
+	}
+	objs := make([]string, n)
+	for i, key := range keys {
+		objs[i] = filepath.Join(b.cfg.Root, "build", "cache", key+".o")
+		if !fileExists(objs[i]) {
+			return nil, false
+		}
+	}
+	return objs, true
+}
+
+func (b *build) saveWPO(k string, keys []string) {
+	p := filepath.Join(b.cfg.Root, "build", "cache", "wpo-"+k)
+	if os.WriteFile(p+".tmp", []byte(strings.Join(keys, "\n")+"\n"), 0o644) == nil {
+		os.Rename(p+".tmp", p)
+	}
+}

@@ -1,6 +1,8 @@
 package codegen
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -53,12 +55,26 @@ func cArray(elemType string, elems ...cv) cv {
 	return cAgg(mlir.Array(int64(len(elems)), elemType), elems...)
 }
 
-// cString makes a Go string constant in module m.
+// cString makes a Go string constant in module m for use inside global
+// initializers. Its bytes live in a linkonce_odr global named by content,
+// so linkonce data (descriptors) never refers to a module-private symbol.
 func (m *moduleGen) cString(s string) cv {
 	if s == "" {
 		return cZero(tString)
 	}
-	return cAgg(tString, cAddr(m.stringData(s)), cI64(int64(len(s))))
+	return cAgg(tString, cAddr(m.sharedStringData(s)), cI64(int64(len(s))))
+}
+
+// sharedStringData returns a linkonce_odr global holding s.
+func (m *moduleGen) sharedStringData(s string) string {
+	h := sha256.Sum256([]byte(s))
+	sym := "go:str." + hex.EncodeToString(h[:12])
+	if !m.defined[sym] {
+		m.defined[sym] = true
+		fmt.Fprintf(&m.defs, "  llvm.mlir.global linkonce_odr constant %s(%s) {addr_space = 0 : i32}\n",
+			mlir.Symbol(sym), mlir.Quote(s))
+	}
+	return sym
 }
 
 // constGlobal defines a global initialized with c.

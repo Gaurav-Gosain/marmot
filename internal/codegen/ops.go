@@ -29,6 +29,9 @@ func (f *funcGen) binop(op token.Token, X, Y ssa.Value, t types.Type) string {
 	case token.SHL, token.SHR:
 		return f.shift(op, f.value(X), f.value(Y), t, Y)
 	}
+	if r, ok := f.tryFMA(op, X, Y, t); ok {
+		return r
+	}
 	x, y := f.value(X), f.value(Y)
 	vt := f.tm.valType(t)
 	switch {

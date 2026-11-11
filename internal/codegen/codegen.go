@@ -57,6 +57,7 @@ type Program struct {
 	runtime *ssa.Package
 	pkgs    []*ssa.Package
 	files   map[*types.Package][]*ast.File
+	infos   map[*types.Package]*types.Info
 
 	owner    map[*ssa.Function]*ssa.Package // functions emitted as strong definitions
 	byPkg    map[*ssa.Package][]*ssa.Function
@@ -73,6 +74,7 @@ type Program struct {
 	reflectCall     bool // reflect.Value.Call reachable: emit call adapters
 
 	ifaceTypes  map[string]bool      // canonical names of types that can be in interfaces
+	fmaBlocked  map[token.Pos]bool   // float multiplications under an explicit conversion
 	mainPath    string               // import path of the main package
 	globalRead  map[*ssa.Global]bool // globals read anywhere in the program
 	varLinkname map[string]bool      // pkgpath.name of variables named in //go:linkname
@@ -122,6 +124,7 @@ func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package
 		p.collect(pkg)
 	}
 	p.computeUsedMethods()
+	p.collectFMABlocks()
 	return p, nil
 }
 
@@ -271,6 +274,14 @@ func (p *Program) computeSymbol(fn *ssa.Function) string {
 	// Synthetic functions (wrappers, thunks, instances): the SSA name with
 	// full package paths is unique and stable across modules.
 	return fn.String()
+}
+
+// SetTypesInfo provides the type checker results (for syntax-level facts
+// that SSA does not keep, such as explicit conversions). Call before
+// Generate.
+func (p *Program) SetTypesInfo(infos map[*types.Package]*types.Info) {
+	p.infos = infos
+	p.collectFMABlocks()
 }
 
 // Package returns the SSA packages to compile, in dependency order.
