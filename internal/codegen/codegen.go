@@ -73,6 +73,7 @@ type Program struct {
 	escMu     sync.Mutex
 	esc       escapeState
 	regions   regionState
+	deep      deepState
 	panicMemo map[panicKey]int
 	byValue   map[*ssa.Function]map[int]bool
 

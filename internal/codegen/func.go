@@ -38,7 +38,9 @@ type funcGen struct {
 	stackOK           map[ssa.Value]bool
 	region            string                            // region clone: the rt_region parameter
 	regionCalls       map[ssa.Instruction]*regionPlan   // calls that use a region clone
-	regionFree        map[ssa.Instruction][]*regionPlan // free these regions after the instruction         // heap Allocs and closures that live in the frame
+	regionFree        map[ssa.Instruction][]*regionPlan // free these regions after the instruction
+	frameCalls        map[ssa.Instruction]bool          // calls that allocate into the frame region
+	frameSlot         string                            // holds the frame region (nil until first use)         // heap Allocs and closures that live in the frame
 	appendElems       map[*ssa.Slice][]ssa.Value        // append(s, a, b): elements by varargs slice
 	skipInstr         map[ssa.Instruction]bool          // instructions folded into others
 	forceUnsafe       bool                              // the access goes through a locally punned pointer
@@ -162,6 +164,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 	f.findAppendElems()
 	f.stackOK = f.m.p.stackAllocs(fn)
 	f.findRegionCalls()
+	f.findFrameRegionCalls()
 	if od := openDefersFor(fn); od != nil && os.Getenv("MARMOT_NO_OPENDEFER") == "" {
 		f.open = od
 		f.setupOpenDefers()
@@ -656,6 +659,7 @@ func (f *funcGen) succ(b *ssa.BasicBlock, i int) string {
 }
 
 func (f *funcGen) ret(r *ssa.Return) {
+	f.freeFrameRegion()
 	if f.implicitRunDefers && r.Block() != f.fn.Recover {
 		// The function only hands its defer stack to range-over-func
 		// bodies; SSA has no RunDefers for it.

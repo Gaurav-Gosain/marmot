@@ -18,6 +18,9 @@ func (f *funcGen) call(c *ssa.CallCommon, instr ssa.Instruction) string {
 	if pl := f.regionCalls[instr]; pl != nil {
 		return f.regionCall(c, pl)
 	}
+	if f.frameCalls[instr] {
+		return f.callRegionClone(c, c.StaticCallee(), f.frameRegion())
+	}
 	if fn := c.StaticCallee(); f.region != "" && fn != nil && !c.IsInvoke() && fn.Signature.Results().Len() == 1 &&
 		isPtrRepr(fn.Signature.Results().At(0).Type()) && f.m.p.regionCloneable(fn) {
 		return f.callRegionClone(c, fn, f.region) // inside a clone: same region

@@ -262,6 +262,7 @@ func confinedTo(p *Program, c *ssa.Call, b *ssa.BasicBlock, start int) (ssa.Inst
 
 func (m *moduleGen) declareRegionAPI() {
 	m.declareRaw("rt_region_new", nil, mlir.Ptr, "")
+	m.declareRaw("rt_region_new_noscan", nil, mlir.Ptr, "")
 	m.declareRaw("rt_region_alloc", []string{mlir.Ptr, mlir.I64}, mlir.Ptr, "")
 	m.declareRaw("rt_region_free", []string{mlir.Ptr}, "", "")
 }
@@ -283,6 +284,10 @@ func (f *funcGen) callRegionClone(c *ssa.CallCommon, fn *ssa.Function, r string)
 		args = append(args, f.value(a))
 	}
 	args = append(args, r)
+	if ret == "" {
+		f.emit("llvm.call %s(%s) : (%s) -> ()", mlir.Symbol(sym), joinArgs(args), joinArgs(params))
+		return ""
+	}
 	return f.op("llvm.call %s(%s) : (%s) -> %s", mlir.Symbol(sym), joinArgs(args), joinArgs(params), ret)
 }
 
