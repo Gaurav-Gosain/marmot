@@ -4,6 +4,7 @@
 //
 //	check -before in.mlir -after out.mlir [-report bce.report]
 //	check -loops-report loops.json
+//	check -gcdata prog.mlir PACKAGES
 //
 // in.mlir is the go dialect MLIR the frontend emits (marmot build -dialect=go -emit mlir),
 // out.mlir is `marmot-opt --go-bce in.mlir`. go.index checks are matched one to one (the
@@ -25,7 +26,28 @@ func main() {
 	verbose := flag.Bool("v", false, "print every justified removal")
 	report := flag.String("report", "", "the certificate from --go-bce='report=FILE': validate the rule the pass names for each removal")
 	loopsReport := flag.String("loops-report", "", "a Rule P report (-loops-report=FILE): check it alone")
+	gcdata := flag.String("gcdata", "", "MLIR whose type descriptor bitmaps to check; the arguments are the packages it was built from")
 	flag.Parse()
+	if *gcdata != "" {
+		r, err := checkGCData(*gcdata, flag.Args())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "check:", err)
+			os.Exit(2)
+		}
+		for _, b := range r.bad {
+			fmt.Println("MISMATCH", b)
+		}
+		if *verbose {
+			for _, s := range r.skips {
+				fmt.Println("skipped", s)
+			}
+		}
+		fmt.Printf("check: %d type descriptors checked, %d mismatches, %d skipped\n", r.checked, len(r.bad), r.skipped)
+		if len(r.bad) > 0 {
+			os.Exit(1)
+		}
+		return
+	}
 	if *loopsReport != "" {
 		n, bad, unv, err := CheckLoopsReport(*loopsReport)
 		if err != nil {
