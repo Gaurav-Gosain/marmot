@@ -27,7 +27,12 @@ func sync_runtime_SemacquireRWMutex(addr *uint32, lifo bool, skipframes int) {
 }
 
 //go:linkname sync_runtime_Semrelease sync.runtime_Semrelease
-func sync_runtime_Semrelease(addr *uint32, handoff bool, skipframes int) { semrelease1(addr) }
+func sync_runtime_Semrelease(addr *uint32, handoff bool, skipframes int) {
+	if semrelease1(addr) && handoff {
+		// Let the woken waiter run now (sync.Mutex starvation mode).
+		rt_yield()
+	}
+}
 
 //go:linkname internal_sync_runtime_SemacquireMutex internal/sync.runtime_SemacquireMutex
 func internal_sync_runtime_SemacquireMutex(addr *uint32, lifo bool, skipframes int) {
@@ -36,7 +41,9 @@ func internal_sync_runtime_SemacquireMutex(addr *uint32, lifo bool, skipframes i
 
 //go:linkname internal_sync_runtime_Semrelease internal/sync.runtime_Semrelease
 func internal_sync_runtime_Semrelease(addr *uint32, handoff bool, skipframes int) {
-	semrelease1(addr)
+	if semrelease1(addr) && handoff {
+		rt_yield()
+	}
 }
 
 //go:linkname internal_sync_runtime_canSpin internal/sync.runtime_canSpin

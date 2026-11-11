@@ -73,8 +73,8 @@ func semacquire1(addr *uint32, lifo bool) {
 }
 
 // semrelease1 increments *addr, or wakes one waiter on addr and gives it
-// the unit.
-func semrelease1(addr *uint32) {
+// the unit. It reports whether a waiter was woken.
+func semrelease1(addr *uint32) bool {
 	root := semroot(addr)
 	lock(&root.lock)
 	for s := root.head; s != nil; s = s.next {
@@ -96,10 +96,11 @@ func semrelease1(addr *uint32) {
 		gp := s.g
 		unlock(&root.lock)
 		goready(gp)
-		return
+		return true
 	}
 	atomicXadd32(addr, 1)
 	unlock(&root.lock)
+	return false
 }
 
 // notifyList is the runtime side of sync.notifyList (sync.Cond). The

@@ -83,6 +83,9 @@ func rt_current() unsafe.Pointer
 //go:linkname rt_gosched rt_gosched
 func rt_gosched()
 
+//go:linkname rt_yield rt_yield
+func rt_yield()
+
 //go:linkname rt_park rt_park
 func rt_park(unlock unsafe.Pointer, lock unsafe.Pointer)
 
