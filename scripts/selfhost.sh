@@ -8,6 +8,7 @@
 # Then marmot-2 and marmot-3 must emit identical MLIR for every tests/run/core
 # program and for cmd/marmot itself, and the core tier must pass with
 # marmot-2 as the compiler. Usage: scripts/selfhost.sh [core-test-regexp]
+# Sources (cmd, internal, lib/src) are frozen from git HEAD at the start.
 # Runs sequentially under nice (SPEC rule 10). Output: .work/selfhost/.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -16,23 +17,27 @@ export MARMOT_ROOT="$ROOT" MARMOT_MAX_JOBS=2
 OUT="$ROOT/.work/selfhost"
 FILTER="${1:-.}"
 rm -rf "$OUT"
-mkdir -p "$OUT/mlir2" "$OUT/mlir3" "$OUT/run"
+mkdir -p "$OUT/mlir2" "$OUT/mlir3" "$OUT/run" "$OUT/src"
+# Freeze the compiler sources and the runtime overlay so every stage
+# compiles the same program (other workers keep committing).
+git archive HEAD cmd internal go.mod go.sum lib/src | tar -x -C "$OUT/src"
+export MARMOT_LIBSRC="$OUT/src/lib/src"
 T="timeout 900"
 fail=0
 
 step() { echo "== $*"; }
 
 step "stage 1: go build"
-$T nice go build -o "$OUT/marmot-1" ./cmd/marmot || { echo "stage 1 failed"; exit 1; }
+(cd "$OUT/src" && $T nice go build -o "$OUT/marmot-1" ./cmd/marmot) || { echo "stage 1 failed"; exit 1; }
 step "stage 2: marmot-1 builds marmot"
-$T nice "$OUT/marmot-1" build -o "$OUT/marmot-2" ./cmd/marmot || { echo "stage 2 failed"; exit 1; }
+(cd "$OUT/src" && $T nice "$OUT/marmot-1" build -o "$OUT/marmot-2" ./cmd/marmot) || { echo "stage 2 failed"; exit 1; }
 step "stage 3: marmot-2 builds marmot"
-$T nice "$OUT/marmot-2" build -o "$OUT/marmot-3" ./cmd/marmot || { echo "stage 3 failed"; exit 1; }
+(cd "$OUT/src" && $T nice "$OUT/marmot-2" build -o "$OUT/marmot-3" ./cmd/marmot) || { echo "stage 3 failed"; exit 1; }
 ls -l "$OUT"/marmot-[123] | awk '{print $5, $NF}'
 
 step "MLIR of cmd/marmot: marmot-2 vs marmot-3"
-$T nice "$OUT/marmot-2" build -emit mlir -o "$OUT/mlir2/cmd-marmot.mlir" ./cmd/marmot
-$T nice "$OUT/marmot-3" build -emit mlir -o "$OUT/mlir3/cmd-marmot.mlir" ./cmd/marmot
+(cd "$OUT/src" && $T nice "$OUT/marmot-2" build -emit mlir -o "$OUT/mlir2/cmd-marmot.mlir" ./cmd/marmot)
+(cd "$OUT/src" && $T nice "$OUT/marmot-3" build -emit mlir -o "$OUT/mlir3/cmd-marmot.mlir" ./cmd/marmot)
 if cmp -s "$OUT/mlir2/cmd-marmot.mlir" "$OUT/mlir3/cmd-marmot.mlir"; then
 	echo "identical"
 else
