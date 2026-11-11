@@ -48,28 +48,30 @@ CFLAGS_COMMON := $(TARGET_FLAGS) -std=c11 -Wall -Wextra -Wno-unused-parameter -I
 CFLAGS  ?= -O2
 ALL_CFLAGS := $(CFLAGS_COMMON) $(CFLAGS)
 
-C_SRCS  := $(wildcard src/*.c)
+C_SRCS  := $(wildcard src/*.c) $(wildcard gpu/*.c)
 # Cold code (startup, signals, timers, I/O, OS glue) is built for size.
-COLD    := entry io libcall netpoll os_darwin os_linux signal timer util par
+COLD    := entry io libcall netpoll os_darwin os_linux signal timer util par gpu
 COLD_OBJS := $(patsubst %,$(OBJ)/%.o,$(COLD))
 COLD_BCS  := $(patsubst %,$(OBJ)/%.bc,$(COLD))
 S_SRCS  := $(wildcard src/*.S)
-C_OBJS  := $(patsubst src/%.c,$(OBJ)/%.o,$(C_SRCS))
+C_OBJS  := $(patsubst %.c,$(OBJ)/%.o,$(notdir $(C_SRCS)))
 S_OBJS  := $(patsubst src/%.S,$(OBJ)/%.o,$(S_SRCS))
-BCS     := $(patsubst src/%.c,$(OBJ)/%.bc,$(C_SRCS))
+BCS     := $(patsubst %.c,$(OBJ)/%.bc,$(notdir $(C_SRCS)))
 HDRS    := $(wildcard src/*.h) include/rt.h
 
 .PHONY: all test test-asan test-tsan bench clean check-targets
 
 all: $(OUT)/librtcore.a $(OUT)/rtcore.bc
 
-$(OBJ)/%.o: src/%.c $(HDRS) | $(OBJ)
+vpath %.c src gpu
+
+$(OBJ)/%.o: %.c $(HDRS) | $(OBJ)
 	$(CC) $(ALL_CFLAGS) $(if $(filter $@,$(COLD_OBJS)),-Oz) -c $< -o $@
 
 $(OBJ)/%.o: src/%.S | $(OBJ)
 	$(CC) $(TARGET_FLAGS) $(SYSROOT) -c $< -o $@
 
-$(OBJ)/%.bc: src/%.c $(HDRS) | $(OBJ)
+$(OBJ)/%.bc: %.c $(HDRS) | $(OBJ)
 	$(CC) $(ALL_CFLAGS) $(if $(filter $@,$(COLD_BCS)),-Oz) -emit-llvm -c $< -o $@
 
 $(OUT)/librtcore.a: $(C_OBJS) $(S_OBJS) | $(OUT)

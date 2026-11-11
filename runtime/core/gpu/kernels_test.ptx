@@ -1,0 +1,181 @@
+// Hand-written test kernels for runtime/core/test/gpu.c. Calling convention
+// of rt_gpu_launch: every parameter is 64 bits, parameter 0 is the item
+// count n. Floating point uses explicit .rn rounding so ptxas never fuses
+// a multiply and an add: results match CPU code compiled without FMA
+// contraction, bit for bit.
+.version 7.0
+.target sm_52
+.address_size 64
+
+// y[i] = a*x[i] + y[i]
+.visible .entry saxpy(.param .u64 n, .param .f64 a, .param .u64 x, .param .u64 y)
+{
+  .reg .pred p;
+  .reg .b32 r<3>;
+  .reg .b64 rd<8>;
+  .reg .f64 fd<3>;
+  mov.u32 r0, %ctaid.x;
+  mov.u32 r1, %ntid.x;
+  mov.u32 r2, %tid.x;
+  cvt.u64.u32 rd0, r0;
+  cvt.u64.u32 rd1, r1;
+  cvt.u64.u32 rd2, r2;
+  mad.lo.u64 rd0, rd0, rd1, rd2;
+  ld.param.u64 rd3, [n];
+  setp.ge.u64 p, rd0, rd3;
+  @p ret;
+  ld.param.f64 fd0, [a];
+  ld.param.u64 rd4, [x];
+  ld.param.u64 rd5, [y];
+  shl.b64 rd6, rd0, 3;
+  add.u64 rd7, rd4, rd6;
+  ld.global.f64 fd1, [rd7];
+  add.u64 rd7, rd5, rd6;
+  ld.global.f64 fd2, [rd7];
+  mul.rn.f64 fd1, fd0, fd1;
+  add.rn.f64 fd2, fd1, fd2;
+  st.global.f64 [rd7], fd2;
+  ret;
+}
+
+// out[i] = mix(i * 0x9E3779B97F4A7C15 + seed)
+.visible .entry ihash(.param .u64 n, .param .u64 seed, .param .u64 out)
+{
+  .reg .pred p;
+  .reg .b32 r<3>;
+  .reg .b64 rd<10>;
+  mov.u32 r0, %ctaid.x;
+  mov.u32 r1, %ntid.x;
+  mov.u32 r2, %tid.x;
+  cvt.u64.u32 rd0, r0;
+  cvt.u64.u32 rd1, r1;
+  cvt.u64.u32 rd2, r2;
+  mad.lo.u64 rd0, rd0, rd1, rd2;
+  ld.param.u64 rd3, [n];
+  setp.ge.u64 p, rd0, rd3;
+  @p ret;
+  ld.param.u64 rd4, [seed];
+  mul.lo.u64 rd5, rd0, 0x9E3779B97F4A7C15;
+  add.u64 rd5, rd5, rd4;
+  shr.u64 rd6, rd5, 29;
+  xor.b64 rd5, rd5, rd6;
+  mul.lo.u64 rd5, rd5, 0xBF58476D1CE4E5B9;
+  shr.u64 rd6, rd5, 32;
+  xor.b64 rd5, rd5, rd6;
+  ld.param.u64 rd7, [out];
+  shl.b64 rd8, rd0, 3;
+  add.u64 rd7, rd7, rd8;
+  st.global.u64 [rd7], rd5;
+  ret;
+}
+
+// Mandelbrot iteration counts, one item per pixel i of a w-wide image:
+// cr = x*sx + ox, ci = y*sy + oy (x = i % w, y = i / w), at most maxit
+// iterations; out is uint32 per pixel. Params: n, w, maxit, sx, ox, sy, oy, out.
+.visible .entry mandel(.param .u64 n, .param .u64 w, .param .u64 maxit, .param .f64 sx,
+                       .param .f64 ox, .param .f64 sy, .param .f64 oy, .param .u64 out)
+{
+  .reg .pred p, q;
+  .reg .b32 r<4>;
+  .reg .b64 rd<12>;
+  .reg .f64 fd<16>;
+  mov.u32 r0, %ctaid.x;
+  mov.u32 r1, %ntid.x;
+  mov.u32 r2, %tid.x;
+  cvt.u64.u32 rd0, r0;
+  cvt.u64.u32 rd1, r1;
+  cvt.u64.u32 rd2, r2;
+  mad.lo.u64 rd0, rd0, rd1, rd2;
+  ld.param.u64 rd3, [n];
+  setp.ge.u64 p, rd0, rd3;
+  @p ret;
+  ld.param.u64 rd4, [w];
+  rem.u64 rd5, rd0, rd4;       // x
+  div.u64 rd6, rd0, rd4;       // y
+  cvt.rn.f64.u64 fd0, rd5;
+  cvt.rn.f64.u64 fd1, rd6;
+  ld.param.f64 fd2, [sx];
+  ld.param.f64 fd3, [ox];
+  ld.param.f64 fd4, [sy];
+  ld.param.f64 fd5, [oy];
+  mul.rn.f64 fd0, fd0, fd2;
+  add.rn.f64 fd6, fd0, fd3;    // cr
+  mul.rn.f64 fd1, fd1, fd4;
+  add.rn.f64 fd7, fd1, fd5;    // ci
+  mov.f64 fd8, 0d0000000000000000;   // zr
+  mov.f64 fd9, 0d0000000000000000;   // zi
+  ld.param.u64 rd7, [maxit];
+  mov.u64 rd8, 0;              // k
+LOOP:
+  setp.ge.u64 q, rd8, rd7;
+  @q bra DONE;
+  mul.rn.f64 fd10, fd8, fd8;   // zr2
+  mul.rn.f64 fd11, fd9, fd9;   // zi2
+  add.rn.f64 fd12, fd10, fd11;
+  setp.gt.f64 q, fd12, 0d4010000000000000;  // > 4.0
+  @q bra DONE;
+  mul.rn.f64 fd13, fd8, fd9;
+  add.rn.f64 fd13, fd13, fd13;
+  add.rn.f64 fd9, fd13, fd7;   // zi = 2*zr*zi + ci
+  sub.rn.f64 fd14, fd10, fd11;
+  add.rn.f64 fd8, fd14, fd6;   // zr = zr2 - zi2 + cr
+  add.u64 rd8, rd8, 1;
+  bra LOOP;
+DONE:
+  cvt.u32.u64 r3, rd8;
+  ld.param.u64 rd9, [out];
+  shl.b64 rd10, rd0, 2;
+  add.u64 rd9, rd9, rd10;
+  st.global.u32 [rd9], r3;
+  ret;
+}
+
+// c[i] = sum over k of a[row*m+k] * b[k*m+col], row = i / m, col = i % m,
+// summed in k order. Params: n (= m*m), m, a, b, c.
+.visible .entry matmul(.param .u64 n, .param .u64 m, .param .u64 a, .param .u64 b, .param .u64 c)
+{
+  .reg .pred p, q;
+  .reg .b32 r<3>;
+  .reg .b64 rd<16>;
+  .reg .f64 fd<4>;
+  mov.u32 r0, %ctaid.x;
+  mov.u32 r1, %ntid.x;
+  mov.u32 r2, %tid.x;
+  cvt.u64.u32 rd0, r0;
+  cvt.u64.u32 rd1, r1;
+  cvt.u64.u32 rd2, r2;
+  mad.lo.u64 rd0, rd0, rd1, rd2;
+  ld.param.u64 rd3, [n];
+  setp.ge.u64 p, rd0, rd3;
+  @p ret;
+  ld.param.u64 rd4, [m];
+  div.u64 rd5, rd0, rd4;          // row
+  rem.u64 rd6, rd0, rd4;          // col
+  ld.param.u64 rd7, [a];
+  ld.param.u64 rd8, [b];
+  mul.lo.u64 rd9, rd5, rd4;
+  shl.b64 rd9, rd9, 3;
+  add.u64 rd9, rd7, rd9;          // &a[row*m]
+  shl.b64 rd10, rd6, 3;
+  add.u64 rd10, rd8, rd10;        // &b[col]
+  shl.b64 rd11, rd4, 3;           // row stride of b in bytes
+  mov.f64 fd0, 0d0000000000000000;
+  mov.u64 rd12, 0;
+KLOOP:
+  setp.ge.u64 q, rd12, rd4;
+  @q bra KDONE;
+  ld.global.f64 fd1, [rd9];
+  ld.global.f64 fd2, [rd10];
+  mul.rn.f64 fd3, fd1, fd2;
+  add.rn.f64 fd0, fd0, fd3;
+  add.u64 rd9, rd9, 8;
+  add.u64 rd10, rd10, rd11;
+  add.u64 rd12, rd12, 1;
+  bra KLOOP;
+KDONE:
+  ld.param.u64 rd13, [c];
+  shl.b64 rd14, rd0, 3;
+  add.u64 rd13, rd13, rd14;
+  st.global.f64 [rd13], fd0;
+  ret;
+}

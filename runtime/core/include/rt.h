@@ -167,6 +167,59 @@ void rt_region_free(rt_region *r);
 // lives across loop iterations).
 void rt_region_reset(rt_region *r);
 
+// ---- GPU (CUDA driver API, loaded at run time) ----
+//
+// No link-time dependency: without libcuda, a device, or with MARMOT_GPU=0,
+// rt_gpu_available returns 0 and every other call fails cleanly (NULL, -1).
+// Kernels (PTX text, NUL-terminated, or a cubin) are embedded in the binary;
+// modules are cached by image address. Kernel convention: every parameter
+// is a 64-bit word (.u64/.s64/.f64 or a device pointer); parameter 0 is the
+// element count n, followed by args[0..nargs); a 1-D grid of ceil(n/block)
+// blocks covers indexes [0, n) and the kernel returns early when its
+// global index >= n. Launches are asynchronous; copies and rt_gpu_sync
+// wait (other goroutines keep running meanwhile).
+typedef struct rt_gpu_info {
+  int32_t present, sm_count, cc_major, cc_minor, clock_mhz;
+  uint64_t mem_total, mem_free;  // bytes; free counts the runtime's pooled buffers
+  int64_t launch_ns;             // launch plus synchronize of an empty kernel
+  double h2d_gbps, d2h_gbps;     // measured copy bandwidth, bytes per ns
+} rt_gpu_info;
+int32_t rt_gpu_available(void);
+int32_t rt_gpu_info_get(rt_gpu_info *out);  // 1 with a GPU (fills out), else 0
+void *rt_gpu_module(const void *image, uintptr_t len);
+void *rt_gpu_function(void *module, const char *name);
+void *rt_gpu_alloc(uintptr_t bytes);        // device buffer from a pool, NULL on failure
+void rt_gpu_free(void *dptr, uintptr_t bytes);
+int32_t rt_gpu_copy_in(void *dptr, const void *host, uintptr_t n);   // 0 or -1
+int32_t rt_gpu_copy_out(void *host, const void *dptr, uintptr_t n);
+int32_t rt_gpu_launch(void *fn, int64_t n, int32_t block, const uint64_t *args, int32_t nargs);
+int32_t rt_gpu_sync(void);
+// Cost model. ops: arithmetic operations per item; bytes_in/out: bytes per
+// item copied to/from the device (0 if resident). should_offload says 1 only
+// with MARMOT_GPU=1 (opt-in) when the GPU is predicted faster than
+// rt_parallel_for; break_even returns the smallest power-of-two n where it
+// would be, or -1.
+int32_t rt_gpu_should_offload(int64_t n, double ops, double bytes_in, double bytes_out);
+int64_t rt_gpu_break_even(double ops, double bytes_in, double bytes_out);
+
+// Loop offload entry for compiled code (docs/gpu.md). Runs kernel kname(ptr
+// ctx, i64 n) (the outlined parallel-for body, one thread per iteration,
+// blocks of 256) over [0, n). ranges list every byte the loop may touch
+// (flags: 1 read, 2 written): they are copied to the device and written ones
+// back; 8-byte words of ctx pointing into a range are rewritten to the device
+// copy; ctx (at most 4096 bytes) is copied to the device and back (words the
+// kernel changed are kept). Returns false, having done nothing, unless
+// MARMOT_GPU=1, a GPU is present, the cost model (cost = operations per
+// iteration) prefers it and setup succeeds; the caller then runs its CPU
+// loop. Failures after the launch are fatal.
+typedef struct rt_gpu_range {
+  void *base;
+  int64_t bytes;
+  int64_t flags;
+} rt_gpu_range;
+_Bool rt_gpu_for(const char *ptx, int64_t ptxlen, const char *kname, int64_t n, void *ctx,
+                 int64_t ctxsize, rt_gpu_range *ranges, int64_t nranges, int64_t cost);
+
 // ---- Locks (for the Go runtime's own data structures) ----
 
 typedef struct rt_mutex { uint32_t state; } rt_mutex; // zero value is unlocked

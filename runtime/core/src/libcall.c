@@ -75,9 +75,14 @@ static bool valid(int32_t nargs, int32_t nfixed) {
 RT_API intptr_t rt_libcall_raw(void *fn, const uintptr_t *args, int32_t nargs, int32_t nfixed,
                                int32_t *err) {
   if (!valid(nargs, nfixed)) rt_throw("rt_libcall: bad argument count");
+  // Not stoppable by signal while inside libc: a thread stopped holding a
+  // libc lock (malloc) could deadlock whoever needs it during a GC.
+  rt_m *m = getm();
+  if (m) m->locks++;
   errno = 0;
   intptr_t r = dispatch(fn, args, nargs, nfixed);
   int e = errno;
+  if (m) m->locks--;
   if (err) *err = e;
   return r;
 }

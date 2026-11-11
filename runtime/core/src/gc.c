@@ -491,7 +491,6 @@ static void helpers_wait(void) {
 
 // Drain the heap graph from worker 0's stack with all helpers.
 static void mark_parallel(void) {
-  helpers_init();
   int32_t nh = gc_nhelpers;
   // Small heaps are not worth waking the helpers for.
   if (atomic_load(&heap_live) < (2u << 20) || workers[0].len == 0) nh = 0;
@@ -665,6 +664,9 @@ void gc_collect(bool forced) {
     rt_unlock(&gc_mu);
     return;
   }
+  // Helper threads are created before the world stops: pthread_create
+  // takes libc locks (malloc) that a thread stopped by signal may hold.
+  helpers_init();
   int64_t t0 = os_nanotime();
   stop_the_world();
   rt_m *m = getm();
