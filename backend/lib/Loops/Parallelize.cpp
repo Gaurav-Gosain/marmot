@@ -110,6 +110,7 @@ struct Access {
   uint64_t size = 0;
   int family = -1; // row access: index into Plan::families
   int priv = -1;   // access to a privatized reduction array (Plan::privs)
+  const SCEV *stride = nullptr; // strided form: bytes per inner step t
 };
 
 // Rows reached through one row pointer load `p = load(table + slot)`, with
@@ -384,8 +385,10 @@ void Parallelizer::writeReport(Plan &P) {
     os << (i ? "," : "") << "{\"id\":" << i << ",\"base\":" << jsonStr(bn)
        << ",\"store\":" << (a.store ? "true" : "false") << ",\"size\":" << a.size
        << ",\"coef\":" << scevJSON(a.coef) << ",\"lo\":" << scevJSON(a.lo)
-       << ",\"hi\":" << scevJSON(a.hi) << ",\"row\":" << (a.family >= 0 ? "true" : "false")
-       << "}";
+       << ",\"hi\":" << scevJSON(a.hi) << ",\"row\":" << (a.family >= 0 ? "true" : "false");
+    if (a.stride)
+      os << ",\"stride\":" << scevJSON(a.stride) << ",\"count\":" << scevJSON(tripBtc);
+    os << "}";
   }
   os << "],\"pairs\":[";
   for (size_t i = 0; i < P.pairs.size(); i++)
@@ -921,6 +924,7 @@ bool Parallelizer::interleaved(Loop *L, Plan &P, Access &x, Access &y) {
   Type *ty2 = x.coef->getType();
   const SCEV *W = SE.getAddExpr(SE.getMulExpr(x.coef, SE.getTruncateOrZeroExtend(tripBtc, ty2)),
                                 SE.getConstant(ty2, size));
+  x.stride = y.stride = tx;
   if (SE.isKnownPredicate(ICmpInst::ICMP_SLE, W, tx))
     return true;
   if (auto *d = dyn_cast<SCEVConstant>(SE.getMinusSCEV(tx, W)))
