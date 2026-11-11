@@ -22,7 +22,7 @@ mkdir -p "$OUT/mlir2" "$OUT/mlir3" "$OUT/run" "$OUT/src"
 # compiles the same program (other workers keep committing).
 git archive HEAD cmd internal go.mod go.sum lib/src | tar -x -C "$OUT/src"
 export MARMOT_LIBSRC="$OUT/src/lib/src"
-T="timeout 900"
+T="timeout 300"
 fail=0
 
 step() { echo "== $*"; }
