@@ -111,9 +111,7 @@ func sync_atomic_runtime_procPin() int { return procPin() }
 //go:linkname sync_atomic_runtime_procUnpin sync/atomic.runtime_procUnpin
 func sync_atomic_runtime_procUnpin() { procUnpin() }
 
-// internal/poll. File descriptors are not registered with a poller:
-// pollOpen fails, so internal/poll uses blocking system calls, which the C
-// core runs without stalling other goroutines.
+// internal/poll semaphores and clock. The poller hooks are in netpoll.go.
 
 //go:linkname poll_runtime_Semacquire internal/poll.runtime_Semacquire
 func poll_runtime_Semacquire(addr *uint32) { semacquire1(addr, false) }
@@ -123,33 +121,6 @@ func poll_runtime_Semrelease(addr *uint32) { semrelease1(addr) }
 
 //go:linkname poll_runtimeNano internal/poll.runtimeNano
 func poll_runtimeNano() int64 { return rt_nanotime() }
-
-//go:linkname poll_runtime_pollServerInit internal/poll.runtime_pollServerInit
-func poll_runtime_pollServerInit() {}
-
-//go:linkname poll_runtime_pollOpen internal/poll.runtime_pollOpen
-func poll_runtime_pollOpen(fd uintptr) (uintptr, int) { return 0, _ENOTSUP }
-
-//go:linkname poll_runtime_pollClose internal/poll.runtime_pollClose
-func poll_runtime_pollClose(ctx uintptr) {}
-
-//go:linkname poll_runtime_pollWait internal/poll.runtime_pollWait
-func poll_runtime_pollWait(ctx uintptr, mode int) int { return 0 }
-
-//go:linkname poll_runtime_pollWaitCanceled internal/poll.runtime_pollWaitCanceled
-func poll_runtime_pollWaitCanceled(ctx uintptr, mode int) {}
-
-//go:linkname poll_runtime_pollReset internal/poll.runtime_pollReset
-func poll_runtime_pollReset(ctx uintptr, mode int) int { return 0 }
-
-//go:linkname poll_runtime_pollSetDeadline internal/poll.runtime_pollSetDeadline
-func poll_runtime_pollSetDeadline(ctx uintptr, d int64, mode int) {}
-
-//go:linkname poll_runtime_pollUnblock internal/poll.runtime_pollUnblock
-func poll_runtime_pollUnblock(ctx uintptr) {}
-
-//go:linkname poll_runtime_isPollServerDescriptor internal/poll.runtime_isPollServerDescriptor
-func poll_runtime_isPollServerDescriptor(fd uintptr) bool { return false }
 
 // os.
 
