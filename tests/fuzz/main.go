@@ -32,6 +32,8 @@ var (
 	flKeep = flag.Bool("keep", false, "keep all generated programs under .work/fuzz")
 	flShr  = flag.Bool("shrink", true, "shrink failing programs")
 	flExt2 = flag.Bool("ext2", true, "also generate loops over slices, structs, fmt verbs, json round trips, sorts and struct-keyed maps")
+	flMem  = flag.Bool("mem", true, "include append chains, retained slices and tree builders that hunt use-after-free")
+	flStr  = flag.Bool("stress", false, "build and run with MARMOT_GCSTRESS=1")
 	flRel  = flag.Bool("release", false, "build with marmot -release")
 	flRoot = flag.String("root", "", "MARMOT_ROOT to use (a snapshot made by tests/snapshot.sh); default is the live tree")
 	flGen  = flag.Int64("print", 0, "print the program for this seed and exit")
@@ -395,11 +397,11 @@ func (rn *runner) check(src string) string {
 		args = append(args, "-O", *flO)
 	}
 	args = append(args, file)
-	b, why := sh(2*time.Minute, rn.root, []string{"MARMOT_ROOT=" + rn.mroot}, rn.marmot, args...)
+	b, why := sh(2*time.Minute, rn.root, append([]string{"MARMOT_ROOT=" + rn.mroot}, stressEnv()...), rn.marmot, args...)
 	if why != "" || b.code != 0 {
 		return "compile error: " + firstLine(b.stdout+b.stderr+why)
 	}
-	got, why := sh(10*time.Second, dir, nil, filepath.Join(dir, "got"))
+	got, why := sh(10*time.Second, dir, stressEnv(), filepath.Join(dir, "got"))
 	if why != "" {
 		return "run: " + why
 	}
@@ -520,4 +522,11 @@ func main() {
 func killGroupOnCancel(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+}
+
+func stressEnv() []string {
+	if *flStr {
+		return []string{"MARMOT_GCSTRESS=1"}
+	}
+	return nil
 }

@@ -49,6 +49,8 @@ func (g *gen) genDecls() {
 	g.decls = append(g.decls, "type pt struct {\n\ta int\n\tb float64\n\tc string\n}\n")
 	g.decls = append(g.decls, "type mkey struct {\n\ta int8\n\tb string\n\tc [2]uint8\n}\n")
 	g.decls = append(g.decls, "type smallKey [3]int16\n")
+	g.decls = append(g.decls, "var sinkF [][]int\n\n//go:noinline\nfunc junkF(n int) {\n\tj := make([]int, n)\n\tfor i := range j {\n\t\tj[i] = -1 - i\n\t}\n\tsinkF = append(sinkF, j)\n\tif len(sinkF) > 6 {\n\t\tsinkF = sinkF[1:]\n\t}\n}\n")
+	g.decls = append(g.decls, "type tn struct {\n\tv    int\n\tl, r *tn\n\td    []int\n}\n\n//go:noinline\nfunc buildT(d, c int) *tn {\n\tn := &tn{v: d, d: make([]int, 2, c)}\n\tn.d[0], n.d[1] = d, d*2\n\tif d > 0 {\n\t\tn.l, n.r = buildT(d-1, c), buildT(d-1, c)\n\t}\n\treturn n\n}\n\nfunc sumT(n *tn) int {\n\tif n == nil {\n\t\treturn 0\n\t}\n\treturn n.v + n.d[0] + n.d[1] + sumT(n.l) + sumT(n.r)\n}\n")
 }
 
 func (g *gen) jvalue(t string) string {
@@ -73,7 +75,56 @@ func (g *gen) jvalue(t string) string {
 
 func (g *gen) ext2Stmt() {
 	i := fmt.Sprintf("%d", len(g.lines))
-	switch g.r.Intn(8) {
+	k := g.r.Intn(8)
+	if *flMem && g.r.Intn(3) == 0 {
+		k = 8 + g.r.Intn(3)
+	}
+	switch k {
+	case 8: // append chain keeping every earlier slice value, then memory reuse
+		c := 1 + g.r.Intn(6)
+		n := 3 + g.r.Intn(8)
+		g.emit("{")
+		g.emit("\tv := make([]int, 1, %d)", c)
+		g.emit("\tv[0] = int(%s)", g.anyVar())
+		g.emit("\tkeep := [][]int{v}")
+		g.emit("\tcur := v")
+		g.emit("\tfor i := 0; i < %d; i++ {", n)
+		g.emit("\t\tcur = append(cur, i*%d+int(%s))", 1+g.r.Intn(9), g.anyVar())
+		g.emit("\t\tkeep = append(keep, cur)")
+		g.emit("\t\tjunkF(%d + i)", c)
+		g.emit("\t}")
+		g.emit("\tjunkF(%d)", c*4)
+		g.emit("\tfor _, k := range keep {")
+		g.emit("\t\tfmt.Println(len(k), k)")
+		g.emit("\t}")
+		g.emit("}")
+	case 9: // slices of an old backing array reachable through structs and maps
+		c := 2 + g.r.Intn(5)
+		g.emit("{")
+		g.emit("\tv := make([]int, 2, %d)", c)
+		g.emit("\tv[0], v[1] = 7, int(%s)", g.anyVar())
+		g.emit("\ttype hold struct{ s []int; p *int }")
+		g.emit("\th := hold{v, &v[1]}")
+		g.emit("\tm := map[string][]int{\"old\": v[:1]}")
+		g.emit("\tw := append(v, 1, 2, 3, 4, 5, 6)")
+		g.emit("\tjunkF(%d)", c)
+		g.emit("\tjunkF(len(w))")
+		g.emit("\tfmt.Println(h.s, *h.p, m[\"old\"], len(w))")
+		g.emit("}")
+	case 10: // tree builder with a retained interior pointer
+		c := 2 + g.r.Intn(4)
+		d := 2 + g.r.Intn(3)
+		g.emit("{")
+		g.emit("\tt := buildT(%d, %d)", d, c)
+		g.emit("\tn := t.l.r")
+		g.emit("\tp := &t.r.d[1]")
+		g.emit("\tt = nil")
+		g.emit("\tfor i := 0; i < 5; i++ {")
+		g.emit("\t\tjunkF(%d)", c*6)
+		g.emit("\t\tbuildT(%d, %d)", d, c)
+		g.emit("\t}")
+		g.emit("\tfmt.Println(sumT(n), *p, n.d)")
+		g.emit("}")
 	case 0: // nested counted loops over a slice, with reductions
 		n := 4 + g.r.Intn(20)
 		v := g.anyVar()
