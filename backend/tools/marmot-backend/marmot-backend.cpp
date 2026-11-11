@@ -88,6 +88,11 @@ static cl::opt<bool> fastFP("ffast-fp",
 static cl::opt<bool> loopsRemarks("loops-remarks",
                                   cl::desc("Loop optimizer: explain each loop decision"),
                                   cl::cat(cat));
+static cl::opt<bool> noBCV("no-bcv", cl::desc("Loop optimizer: no bounds check versioning"),
+                           cl::cat(cat));
+static cl::opt<bool> typeAlias("type-alias",
+                               cl::desc("Loop optimizer: alias metadata from Go type classes"),
+                               cl::cat(cat));
 static cl::opt<bool> verifyEach("verify-each",
                                 cl::desc("Verify IR after every pass"), cl::cat(cat));
 
@@ -150,6 +155,8 @@ int main(int argc, char **argv) {
   opts.loops.parallel = !noPar;
   opts.loops.fastFP = fastFP;
   opts.loops.remarks = loopsRemarks;
+  opts.loops.versioning = !noBCV;
+  opts.loops.typeAlias = typeAlias;
   opts.escape = !noEscape;
   opts.bce = !noBCE;
   opts.devirt = !noDevirt;

@@ -330,6 +330,8 @@ std::unique_ptr<llvm::Module> lowerAndTranslate(ParsedModule &pm, const std::str
     mpm.addPass(go::createGoToLLVM());
     // Always: large aggregate values would hang code generation.
     mpm.addPass(go::createAggregateCopies());
+    if ((opts.optLevel == '2' || opts.optLevel == '3') && opts.loops.enable)
+      loops::addMLIRPasses(mpm, opts.loops);
     if (mlir::failed(mpm.run(module)))
       return fail("MLIR pass pipeline failed");
   }

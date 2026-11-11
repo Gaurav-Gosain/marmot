@@ -273,7 +273,8 @@ std::string fingerprint(const CompileOptions &opts) {
      << opts.triple << "|" << opts.cpu << "|" << opts.features << "|"
      << opts.strings << opts.devirt << opts.escape << opts.bce << opts.openDefers
      << opts.initOptNone << opts.wpoImport << "|loops" << opts.loops.enable
-     << opts.loops.parallel << opts.loops.fastFP << opts.loops.remarks << "|";
+     << opts.loops.parallel << opts.loops.fastFP << opts.loops.remarks
+     << opts.loops.versioning << opts.loops.typeAlias << "|";
   if (opts.rtBitcode)
     os << hashHex(opts.rtBitcode->bitcode->getBuffer());
   return fp;
