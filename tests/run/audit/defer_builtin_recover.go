@@ -1,0 +1,22 @@
+// Audit (loops, 2026-11-12): defer recover() must return nil and let the
+// panic reach the caller (gc: "main recovered: b"). marmot faults (dev) or
+// hangs (-release, and dev under MARMOT_GCSTRESS=1), with or without
+// -no-open-defers.
+package main
+
+import "fmt"
+
+// defer recover(): the deferred call is recover itself, not a function
+// that calls it, so it returns nil and the panic goes on to the caller.
+//
+//go:noinline
+func f() (s string) {
+	defer func() { s = "deferred closure ran" }()
+	defer recover()
+	panic("b")
+}
+
+func main() {
+	defer func() { fmt.Println("main recovered:", recover()) }()
+	fmt.Println(f())
+}
