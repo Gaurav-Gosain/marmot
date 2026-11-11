@@ -18,27 +18,30 @@ var classToSize = [...]uint16{0, 8, 16, 24, 32, 48, 64, 80, 96, 112, 128, 144, 1
 
 // sizeToClass8 maps (n+7)/8 to the size class index for n <= 1024, and
 // sizeToClass128 maps (n-1024+127)/128 for 1024 < n <= 32768. They are
-// built from classToSize at init.
-var (
-	sizeToClass8   [smallSizeMax/smallSizeDiv + 1]uint8
-	sizeToClass128 [(maxSmallSize-smallSizeMax)/largeSizeDiv + 1]uint8
-)
+// literal tables (generated from classToSize), not built by an init
+// function: allocation happens during package initialization, possibly
+// before the runtime's init functions run.
+var sizeToClass8 = [smallSizeMax/smallSizeDiv + 1]uint8{
+	0, 1, 2, 3, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14,
+	14, 15, 15, 16, 16, 17, 17, 18, 18, 19, 19, 19, 19, 20, 20, 20, 20, 21, 21, 21, 21, 22, 22, 22,
+	22, 23, 23, 23, 23, 24, 24, 24, 24, 25, 25, 25, 25, 26, 26, 26, 26, 27, 27, 27, 27, 27, 27, 27,
+	27, 28, 28, 28, 28, 28, 28, 28, 28, 29, 29, 29, 29, 29, 29, 29, 29, 30, 30, 30, 30, 30, 30, 30,
+	30, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 31, 32, 32, 32, 32, 32, 32, 32,
+	32, 32, 32, 32, 32, 32, 32, 32, 32,
+}
 
-func init() {
-	c := 0
-	for i := range sizeToClass8 {
-		for int(classToSize[c]) < i*smallSizeDiv {
-			c++
-		}
-		sizeToClass8[i] = uint8(c)
-	}
-	for i := range sizeToClass128 {
-		n := smallSizeMax + i*largeSizeDiv
-		for int(classToSize[c]) < n {
-			c++
-		}
-		sizeToClass128[i] = uint8(c)
-	}
+var sizeToClass128 = [(maxSmallSize-smallSizeMax)/largeSizeDiv + 1]uint8{
+	32, 33, 34, 35, 36, 37, 37, 38, 38, 39, 39, 40, 40, 40, 41, 41, 41, 42, 43, 43, 44, 44, 44, 44,
+	44, 45, 45, 45, 45, 45, 45, 46, 46, 46, 46, 47, 47, 47, 47, 47, 47, 48, 48, 48, 49, 49, 50, 51,
+	51, 51, 51, 51, 51, 51, 51, 51, 51, 52, 52, 52, 52, 52, 52, 52, 52, 52, 52, 53, 53, 54, 54, 54,
+	54, 55, 55, 55, 55, 55, 56, 56, 56, 56, 56, 56, 56, 56, 56, 56, 56, 57, 57, 57, 57, 57, 57, 57,
+	57, 57, 57, 58, 58, 58, 58, 58, 58, 59, 59, 59, 59, 59, 59, 59, 59, 59, 59, 59, 59, 59, 59, 59,
+	59, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 61, 61, 61, 61, 61, 62, 62,
+	62, 62, 62, 62, 62, 62, 62, 62, 62, 63, 63, 63, 63, 63, 63, 63, 63, 63, 63, 64, 64, 64, 64, 64,
+	64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 65, 65, 65, 65, 65, 65, 65,
+	65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 65, 66, 66, 66, 66, 66, 66, 66, 66, 66, 66,
+	66, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67, 67,
+	67, 67, 67, 67, 67, 67, 67, 67, 67,
 }
 
 // sizeClassUp returns the smallest size class >= n, for n <= maxSmallSize.
