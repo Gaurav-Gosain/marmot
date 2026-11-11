@@ -248,6 +248,11 @@ intptr_t rt_last_index(const void *p, intptr_t n, const void *sep, intptr_t m);
 // Non-overlapping occurrences of sep[0:m], m >= 1 (0 if m <= 0) [strings.Count
 // for a non-empty sep].
 intptr_t rt_count_substr(const void *p, intptr_t n, const void *sep, intptr_t m);
+// Replace all non-overlapping occurrences of old[0:m] (m >= 1) in src[0:n]
+// with new[0:k] into dst, sized n + count*(k-m) with count from
+// rt_count_substr; returns bytes written [strings.Replace, n < 0].
+intptr_t rt_replace_into(uint8_t *dst, const void *src, intptr_t n, const void *old, intptr_t m,
+                         const void *new_, intptr_t k);
 intptr_t rt_ascii_prefix(const void *p, intptr_t n);  // length of the leading ASCII bytes
 int32_t rt_utf8_valid(const void *p, intptr_t n);     // utf8.Valid
 intptr_t rt_utf8_count(const void *p, intptr_t n);    // utf8.RuneCount

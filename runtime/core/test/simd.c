@@ -141,6 +141,22 @@ void marmot_main(void) {
     for (intptr_t k = 0; k + m <= n; k++) if (memcmp(t + k, nd, (size_t)m) == 0) { if (wf < 0) wf = k; wl = k; }
     for (intptr_t k = 0; k + m <= n;) { if (memcmp(t + k, nd, (size_t)m) == 0) { wc++; k += m; } else k++; }
     CHECK(rt_index(t, n, nd, m) == wf && rt_last_index(t, n, nd, m) == wl && rt_count_substr(t, n, nd, m) == wc);
+    // Replace with a different length, against a byte loop.
+    {
+      static uint8_t got[4000], want[4000];
+      const uint8_t rep[3] = {'X', 'Y', 'Z'};
+      intptr_t mm = 1 + (intptr_t)(rnd() % 5), kk = (intptr_t)(rnd() % 4);
+      intptr_t c = rt_count_substr(t, n, t + at, mm);
+      intptr_t w = 0;
+      for (intptr_t k2 = 0; k2 < n;) {
+        if (k2 + mm <= n && memcmp(t + k2, t + at, (size_t)mm) == 0) { memcpy(want + w, rep, (size_t)kk); w += kk; k2 += mm; }
+        else want[w++] = t[k2++];
+      }
+      uint8_t oldv[8];
+      memcpy(oldv, t + at, (size_t)mm);
+      intptr_t g = rt_replace_into(got, t, n, oldv, mm, rep, kk);
+      CHECK(g == w && g == n + c * (kk - mm) && memcmp(got, want, (size_t)w) == 0);
+    }
   }
   // Digits and hex.
   for (int iter = 0; iter < 20000; iter++) {

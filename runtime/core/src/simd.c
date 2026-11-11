@@ -865,3 +865,64 @@ RT_API intptr_t rt_json_string_scan(const void *s, intptr_t n) {
     if (p[i] < 0x20 || p[i] == '"' || p[i] == '\\') return i;
   return n;
 }
+
+// Replace every non-overlapping occurrence of old[0:m] (m >= 1, leftmost
+// first) in src[0:n] by new_[0:k], writing to dst, which must hold
+// n + count * (k - m) bytes where count = rt_count_substr(src, n, old, m)
+// [strings.Replace with n < 0, after the caller allocated dst]. Returns the
+// number of bytes written.
+RT_API intptr_t rt_replace_into(uint8_t *dst, const void *s, intptr_t n, const void *old,
+                                intptr_t m, const void *new_, intptr_t k) {
+  bp p = s, q = old, r = new_;
+  intptr_t o = 0, done = 0;  // bytes written, source bytes consumed
+  if (m <= 0 || m > n) {
+    __builtin_memcpy(dst, p, (size_t)n);
+    return n;
+  }
+  if (m == 1) {
+    intptr_t j;
+    while ((j = rt_index_byte(p + done, n - done, q[0])) >= 0) {
+      __builtin_memcpy(dst + o, p + done, (size_t)j);
+      o += j;
+      __builtin_memcpy(dst + o, r, (size_t)k);
+      o += k;
+      done += j + 1;
+    }
+  } else {
+    needle nd;
+    needle_init(&nd, q, m);
+    intptr_t i = 0, mo = nd.mo, last = n - m;
+#if RT_NEON || RT_SSE2
+    for (; i + 16 <= last + 1; i += 16) {
+      uint64_t mk = eq_mask16(p + i, nd.f) & eq_mask16(p + i + m - 1, nd.l) &
+                    eq_mask16(p + i + mo, nd.md);
+      while (mk) {
+        uint32_t b = (uint32_t)__builtin_ctzll(mk) >> MASK_SHIFT;
+        intptr_t j = i + (intptr_t)b;
+#if RT_NEON
+        mk &= ~(0xfull << (b << 2));
+#else
+        mk &= mk - 1;
+#endif
+        if (j >= done && needle_at(&nd, p, n, q, j)) {
+          __builtin_memcpy(dst + o, p + done, (size_t)(j - done));
+          o += j - done;
+          __builtin_memcpy(dst + o, r, (size_t)k);
+          o += k;
+          done = j + m;
+        }
+      }
+    }
+#endif
+    for (; i <= last; i++)
+      if (i >= done && p[i] == q[0] && p[i + m - 1] == q[m - 1] && rt_mem_equal(p + i, q, m)) {
+        __builtin_memcpy(dst + o, p + done, (size_t)(i - done));
+        o += i - done;
+        __builtin_memcpy(dst + o, r, (size_t)k);
+        o += k;
+        done = i + m;
+      }
+  }
+  __builtin_memcpy(dst + o, p + done, (size_t)(n - done));
+  return o + n - done;
+}
