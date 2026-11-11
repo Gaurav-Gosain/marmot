@@ -16,10 +16,9 @@
 #include "malloc.h"
 
 static rt_mutex gc_mu;
+static bool gc_trace;
 static _Atomic uint64_t num_gc;
 static uint64_t pause_total_ns;
-static uintptr_t *mstack;
-static uintptr_t mlen, mcap;
 
 // ---- registered roots ----
 
@@ -169,18 +168,95 @@ RT_API void rt_gc_set_finalizer(void *obj, void (*fn)(void *)) {
 }
 
 // ---- marking ----
+//
+// Parallel mark: the collecting thread scans the roots into its own work
+// stack, then it and up to gc_nhelpers helper threads drain the heap graph.
+// A worker with a deep stack shares half of it through the global list of
+// full work buffers when another worker is idle. Mark bits are set with an
+// atomic or. Marking ends when every worker is idle and no buffer is left.
 
-static void mstack_push(uintptr_t obj) {
-  if (mlen == mcap) {
-    uintptr_t ncap = mcap ? mcap * 2 : 65536;
-    uintptr_t *n = os_map(ncap * sizeof *n);
-    if (!n) rt_throw("out of memory (mark stack)");
-    if (mlen) __builtin_memcpy(n, mstack, mlen * sizeof *n);
-    if (mstack) os_unmap(mstack, mcap * sizeof *n);
-    mstack = n;
-    mcap = ncap;
+#define WBUF_N 1022
+typedef struct wbuf {
+  struct wbuf *next;
+  uintptr_t n;
+  uintptr_t obj[WBUF_N];
+} wbuf;
+
+typedef struct gcw {
+  uintptr_t *stk;
+  uintptr_t len, cap;
+  uint64_t nscan;  // objects scanned this cycle (trace)
+} gcw;
+
+#define MAX_GCWORKERS 16
+static gcw workers[MAX_GCWORKERS];
+static rt_spin wlock;
+static wbuf *_Atomic wfull;
+static wbuf *wempty;
+static _Atomic int32_t wnidle;
+static int32_t wactive;              // workers in this mark phase
+static int32_t gc_nhelpers = -1;     // helper threads (not counting the collector)
+static _Atomic uint32_t helper_gen;  // bumped to start a phase
+static _Atomic int32_t helpers_running;
+static _Atomic int32_t helpers_done_futex;
+
+static void gcw_grow(gcw *w) {
+  uintptr_t ncap = w->cap ? w->cap * 2 : 65536;
+  uintptr_t *n = os_map(ncap * sizeof *n);
+  if (!n) rt_throw("out of memory (mark stack)");
+  if (w->len) __builtin_memcpy(n, w->stk, w->len * sizeof *n);
+  if (w->stk) os_unmap(w->stk, w->cap * sizeof *n);
+  w->stk = n;
+  w->cap = ncap;
+}
+
+INLINE void gcw_push(gcw *w, uintptr_t obj) {
+  if (UNLIKELY(w->len == w->cap)) gcw_grow(w);
+  w->stk[w->len++] = obj;
+}
+
+static wbuf *wbuf_get_empty(void) {
+  spin_lock(&wlock);
+  wbuf *b = wempty;
+  if (b) wempty = b->next;
+  spin_unlock(&wlock);
+  if (!b) {
+    b = os_map(sizeof(wbuf));
+    if (!b) rt_throw("out of memory (mark buffers)");
   }
-  mstack[mlen++] = obj;
+  b->n = 0;
+  b->next = NULL;
+  return b;
+}
+
+static _Atomic uint32_t wwork_gen;  // bumped when work is shared or marking ends
+static _Atomic int32_t wdone;
+static _Atomic int32_t wsleeping;   // idle workers blocked in the kernel
+static uint32_t gc_spin = 200;     // idle spins before sleeping (MARMOT_GCSPIN)
+
+static void wbuf_put_full(wbuf *b) {
+  spin_lock(&wlock);
+  b->next = atomic_load(&wfull);
+  atomic_store(&wfull, b);
+  spin_unlock(&wlock);
+  atomic_fetch_add(&wwork_gen, 1);
+  if (atomic_load(&wsleeping) > 0) os_futex_wake(&wwork_gen, false);
+}
+
+static wbuf *wbuf_get_full(void) {
+  if (!atomic_load(&wfull)) return NULL;
+  spin_lock(&wlock);
+  wbuf *b = atomic_load(&wfull);
+  if (b) atomic_store(&wfull, b->next);
+  spin_unlock(&wlock);
+  return b;
+}
+
+static void wbuf_put_empty(wbuf *b) {
+  spin_lock(&wlock);
+  b->next = wempty;
+  wempty = b;
+  spin_unlock(&wlock);
 }
 
 // Find the object containing p. Returns its span and index, or NULL.
@@ -188,41 +264,45 @@ NO_SANITIZE INLINE mspan *find_object(uintptr_t p, uintptr_t *idxp) {
   if (p - rt_arena_start >= rt_arena_used - rt_arena_start) return NULL;
   mspan *s = rt_pagemap[(p - rt_arena_start) >> PAGE_SHIFT];
   if (!s || s->state != SPAN_INUSE || p < s->base || p >= s->limit) return NULL;
-  uintptr_t idx = s->cls ? (p - s->base) / s->elemsize : 0;
+  uintptr_t idx = s->cls ? (uintptr_t)(((uint64_t)(p - s->base) * s->divmul) >> 32) : 0;
   if (idx >= s->nelems) return NULL;
   if (!((s->allocbits[idx / 64] >> (idx % 64)) & 1)) return NULL;  // free slot
   *idxp = idx;
   return s;
 }
 
-NO_SANITIZE INLINE void mark_ptr(uintptr_t p) {
+NO_SANITIZE INLINE void mark_ptr(gcw *w, uintptr_t p) {
   uintptr_t idx;
   mspan *s = find_object(p, &idx);
   if (!s) return;
   uint64_t bit = 1ull << (idx % 64);
-  uint64_t *w = &s->markbits[idx / 64];
-  if (*w & bit) return;
-  *w |= bit;
-  if (s->kind != RT_ALLOC_NOSCAN) mstack_push(s->base + idx * s->elemsize);
+  uint64_t *mw = &s->markbits[idx / 64];
+  if (__atomic_load_n(mw, __ATOMIC_RELAXED) & bit) return;
+  if (__atomic_fetch_or(mw, bit, __ATOMIC_RELAXED) & bit) return;
+  if (s->kind != RT_ALLOC_NOSCAN) gcw_push(w, s->base + idx * s->elemsize);
 }
 
-NO_SANITIZE void gc_scan_range(uintptr_t lo, uintptr_t hi) {
+NO_SANITIZE static void scan_range_w(gcw *w, uintptr_t lo, uintptr_t hi) {
   lo = (lo + 7) & ~(uintptr_t)7;
-  for (uintptr_t p = lo; p + 8 <= hi; p += 8) mark_ptr(*(uintptr_t *)p);
+  for (uintptr_t p = lo; p + 8 <= hi; p += 8) mark_ptr(w, *(uintptr_t *)p);
 }
 
-NO_SANITIZE static void scan_object(uintptr_t obj) {
+// Root scanning runs on the collecting thread, into worker 0.
+NO_SANITIZE void gc_scan_range(uintptr_t lo, uintptr_t hi) { scan_range_w(&workers[0], lo, hi); }
+
+NO_SANITIZE static void scan_object(gcw *w, uintptr_t obj) {
   mspan *s = rt_pagemap[(obj - rt_arena_start) >> PAGE_SHIFT];
   if (s->kind == RT_ALLOC_CONSERVATIVE) {
-    gc_scan_range(obj, obj + s->elemsize);
+    scan_range_w(w, obj, obj + s->elemsize);
   } else if (s->cls) {
     // Small precise object: heap bits.
     uintptr_t w0 = (obj - rt_arena_start) / 8;
     uintptr_t nw = s->elemsize / 8;
+    const uintptr_t *o = (const uintptr_t *)obj;
     for (uintptr_t i = 0; i < nw;) {
-      uintptr_t w = w0 + i;
-      uint64_t bits = rt_heapbits[w / 64] >> (w % 64);
-      uintptr_t n = 64 - w % 64;
+      uintptr_t wd = w0 + i;
+      uint64_t bits = rt_heapbits[wd / 64] >> (wd % 64);
+      uintptr_t n = 64 - wd % 64;
       if (n > nw - i) {
         n = nw - i;
         bits &= (1ull << n) - 1;
@@ -230,7 +310,7 @@ NO_SANITIZE static void scan_object(uintptr_t obj) {
       while (bits) {
         uintptr_t b = (uintptr_t)__builtin_ctzll(bits);
         bits &= bits - 1;
-        mark_ptr(((uintptr_t *)obj)[i + b]);
+        mark_ptr(w, o[i + b]);
       }
       i += n;
     }
@@ -239,15 +319,152 @@ NO_SANITIZE static void scan_object(uintptr_t obj) {
     uintptr_t ew = s->ptrelem / 8;
     const uint8_t *pm = s->ptrmap;
     for (uintptr_t e = 0; e < s->ptrcount; e++) {
-      uintptr_t *elem = (uintptr_t *)(obj + e * s->ptrelem);
+      const uintptr_t *elem = (const uintptr_t *)(obj + e * s->ptrelem);
       for (uintptr_t i = 0; i < ew; i++)
-        if ((pm[i / 8] >> (i % 8)) & 1) mark_ptr(elem[i]);
+        if ((pm[i / 8] >> (i % 8)) & 1) mark_ptr(w, elem[i]);
+    }
+  }
+}
+
+// Move the oldest half (at most one buffer) of w's stack to the shared list.
+static void share(gcw *w) {
+  uintptr_t n = w->len / 2;
+  if (n > WBUF_N) n = WBUF_N;
+  wbuf *b = wbuf_get_empty();
+  __builtin_memcpy(b->obj, w->stk, n * sizeof(uintptr_t));
+  b->n = n;
+  __builtin_memmove(w->stk, w->stk + n, (w->len - n) * sizeof(uintptr_t));
+  w->len -= n;
+  wbuf_put_full(b);
+}
+
+INLINE void cpu_relax(void) {
+#if RT_ARCH_ARM64
+  __asm__ volatile("yield");
+#else
+  __asm__ volatile("pause");
+#endif
+}
+
+// Drain until global termination. Single-worker phases just drain.
+static void drain_parallel(gcw *w) {
+  for (;;) {
+    uint32_t k = 0;
+    while (w->len > 0) {
+      scan_object(w, w->stk[--w->len]);
+      w->nscan++;
+      if ((++k & 15) == 0 && w->len > 4 && atomic_load_explicit(&wnidle, memory_order_relaxed) > 0 &&
+          !atomic_load_explicit(&wfull, memory_order_relaxed))
+        share(w);
+    }
+    wbuf *b = wbuf_get_full();
+    if (b) {
+      while (w->cap < w->len + b->n) gcw_grow(w);
+      __builtin_memcpy(w->stk + w->len, b->obj, b->n * sizeof(uintptr_t));
+      w->len += b->n;
+      wbuf_put_empty(b);
+      continue;
+    }
+    if (wactive == 1) return;
+    if (atomic_load(&wdone)) return;
+    if (atomic_fetch_add(&wnidle, 1) + 1 == wactive && !atomic_load(&wfull)) {
+      // Last worker to go idle with nothing queued: marking is done.
+      atomic_store(&wdone, 1);
+      atomic_fetch_add(&wwork_gen, 1);
+      os_futex_wake(&wwork_gen, true);
+      return;
+    }
+    for (uint32_t spins = 0;; spins++) {
+      if (atomic_load(&wdone)) return;
+      if (atomic_load(&wfull)) {
+        atomic_fetch_sub(&wnidle, 1);
+        break;
+      }
+      if (atomic_load(&wnidle) == wactive && !atomic_load(&wfull)) {
+        atomic_store(&wdone, 1);
+        atomic_fetch_add(&wwork_gen, 1);
+        os_futex_wake(&wwork_gen, true);
+        return;
+      }
+      if (spins < gc_spin) {
+        cpu_relax();
+      } else {
+        uint32_t g = atomic_load(&wwork_gen);
+        atomic_fetch_add(&wsleeping, 1);
+        if (!atomic_load(&wfull) && !atomic_load(&wdone)) os_futex_wait(&wwork_gen, g, 200000);
+        atomic_fetch_sub(&wsleeping, 1);
+        spins = gc_spin / 2;
+      }
     }
   }
 }
 
 static void drain(void) {
-  while (mlen > 0) scan_object(mstack[--mlen]);
+  int32_t saved = wactive;
+  wactive = 1;
+  drain_parallel(&workers[0]);
+  wactive = saved;
+}
+
+static void gc_helper(void *arg) {
+  gcw *w = arg;
+  uint32_t seen = 0;
+  for (;;) {
+    uint32_t g;
+    while ((g = atomic_load(&helper_gen)) == seen) os_futex_wait(&helper_gen, seen, -1);
+    seen = g;
+    drain_parallel(w);
+    if (atomic_fetch_sub(&helpers_running, 1) == 1) {
+      atomic_store(&helpers_done_futex, 1);
+      os_futex_wake((_Atomic uint32_t *)&helpers_done_futex, true);
+    }
+  }
+}
+
+static void helpers_init(void) {
+  if (gc_nhelpers >= 0) return;
+  bool ok;
+  int64_t n = rt_atoi(rt_getenv("MARMOT_GCPROCS"), &ok);
+  if (!ok || n < 1) {
+    // Half the processors, at most 4 workers: most of the speedup for a
+    // modest CPU cost on a shared machine.
+    n = atomic_load(&sched.nprocs);
+    int32_t c = os_ncpu();
+    if (n > c) n = c;
+    n = n / 2;
+    if (n < 1) n = 1;
+    if (n > 4) n = 4;
+  }
+  if (n > MAX_GCWORKERS) n = MAX_GCWORKERS;
+  int64_t sp = rt_atoi(rt_getenv("MARMOT_GCSPIN"), &ok);
+  if (ok && sp >= 0) gc_spin = (uint32_t)sp;
+  gc_nhelpers = 0;
+  for (int32_t i = 1; i < n; i++) {
+    if (!os_thread_create(gc_helper, &workers[i], 256 << 10)) break;
+    gc_nhelpers++;
+  }
+}
+
+// Drain the heap graph from worker 0's stack with all helpers.
+static void mark_parallel(void) {
+  helpers_init();
+  int32_t nh = gc_nhelpers;
+  // Small heaps are not worth waking the helpers for.
+  if (atomic_load(&heap_live) < (2u << 20) || workers[0].len == 0) nh = 0;
+  wactive = nh + 1;
+  atomic_store(&wnidle, 0);
+  atomic_store(&wdone, 0);
+  if (nh > 0) {
+    atomic_store(&helpers_running, nh);
+    atomic_store(&helpers_done_futex, 0);
+    atomic_fetch_add(&helper_gen, 1);
+    os_futex_wake(&helper_gen, true);
+  }
+  drain_parallel(&workers[0]);
+  if (nh > 0)
+    while (atomic_load(&helpers_done_futex) == 0)
+      os_futex_wait((_Atomic uint32_t *)&helpers_done_futex, 0, -1);
+  wactive = 1;
 }
 
 static bool is_marked(uintptr_t p) {
@@ -265,17 +482,19 @@ static void set_marked(uintptr_t p) {
 static void scan_data_segment(void *lo, void *hi) { gc_scan_range((uintptr_t)lo, (uintptr_t)hi); }
 
 static void mark_roots(void) {
+  gcw *w = &workers[0];
   os_data_segments(scan_data_segment);
   for (int32_t i = 0; i < nroots; i++) gc_scan_range(roots[i].lo, roots[i].hi);
   sched_scan_roots(gc_scan_range);
   timers_scan_roots(gc_scan_range);
-  for (uintptr_t i = 0; i < finqlen; i++) mark_ptr(finq[i].obj);
-  drain();
+  for (uintptr_t i = 0; i < finqlen; i++) mark_ptr(w, finq[i].obj);
+  mark_parallel();
 }
 
 static bool mark_finalizers(void) {
   bool queued = false;
   if (!finlen) return false;
+  gcw *w = &workers[0];
   // Referents of finalizable objects stay alive.
   for (uintptr_t i = 0; i < fincap; i++) {
     uintptr_t obj = fintab[i].obj;
@@ -283,7 +502,7 @@ static bool mark_finalizers(void) {
     uintptr_t idx;
     mspan *s = find_object(obj, &idx);
     if (s && s->kind != RT_ALLOC_NOSCAN) {
-      scan_object(s->base + idx * s->elemsize);
+      scan_object(w, s->base + idx * s->elemsize);
       drain();
     }
   }
@@ -351,10 +570,14 @@ void gc_collect(bool forced) {
   void *regs[24];
   m->stop_sp = rt_spill_regs(regs);
   m->stop_hi = m->curg->stack_hi;
+  uint64_t before = atomic_load(&heap_live);
   mcache_flush_all();
+  int64_t t1 = os_nanotime();
   mark_roots();
   bool queued = mark_finalizers();
+  int64_t t2 = os_nanotime();
   sweep_all();
+  int64_t t3 = os_nanotime();
   uint64_t live = atomic_load(&heap_live);
   if (gc_percent >= 0) {
     uint64_t goal = live + live * (uint64_t)gc_percent / 100;
@@ -362,13 +585,44 @@ void gc_collect(bool forced) {
   } else {
     next_gc = UINT64_MAX;
   }
-  if (mcap > (1 << 20)) {  // drop a large mark stack
-    os_unmap(mstack, mcap * sizeof *mstack);
-    mstack = NULL;
-    mcap = 0;
+  for (int32_t i = 0; i <= gc_nhelpers; i++) {
+    gcw *w = &workers[i];
+    if (w->cap > (1 << 20)) {  // drop a large mark stack
+      os_unmap(w->stk, w->cap * sizeof *w->stk);
+      w->stk = NULL;
+      w->cap = 0;
+    }
   }
   atomic_fetch_add(&num_gc, 1);
-  pause_total_ns += (uint64_t)(os_nanotime() - t0);
+  int64_t t4 = os_nanotime();
+  pause_total_ns += (uint64_t)(t4 - t0);
+  if (UNLIKELY(gc_trace)) {
+    rt_print("gc ");
+    rt_printu(atomic_load(&num_gc));
+    rt_print(": ");
+    rt_printu(before >> 10);
+    rt_print(" -> ");
+    rt_printu(live >> 10);
+    rt_print(" KiB, goal ");
+    rt_printu(next_gc >> 10);
+    rt_print(" KiB, stw ");
+    rt_printu((uint64_t)(t1 - t0) / 1000);
+    rt_print(" us, mark ");
+    rt_printu((uint64_t)(t2 - t1) / 1000);
+    rt_print(" us, sweep ");
+    rt_printu((uint64_t)(t3 - t2) / 1000);
+    rt_print(" us, total ");
+    rt_printu((uint64_t)(t4 - t0) / 1000);
+    rt_print(" us, ");
+    rt_printu((uint64_t)gc_nhelpers + 1);
+    rt_print(" workers, scanned");
+    for (int32_t i = 0; i <= gc_nhelpers; i++) {
+      rt_print(" ");
+      rt_printu(workers[i].nscan);
+      workers[i].nscan = 0;
+    }
+    rt_print("\n");
+  }
   bool wake = false;
   if (queued) {
     spin_lock(&fin_lock);
@@ -412,6 +666,8 @@ RT_API int32_t rt_gc_set_percent(int32_t percent) {
 }
 
 void gc_init(void) {
+  const char *t = rt_getenv("MARMOT_GCTRACE");
+  gc_trace = t && *t == '1';
   if (gc_percent < 0) next_gc = UINT64_MAX;
 }
 

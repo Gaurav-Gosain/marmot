@@ -28,7 +28,27 @@ extern int __ulock_wake(uint32_t op, void *addr, uint64_t wake_value);
 uintptr_t rt_pagesize;
 static uint32_t tb_numer, tb_denom;
 
+uintptr_t rt_m_tlsoff;
+_Thread_local rt_m *rt_tls_m;  // unused on darwin
+static pthread_key_t m_key;
+
+void tls_init(void) {
+  if (pthread_key_create(&m_key, NULL) != 0) os_exit(2);
+  rt_m_tlsoff = (uintptr_t)m_key * sizeof(void *);
+  // The fast path reads the slot directly; make sure that matches.
+  pthread_setspecific(m_key, (void *)&m_key);
+  if ((void *)getm() != (void *)&m_key) {
+    static const char msg[] = "fatal error: unexpected TSD layout\n";
+    os_write_err(msg, sizeof msg - 1);
+    os_exit(2);
+  }
+  pthread_setspecific(m_key, NULL);
+}
+
+void setm(rt_m *m) { pthread_setspecific(m_key, m); }
+
 void os_init(void) {
+  tls_init();
   rt_pagesize = (uintptr_t)getpagesize();
   mach_timebase_info_data_t tb;
   mach_timebase_info(&tb);

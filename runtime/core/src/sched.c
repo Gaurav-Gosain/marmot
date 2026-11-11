@@ -23,9 +23,6 @@
 
 #include <pthread.h>
 
-_Thread_local rt_m *rt_tls_m;
-
-rt_m *getm(void) { return rt_tls_m; }
 
 schedt sched;
 rt_g *rt_main_g;
@@ -322,7 +319,7 @@ static void checkdead(void) {
 
 static void mstart(void *arg) {
   rt_m *m = arg;
-  rt_tls_m = m;
+  setm(m);
   m->thread = (void *)pthread_self();
   signal_init_thread(m);
   rt_p *p = m->nextp;
@@ -341,7 +338,7 @@ static void newm(rt_p *p, bool spinning) {
   m->nextp = p;
   m->spinning = spinning;
   spin_unlock(&sched.lock);
-  rt_m *me = rt_tls_m;
+  rt_m *me = getm();
   if (me) me->locks++;
   bool ok = os_thread_create(mstart, m, 256 << 10);
   if (me) me->locks--;
@@ -982,7 +979,7 @@ static int retake(int64_t now) {
 static rt_m sysmon_m;
 
 static void sysmon(void *arg) {
-  rt_tls_m = &sysmon_m;
+  setm(&sysmon_m);
   uint32_t delay = 20;
   int idle = 0;
   for (;;) {
@@ -1069,7 +1066,7 @@ void sched_init(void) {
   g_stacksize = parse_size(rt_getenv("MARMOT_STACKSIZE"), g_stacksize);
   main_stacksize = parse_size(rt_getenv("MARMOT_MAINSTACKSIZE"), main_stacksize);
   rt_m *m = &m0;
-  rt_tls_m = m;
+  setm(m);
   m->thread = (void *)pthread_self();
   m->fastrand = rt_fastrand() | 1;
   sched.mcount = 1;

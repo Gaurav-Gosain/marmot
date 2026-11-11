@@ -354,6 +354,7 @@ static mspan *span_new_small(uint32_t cls, uint32_t kind) {
   s->allocbits = bits_new(nw);
   s->markbits = bits_new(nw);
   s->freeindex = 0;
+  s->divmul = (uint32_t)(0xffffffffu / (uint32_t)s->elemsize + 1);
   return s;
 }
 
@@ -489,6 +490,13 @@ void mcache_flush_all(void) {
 
 void rt_heapbits_set(uintptr_t p, uintptr_t size, uintptr_t clsize, const uint8_t *ptrmap,
                      uintptr_t elemsize) {
+  static const uint8_t all_ptrs[1] = {1};
+  if (!ptrmap || elemsize == 0 || elemsize % 8 != 0) {
+    // Invalid precise request: every word may be a pointer.
+    ptrmap = all_ptrs;
+    elemsize = 8;
+    size = clsize;
+  }
   uintptr_t w0 = (p - rt_arena_start) / 8;
   uintptr_t nw = clsize / 8;
   uintptr_t ew = elemsize / 8;
@@ -595,6 +603,25 @@ void *rt_alloc_slow(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintpt
   return p;
 }
 
+// Heap bits for a single-element precise object of at most 8 words (one
+// ptrmap byte) in a class of at most 64 bytes.
+INLINE void heapbits_byte(uintptr_t p, uintptr_t size, uintptr_t clsize, uint8_t pm) {
+  uint64_t bits = pm & ((1u << (size / 8)) - 1);
+  uint64_t mask = (1ull << (clsize / 8)) - 1;
+  uintptr_t w = (p - rt_arena_start) / 8;
+  uintptr_t sh = w % 64;
+  uint64_t *hb = &rt_heapbits[w / 64];
+  hb[0] = (hb[0] & ~(mask << sh)) | (bits << sh);
+  if (sh + clsize / 8 > 64) hb[1] = (hb[1] & ~(mask >> (64 - sh))) | (bits >> (64 - sh));
+}
+
+// Cold part of the fast path: zeroing larger objects and general heap bits.
+NOINLINE void rt_alloc_finish(uintptr_t p, uintptr_t size, uintptr_t clsize, uint32_t kind,
+                              const uint8_t *ptrmap, uintptr_t elemsize, bool zero) {
+  if (zero) __builtin_memset((void *)p, 0, clsize);
+  if (kind == RT_ALLOC_PRECISE) rt_heapbits_set(p, size, clsize, ptrmap, elemsize);
+}
+
 // Fast path: small objects from the P's cache. Inlinable from rtcore.bc.
 RT_API void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintptr_t elemsize) {
   if (LIKELY(size - 1 < MAX_SMALL && kind <= RT_ALLOC_PRECISE)) {
@@ -611,17 +638,17 @@ RT_API void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uint
       if (LIKELY(idx < s->nelems && (fi % 64 != 0 || fi == s->nelems))) {
         s->alloc_cache = (cache >> b) >> 1;
         s->freeindex = fi;
-        uintptr_t p = s->base + idx * s->elemsize;
-        if (s->needzero) __builtin_memset((void *)p, 0, s->elemsize);
-        if (kind == RT_ALLOC_PRECISE) {
-          if (UNLIKELY(!ptrmap || elemsize == 0 || elemsize % 8 != 0)) {
-            // Rare misuse: fall back below with the object returned unused.
-            s->freeindex = idx;
-            s->alloc_cache = cache;
-            m->locks--;
-            return rt_alloc_slow(size, kind, ptrmap, elemsize);
+        uintptr_t es = s->elemsize;
+        uintptr_t p = s->base + idx * es;
+        bool zero = s->needzero;
+        if (LIKELY(es <= 64 && (kind != RT_ALLOC_PRECISE || (elemsize == size && ptrmap)))) {
+          if (zero) {
+            uint64_t *q = (uint64_t *)p;
+            for (uintptr_t i = 0; i < es / 8; i++) __atomic_store_n(&q[i], 0, __ATOMIC_RELAXED);
           }
-          rt_heapbits_set(p, size, s->elemsize, ptrmap, elemsize);
+          if (kind == RT_ALLOC_PRECISE) heapbits_byte(p, size, es, ptrmap[0]);
+        } else {
+          rt_alloc_finish(p, size, es, kind, ptrmap, elemsize, zero);
         }
         m->locks--;
         return (void *)p;

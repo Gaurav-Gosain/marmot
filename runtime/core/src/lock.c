@@ -46,14 +46,14 @@ RT_API void rt_lock(rt_mutex *m) { lock_word((_Atomic uint32_t *)&m->state); }
 RT_API void rt_unlock(rt_mutex *m) { unlock_word((_Atomic uint32_t *)&m->state); }
 
 void spin_lock(rt_spin *l) {
-  rt_m *m = rt_tls_m;
+  rt_m *m = getm();
   if (m) m->locks++;
   lock_word(&l->v);
 }
 
 void spin_unlock(rt_spin *l) {
   unlock_word(&l->v);
-  rt_m *m = rt_tls_m;
+  rt_m *m = getm();
   if (m) m->locks--;
 }
 

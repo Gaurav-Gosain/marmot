@@ -21,7 +21,7 @@ RT_API void rt_set_sigpanic(void (*fn)(uintptr_t addr, int32_t kind)) { sigpanic
 
 static void sigurg(int sig, siginfo_t *info, void *ctx) {
   int saved = errno;
-  rt_m *m = rt_tls_m;
+  rt_m *m = getm();
   if (m && atomic_load(&sched.gcwaiting) && m->locks == 0 && m->curg && m->p &&
       atomic_load(&m->p->status) == P_RUNNING && m->p->m == m) {
     rt_g *g = m->curg;
@@ -61,7 +61,7 @@ static void sigfault(int sig, siginfo_t *info, void *ctxp) {
 #elif RT_OS_LINUX && RT_ARCH_AMD64
   pc = (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
 #endif
-  rt_m *m = rt_tls_m;
+  rt_m *m = getm();
   rt_g *g = m ? m->curg : NULL;
   // Stack overflow: the address is in a goroutine's guard page.
   if (g && addr >= g->map_base && addr < g->stack_lo) {

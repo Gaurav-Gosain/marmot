@@ -77,7 +77,7 @@ int64_t rt_atoi(const char *s, bool *ok) {
 static _Atomic uint64_t global_rand = 0x9E3779B97F4A7C15ull;
 
 uint64_t rt_fastrand(void) {
-  rt_m *m = rt_tls_m;
+  rt_m *m = getm();
   uint64_t s;
   if (m) {
     m->fastrand += 0xa0761d6478bd642full;

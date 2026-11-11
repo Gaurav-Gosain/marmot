@@ -229,9 +229,35 @@ struct rt_m {
   uintptr_t sigstack;        // alternate signal stack
 };
 
+// Current M. The thread pointer is read with volatile asm on every call, so
+// the compiler never reuses a value across a goroutine switch that moved the
+// goroutine to another thread (which a plain _Thread_local access allows).
+// darwin: a pthread TSD slot (rt_m_tlsoff = key * 8); linux: offset of
+// rt_tls_m from the thread pointer.
+extern uintptr_t rt_m_tlsoff;
 extern _Thread_local rt_m *rt_tls_m;
-// Current M. noinline so that the TLS address is recomputed after a switch.
-rt_m *getm(void) NOINLINE;
+INLINE rt_m *getm(void) {
+#if RT_OS_DARWIN && RT_ARCH_ARM64
+  uintptr_t tp;
+  __asm__ volatile("mrs %0, tpidrro_el0" : "=r"(tp));
+  return *(rt_m **)((tp & ~(uintptr_t)7) + rt_m_tlsoff);
+#elif RT_OS_DARWIN && RT_ARCH_AMD64
+  rt_m *m;
+  __asm__ volatile("movq %%gs:(%1), %0" : "=r"(m) : "r"(rt_m_tlsoff));
+  return m;
+#elif RT_OS_LINUX && RT_ARCH_ARM64
+  uintptr_t tp;
+  __asm__ volatile("mrs %0, tpidr_el0" : "=r"(tp));
+  return *(rt_m **)(tp + rt_m_tlsoff);
+#elif RT_OS_LINUX && RT_ARCH_AMD64
+  uintptr_t tp;
+  __asm__ volatile("movq %%fs:0, %0" : "=r"(tp));
+  return *(rt_m **)(tp + rt_m_tlsoff);
+#endif
+}
+// Set the current thread's M. tls_init must run first (os_init does it).
+void setm(rt_m *m);
+void tls_init(void);
 
 typedef struct schedt {
   rt_spin lock;

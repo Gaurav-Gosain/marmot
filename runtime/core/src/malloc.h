@@ -35,6 +35,7 @@ struct mspan {
   uint64_t *markbits;
   uint32_t nfree_cached;   // free objects when it was cached
   int32_t allidx;          // index in allspans
+  uint32_t divmul;         // index = (offset * divmul) >> 32 for small spans
   // Large precise objects: pointer map of one element.
   const uint8_t *ptrmap;
   uintptr_t ptrelem;       // element size
@@ -58,6 +59,8 @@ void *rt_alloc_slow(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintpt
     NOINLINE;
 void rt_heapbits_set(uintptr_t p, uintptr_t size, uintptr_t clsize, const uint8_t *ptrmap,
                      uintptr_t elemsize) NOINLINE;
+void rt_alloc_finish(uintptr_t p, uintptr_t size, uintptr_t clsize, uint32_t kind,
+                     const uint8_t *ptrmap, uintptr_t elemsize, bool zero) NOINLINE;
 
 // Internal to the heap.
 extern rt_spin heap_lock;
