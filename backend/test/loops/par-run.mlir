@@ -14,3 +14,9 @@
 // RUN: MARMOT_BACKEND_FLAGS="-par -type-alias" %S/../../../build/bin/marmot build -nocache -o %t.env %S/Inputs/envp.go
 // RUN: MARMOT_BACKEND_FLAGS="-no-loops" %S/../../../build/bin/marmot build -nocache -o %t.env0 %S/Inputs/envp.go
 // RUN: %t.env > %t.env.out 2>&1 && %t.env0 > %t.env0.out 2>&1 && diff %t.env.out %t.env0.out
+// Inputs/adversarial.go: loops that must not run in parallel (one per clause
+// of Rule P): allocation, a possible divide panic, aliasing pointers, channel,
+// defer, map, interface calls, recurrences, live-outs, one shared cell.
+// RUN: MARMOT_BACKEND_FLAGS="-par -type-alias" %S/../../../build/bin/marmot build -nocache -o %t.adv %S/Inputs/adversarial.go
+// RUN: %t.adv > %t.adv.out 2>&1 && diff %t.adv.out %S/Inputs/adversarial.expected
+// RUN: GOMAXPROCS=1 %t.adv > %t.adv.out1 2>&1 && diff %t.adv.out1 %S/Inputs/adversarial.expected
