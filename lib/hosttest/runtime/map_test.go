@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"strconv"
 	"testing"
 	"unsafe"
 )
@@ -447,5 +448,34 @@ func TestMapStrBytes(t *testing.T) {
 	}
 	if maplen(m) != 1 || *(*int)(mapaccess1_faststr(mt, m, "word")) != 3 {
 		t.Fatal("string lookup")
+	}
+}
+
+func TestMapKeysStr(t *testing.T) {
+	mt := mapType(tString, tInt)
+	if got := mapkeys_faststr(mt, nil, []string{"x"}); len(got) != 1 {
+		t.Fatal("nil map changed dst")
+	}
+	m := makemap(mt, 0)
+	want := map[string]int{}
+	for i := 0; i < 100; i++ {
+		k := "k" + strconv.Itoa(i)
+		*(*int)(mapassign_faststr(mt, m, k)) = i
+		want[k] = i
+	}
+	k := []string{"pre"}
+	vs := make([]int, 100)
+	keys := mapentries_faststr(mt, m, k, unsafe.Pointer(&vs[0]))
+	if len(keys) != 101 || keys[0] != "pre" {
+		t.Fatalf("len %d", len(keys))
+	}
+	for i, key := range keys[1:] {
+		if want[key] != vs[i] {
+			t.Fatalf("%s: %d want %d", key, vs[i], want[key])
+		}
+		delete(want, key)
+	}
+	if len(want) != 0 || len(mapkeys_faststr(mt, m, nil)) != 100 {
+		t.Fatal("missing keys")
 	}
 }

@@ -1065,6 +1065,42 @@ func mapaccess_faststr_bytes(t *maptype, m *hmap, b []byte) unsafe.Pointer {
 	return m.findstr(unsafe.String(unsafe.SliceData(b), len(b)))
 }
 
+// mapkeys_faststr appends the keys of the string keyed map m to dst, in
+// table order (unspecified). A nil or empty map leaves dst unchanged.
+func mapkeys_faststr(t *maptype, m *hmap, dst []string) []string {
+	if m == nil || m.count == 0 {
+		return dst
+	}
+	for g := uintptr(0); g <= m.mask; g++ {
+		grp := m.group(g)
+		for b := matchFull(*ctrlOf(grp)); b != 0; b &= b - 1 {
+			dst = append(dst, *(*string)(m.slotKey(grp, firstSlot(b))))
+		}
+	}
+	return dst
+}
+
+// mapentries_faststr is mapkeys_faststr that also copies the element of
+// each appended key: the element of the key appended as dst[len(dst)+i]
+// is stored at index i of the element array dv, which has room for
+// len(m) elements.
+func mapentries_faststr(t *maptype, m *hmap, dst []string, dv unsafe.Pointer) []string {
+	if m == nil || m.count == 0 {
+		return dst
+	}
+	i := uintptr(0)
+	for g := uintptr(0); g <= m.mask; g++ {
+		grp := m.group(g)
+		for b := matchFull(*ctrlOf(grp)); b != 0; b &= b - 1 {
+			s := firstSlot(b)
+			dst = append(dst, *(*string)(m.slotKey(grp, s)))
+			typedmemmove(m.elem, unsafe.Add(dv, i*m.elem.size), m.slotElem(grp, s))
+			i++
+		}
+	}
+	return dst
+}
+
 // mapassign_faststr_bytes is m[string(b)] = v: it returns the element
 // slot and allocates the key string only when the key is new.
 func mapassign_faststr_bytes(t *maptype, m *hmap, b []byte) unsafe.Pointer {
