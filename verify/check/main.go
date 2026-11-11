@@ -22,12 +22,16 @@ func main() {
 	before := flag.String("before", "", "go dialect MLIR before go-bce")
 	after := flag.String("after", "", "the same after go-bce")
 	verbose := flag.Bool("v", false, "print every justified removal")
+	report := flag.String("report", "", "the certificate from --go-bce='report=FILE': validate the rule the pass names for each removal")
 	flag.Parse()
 	if *before == "" || *after == "" {
 		flag.Usage()
 		os.Exit(2)
 	}
 	rs, err := CheckFiles(*before, *after)
+	if err == nil && *report != "" {
+		rs, err = CheckReport(*before, *after, *report)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "check:", err)
 		os.Exit(2)
@@ -102,6 +106,59 @@ func CheckFiles(beforePath, afterPath string) ([]Result, error) {
 			}
 			rule, why := Justify(f, d, c, kept)
 			out = append(out, Result{Func: name, Rule: rule, Why: why, Check: c})
+		}
+	}
+	return out, nil
+}
+
+// CheckReport validates the pass's own claims, and that they name exactly the checks that
+// disappeared between before and after.
+func CheckReport(beforePath, afterPath, reportPath string) ([]Result, error) {
+	bf, order, err := readFuncs(beforePath)
+	if err != nil {
+		return nil, err
+	}
+	af, _, err := readFuncs(afterPath)
+	if err != nil {
+		return nil, err
+	}
+	rep, err := readReport(reportPath)
+	if err != nil {
+		return nil, err
+	}
+	var out []Result
+	for _, name := range order {
+		f, g := bf[name], af[name]
+		if g == nil {
+			return nil, fmt.Errorf("function %s missing after go-bce", name)
+		}
+		cs, ds := checksOf(f), checksOf(g)
+		if err := markRemoved(f, g, cs, ds); err != nil {
+			return nil, fmt.Errorf("%s: %v", name, err)
+		}
+		claimed := map[int]bool{}
+		d := newDom(f)
+		for _, cl := range rep[name] {
+			claimed[cl.Idx] = true
+			var c *Check
+			if cl.Idx >= 0 && cl.Idx < len(cs) {
+				c = cs[cl.Idx]
+			} else {
+				c = &Check{Kind: "?", Op: &Op{Block: f.Blocks[0]}}
+			}
+			why := checkClaim(f, d, cs, cl)
+			r := Result{Func: name, Check: c, Rule: cl.Rule}
+			if why != "" {
+				r.Rule, r.Why = "", "claimed "+cl.Rule+": "+why
+			} else if !c.Removed {
+				r.Rule, r.Why = "", "claimed removed but still present"
+			}
+			out = append(out, r)
+		}
+		for i, c := range cs {
+			if c.Removed && !claimed[i] {
+				out = append(out, Result{Func: name, Check: c, Why: "removed without a claim in the report"})
+			}
 		}
 	}
 	return out, nil
