@@ -188,6 +188,7 @@ var (
 	maxLoad    = flag.Float64("max-load", 12, "retry a program when the load average is above this at start or end; 0 disables")
 	notes      = flag.String("notes", "", "free text stored in the results file")
 	sizeOnly   = flag.Bool("size-only", false, "build once and record size and output check only, no timing")
+	resume     = flag.Bool("resume", false, "continue the results file of this label and date: skip program and toolchain pairs already measured without noise")
 	noSnapshot = flag.Bool("no-snapshot", false, "use the live tree for marmot instead of a snapshot (do not use for long runs)")
 )
 
@@ -243,8 +244,26 @@ func main() {
 	check(os.MkdirAll(dir, 0o755))
 	path := filepath.Join(dir, meta.Date+"-"+*label+".json")
 
+	done := map[string]bool{}
+	if *resume {
+		if data, err := os.ReadFile(path); err == nil {
+			var old File
+			if json.Unmarshal(data, &old) == nil {
+				for _, r := range old.Results {
+					if r.Status == "ok" && !r.Noisy {
+						file.Results = append(file.Results, r)
+						done[r.Program+"|"+r.Toolchain] = true
+					}
+				}
+				file.Meta.Notes = old.Meta.Notes + " Resumed at " + file.Meta.GitRev + " with all build slots held while timing."
+			}
+		}
+	}
 	for _, p := range progs {
 		for _, t := range tcl {
+			if done[p.Name+"|"+t.Name] {
+				continue
+			}
 			fmt.Fprintf(os.Stderr, "== %s / %s\n", p.Name, t.Name)
 			r := measureQuiet(p, t)
 			fmt.Fprintf(os.Stderr, "   %s run=%s size=%d\n", r.Status, fmtStat(r.Run), r.Size)
@@ -378,7 +397,7 @@ func measure(p Program, t Toolchain) Result {
 	}
 
 	var rss []int64
-	r.Run, rss, err = timeRuns(func() *exec.Cmd { return exec.Command(out) }, "", *runRuns, 1, os.Environ(), time.Duration(*timeoutSec)*time.Second)
+	r.Run, rss, err = timeRuns(func() *exec.Cmd { return exec.Command(out) }, "", *runRuns, 1, os.Environ(), time.Duration(*timeoutSec)*time.Second, true)
 	if err != nil {
 		r.Status, r.Error = "run_failed", trunc(err.Error())
 		return r
@@ -404,9 +423,25 @@ func runOnce(bin string) (string, error) {
 // here, with no external tools: wall time from the clock, CPU time and peak RSS from the child's
 // rusage. prepare, if not empty, is a shell command run before every run (not timed). The command
 // runs in its own process group with a timeout. rss holds the peak RSS in bytes of each run.
-func timeRuns(mk func() *exec.Cmd, prepare string, runs, warmup int, env []string, timeout time.Duration) (st *Stat, rss []int64, err error) {
+func timeRuns(mk func() *exec.Cmd, prepare string, runs, warmup int, env []string, timeout time.Duration, hold bool) (st *Stat, rss []int64, err error) {
 	var wall, cpu []float64
+	var release func()
+	var heldAt time.Time
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
 	for i := 0; i < warmup+runs; i++ {
+		// Hold every build slot while timing so no other marmot build starts, but never for
+		// longer than about 45 s at a time: release and take them again in between.
+		if hold && (release == nil || time.Since(heldAt) > 45*time.Second) {
+			if release != nil {
+				release()
+			}
+			release = holdAllSlots()
+			heldAt = time.Now()
+		}
 		if prepare != "" {
 			cc := exec.Command("sh", "-c", prepare)
 			cc.Dir, cc.Env = root, env
@@ -486,7 +521,7 @@ func medianInt(v []int64) int64 {
 }
 
 func timeBuild(argv []string, clean string, runs, warmup int, env []string) (*Stat, error) {
-	st, _, err := timeRuns(func() *exec.Cmd { return exec.Command(argv[0], argv[1:]...) }, clean, runs, warmup, env, 10*time.Minute)
+	st, _, err := timeRuns(func() *exec.Cmd { return exec.Command(argv[0], argv[1:]...) }, clean, runs, warmup, env, 10*time.Minute, false)
 	return st, err
 }
 
@@ -753,8 +788,58 @@ func measureQuiet(p Program, t Toolchain) Result {
 			return r
 		}
 		fmt.Fprintf(os.Stderr, "   load %.1f/%.1f above %.0f, retrying after a pause\n", r.Load, r.LoadEnd, *maxLoad)
-		time.Sleep(45 * time.Second)
+		time.Sleep(20 * time.Second)
 	}
 	r.Noisy = true
 	return r
+}
+
+// holdAllSlots takes every machine-wide marmot build slot (the flock files the driver uses, see
+// internal/driver/slots.go) so no other marmot build can start, then waits for running backends
+// to drain. The returned function releases the slots. If slots are off or the directory is
+// missing it does nothing. The bench's own builds never call this.
+func holdAllSlots() func() {
+	n := 3
+	if v, err := strconv.Atoi(os.Getenv("MARMOT_SLOTS")); err == nil && v >= 0 {
+		n = v
+	}
+	dir := os.Getenv("MARMOT_SLOTS_DIR")
+	if dir == "" {
+		dir = "/tmp/marmot-slots"
+	}
+	if n == 0 {
+		return func() {}
+	}
+	os.MkdirAll(dir, 0o777)
+	os.Chmod(dir, 0o777)
+	var files []*os.File
+	deadline := time.Now().Add(3 * time.Minute)
+	for i := 0; i < n; i++ {
+		f, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("slot-%d", i)), os.O_RDWR|os.O_CREATE, 0o666)
+		if err != nil {
+			break
+		}
+		for syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+			if time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		files = append(files, f)
+	}
+	// Let running backends and compilers finish: wait until none of them runs for 3 s in a row.
+	quiet := 0
+	for t := time.Now(); quiet < 3 && time.Since(t) < 40*time.Second; {
+		if exec.Command("pgrep", "-f", "marmot-backend").Run() != nil {
+			quiet++
+		} else {
+			quiet = 0
+		}
+		time.Sleep(time.Second)
+	}
+	return func() {
+		for _, f := range files {
+			f.Close() // closing drops the flock
+		}
+	}
 }
