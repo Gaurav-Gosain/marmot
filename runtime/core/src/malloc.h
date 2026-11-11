@@ -45,9 +45,17 @@ struct mspan {
   uintptr_t ptrcount;      // number of elements
 };
 
+// Per span class: the cached span and a list of objects returned with
+// rt_free (linked through their first word), reused first. The lists are
+// dropped at every GC (those objects are garbage to the GC and the sweep
+// reclaims them), so an object is never handed out twice.
+typedef struct mcentry {
+  mspan *span;
+  void *freed;
+} mcentry;
+
 struct mcache {
-  mspan *alloc[NUM_SPANCLASS];
-  uint64_t local_large;    // unused, keeps the struct aligned
+  mcentry e[NUM_SPANCLASS];
 };
 
 // Exported (non-static) so the fast path can be inlined from rtcore.bc.

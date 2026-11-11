@@ -49,6 +49,13 @@ char **rt_envp(void);
 // does not: never form a past-the-end pointer to a heap object.
 void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintptr_t elemsize);
 
+// Free a heap object the compiler proved dead: nothing may use it or point
+// to it afterwards. Small objects are reused by the next allocation of the
+// same size class and kind on this thread; large ones give their pages back.
+// Pointers that are not the start of a heap object are ignored. size is the
+// allocation size (for checking only).
+void rt_free(void *p, uintptr_t size);
+
 void rt_gc_collect(void);
 // Register [start, end) as a conservative root range (globals).
 void rt_gc_add_roots(void *start, void *end);

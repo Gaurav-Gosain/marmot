@@ -431,7 +431,7 @@ static void mcache_release(mspan *s) {
 // Take a span with free objects for spanclass spc into cache c.
 static void mcache_refill(mcache *c, uint32_t spc) {
   uint32_t cls = spc / NUM_KINDS, kind = spc % NUM_KINDS;
-  mspan *old = c->alloc[spc];
+  mspan *old = c->e[spc].span;
   spin_lock(&heap_lock);
   if (old != &empty_span) {
     // The cached span is exhausted: fold its state and retire it.
@@ -456,12 +456,12 @@ static void mcache_refill(mcache *c, uint32_t spc) {
   s->cached = 1;
   spin_unlock(&heap_lock);
   atomic_fetch_add(&heap_live, (uint64_t)nfree * s->elemsize);
-  c->alloc[spc] = s;
+  c->e[spc].span = s;
 }
 
 mcache *mcache_new(void) {
   mcache *c = persistent_alloc(sizeof(mcache), 64);
-  for (int i = 0; i < NUM_SPANCLASS; i++) c->alloc[i] = &empty_span;
+  for (int i = 0; i < NUM_SPANCLASS; i++) c->e[i].span = &empty_span;
   spin_lock(&heap_lock);
   all_mcaches[nmcaches++] = c;
   spin_unlock(&heap_lock);
@@ -475,11 +475,12 @@ void mcache_flush_all(void) {
   for (int32_t i = 0; i < nmcaches; i++) {
     mcache *c = all_mcaches[i];
     for (int k = 0; k < NUM_SPANCLASS; k++) {
-      mspan *s = c->alloc[k];
+      mspan *s = c->e[k].span;
       if (s != &empty_span) {
         mcache_release(s);
-        c->alloc[k] = &empty_span;
+        c->e[k].span = &empty_span;
       }
+      c->e[k].freed = NULL;  // garbage to the GC; the sweep reclaims it
     }
   }
   // Spans on central lists also keep allocbits exact already.
@@ -555,11 +556,11 @@ INLINE uint32_t size_class(uintptr_t size) {
 // Allocate from the span cached for spc, refilling as needed. m->locks held.
 static void *alloc_small_locked(mcache *c, uint32_t spc, uintptr_t size,
                                 const uint8_t *ptrmap, uintptr_t elemsize) {
-  mspan *s = c->alloc[spc];
+  mspan *s = c->e[spc].span;
   uint32_t idx = s == &empty_span ? 0 : next_free_index(s);
   if (s == &empty_span || idx == s->nelems) {
     mcache_refill(c, spc);
-    s = c->alloc[spc];
+    s = c->e[spc].span;
     idx = next_free_index(s);
     if (idx == s->nelems) rt_throw("mcache_refill: span has no free object");
   }
@@ -590,9 +591,9 @@ void *rt_alloc_slow(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintpt
     if (UNLIKELY(rt_gcstress)) {
       // Keep every allocation on the slow path.
       spin_lock(&heap_lock);
-      mspan *s = c->alloc[spc];
+      mspan *s = c->e[spc].span;
       mcache_release(s);
-      c->alloc[spc] = &empty_span;
+      c->e[spc].span = &empty_span;
       central_put(s);
       spin_unlock(&heap_lock);
     }
@@ -629,7 +630,23 @@ RT_API void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uint
                                 : rt_size_to_class128[(size - 1024 + 127) >> 7];
     rt_m *m = getm();
     m->locks++;
-    mspan *s = m->mcache->alloc[cls * NUM_KINDS + kind];
+    mcentry *ent = &m->mcache->e[cls * NUM_KINDS + kind];
+    void *fr = ent->freed;
+    if (UNLIKELY(fr != NULL)) {
+      // An object returned with rt_free: reuse it.
+      ent->freed = *(void **)fr;
+      uintptr_t p = (uintptr_t)fr, es = rt_class_size[cls];
+      if (LIKELY(es <= 64 && (kind != RT_ALLOC_PRECISE || (elemsize == size && ptrmap)))) {
+        uint64_t *q = (uint64_t *)p;
+        for (uintptr_t i = 0; i < es / 8; i++) __atomic_store_n(&q[i], 0, __ATOMIC_RELAXED);
+        if (kind == RT_ALLOC_PRECISE) heapbits_byte(p, size, es, ptrmap[0]);
+      } else {
+        rt_alloc_finish(p, size, es, kind, ptrmap, elemsize, true);
+      }
+      m->locks--;
+      return fr;
+    }
+    mspan *s = ent->span;
     uint64_t cache = s->alloc_cache;
     if (LIKELY(cache != 0)) {
       uint32_t b = (uint32_t)__builtin_ctzll(cache);
@@ -684,4 +701,38 @@ void malloc_init(void) {
     n = rt_atoi(g, &ok);
     if (ok) gc_percent = (int32_t)n;
   }
+}
+
+// Return a heap object the compiler proved dead. Small objects go on this
+// thread's list for their class and are handed out by the next allocation
+// of that class; large objects give their pages back at once. Pointers that
+// are not to the start of a heap object (zero-size objects, regions,
+// stacks, globals, interior pointers) are ignored.
+RT_API void rt_free(void *ptr, uintptr_t size) {
+  uintptr_t p = (uintptr_t)ptr;
+  if (p - rt_arena_start >= rt_arena_used - rt_arena_start) return;
+  mspan *s = rt_pagemap[(p - rt_arena_start) >> PAGE_SHIFT];
+  if (!s || s->state != SPAN_INUSE || p < s->base || p >= s->limit) return;
+  if (s->cls == 0) {
+    if (p != s->base) return;
+    spin_lock(&heap_lock);
+    if (s->state == SPAN_INUSE && !s->cached && s->allocbits[0]) {
+      s->allocbits[0] = 0;
+      atomic_fetch_sub(&heap_live, s->elemsize);
+      atomic_fetch_add(&stat_frees, 1);
+      span_free(s);
+    }
+    spin_unlock(&heap_lock);
+    return;
+  }
+  uintptr_t off = p - s->base;
+  if (off % s->elemsize != 0) return;
+  rt_m *m = getm();
+  if (!m || !m->mcache) return;
+  m->locks++;
+  mcentry *ent = &m->mcache->e[s->cls * NUM_KINDS + s->kind];
+  *(void **)p = ent->freed;
+  ent->freed = (void *)p;
+  m->locks--;
+  (void)size;
 }
