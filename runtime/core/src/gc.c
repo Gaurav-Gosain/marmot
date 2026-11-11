@@ -196,11 +196,14 @@ static rt_spin wlock;
 static wbuf *_Atomic wfull;
 static wbuf *wempty;
 static _Atomic int32_t wnidle;
-static int32_t wactive;              // workers in this mark phase
+// Workers that joined this mark phase. Only grows during a phase: the
+// collector starts alone and helpers join if they get a CPU while the phase
+// is open, so a busy machine never makes the collector wait for them.
+static _Atomic int32_t wactive;
 static int32_t gc_nhelpers = -1;     // helper threads (not counting the collector)
 static _Atomic uint32_t helper_gen;  // bumped to start a phase
-static _Atomic int32_t helpers_running;
-static _Atomic int32_t helpers_done_futex;
+static _Atomic int32_t phase_open;   // helpers may join
+static _Atomic int32_t phase_joined; // helpers inside the current phase
 
 static void gcw_grow(gcw *w) {
   uintptr_t ncap = w->cap ? w->cap * 2 : 65536;
@@ -382,9 +385,9 @@ static void drain_parallel(gcw *w) {
       wbuf_put_empty(b);
       continue;
     }
-    if (wactive == 1) return;
+    if (atomic_load(&wactive) == 1 && !atomic_load(&wfull)) return;  // alone: nobody holds work
     if (atomic_load(&wdone)) return;
-    if (atomic_fetch_add(&wnidle, 1) + 1 == wactive && !atomic_load(&wfull)) {
+    if (atomic_fetch_add(&wnidle, 1) + 1 == atomic_load(&wactive) && !atomic_load(&wfull)) {
       // Last worker to go idle with nothing queued: marking is done.
       atomic_store(&wdone, 1);
       atomic_fetch_add(&wwork_gen, 1);
@@ -397,7 +400,7 @@ static void drain_parallel(gcw *w) {
         atomic_fetch_sub(&wnidle, 1);
         break;
       }
-      if (atomic_load(&wnidle) == wactive && !atomic_load(&wfull)) {
+      if (atomic_load(&wnidle) == atomic_load(&wactive) && !atomic_load(&wfull)) {
         atomic_store(&wdone, 1);
         atomic_fetch_add(&wwork_gen, 1);
         os_futex_wake(&wwork_gen, true);
@@ -416,11 +419,11 @@ static void drain_parallel(gcw *w) {
   }
 }
 
+// Single-threaded drain (finalizer marking); no phase is open.
 static void drain(void) {
-  int32_t saved = wactive;
-  wactive = 1;
+  atomic_store(&wactive, 1);
+  atomic_store(&wdone, 0);
   drain_parallel(&workers[0]);
-  wactive = saved;
 }
 
 enum { PHASE_MARK = 0, PHASE_SWEEP = 1 };
@@ -434,14 +437,16 @@ static void gc_helper(void *arg) {
     uint32_t g;
     while ((g = atomic_load(&helper_gen)) == seen) os_futex_wait(&helper_gen, seen, -1);
     seen = g;
-    if (atomic_load(&gc_phase) == PHASE_SWEEP)
-      sweep_worker();
-    else
-      drain_parallel(w);
-    if (atomic_fetch_sub(&helpers_running, 1) == 1) {
-      atomic_store(&helpers_done_futex, 1);
-      os_futex_wake((_Atomic uint32_t *)&helpers_done_futex, true);
+    atomic_fetch_add(&phase_joined, 1);
+    if (atomic_load(&phase_open)) {
+      if (atomic_load(&gc_phase) == PHASE_SWEEP) {
+        sweep_worker();
+      } else {
+        atomic_fetch_add(&wactive, 1);
+        if (!atomic_load(&wdone)) drain_parallel(w);
+      }
     }
+    atomic_fetch_sub(&phase_joined, 1);
   }
 }
 
@@ -469,18 +474,19 @@ static void helpers_init(void) {
   }
 }
 
-// Start nh helpers on the given phase.
+// Open a phase and wake the helpers; they join if they arrive in time.
 static void helpers_start(int32_t phase, int32_t nh) {
   atomic_store(&gc_phase, phase);
-  atomic_store(&helpers_running, nh);
-  atomic_store(&helpers_done_futex, 0);
+  atomic_store(&phase_open, 1);
   atomic_fetch_add(&helper_gen, 1);
   os_futex_wake(&helper_gen, true);
 }
 
+// Close the phase: helpers that joined finish quickly (the work is done);
+// helpers that arrive later see it closed and go back to sleep.
 static void helpers_wait(void) {
-  while (atomic_load(&helpers_done_futex) == 0)
-    os_futex_wait((_Atomic uint32_t *)&helpers_done_futex, 0, -1);
+  atomic_store(&phase_open, 0);
+  while (atomic_load(&phase_joined) > 0) cpu_relax();
 }
 
 // Drain the heap graph from worker 0's stack with all helpers.
@@ -489,13 +495,12 @@ static void mark_parallel(void) {
   int32_t nh = gc_nhelpers;
   // Small heaps are not worth waking the helpers for.
   if (atomic_load(&heap_live) < (2u << 20) || workers[0].len == 0) nh = 0;
-  wactive = nh + 1;
+  atomic_store(&wactive, 1);
   atomic_store(&wnidle, 0);
   atomic_store(&wdone, 0);
   if (nh > 0) helpers_start(PHASE_MARK, nh);
   drain_parallel(&workers[0]);
   if (nh > 0) helpers_wait();
-  wactive = 1;
 }
 
 static bool is_marked(uintptr_t p) {

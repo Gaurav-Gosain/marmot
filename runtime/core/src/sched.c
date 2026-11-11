@@ -632,10 +632,17 @@ void start_the_world(void) {
   atomic_store(&sched.gcwaiting, 0);
   atomic_fetch_add(&sched.worldgen, 1);
   os_futex_wake(&sched.worldgen, true);
+  bool work = sched.runqsize > 0;
+  for (int32_t i = 0; i < n && !work; i++)
+    if (atomic_load(&sched.allp[i]->status) != P_DEAD && sched.allp[i] != m->p &&
+        !runqempty(sched.allp[i]))
+      work = true;
   spin_unlock(&sched.lock);
   m->locks--;
   rt_unlock(&worldsema);
-  wakep();
+  // Wake a thread only for queued work: a spinning thread holds a P, and on
+  // a loaded machine the next stop the world would wait for it to run.
+  if (work) wakep();
 }
 
 // ---- switching ----
