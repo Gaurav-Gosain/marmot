@@ -1359,7 +1359,7 @@ void Parallelizer::transform(Plan &P) {
     cond = b.CreateAnd(cond, disjoint, "par.noalias");
   }
   // GPU ranges, expanded with the other conditions (before any block split).
-  bool gpu = opts.gpu && P.gpuOK && !P.gpuRanges.empty();
+  bool gpu = opts.gpu && P.gpuOK;
   SmallVector<std::pair<Value *, Value *>, 8> gpuVals;
   if (gpu)
     for (auto &g : P.gpuRanges) {
@@ -1407,7 +1407,10 @@ void Parallelizer::transform(Plan &P) {
     const DataLayout &DL = F.getDataLayout();
     StructType *rty = StructType::get(C, {ptr, i64, i64});
     ArrayType *aty = ArrayType::get(rty, gpuVals.size());
-    AllocaInst *ranges = eb.CreateAlloca(aty, nullptr, "par.ranges");
+    // No memory accesses (mandelbrot's rows): no ranges, a null array.
+    Value *ranges = gpuVals.empty() ? static_cast<Value *>(ConstantPointerNull::get(
+                                          PointerType::getUnqual(C)))
+                                    : eb.CreateAlloca(aty, nullptr, "par.ranges");
     for (size_t i = 0; i < gpuVals.size(); i++) {
       Value *slot = pb.CreateConstInBoundsGEP2_32(aty, ranges, 0, i);
       pb.CreateStore(pb.CreateIntToPtr(gpuVals[i].first, ptr), pb.CreateStructGEP(rty, slot, 0));
