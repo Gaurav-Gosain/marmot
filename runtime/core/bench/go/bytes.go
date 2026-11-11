@@ -4,6 +4,7 @@ package main
 import (
 	"bytes"
 	"encoding/hex"
+	"hash/crc32"
 	"strconv"
 	"crypto/aes"
 	"crypto/cipher"
@@ -65,6 +66,9 @@ func main() {
 	hx := make([]byte, 2*n)
 	bench("hex encode 1MiB", n, 500, func() int { hex.Encode(hx, buf); return int(hx[0]) })
 	bench("hex decode 1MiB", n, 500, func() int { k, _ := hex.Decode(ub, hx); return k })
+	ctab := crc32.MakeTable(crc32.Castagnoli)
+	bench("crc32 IEEE 1MiB", n, 500, func() int { return int(crc32.ChecksumIEEE(buf)) })
+	bench("crc32 Castagnoli 1MiB", n, 500, func() int { return int(crc32.Checksum(buf, ctab)) })
 	h256 := sha256.New()
 	bench("sha256 blocks 1MiB", n, 200, func() int { h256.Write(buf); return 0 })
 	h512 := sha512.New()

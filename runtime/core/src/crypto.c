@@ -282,3 +282,60 @@ RT_API void rt_sha512_block(uint64_t h[8], const uint8_t *p, intptr_t n) {
   sha512_block_generic(h, p, n);
 #endif
 }
+
+// ---- CRC32 (hash/crc32) ----
+
+static uint32_t crc_table[2][256];
+static _Atomic int crc_table_ready;
+
+static void crc_tables(void) {
+  const uint32_t poly[2] = {0xEDB88320u, 0x82F63B78u};  // IEEE, Castagnoli (reflected)
+  for (int k = 0; k < 2; k++)
+    for (uint32_t i = 0; i < 256; i++) {
+      uint32_t c = i;
+      for (int j = 0; j < 8; j++) c = c & 1 ? (c >> 1) ^ poly[k] : c >> 1;
+      crc_table[k][i] = c;
+    }
+  atomic_store(&crc_table_ready, 1);
+}
+
+uint32_t crc32_generic(uint32_t crc, const uint8_t *p, intptr_t n, int kind) {
+  if (!atomic_load(&crc_table_ready)) crc_tables();
+  const uint32_t *t = crc_table[kind ? 1 : 0];
+  for (intptr_t i = 0; i < n; i++) crc = t[(crc ^ p[i]) & 0xFF] ^ (crc >> 8);
+  return crc;
+}
+
+#if defined(__aarch64__)
+#include <arm_acle.h>
+__attribute__((target("crc"))) static uint32_t crc32_arm(uint32_t crc, const uint8_t *p, intptr_t n,
+                                                         int kind) {
+  intptr_t i = 0;
+  if (kind) {
+    for (; i + 8 <= n; i += 8) {
+      uint64_t v;
+      __builtin_memcpy(&v, p + i, 8);
+      crc = __crc32cd(crc, v);
+    }
+    for (; i < n; i++) crc = __crc32cb(crc, p[i]);
+  } else {
+    for (; i + 8 <= n; i += 8) {
+      uint64_t v;
+      __builtin_memcpy(&v, p + i, 8);
+      crc = __crc32d(crc, v);
+    }
+    for (; i < n; i++) crc = __crc32b(crc, p[i]);
+  }
+  return crc;
+}
+#endif
+
+// hash/crc32 Update: crc is the public (non-inverted) value; kind 0 is IEEE,
+// 1 is Castagnoli.
+RT_API uint32_t rt_crc32_update(uint32_t crc, const uint8_t *p, intptr_t n, int32_t kind) {
+#if defined(__aarch64__)
+  return ~crc32_arm(~crc, p, n, kind);
+#else
+  return ~crc32_generic(~crc, p, n, kind);
+#endif
+}

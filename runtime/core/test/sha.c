@@ -4,6 +4,7 @@
 
 void sha256_block_generic(uint32_t h[8], const uint8_t *p, intptr_t n);
 void sha512_block_generic(uint64_t h[8], const uint8_t *p, intptr_t n);
+uint32_t crc32_generic(uint32_t crc, const uint8_t *p, intptr_t n, int kind);
 
 static void sha256(const uint8_t *msg, size_t len, uint8_t out[32], int generic) {
   uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
@@ -76,5 +77,14 @@ void marmot_main(void) {
     sha512_block_generic(y, big + nb, nb * 128);
     CHECK(memcmp(x, y, 64) == 0);
   }
+  // CRC32 check values and incremental updates.
+  CHECK(rt_crc32_update(0, (const uint8_t *)"123456789", 9, 0) == 0xCBF43926u);
+  CHECK(rt_crc32_update(0, (const uint8_t *)"123456789", 9, 1) == 0xE3069283u);
+  for (int kind = 0; kind < 2; kind++)
+    for (intptr_t len = 0; len < 3000; len += 1 + len / 5) {
+      uint32_t a = rt_crc32_update(0, big, len / 2, kind);
+      a = rt_crc32_update(a, big + len / 2, len - len / 2, kind);
+      CHECK(a == ~crc32_generic(~0u, big, len, kind));
+    }
   out("ok\n");
 }

@@ -263,6 +263,10 @@ uint64_t rt_hash_u64(uint64_t x, uint64_t seed);
 // instructions on arm64, SHA-NI on x86-64 when present, portable C else.
 void rt_sha256_block(uint32_t h[8], const uint8_t *p, intptr_t n);
 void rt_sha512_block(uint64_t h[8], const uint8_t *p, intptr_t n);
+// hash/crc32 Update for kind 0 (IEEE) or 1 (Castagnoli): crc in and out in
+// the public form (the function inverts). ARMv8 CRC32 instructions on
+// arm64, a byte table elsewhere.
+uint32_t rt_crc32_update(uint32_t crc, const uint8_t *p, intptr_t n, int32_t kind);
 
 // AES and GCM building blocks. Round keys are bytes, 16 * (nr + 1) of them.
 // rt_aes_expand returns nr (10, 12, 14) or 0 for a bad key length; dec may

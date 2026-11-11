@@ -39,6 +39,8 @@ void marmot_main(void) {
   uint8_t *hx = rt_alloc((uintptr_t)n * 2, RT_ALLOC_NOSCAN, 0, 0);
   BENCH("hex encode 1MiB", n, 500, (rt_hex_encode(hx, buf, n), hx[0]));
   BENCH("hex decode 1MiB", n, 500, rt_hex_decode((uint8_t *)ub, hx, n));
+  BENCH("crc32 IEEE 1MiB", n, 500, rt_crc32_update(1, (const uint8_t *)buf, n, 0));
+  BENCH("crc32 Castagnoli 1MiB", n, 500, rt_crc32_update(1, (const uint8_t *)buf, n, 1));
   uint32_t h256[8] = {0};
   uint64_t h512[8] = {0};
   BENCH("sha256 blocks 1MiB", n, 200, (rt_sha256_block(h256, (const uint8_t *)buf, n), h256[0]));
