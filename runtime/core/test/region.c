@@ -58,6 +58,22 @@ void marmot_main(void) {
     CHECK(((char *)big)[199999] == 0);
     rt_region_free(rg);
   }
+  // A noscan region of plain linked nodes survives collections.
+  {
+    rt_region *nr = rt_region_new_noscan();
+    rn *head = 0;
+    for (int i = 0; i < 100000; i++) {
+      rn *x = rt_region_alloc(nr, sizeof(rn));
+      x->v = i;
+      x->l = head;
+      head = x;
+    }
+    rt_gc_collect();
+    long k = 99999;
+    for (rn *x = head; x; x = x->l, k--) CHECK(x->v == k);
+    CHECK(k == -1);
+    rt_region_free(nr);
+  }
   // Reset: one region reused across iterations, objects zeroed again.
   rt_region *rr = rt_region_new();
   for (int round = 0; round < 50; round++) {

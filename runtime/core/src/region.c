@@ -35,6 +35,7 @@ struct rt_region {
   uintptr_t cur, end;      // bump range in the current chunk (hot)
   rchunk *chunks;          // newest first
   struct rt_region *next;  // free list
+  bool noscan;             // holds no pointers to the heap: not a GC root
 };
 
 // Per-thread caches, kept in the M.
@@ -147,6 +148,13 @@ RT_API rt_region *rt_region_new(void) {
   r->cur = r->end = 0;
   r->chunks = NULL;
   r->next = NULL;
+  r->noscan = false;
+  return r;
+}
+
+RT_API rt_region *rt_region_new_noscan(void) {
+  rt_region *r = rt_region_new();
+  r->noscan = true;
   return r;
 }
 
@@ -224,7 +232,7 @@ void regions_scan_roots(void (*scan)(uintptr_t lo, uintptr_t hi)) {
   for (intptr_t i = 0; i < nregistry; i++) {
     rchunk *c = registry[i];
     rt_region *r = c->region;
-    if (!r) continue;
+    if (!r || r->noscan) continue;
     uintptr_t hi = r->chunks == c ? r->cur : chunk_data(c) + c->used;
     scan(chunk_data(c), hi);
   }

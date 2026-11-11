@@ -161,6 +161,9 @@ int32_t rt_ranges_disjoint(int64_t n, uintptr_t *lo, uintptr_t *hi);
 // A region belongs to one goroutine at a time.
 typedef struct rt_region rt_region;
 rt_region *rt_region_new(void);
+// A region the GC neither scans nor marks: only for data proven to hold no
+// pointers to heap objects (pointers within the region are fine).
+rt_region *rt_region_new_noscan(void);
 void *rt_region_alloc(rt_region *r, uintptr_t size);
 void rt_region_free(rt_region *r);
 // Free all objects of r but keep r and one chunk for reuse (a region that
