@@ -58,3 +58,13 @@ func vgetrandom(p []byte, flags uint32) (ret int, supported bool) {
 // getAuxv is pulled by golang.org/x/sys/cpu; marmot does not keep the
 // auxiliary vector.
 func getAuxv() []uintptr { return nil }
+
+// os probes pidfd support with a syscall that may raise SIGSYS under a
+// seccomp filter and brackets the probe with these. marmot installs no
+// SIGSYS handler, so the default action applies and nothing changes.
+
+//go:linkname ignoreSIGSYS os.ignoreSIGSYS
+func ignoreSIGSYS() {}
+
+//go:linkname restoreSIGSYS os.restoreSIGSYS
+func restoreSIGSYS() {}
