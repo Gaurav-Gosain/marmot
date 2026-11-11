@@ -63,6 +63,9 @@ type sudog struct {
 	caseIndex int
 	// ticket is the notify list ticket (sync.Cond).
 	ticket uint32
+	// notify marks a wake-up from a buffered channel: retry, nothing was
+	// transferred.
+	notify bool
 }
 
 // cheaprand returns a pseudo random number from the per-goroutine state

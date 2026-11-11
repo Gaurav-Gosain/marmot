@@ -140,128 +140,174 @@ func selectgo(cases *scase, ncases int, block bool) (chosen int, recvOK bool) {
 		throw("unreachable")
 	}
 
-	sellock(cases, lockorder)
+	for {
+		sellock(cases, lockorder)
 
-	// Pass 1: look for a case that can proceed now.
-	for _, casei := range pollorder {
-		casi := int(casei)
-		cas := cases.at(casi)
-		c := cas.c
-		if cas.send {
-			if c.closed != 0 {
-				selunlock(cases, lockorder)
-				panic(plainError("send on closed channel"))
-			}
-			if sg := c.recvq.dequeue(); sg != nil {
-				send(c, sg, cas.elem)
-				selunlock(cases, lockorder)
-				return casi, false
-			}
-			if c.qcount < c.dataqsiz {
-				typedmemmove(c.elemtype, chanbuf(c, c.sendx), cas.elem)
-				c.sendx++
-				if c.sendx == c.dataqsiz {
-					c.sendx = 0
+		// Pass 1: look for a case that can proceed now.
+		for _, casei := range pollorder {
+			casi := int(casei)
+			cas := cases.at(casi)
+			c := cas.c
+			if c.dataqsiz != 0 {
+				// Buffered channel: the lock-free ring.
+				if cas.send {
+					switch c.ringPush(cas.elem) {
+					case ringClosed:
+						selunlock(cases, lockorder)
+						panic(plainError("send on closed channel"))
+					case ringOK:
+						w := c.recvq.dequeue()
+						selunlock(cases, lockorder)
+						if w != nil {
+							notifySudog(w)
+						}
+						return casi, false
+					}
+				} else {
+					if c.ringPop(cas.elem) {
+						w := c.sendq.dequeue()
+						selunlock(cases, lockorder)
+						if w != nil {
+							notifySudog(w)
+						}
+						return casi, true
+					}
+					if c.ringClosedDrained() {
+						selunlock(cases, lockorder)
+						if cas.elem != nil {
+							typedmemclr(c.elemtype, cas.elem)
+						}
+						return casi, false
+					}
 				}
-				c.qcount++
-				selunlock(cases, lockorder)
-				return casi, false
+				continue
 			}
-		} else {
-			if sg := c.sendq.dequeue(); sg != nil {
-				recv(c, sg, cas.elem)
-				selunlock(cases, lockorder)
-				return casi, true
-			}
-			if c.qcount > 0 {
-				qp := chanbuf(c, c.recvx)
-				if cas.elem != nil {
-					typedmemmove(c.elemtype, cas.elem, qp)
+			if cas.send {
+				if c.closed != 0 {
+					selunlock(cases, lockorder)
+					panic(plainError("send on closed channel"))
 				}
-				typedmemclr(c.elemtype, qp)
-				c.recvx++
-				if c.recvx == c.dataqsiz {
-					c.recvx = 0
+				if sg := c.recvq.dequeue(); sg != nil {
+					send(c, sg, cas.elem)
+					selunlock(cases, lockorder)
+					return casi, false
 				}
-				c.qcount--
-				selunlock(cases, lockorder)
-				return casi, true
-			}
-			if c.closed != 0 {
-				selunlock(cases, lockorder)
-				if cas.elem != nil {
-					typedmemclr(c.elemtype, cas.elem)
+			} else {
+				if sg := c.sendq.dequeue(); sg != nil {
+					recv(c, sg, cas.elem)
+					selunlock(cases, lockorder)
+					return casi, true
 				}
-				return casi, false
+				if c.closed != 0 {
+					selunlock(cases, lockorder)
+					if cas.elem != nil {
+						typedmemclr(c.elemtype, cas.elem)
+					}
+					return casi, false
+				}
 			}
 		}
-	}
 
-	if !block {
+		if !block {
+			selunlock(cases, lockorder)
+			return -1, false
+		}
+
+		// Pass 2: enqueue on every channel.
+		gp.selectDone = 0
+		gp.param = nil
+		nextp := &gp.waiting
+		for _, casei := range lockorder {
+			casi := int(casei)
+			cas := cases.at(casi)
+			c := cas.c
+			sg := acquireSudog(gp)
+			sg.g = gp
+			sg.isSelect = true
+			sg.elem = cas.elem
+			sg.c = c
+			sg.caseIndex = casi
+			*nextp = sg
+			nextp = &sg.waitlink
+			if cas.send {
+				c.sendq.enqueue(sg)
+			} else {
+				c.recvq.enqueue(sg)
+			}
+		}
+
+		// Buffered cases are changed without the lock: now that we are
+		// queued (and so will be notified), check them again before
+		// parking (Dekker). If one is ready, withdraw and poll again.
+		retry := false
+		for _, casei := range lockorder {
+			cas := cases.at(int(casei))
+			c := cas.c
+			if c.dataqsiz == 0 {
+				continue
+			}
+			if c.ringIsClosed() || (cas.send && c.ringLen() < int(c.dataqsiz)) || (!cas.send && c.ringLen() > 0) {
+				retry = true
+				break
+			}
+		}
+		if retry {
+			selectWithdraw(gp, cases, nil)
+			selunlock(cases, lockorder)
+			procyield(10)
+			continue
+		}
+
+		goparkselect(gp)
+
+		// Pass 3: the winner is in gp.param. Dequeue from the other
+		// channels.
+		sellock(cases, lockorder)
+		gp.selectDone = 0
+		win := (*sudog)(gp.param)
+		gp.param = nil
+		if win == nil {
+			throw("selectgo: bad wakeup")
+		}
+		notified := win.notify
+		casi := win.caseIndex
+		winCase := cases.at(casi)
+		recvOK = win.success
+		selectWithdraw(gp, cases, win)
 		selunlock(cases, lockorder)
-		return -1, false
-	}
-
-	// Pass 2: enqueue on every channel and park.
-	gp.selectDone = 0
-	gp.param = nil
-	nextp := &gp.waiting
-	for _, casei := range lockorder {
-		casi := int(casei)
-		cas := cases.at(casi)
-		c := cas.c
-		sg := acquireSudog(gp)
-		sg.g = gp
-		sg.isSelect = true
-		sg.elem = cas.elem
-		sg.c = c
-		sg.caseIndex = casi
-		*nextp = sg
-		nextp = &sg.waitlink
-		if cas.send {
-			c.sendq.enqueue(sg)
-		} else {
-			c.recvq.enqueue(sg)
+		if notified {
+			// A buffered channel changed: poll again.
+			continue
 		}
+		if winCase.send && !recvOK {
+			panic(plainError("send on closed channel"))
+		}
+		if winCase.send {
+			recvOK = false
+		}
+		return casi, recvOK
 	}
-	goparkselect(gp)
+}
 
-	// Pass 3: the winner is in gp.param. Dequeue from the other channels.
-	sellock(cases, lockorder)
-	gp.selectDone = 0
-	win := (*sudog)(gp.param)
-	gp.param = nil
-
-	casi := -1
-	var winCase *scase
+// selectWithdraw removes gp's select sudogs (gp.waiting) from their
+// channels, except win (already removed by its waker), and releases them.
+// The channels are locked.
+func selectWithdraw(gp *g, cases *scase, win *sudog) {
 	sglist := gp.waiting
 	gp.waiting = nil
 	for sg := sglist; sg != nil; {
 		next := sg.waitlink
-		cas := cases.at(sg.caseIndex)
-		if sg == win {
-			casi = sg.caseIndex
-			winCase = cas
-			recvOK = sg.success
-		} else if cas.send {
-			cas.c.sendq.dequeueSudoG(sg)
-		} else {
-			cas.c.recvq.dequeueSudoG(sg)
+		if sg != win {
+			cas := cases.at(sg.caseIndex)
+			if cas.send {
+				cas.c.sendq.dequeueSudoG(sg)
+			} else {
+				cas.c.recvq.dequeueSudoG(sg)
+			}
 		}
 		releaseSudog(gp, sg)
 		sg = next
 	}
-	if winCase == nil {
-		throw("selectgo: bad wakeup")
-	}
-	selunlock(cases, lockorder)
-	if winCase.send && !recvOK {
-		panic(plainError("send on closed channel"))
-	}
-	if winCase.send {
-		recvOK = false
-	}
-	return casi, recvOK
 }
 
 // selectnbsend implements select { case c <- v: ... default: ... }.

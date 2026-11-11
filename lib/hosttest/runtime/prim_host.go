@@ -186,6 +186,10 @@ func atomicStore32(p *uint32, v uint32)                { atomic.StoreUint32(p, v
 func atomicCas32(p *uint32, old, new uint32) bool      { return atomic.CompareAndSwapUint32(p, old, new) }
 func atomicLoadp(p *unsafe.Pointer) unsafe.Pointer     { return atomic.LoadPointer(p) }
 func atomicStorep(p *unsafe.Pointer, v unsafe.Pointer) { atomic.StorePointer(p, v) }
+func atomicLoad64(p *uint64) uint64                    { return atomic.LoadUint64(p) }
+func atomicStore64(p *uint64, v uint64)                { atomic.StoreUint64(p, v) }
+func atomicCas64(p *uint64, old, new uint64) bool      { return atomic.CompareAndSwapUint64(p, old, new) }
+func atomicOr64(p *uint64, v uint64)                   { atomic.OrUint64(p, v) }
 func atomicXadd32(p *uint32, d int32) uint32           { return atomic.AddUint32(p, uint32(d)) }
 func atomicXadd64(p *uint64, d int64) uint64           { return atomic.AddUint64(p, uint64(d)) }
 
@@ -195,3 +199,5 @@ type _defer struct{}
 func hashBytes(p unsafe.Pointer, n uintptr, seed uintptr) uintptr {
 	return memhash(p, seed, n)
 }
+
+func procyield(n int32) { goruntime.Gosched() }

@@ -83,19 +83,11 @@ func (t *timeTimer) stop() bool {
 		t.handle = nil
 	}
 	t.seq++
-	if t.ch != nil {
+	if t.ch != nil && t.ch.dataqsiz != 0 {
 		// Drop a value sent by an earlier firing, so that no stale time
 		// is received after Stop or Reset (Go 1.23 timer semantics).
-		lock(&t.ch.lock)
-		for t.ch.qcount > 0 {
-			typedmemclr(t.ch.elemtype, chanbuf(t.ch, t.ch.recvx))
-			t.ch.recvx++
-			if t.ch.recvx == t.ch.dataqsiz {
-				t.ch.recvx = 0
-			}
-			t.ch.qcount--
+		for t.ch.ringPop(nil) {
 		}
-		unlock(&t.ch.lock)
 	}
 	return pending
 }

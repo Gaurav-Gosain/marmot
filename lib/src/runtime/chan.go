@@ -1,30 +1,37 @@
-// Channels. The algorithm follows the gc runtime: a lock per channel, a
-// circular buffer, and queues of waiting goroutines (sudogs). A goroutine
-// that blocks parks with gopark; the goroutine that completes the operation
-// copies the element directly to or from the parked goroutine's memory and
-// wakes it with goready. Pure file.
+// Channels. Unbuffered channels follow the gc runtime: a lock per channel
+// and queues of waiting goroutines (sudogs); a goroutine that blocks parks,
+// and the goroutine that completes the operation copies the element
+// directly to or from the parked goroutine's memory and wakes it.
+// Buffered channels keep their elements in a lock-free ring (chanring.go)
+// and use the queues only to park waiters. Pure file.
 
 package runtime
 
 import "unsafe"
 
 type hchan struct {
-	qcount   uint           // number of elements in the buffer
-	dataqsiz uint           // size of the circular buffer
+	dataqsiz uint           // size of the ring, 0 for unbuffered channels
 	buf      unsafe.Pointer // dataqsiz elements
 	elemsize uintptr
 	closed   uint32
 	elemtype *_type
-	sendx    uint // send index
-	recvx    uint // receive index
 	recvq    waitq
 	sendq    waitq
 	lock     mutex
+
+	// Ring state of buffered channels (chanring.go).
+	seq    unsafe.Pointer // dataqsiz sequence words
+	enqpos uint64         // next position to fill; chanClosedBit once closed
+	deqpos uint64         // next position to take
 }
 
+// waitq is a queue of waiting goroutines. n is the number of sudogs in the
+// queue, updated atomically under the channel lock and read without it by
+// the lock-free ring operations.
 type waitq struct {
 	first *sudog
 	last  *sudog
+	n     uint32
 }
 
 const hchanSize = unsafe.Sizeof(hchan{})
@@ -55,6 +62,9 @@ func makechan(elem *_type, size int) *hchan {
 	c.elemsize = elem.size
 	c.elemtype = elem
 	c.dataqsiz = uint(size)
+	if size > 0 {
+		c.ringInit()
+	}
 	return c
 }
 
@@ -92,6 +102,9 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool) bool {
 		goparkForever()
 		throw("unreachable")
 	}
+	if c.dataqsiz != 0 {
+		return chansendBuf(c, ep, block)
+	}
 
 	lock(&c.lock)
 
@@ -103,18 +116,6 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool) bool {
 	if sg := c.recvq.dequeue(); sg != nil {
 		// A receiver is waiting: hand the value over directly.
 		send(c, sg, ep)
-		unlock(&c.lock)
-		return true
-	}
-
-	if c.qcount < c.dataqsiz {
-		qp := chanbuf(c, c.sendx)
-		typedmemmove(c.elemtype, qp, ep)
-		c.sendx++
-		if c.sendx == c.dataqsiz {
-			c.sendx = 0
-		}
-		c.qcount++
 		unlock(&c.lock)
 		return true
 	}
@@ -148,17 +149,9 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool) bool {
 	return true
 }
 
-// send completes a send to the waiting receiver sg. c is locked.
+// send completes a send to the waiting receiver sg of an unbuffered
+// channel. c is locked.
 func send(c *hchan, sg *sudog, ep unsafe.Pointer) {
-	if c.dataqsiz != 0 {
-		// The buffer is empty (otherwise nobody would wait to receive).
-		// Keep FIFO order: the value goes through the buffer slot.
-		c.recvx++
-		if c.recvx == c.dataqsiz {
-			c.recvx = 0
-		}
-		c.sendx = c.recvx
-	}
 	if sg.elem != nil {
 		typedmemmove(c.elemtype, sg.elem, ep)
 		sg.elem = nil
@@ -184,6 +177,9 @@ func closechan(c *hchan) {
 
 	// Collect all waiters, then wake them after releasing the lock.
 	var glist *sudog
+	if c.dataqsiz != 0 {
+		glist = closechanBuf(c)
+	}
 	for {
 		sg := c.recvq.dequeue()
 		if sg == nil {
@@ -244,36 +240,21 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 		goparkForever()
 		throw("unreachable")
 	}
+	if c.dataqsiz != 0 {
+		return chanrecvBuf(c, ep, block)
+	}
 
 	lock(&c.lock)
 
 	if c.closed != 0 {
-		if c.qcount == 0 {
-			unlock(&c.lock)
-			if ep != nil {
-				typedmemclr(c.elemtype, ep)
-			}
-			return true, false
-		}
-	} else {
-		if sg := c.sendq.dequeue(); sg != nil {
-			recv(c, sg, ep)
-			unlock(&c.lock)
-			return true, true
-		}
-	}
-
-	if c.qcount > 0 {
-		qp := chanbuf(c, c.recvx)
+		unlock(&c.lock)
 		if ep != nil {
-			typedmemmove(c.elemtype, ep, qp)
+			typedmemclr(c.elemtype, ep)
 		}
-		typedmemclr(c.elemtype, qp)
-		c.recvx++
-		if c.recvx == c.dataqsiz {
-			c.recvx = 0
-		}
-		c.qcount--
+		return true, false
+	}
+	if sg := c.sendq.dequeue(); sg != nil {
+		recv(c, sg, ep)
 		unlock(&c.lock)
 		return true, true
 	}
@@ -300,25 +281,11 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 	return true, success
 }
 
-// recv completes a receive from the waiting sender sg. c is locked.
+// recv completes a receive from the waiting sender sg of an unbuffered
+// channel. c is locked.
 func recv(c *hchan, sg *sudog, ep unsafe.Pointer) {
-	if c.dataqsiz == 0 {
-		if ep != nil {
-			typedmemmove(c.elemtype, ep, sg.elem)
-		}
-	} else {
-		// The buffer is full. Take the head of the queue and put the
-		// sender's value at the tail, which is the same slot.
-		qp := chanbuf(c, c.recvx)
-		if ep != nil {
-			typedmemmove(c.elemtype, ep, qp)
-		}
-		typedmemmove(c.elemtype, qp, sg.elem)
-		c.recvx++
-		if c.recvx == c.dataqsiz {
-			c.recvx = 0
-		}
-		c.sendx = c.recvx
+	if ep != nil {
+		typedmemmove(c.elemtype, ep, sg.elem)
 	}
 	sg.elem = nil
 	gp := sg.g
@@ -329,10 +296,10 @@ func recv(c *hchan, sg *sudog, ep unsafe.Pointer) {
 
 // chanlen implements len(c).
 func chanlen(c *hchan) int {
-	if c == nil {
+	if c == nil || c.dataqsiz == 0 {
 		return 0
 	}
-	return int(c.qcount)
+	return c.ringLen()
 }
 
 // chancap implements cap(c).
@@ -344,6 +311,7 @@ func chancap(c *hchan) int {
 }
 
 func (q *waitq) enqueue(sgp *sudog) {
+	atomicXadd32(&q.n, 1)
 	sgp.next = nil
 	x := q.last
 	if x == nil {
@@ -374,6 +342,7 @@ func (q *waitq) dequeue() *sudog {
 			q.first = y
 			sgp.next = nil
 		}
+		atomicXadd32(&q.n, -1)
 
 		// A select waiter is woken by at most one channel.
 		if sgp.isSelect && !atomicCas32(&sgp.g.selectDone, 0, 1) {
@@ -393,22 +362,25 @@ func (q *waitq) dequeueSudoG(sgp *sudog) {
 			y.prev = x
 			sgp.next = nil
 			sgp.prev = nil
-			return
+		} else {
+			x.next = nil
+			q.last = x
+			sgp.prev = nil
 		}
-		x.next = nil
-		q.last = x
-		sgp.prev = nil
+		atomicXadd32(&q.n, -1)
 		return
 	}
 	if y != nil {
 		y.prev = nil
 		q.first = y
 		sgp.next = nil
+		atomicXadd32(&q.n, -1)
 		return
 	}
 	if q.first == sgp {
 		q.first = nil
 		q.last = nil
+		atomicXadd32(&q.n, -1)
 	}
 }
 
