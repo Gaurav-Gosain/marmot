@@ -5,6 +5,28 @@ package runtime
 
 import "unsafe"
 
+// init runs before every other package init (the compiler calls it
+// first).
+func init() {
+	hashkey ^= uintptr(rt_nanotime()) * 0x9e3779b97f4a7c15
+	sp := sigpanic
+	rt_set_sigpanic(funcPC(unsafe.Pointer(&sp)))
+}
+
+// sigpanic is called by the C core on the faulting goroutine for a memory
+// fault in Go code, as if the faulting instruction had called it.
+func sigpanic(addr uintptr, kind int32) {
+	if kind == 1 {
+		panicmem()
+	}
+	printlock()
+	printstring("unexpected fault address ")
+	printhex(uint64(addr))
+	printstring("\n")
+	printunlock()
+	throw("fault")
+}
+
 // newobject implements new(T) and heap allocation of escaping variables.
 func newobject(t *_type) unsafe.Pointer {
 	return mallocgc(t.size, t)

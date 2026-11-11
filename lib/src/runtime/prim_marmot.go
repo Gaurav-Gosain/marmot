@@ -103,8 +103,6 @@ func writeErr(p unsafe.Pointer, n uintptr) {
 	}
 }
 
-var goidNext uint64
-
 func getg() *g {
 	slot := rt_gslot()
 	if *slot != nil {
@@ -112,7 +110,7 @@ func getg() *g {
 	}
 	gp := (*g)(mallocConservative(unsafe.Sizeof(g{})))
 	gp.handle = rt_current()
-	gp.goid = int64(atomicXadd64(&goidNext, 1))
+	gp.goid = rt_goid()
 	gp.rand = uint64(rt_nanotime()) ^ uint64(uintptr(unsafe.Pointer(gp)))
 	*slot = unsafe.Pointer(gp)
 	return gp

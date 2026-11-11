@@ -98,6 +98,9 @@ func rt_gslot() *unsafe.Pointer
 //go:linkname rt_gparam rt_gparam
 func rt_gparam(g unsafe.Pointer) *unsafe.Pointer
 
+//go:linkname rt_goid rt_goid
+func rt_goid() int64
+
 //go:linkname rt_numgoroutine rt_numgoroutine
 func rt_numgoroutine() int
 
@@ -162,6 +165,11 @@ func rt_setjmp(buf unsafe.Pointer) int32
 
 //go:linkname rt_longjmp rt_longjmp
 func rt_longjmp(buf unsafe.Pointer, val int32)
+
+// Faults.
+
+//go:linkname rt_set_sigpanic rt_set_sigpanic
+func rt_set_sigpanic(fn unsafe.Pointer)
 
 // C library functions. LLVM knows these by name and expands small constant
 // sized calls inline.

@@ -14,8 +14,11 @@
 //   - Every return path calls deferreturn(&fr) before returning.
 //   - recover() compiles to gorecover(fp) where fp is the frame address of
 //     the function that contains the recover call (llvm.frameaddress(0)).
-//     Functions that call recover must not be inlined. A zero fp skips the
-//     "called directly by a deferred function" check.
+//     Functions that call recover must not be inlined and must keep frame
+//     records. A wrapped thunk must call its target with a real call (no
+//     tail call), so that the target's frame record points at the thunk's
+//     frame. A zero fp skips the "called directly by a deferred function"
+//     check.
 //
 // Compiled only by marmot (it uses rt_setjmp/rt_longjmp and getcallerfp).
 
@@ -134,12 +137,14 @@ func gorecover(fp uintptr) any {
 		return nil
 	}
 	if fp != 0 {
-		parent := parentfp(fp)
-		ok := parent == p.deferfp
-		if !ok && p.wrapped {
-			ok = parentfp(parent) == p.deferfp
+		// The caller of recover must have been called by the code that
+		// runs deferred calls, either directly or (wrapped) through
+		// exactly one compiler generated thunk.
+		caller := parentfp(fp)
+		if p.wrapped {
+			caller = parentfp(caller)
 		}
-		if !ok {
+		if caller != p.deferfp {
 			return nil
 		}
 	}
