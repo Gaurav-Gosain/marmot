@@ -1,1 +1,1 @@
-# Dialect headers and TableGen targets are added here.
+add_subdirectory(Dialect/Go)

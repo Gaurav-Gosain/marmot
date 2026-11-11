@@ -21,6 +21,7 @@ WORK = os.path.join(ROOT, ".work", "backend-test")
 
 SUBST = [
     ("%backend", os.path.join(ROOT, "build", "bin", "marmot-backend")),
+    ("%marmot-opt", os.path.join(ROOT, "build", "bin", "marmot-opt")),
     ("%clang", os.path.join(BIN, "clang")),
     ("%opt", os.path.join(BIN, "opt")),
     ("%FileCheck", os.path.join(BIN, "FileCheck")),

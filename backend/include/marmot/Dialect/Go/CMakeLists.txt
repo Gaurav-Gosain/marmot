@@ -1,0 +1,10 @@
+set(LLVM_TARGET_DEFINITIONS GoOps.td)
+mlir_tablegen(GoOps.h.inc -gen-op-decls)
+mlir_tablegen(GoOps.cpp.inc -gen-op-defs)
+mlir_tablegen(GoDialect.h.inc -gen-dialect-decls -dialect=go)
+mlir_tablegen(GoDialect.cpp.inc -gen-dialect-defs -dialect=go)
+add_public_tablegen_target(MarmotGoOpsIncGen)
+
+set(LLVM_TARGET_DEFINITIONS Passes.td)
+mlir_tablegen(Passes.h.inc -gen-pass-decls -name Go)
+add_public_tablegen_target(MarmotGoPassesIncGen)

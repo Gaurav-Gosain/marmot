@@ -4,6 +4,7 @@
 #include "marmot/Driver/Pipeline.h"
 #include "marmot/Driver/RuntimeBitcode.h"
 #include "marmot/Driver/Targets.h"
+#include "marmot/Dialect/Go/Passes.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -72,7 +73,7 @@ llvm::CodeGenOptLevel codegenLevel(char l) {
 }
 
 void registerDialects(mlir::DialectRegistry &registry) {
-  registry.insert<mlir::LLVM::LLVMDialect>();
+  registry.insert<mlir::LLVM::LLVMDialect, go::GoDialect>();
   mlir::registerBuiltinDialectTranslation(registry);
   mlir::registerLLVMDialectTranslation(registry);
 }
@@ -210,8 +211,8 @@ bool compileFile(const std::string &input, const std::string &output,
   {
     mlir::PassManager pm(&mctx, mlir::ModuleOp::getOperationName());
     pm.enableVerifier(opts.verifyEach || opts.optLevel == '0');
-    // Passes are added here as the go dialect lands.
-    if (!pm.getPasses().empty() && mlir::failed(pm.run(*module)))
+    pm.addPass(go::createGoToLLVM());
+    if (mlir::failed(pm.run(*module)))
       return fail("MLIR pass pipeline failed");
   }
   times.mlirPasses += timer.lap();

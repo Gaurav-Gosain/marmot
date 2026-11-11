@@ -3,4 +3,4 @@ add_library(MarmotDriver STATIC
   RuntimeBitcode.cpp
   Targets.cpp
 )
-target_link_libraries(MarmotDriver PUBLIC ${MARMOT_LLVM_LIBS})
+target_link_libraries(MarmotDriver PUBLIC MarmotGoDialect ${MARMOT_LLVM_LIBS})
