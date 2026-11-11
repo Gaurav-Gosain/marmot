@@ -13,6 +13,7 @@
 // heap; nothing outside a region may point into it after it is freed).
 
 #include "internal.h"
+#include "malloc.h"
 
 #define CHUNK_SIZE ((uintptr_t)64 << 10)
 #define M_CACHE_CHUNKS 64     // per thread
@@ -49,6 +50,7 @@ static rt_spin region_lock;  // pool, registry, region structure allocation
 static rchunk *pool;          // free 64 KiB chunks
 static int32_t npool;
 static rchunk *bigpool;       // free dedicated chunks (bigger than 64 KiB)
+static rchunk *poisoned;      // MARMOT_POISON: freed chunks, never reused
 static rchunk **registry;
 static intptr_t nregistry, capregistry;
 static fixalloc region_alloc;
@@ -131,6 +133,24 @@ static void chunk_put(rcache *rc, rchunk *c) {
   spin_unlock(&region_lock);
 }
 
+// MARMOT_POISON: retire chunk c (its owner gave it up) for good. Region
+// lock not held.
+static void chunk_poison(rchunk *c) {
+  c->region = NULL;
+  c->used = 0;
+  spin_lock(&region_lock);
+  c->next = poisoned;
+  poisoned = c;
+  spin_unlock(&region_lock);
+  poison_free_chunk(chunk_data(c), c->size);
+}
+
+bool region_poisoned_at(uintptr_t addr) {
+  for (rchunk *c = poisoned; c; c = c->next)
+    if (addr >= (uintptr_t)c && addr < chunk_data(c) + c->size) return true;
+  return false;
+}
+
 RT_API rt_region *rt_region_new(void) {
   rcache *rc = cache_for(getm());
   rt_region *r = rc ? rc->regions : NULL;
@@ -202,7 +222,9 @@ RT_API void rt_region_free(rt_region *r) {
   r->chunks = NULL;
   while (c) {
     rchunk *next = c->next;
-    if (!c->big) {
+    if (UNLIKELY(rt_poison)) {
+      chunk_poison(c);
+    } else if (!c->big) {
       chunk_put(rc, c);
     } else {
       // Dedicated big chunk: give it back to the OS but keep it mapped and
@@ -254,7 +276,9 @@ RT_API void rt_region_reset(rt_region *r) {
   rchunk *keep = NULL, *c = r->chunks;
   while (c) {
     rchunk *next = c->next;
-    if (!keep && !c->big && next == NULL) {
+    if (UNLIKELY(rt_poison)) {
+      chunk_poison(c);  // keep none: the next allocation takes a fresh chunk
+    } else if (!keep && !c->big && next == NULL) {
       keep = c;  // the oldest standard chunk
     } else if (!c->big) {
       chunk_put(rc, c);

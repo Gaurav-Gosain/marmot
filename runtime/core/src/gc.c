@@ -563,6 +563,7 @@ static void mark_roots(void) {
   if (ts) ts(gc_scan_range);
   regions_scan_roots(gc_scan_range);
   for (uintptr_t i = 0; i < finqlen; i++) mark_ptr(w, finq[i].obj);
+  if (UNLIKELY(rt_poison)) poison_gc(set_marked);
   mark_parallel();
 }
 

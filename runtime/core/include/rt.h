@@ -312,6 +312,13 @@ intptr_t rt_libcall_f64(void *fn, const uintptr_t *args, double f0, int32_t *err
 // .marmot_pcln read from /proc/self/exe. No heap allocation: callable while
 // panicking.
 int32_t rt_pcln(const uint8_t **table, intptr_t *len, uintptr_t *base);
+
+// x86-64 psABI level of the running CPU, for multiversioned loops: 1
+// baseline, 2 x86-64-v2 (SSE4.2, POPCNT, CX16, LAHF), 3 v3 (AVX2, FMA,
+// BMI1/2, F16C, LZCNT, MOVBE, with the OS saving YMM state), 4 v4 (AVX-512
+// F, BW, CD, DQ, VL, with ZMM state). 0 on other architectures. Computed on
+// the first call, then a load of a cached value.
+int32_t rt_x86_level(void);
 // Mark the current goroutine as entering/leaving a blocking system call.
 void rt_entersyscall(void);
 void rt_exitsyscall(void);

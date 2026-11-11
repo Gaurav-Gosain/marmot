@@ -30,6 +30,7 @@ struct mspan {
   uint8_t cached;          // owned by an mcache
   uint8_t released;        // free span returned to the OS
   uint8_t finalizers;      // some object in the span has a finalizer
+  uint8_t poisoned;        // MARMOT_POISON: large object freed with rt_free (pages inaccessible)
   uintptr_t limit;         // base + npages*PAGE_SIZE
   uintptr_t npages;
   mspan *next, *prev;      // central or free list links
@@ -53,6 +54,16 @@ typedef struct mcentry {
   mspan *span;
   void *freed;
 } mcentry;
+
+// MARMOT_POISON (poison.c).
+extern bool rt_poison;
+void poison_init(void);
+void poison_free_small(uintptr_t p, uintptr_t size);
+void poison_free_large(mspan *s);
+void poison_free_chunk(uintptr_t data, uintptr_t n);
+void poison_gc(void (*mark)(uintptr_t p));
+bool poison_fault(uintptr_t addr, uintptr_t pc);
+bool region_poisoned_at(uintptr_t addr);
 
 struct mcache {
   mcentry e[NUM_SPANCLASS];

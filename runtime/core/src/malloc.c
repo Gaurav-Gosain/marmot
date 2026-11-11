@@ -717,6 +717,7 @@ RT_API void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uint
 }
 
 void malloc_init(void) {
+  poison_init();
   classes_init();
   fixalloc_init(&span_alloc, sizeof(mspan));
   for (int k = 0; k < 5; k++) fixalloc_init(&bits_alloc[k], (uintptr_t)8 << k);
@@ -756,7 +757,10 @@ RT_API void rt_free(void *ptr, uintptr_t size) {
   if (s->cls == 0) {
     if (p != s->base) return;
     spin_lock(&heap_lock);
-    if (s->state == SPAN_INUSE && !s->cached && s->allocbits[0]) {
+    if (UNLIKELY(rt_poison) && s->state == SPAN_INUSE && !s->poisoned && s->allocbits[0]) {
+      poison_free_large(s);
+      atomic_fetch_add(&stat_frees, 1);
+    } else if (s->state == SPAN_INUSE && !s->cached && s->allocbits[0] && !s->poisoned) {
       s->allocbits[0] = 0;
       atomic_fetch_sub(&heap_live, s->elemsize);
       atomic_fetch_add(&stat_frees, 1);
@@ -767,6 +771,11 @@ RT_API void rt_free(void *ptr, uintptr_t size) {
   }
   uintptr_t off = p - s->base;
   if (off % s->elemsize != 0) return;
+  if (UNLIKELY(rt_poison)) {
+    poison_free_small(p, s->elemsize);
+    atomic_fetch_add(&stat_frees, 1);
+    return;
+  }
   rt_m *m = getm();
   if (!m || !m->mcache) return;
   m->locks++;

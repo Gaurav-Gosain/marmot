@@ -7,6 +7,7 @@
 // ignored; rt_write raises it for fds 1 and 2 like the gc runtime.
 
 #include "internal.h"
+#include "malloc.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -217,6 +218,8 @@ static void sigfault(int sig, siginfo_t *info, void *ctxp) {
 #elif RT_OS_LINUX && RT_ARCH_AMD64
   pc = (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
 #endif
+  // MARMOT_POISON: an access to freed memory is fatal, never a Go panic.
+  if (poison_fault(addr, pc)) os_exit(2);
   rt_m *m = getm();
   rt_g *g = m ? m->curg : NULL;
   // Stack overflow: the address is in a goroutine's guard page.
