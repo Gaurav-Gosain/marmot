@@ -203,3 +203,22 @@ func unsafestring(ptr unsafe.Pointer, len int) {
 		panicunsafestringlen()
 	}
 }
+
+// unsafeslice64 is unsafeslice for a length of a 64 bit integer type
+// (a uint64 length is passed as its int64 bit pattern).
+func unsafeslice64(et *_type, ptr unsafe.Pointer, len64 int64) {
+	len := int(len64)
+	if int64(len) != len64 {
+		panicunsafeslicelen()
+	}
+	unsafeslice(et, ptr, len)
+}
+
+// unsafestring64 is unsafestring for a length of a 64 bit integer type.
+func unsafestring64(ptr unsafe.Pointer, len64 int64) {
+	len := int(len64)
+	if int64(len) != len64 {
+		panicunsafestringlen()
+	}
+	unsafestring(ptr, len)
+}
