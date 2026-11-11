@@ -27,6 +27,9 @@ type Config struct {
 	GOARCH   string
 	Patterns []string
 	Log      func(format string, args ...any) // optional progress log
+	// Tests loads the test variant of the (single) package pattern; the
+	// root becomes the generated "pkg.test" main package (go list -test).
+	Tests bool
 	// BeforeSSA runs after type checking on every package, dependencies
 	// first; it may replace Syntax, Types and TypesInfo (the spec component).
 	BeforeSSA func(all []*packages.Package) error
@@ -72,8 +75,9 @@ func Load(cfg Config) (*Program, error) {
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedImports |
 			packages.NeedDeps | packages.NeedSyntax | packages.NeedTypes |
 			packages.NeedTypesInfo | packages.NeedTypesSizes | packages.NeedModule,
-		Dir: cfg.Dir,
-		Env: env,
+		Dir:   cfg.Dir,
+		Env:   env,
+		Tests: cfg.Tests,
 	}
 	// The runtime is an implicit dependency of every program. go list cannot
 	// mix .go files with package patterns, so for file lists an overlay file
@@ -110,6 +114,18 @@ func Load(cfg Config) (*Program, error) {
 			userRuntime = true
 		}
 	}
+	if cfg.Tests {
+		// Keep only the generated test main (and the runtime): the plain and
+		// test variants of the package share a path and must not both be
+		// compiled.
+		var roots []*packages.Package
+		for _, p := range pkgs {
+			if strings.HasSuffix(p.ID, ".test") && p.Name == "main" || p.ID == "runtime" {
+				roots = append(roots, p)
+			}
+		}
+		pkgs = roots
+	}
 	var errs []string
 	var all []*packages.Package
 	packages.Visit(pkgs, nil, func(p *packages.Package) {
@@ -145,7 +161,18 @@ func Load(cfg Config) (*Program, error) {
 	if cfg.Log != nil {
 		cfg.Log("ssa: %v", time.Since(t1).Round(time.Millisecond))
 	}
-	if !userRuntime {
+	if cfg.Tests {
+		var roots []*packages.Package
+		for _, p := range pkgs {
+			if p.Name == "main" {
+				roots = append(roots, p)
+			}
+		}
+		if len(roots) == 0 {
+			return nil, fmt.Errorf("no test files in %v", cfg.Patterns)
+		}
+		pkgs = roots
+	} else if !userRuntime {
 		var roots []*packages.Package
 		for _, p := range pkgs {
 			if p.PkgPath != "runtime" {

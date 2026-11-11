@@ -39,6 +39,7 @@ type Config struct {
 	Target   string
 	Dialect  string
 	Release  bool // whole program optimization (-wpo) and all specializations
+	Test     bool   // build the package's test binary (go list -test main)
 	PGOGen   bool   // instrument for profile generation
 	PGO      string // indexed profile to optimize with
 	Tags     []string
@@ -76,8 +77,10 @@ type build struct {
 	cfg    Config
 	work   string
 	start  time.Time
-	goos   string // target
-	goarch string
+	goos    string // target
+	goarch  string
+	testDir string // directory of the package under test
+	out     string
 }
 
 func (b *build) haveBackend() bool {
@@ -90,13 +93,41 @@ func (b *build) logf(format string, args ...any) {
 	}
 }
 
+// BuildTest builds the test binary of one package and returns it with the
+// directory the tests must run in.
+func BuildTest(cfg Config) (exe, dir string, err error) {
+	cfg.Test = true
+	b, err := build1(cfg)
+	if b != nil {
+		dir = b.testDir
+	}
+	return b.out, dir, err
+}
+
 // Build compiles the packages and writes the output. It returns the output
 // path.
 func Build(cfg Config) (string, error) {
+	b, err := build1(cfg)
+	if err != nil {
+		return "", err
+	}
+	return b.out, nil
+}
+
+func build1(cfg Config) (*build, error) {
+	b := &build{cfg: cfg}
+	out, err := b.run1()
+	b.out = out
+	return b, err
+}
+
+func (b *build) run1() (string, error) {
+	cfg := b.cfg
 	if cfg.Stderr == nil {
 		cfg.Stderr = os.Stderr
+		b.cfg.Stderr = os.Stderr
 	}
-	b := &build{cfg: cfg, start: time.Now()}
+	b.start = time.Now()
 	work, err := os.MkdirTemp("", "marmot-")
 	if err != nil {
 		return "", err
@@ -118,7 +149,7 @@ func Build(cfg Config) (string, error) {
 	}
 	b.goos, b.goarch = goos, goarch
 	stamp := ""
-	if cfg.Output != "" && cfg.Emit == "exe" {
+	if cfg.Output != "" && cfg.Emit == "exe" && !cfg.Test {
 		stamp = b.buildStamp(goos, goarch)
 		if b.upToDate(stamp, cfg.Output) {
 			b.logf("up to date (stamp %s)", stamp)
@@ -127,7 +158,7 @@ func Build(cfg Config) (string, error) {
 	}
 	lp, err := loader.Load(loader.Config{
 		Dir: cfg.Dir, Root: cfg.Root, Tags: cfg.Tags, GOOS: goos, GOARCH: goarch, Patterns: cfg.Patterns,
-		Log: b.logf,
+		Log: b.logf, Tests: cfg.Test,
 		BeforeSSA: func(all []*packages.Package) error {
 			return specialize.BeforeSSA(&specialize.Input{Packages: all, Release: cfg.Release, GOOS: goos, GOARCH: goarch, Log: b.logf})
 		},
@@ -143,6 +174,14 @@ func Build(cfg Config) (string, error) {
 		return "", fmt.Errorf("build of %d packages is not supported; name one main package", len(lp.Packages))
 	}
 	root := lp.Packages[0]
+	if cfg.Test {
+		// Tests run in the directory of the package under test.
+		for _, p := range lp.All {
+			if strings.HasSuffix(root.ID, ".test") && p.PkgPath == strings.TrimSuffix(root.PkgPath, ".test") && len(p.GoFiles) > 0 {
+				b.testDir = filepath.Dir(p.GoFiles[0])
+			}
+		}
+	}
 	if root.Name != "main" && cfg.Emit == "exe" {
 		return "", fmt.Errorf("%s is not a main package", root.PkgPath)
 	}

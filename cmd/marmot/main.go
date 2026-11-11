@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Gaurav-Gosain/marmot/internal/driver"
 )
@@ -27,6 +28,7 @@ func usage() {
 Commands:
   build    compile packages and dependencies
   run      compile and run a Go program
+  test     compile and run package tests (like go test)
   version  print the marmot version
 
 Run 'marmot build -h' for build flags.
@@ -50,6 +52,8 @@ func realMain() int {
 		return cmdBuild(os.Args[2:], false)
 	case "run":
 		return cmdBuild(os.Args[2:], true)
+	case "test":
+		return cmdTest(os.Args[2:])
 	case "version":
 		fmt.Println(version)
 	case "help", "-h", "--help":
@@ -196,5 +200,141 @@ func cmdBuild(args []string, run bool) int {
 		fmt.Fprintln(os.Stderr, "marmot:", err)
 		return 1
 	}
+	return 0
+}
+
+// testFlags are passed to the test binary as -test.NAME; boolean ones take
+// no value.
+var testFlags = map[string]bool{
+	"run": false, "skip": false, "bench": false, "benchtime": false, "count": false, "cpu": false,
+	"timeout": false, "parallel": false, "list": false, "shuffle": false,
+	"v": true, "short": true, "failfast": true, "benchmem": true,
+}
+
+// cmdTest implements marmot test [build flags] [test flags] [packages].
+func cmdTest(args []string) int {
+	var buildArgs, testArgs, pkgs []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if !strings.HasPrefix(a, "-") {
+			pkgs = append(pkgs, a)
+			continue
+		}
+		name := strings.TrimLeft(a, "-")
+		val := ""
+		hasVal := false
+		if j := strings.IndexByte(name, '='); j >= 0 {
+			name, val, hasVal = name[:j], name[j+1:], true
+		}
+		name = strings.TrimPrefix(name, "test.")
+		if isBool, ok := testFlags[name]; ok {
+			if !isBool && !hasVal && i+1 < len(args) {
+				i++
+				val, hasVal = args[i], true
+			}
+			if hasVal {
+				testArgs = append(testArgs, "-test."+name+"="+val)
+			} else {
+				testArgs = append(testArgs, "-test."+name)
+			}
+			continue
+		}
+		buildArgs = append(buildArgs, a)
+		// Build flags with a value.
+		switch name {
+		case "o", "O", "tags", "dialect", "gc", "target", "emit", "pgo":
+			if !hasVal && i+1 < len(args) {
+				i++
+				buildArgs = append(buildArgs, args[i])
+			}
+		}
+	}
+	if len(pkgs) == 0 {
+		pkgs = []string{"."}
+	}
+	status := 0
+	for _, p := range pkgs {
+		if c := testOne(buildArgs, p, testArgs); c != 0 {
+			status = c
+		}
+	}
+	return status
+}
+
+func testOne(buildArgs []string, pkg string, testArgs []string) int {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	opt := fs.String("O", "", "optimization level")
+	tags := fs.String("tags", "", "build tags")
+	printCmd := fs.Bool("x", false, "print commands")
+	work := fs.Bool("work", false, "keep the work directory")
+	release := fs.Bool("release", os.Getenv("MARMOT_RELEASE") == "1", "release build")
+	dialect := fs.String("dialect", os.Getenv("MARMOT_DIALECT"), "dialect")
+	out := fs.String("o", "", "write the test binary here and do not run it")
+	if err := fs.Parse(buildArgs); err != nil {
+		return 2
+	}
+	if *opt == "" {
+		*opt = "2"
+		if *release {
+			*opt = "3"
+		}
+	}
+	if *dialect == "" {
+		*dialect = "llvm"
+		if *release {
+			*dialect = "go"
+		}
+	}
+	root, err := driver.FindRoot()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "marmot:", err)
+		return 2
+	}
+	wd, _ := os.Getwd()
+	exe := *out
+	var tmp string
+	if exe == "" {
+		tmp, err = os.MkdirTemp("", "marmot-test-")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "marmot:", err)
+			return 1
+		}
+		defer os.RemoveAll(tmp)
+		exe = filepath.Join(tmp, "pkg.test")
+	}
+	cfg := driver.Config{
+		Root: root, Dir: wd, Output: exe, OptLevel: *opt, Emit: "exe", Work: *work,
+		PrintCmd: *printCmd, Dialect: *dialect, Release: *release, Patterns: []string{pkg}, Stderr: os.Stderr,
+	}
+	if *tags != "" {
+		cfg.Tags = strings.Split(*tags, ",")
+	}
+	start := time.Now()
+	exe, dir, err := driver.BuildTest(cfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Printf("FAIL\t%s [build failed]\n", pkg)
+		return 1
+	}
+	if *out != "" {
+		return 0
+	}
+	cmd := exec.Command(exe, testArgs...)
+	cmd.Dir = dir
+	if cmd.Dir == "" {
+		cmd.Dir = wd
+	}
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	err = cmd.Run()
+	elapsed := time.Since(start).Seconds()
+	if err != nil {
+		fmt.Printf("FAIL\t%s\t%.3fs\n", pkg, elapsed)
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() > 0 {
+			return ee.ExitCode()
+		}
+		return 1
+	}
+	fmt.Printf("ok  \t%s\t%.3fs\n", pkg, elapsed)
 	return 0
 }
