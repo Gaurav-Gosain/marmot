@@ -60,11 +60,32 @@ func vgetrandom(p []byte, flags uint32) (ret int, supported bool) {
 func getAuxv() []uintptr { return nil }
 
 // os probes pidfd support with a syscall that may raise SIGSYS under a
-// seccomp filter and brackets the probe with these. marmot installs no
-// SIGSYS handler, so the default action applies and nothing changes.
+// seccomp filter, and ignores SIGSYS around the probe so that the default
+// action (terminate) does not apply.
+
+// kernelSigaction is struct sigaction as the rt_sigaction system call
+// takes it (the same layout on amd64 and arm64).
+type kernelSigaction struct {
+	handler  uintptr
+	flags    uint64
+	restorer uintptr
+	mask     uint64
+}
+
+const (
+	_SIGSYS  = 31
+	_SIG_IGN = 1
+)
+
+var sigsysSaved kernelSigaction
 
 //go:linkname ignoreSIGSYS os.ignoreSIGSYS
-func ignoreSIGSYS() {}
+func ignoreSIGSYS() {
+	act := kernelSigaction{handler: _SIG_IGN}
+	rt_syscall(_SYS_rt_sigaction, _SIGSYS, uintptr(unsafe.Pointer(&act)), uintptr(unsafe.Pointer(&sigsysSaved)), 8, 0, 0)
+}
 
 //go:linkname restoreSIGSYS os.restoreSIGSYS
-func restoreSIGSYS() {}
+func restoreSIGSYS() {
+	rt_syscall(_SYS_rt_sigaction, _SIGSYS, uintptr(unsafe.Pointer(&sigsysSaved)), 0, 8, 0, 0)
+}

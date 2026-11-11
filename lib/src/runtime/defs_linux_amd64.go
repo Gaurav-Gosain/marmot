@@ -3,6 +3,7 @@
 package runtime
 
 const (
-	_SYS_fcntl  = 72
-	_SYS_clone3 = 435
+	_SYS_fcntl        = 72
+	_SYS_rt_sigaction = 13
+	_SYS_clone3       = 435
 )
