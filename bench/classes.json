@@ -10,7 +10,7 @@
     "conv": {"class": "A"},
 
     "jsonenc": {"class": "B", "floor": 10}, "jsondec": {"class": "B", "floor": 10},
-    "fmtout": {"class": "B", "floor": 10}, "fmtlog": {"class": "B", "floor": 10},
+    "fmtout": {"class": "B", "floor": 10}, "fmtlog": {"class": "B", "floor": 10}, "fmtbuf": {"class": "B", "floor": 10},
     "regexpbench": {"class": "B", "floor": 10}, "sortslice": {"class": "B", "floor": 10},
     "parse": {"class": "B"}, "stringsearch": {"class": "B", "owner": "rtgo"},
     "mapint": {"class": "B", "owner": "rtgo"}, "mapstr": {"class": "B", "owner": "rtgo"},
