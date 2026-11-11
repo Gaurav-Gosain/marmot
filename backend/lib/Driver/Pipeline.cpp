@@ -235,57 +235,82 @@ std::unique_ptr<llvm::TargetMachine> createTargetMachine(const CompileOptions &o
   return makeTargetMachine(opts, triple, err);
 }
 
-std::unique_ptr<llvm::Module> translateFile(const std::string &input,
-                                            const CompileOptions &opts,
-                                            llvm::TargetMachine &tm,
-                                            llvm::LLVMContext &lctx, PhaseTimes &times,
-                                            llvm::raw_ostream &errs,
-                                            const std::string *mlirOutput) {
+struct ParsedModule {
+  std::unique_ptr<mlir::MLIRContext> ctx;
+  llvm::SourceMgr sm;
+  std::unique_ptr<mlir::SourceMgrDiagnosticHandler> diag;
+  std::string diagText;
+  std::unique_ptr<llvm::raw_string_ostream> diagStream;
+  mlir::OwningOpRef<mlir::ModuleOp> module;
+};
+
+void ParsedModuleDeleter::operator()(ParsedModule *p) const { delete p; }
+
+void *parsedModuleOp(ParsedModule &pm) { return pm.module->getOperation(); }
+
+ParsedModulePtr parseFile(const std::string &input, const CompileOptions &opts,
+                          llvm::raw_ostream &errs) {
+  ParsedModulePtr pm(new ParsedModule);
+  mlir::DialectRegistry registry;
+  registerDialects(registry);
+  pm->ctx = std::make_unique<mlir::MLIRContext>(
+      registry, opts.singleThreaded ? mlir::MLIRContext::Threading::DISABLED
+                                    : mlir::MLIRContext::Threading::ENABLED);
+  std::string ioErr;
+  auto inBuf = mlir::openInputFile(input, &ioErr);
+  if (!inBuf) {
+    errs << input << ": " << ioErr << "\n";
+    return nullptr;
+  }
+  pm->sm.AddNewSourceBuffer(std::move(inBuf), llvm::SMLoc());
+  // Diagnostics are collected and printed by whoever reports this job.
+  pm->diagStream = std::make_unique<llvm::raw_string_ostream>(pm->diagText);
+  pm->diag = std::make_unique<mlir::SourceMgrDiagnosticHandler>(pm->sm, pm->ctx.get(),
+                                                                 *pm->diagStream);
+  // The parser verifies the module once.
+  pm->module = mlir::parseSourceFile<mlir::ModuleOp>(pm->sm, mlir::ParserConfig(pm->ctx.get()));
+  if (!pm->module) {
+    errs << pm->diagText << input << ": failed to parse\n";
+    return nullptr;
+  }
+  return pm;
+}
+
+std::unique_ptr<llvm::Module> lowerAndTranslate(ParsedModule &pm, const std::string &input,
+                                                const CompileOptions &opts,
+                                                llvm::TargetMachine &tm,
+                                                llvm::LLVMContext &lctx, PhaseTimes &times,
+                                                llvm::raw_ostream &errs,
+                                                const std::string *mlirOutput) {
   PhaseTimer timer;
   auto fail = [&](const llvm::Twine &msg) -> std::unique_ptr<llvm::Module> {
+    errs << pm.diagText;
+    pm.diagText.clear();
     errs << input << ": " << msg << "\n";
     return nullptr;
   };
-
-  // Parse. The parser verifies the module once.
-  mlir::DialectRegistry registry;
-  registerDialects(registry);
-  mlir::MLIRContext mctx(registry, opts.singleThreaded
-                                       ? mlir::MLIRContext::Threading::DISABLED
-                                       : mlir::MLIRContext::Threading::ENABLED);
-  llvm::SourceMgr sm;
-  std::string ioErr;
-  auto inBuf = mlir::openInputFile(input, &ioErr);
-  if (!inBuf)
-    return fail(ioErr);
-  sm.AddNewSourceBuffer(std::move(inBuf), llvm::SMLoc());
-  mlir::SourceMgrDiagnosticHandler diag(sm, &mctx, errs);
-  mlir::OwningOpRef<mlir::ModuleOp> module =
-      mlir::parseSourceFile<mlir::ModuleOp>(sm, mlir::ParserConfig(&mctx));
-  if (!module)
-    return fail("failed to parse");
-  times.parse += timer.lap();
+  mlir::ModuleOp module = *pm.module;
 
   // MLIR passes: go dialect passes and lowering to the llvm dialect.
   {
-    mlir::PassManager pm(&mctx, mlir::ModuleOp::getOperationName());
-    pm.enableVerifier(opts.verifyEach || opts.optLevel == '0');
+    mlir::PassManager mpm(pm.ctx.get(), mlir::ModuleOp::getOperationName());
+    mpm.enableVerifier(opts.verifyEach || opts.optLevel == '0');
     if (opts.optLevel != '0') {
       if (opts.strings)
-        pm.addPass(go::createGoStrings());
+        mpm.addPass(go::createGoStrings());
       if (opts.devirt)
-        pm.addPass(go::createGoDevirt());
+        mpm.addPass(go::createGoDevirt());
       if (opts.escape)
-        pm.addPass(go::createGoEscape());
+        mpm.addPass(go::createGoEscape());
       if (opts.bce)
-        pm.addPass(go::createGoBCE());
+        mpm.addPass(go::createGoBCE());
       if (opts.openDefers)
-        pm.addPass(go::createGoOpenDefers());
+        mpm.addPass(go::createGoOpenDefers());
     }
-    pm.addPass(go::createGoToLLVM());
+    mpm.addPass(go::createGoToLLVM());
     // Always: large aggregate values would hang code generation.
-    pm.addPass(go::createAggregateCopies());
-    if (mlir::failed(pm.run(*module)))
+    mpm.addPass(go::createAggregateCopies());
+    if (mlir::failed(mpm.run(module)))
       return fail("MLIR pass pipeline failed");
   }
   times.mlirPasses += timer.lap();
@@ -295,20 +320,34 @@ std::unique_ptr<llvm::Module> translateFile(const std::string &input,
     llvm::ToolOutputFile out(*mlirOutput, ec, llvm::sys::fs::OF_None);
     if (ec)
       return fail(*mlirOutput + ": " + ec.message());
-    module->print(out.os());
+    module.print(out.os());
     out.keep();
     times.write += timer.lap();
     return nullptr;
   }
 
-  std::unique_ptr<llvm::Module> lmod =
-      mlir::translateModuleToLLVMIR(*module, lctx, input);
+  std::unique_ptr<llvm::Module> lmod = mlir::translateModuleToLLVMIR(module, lctx, input);
   if (!lmod)
     return fail("failed to translate to LLVM IR");
   lmod->setTargetTriple(tm.getTargetTriple());
   lmod->setDataLayout(tm.createDataLayout());
+  pm.module = nullptr; // free MLIR memory before the LLVM pipeline
   times.translate += timer.lap();
   return lmod;
+}
+
+std::unique_ptr<llvm::Module> translateFile(const std::string &input,
+                                            const CompileOptions &opts,
+                                            llvm::TargetMachine &tm,
+                                            llvm::LLVMContext &lctx, PhaseTimes &times,
+                                            llvm::raw_ostream &errs,
+                                            const std::string *mlirOutput) {
+  PhaseTimer timer;
+  ParsedModulePtr pm = parseFile(input, opts, errs);
+  if (!pm)
+    return nullptr;
+  times.parse += timer.lap();
+  return lowerAndTranslate(*pm, input, opts, tm, lctx, times, errs, mlirOutput);
 }
 
 bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::string &input,

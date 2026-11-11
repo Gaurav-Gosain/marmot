@@ -180,6 +180,15 @@ private:
   SymbolTable symbols;
 };
 
+} // namespace
+
+void marmot::go::summarizeEscapes(ModuleOp m) {
+  EscapeAnalysis ea(m);
+  ea.summarize(m);
+}
+
+namespace {
+
 struct GoEscapePass : marmot::go::impl::GoEscapeBase<GoEscapePass> {
   using GoEscapeBase::GoEscapeBase;
 

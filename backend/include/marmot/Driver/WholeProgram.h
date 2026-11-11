@@ -19,6 +19,7 @@ struct WpoJob {
 
 struct WpoStats {
   unsigned functions = 0, liveFunctions = 0, internalized = 0, imported = 0;
+  unsigned escapeRounds = 0, noEscapeParams = 0;
 };
 
 // Compiles all jobs as one program: one object per job, but functions that

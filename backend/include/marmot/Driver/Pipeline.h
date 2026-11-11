@@ -55,6 +55,25 @@ bool compileFile(const std::string &input, const std::string &output,
                  const CompileOptions &opts, PhaseTimes &times,
                  llvm::raw_ostream &errs);
 
+// A parsed MLIR module with its own context.
+struct ParsedModule;
+struct ParsedModuleDeleter {
+  void operator()(ParsedModule *p) const;
+};
+using ParsedModulePtr = std::unique_ptr<ParsedModule, ParsedModuleDeleter>;
+// Parse (and verify) input. Null with a message on errs on failure.
+ParsedModulePtr parseFile(const std::string &input, const CompileOptions &opts,
+                          llvm::raw_ostream &errs);
+// The module operation, as an opaque pointer for passes (mlir::ModuleOp).
+void *parsedModuleOp(ParsedModule &pm);
+// The go passes, lowering and translation of a parsed module.
+std::unique_ptr<llvm::Module> lowerAndTranslate(ParsedModule &pm, const std::string &input,
+                                                const CompileOptions &opts,
+                                                llvm::TargetMachine &tm,
+                                                llvm::LLVMContext &lctx, PhaseTimes &times,
+                                                llvm::raw_ostream &errs,
+                                                const std::string *mlirOutput = nullptr);
+
 // The two halves of compileFile, for the whole-program mode.
 std::unique_ptr<llvm::TargetMachine> createTargetMachine(const CompileOptions &opts,
                                                          std::string &err);

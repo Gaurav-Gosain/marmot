@@ -215,8 +215,10 @@ int main(int argc, char **argv) {
     marmot::WpoStats st;
     ok = marmot::compileWholeProgram(wjobs, o, n, total, st, errs());
     if (opts.timePhases)
-      errs() << format("wpo: %u functions, %u live, %u internalized, %u imported\n",
-                       st.functions, st.liveFunctions, st.internalized, st.imported);
+      errs() << format("wpo: %u functions, %u live, %u internalized, %u imported, "
+                       "%u no-escape params after %u escape rounds\n",
+                       st.functions, st.liveFunctions, st.internalized, st.imported,
+                       st.noEscapeParams, st.escapeRounds);
   } else if (work.size() == 1) {
     runJob(work[0], false);
   } else {

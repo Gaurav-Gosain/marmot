@@ -13,6 +13,10 @@
 #include "marmot/Driver/WholeProgram.h"
 #include "marmot/Driver/RuntimeBitcode.h"
 #include "marmot/Driver/Watchdog.h"
+#include "marmot/Dialect/Go/Passes.h"
+
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/BuiltinOps.h"
 
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringMap.h"
@@ -52,6 +56,7 @@ struct Def {
 
 struct ModuleInfo {
   WpoJob job;
+  ParsedModulePtr parsed;
   SmallVector<char, 0> bitcode;
   std::vector<Def> defs;
   std::vector<std::string> extraRoots; // from appending globals (llvm.used, ctors)
@@ -173,39 +178,120 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
                      [&](unsigned a, unsigned b) { return size[a] > size[b]; });
   }
 
-  // Phase 1.
-  {
+  auto parallel = [&](auto fn) {
     DefaultThreadPool pool(hardware_concurrency(threads));
     for (unsigned i : order)
-      pool.async([&, i] {
-        ModuleInfo &info = mods[i];
-        info.job = jobs[i];
-        watchdogBegin(jobs[i].in);
-        std::string msgs;
-        raw_string_ostream es(msgs);
-        PhaseTimes t;
-        std::string err;
-        auto tm = createTargetMachine(opts, err);
-        if (!tm) {
-          es << jobs[i].in << ": " << err << "\n";
-        } else {
-          LLVMContext ctx;
-          auto m = translateFile(jobs[i].in, opts, *tm, ctx, t, es);
-          if (m) {
-            auto t0 = std::chrono::steady_clock::now();
-            summarize(*m, i, info);
-            raw_svector_ostream os(info.bitcode);
-            WriteBitcodeToFile(*m, os);
-            info.ok = true;
-            t.write += msSince(t0);
-          }
-        }
-        watchdogEnd(jobs[i].in);
-        perJob[i].add(t);
-        report(msgs, t);
-      });
+      pool.async([&, i] { fn(i); });
     pool.wait();
+  };
+
+  // Phase 1a: parse.
+  parallel([&](unsigned i) {
+    watchdogBegin(jobs[i].in);
+    mods[i].job = jobs[i];
+    std::string msgs;
+    raw_string_ostream es(msgs);
+    PhaseTimes t;
+    auto t0 = std::chrono::steady_clock::now();
+    mods[i].parsed = parseFile(jobs[i].in, opts, es);
+    t.parse += msSince(t0);
+    watchdogEnd(jobs[i].in);
+    perJob[i].add(t);
+    report(msgs, t);
+  });
+  for (ModuleInfo &m : mods)
+    if (!m.parsed)
+      return false;
+
+  // Phase 1b: escape summaries across modules. Each round recomputes every
+  // module's summaries given the table from the previous round, starting
+  // from "everything escapes"; every round is sound and the facts only grow.
+  // Go's import graph has no cycles, so this ends after about as many rounds
+  // as the import depth.
+  if (opts.escape && opts.optLevel != '0') {
+    auto t0 = std::chrono::steady_clock::now();
+    StringMap<std::vector<bool>> table;
+    for (unsigned round = 0; round < 16; ++round) {
+      std::vector<StringMap<std::vector<bool>>> found(mods.size());
+      parallel([&](unsigned i) {
+        auto m = mlir::ModuleOp::getFromOpaquePointer(parsedModuleOp(*mods[i].parsed));
+        mlir::UnitAttr unit = mlir::UnitAttr::get(m.getContext());
+        m.walk([&](mlir::LLVM::LLVMFuncOp f) {
+          if (!f.isExternal())
+            return;
+          auto it = table.find(f.getSymName());
+          if (it == table.end() || it->second.size() != f.getNumArguments())
+            return;
+          for (unsigned a = 0; a < f.getNumArguments(); ++a)
+            if (it->second[a])
+              f.setArgAttr(a, "go.noescape", unit);
+        });
+        go::summarizeEscapes(m);
+        m.walk([&](mlir::LLVM::LLVMFuncOp f) {
+          if (f.isExternal() || f.getLinkage() == mlir::LLVM::Linkage::Internal ||
+              f.getLinkage() == mlir::LLVM::Linkage::Private)
+            return;
+          std::vector<bool> ne(f.getNumArguments());
+          for (unsigned a = 0; a < f.getNumArguments(); ++a)
+            ne[a] = bool(f.getArgAttr(a, "go.noescape"));
+          found[i][f.getSymName()] = std::move(ne);
+        });
+      });
+      // A name defined in several modules (linkonce) gets the intersection.
+      StringMap<std::vector<bool>> next;
+      for (auto &f : found)
+        for (auto &e : f) {
+          auto [it, fresh] = next.try_emplace(e.getKey(), e.getValue());
+          if (!fresh)
+            for (size_t a = 0; a < it->second.size() && a < e.getValue().size(); ++a)
+              it->second[a] = it->second[a] && e.getValue()[a];
+        }
+      bool same = next.size() == table.size();
+      for (auto &e : next) {
+        if (!same)
+          break;
+        auto it = table.find(e.getKey());
+        same = it != table.end() && it->second == e.getValue();
+      }
+      table = std::move(next);
+      stats.escapeRounds = round + 1;
+      if (same)
+        break;
+    }
+    for (auto &e : table)
+      for (bool b : e.getValue())
+        stats.noEscapeParams += b;
+    total.link += msSince(t0);
   }
+
+  // Phase 1c: go passes, lowering, translation, summary, bitcode.
+  parallel([&](unsigned i) {
+    ModuleInfo &info = mods[i];
+    watchdogBegin(jobs[i].in);
+    std::string msgs;
+    raw_string_ostream es(msgs);
+    PhaseTimes t;
+    std::string err;
+    auto tm = createTargetMachine(opts, err);
+    if (!tm) {
+      es << jobs[i].in << ": " << err << "\n";
+    } else {
+      LLVMContext ctx;
+      auto m = lowerAndTranslate(*info.parsed, jobs[i].in, opts, *tm, ctx, t, es);
+      info.parsed = nullptr;
+      if (m) {
+        auto t0 = std::chrono::steady_clock::now();
+        summarize(*m, i, info);
+        raw_svector_ostream os(info.bitcode);
+        WriteBitcodeToFile(*m, os);
+        info.ok = true;
+        t.write += msSince(t0);
+      }
+    }
+    watchdogEnd(jobs[i].in);
+    perJob[i].add(t);
+    report(msgs, t);
+  });
   for (ModuleInfo &m : mods)
     ok &= m.ok;
   if (!ok)
