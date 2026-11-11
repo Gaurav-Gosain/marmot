@@ -2,6 +2,7 @@ package driver
 
 import (
 	"os"
+	"strconv"
 	"os/exec"
 	"os/signal"
 	"runtime"
@@ -14,6 +15,9 @@ func maxJobs() int {
 	n := runtime.NumCPU()
 	if n > 4 {
 		n = 4
+	}
+	if v, err := strconv.Atoi(os.Getenv("MARMOT_MAX_JOBS")); err == nil && v > 0 && v < n {
+		n = v
 	}
 	return n
 }

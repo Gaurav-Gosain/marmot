@@ -176,7 +176,7 @@ func Build(cfg Config) (string, error) {
 	gen := func(need func(i int) bool) error {
 		errs := make([]error, n)
 		var wg sync.WaitGroup
-		sem := make(chan struct{}, runtime.NumCPU())
+		sem := make(chan struct{}, maxJobs())
 		for i := 0; i < n; i++ {
 			if !need(i) || mods[i].Text != "" || mods[i].Path != "" {
 				continue
