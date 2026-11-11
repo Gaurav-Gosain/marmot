@@ -40,11 +40,15 @@ func specOverlay(t *testing.T, dir string) (string, int, string) {
 		Dir: dir,
 		Env: append(os.Environ(), "CGO_ENABLED=0", "GOFLAGS=", "GOWORK=off"),
 	}
-	specSrc, err := os.ReadFile("_lib/fmt/marmot_spec.go")
-	if err != nil {
-		t.Fatal(err)
+	libFiles := libOverlay(t)
+	cfg.Overlay = map[string][]byte{}
+	for dst, src := range libFiles {
+		b, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.Overlay[dst] = b
 	}
-	cfg.Overlay = map[string][]byte{filepath.Join(goroot(t), "src", "fmt", "marmot_spec.go"): specSrc}
 	pkgs, err := packages.Load(cfg, ".")
 	if err != nil {
 		t.Fatal(err)
@@ -61,9 +65,7 @@ func specOverlay(t *testing.T, dir string) (string, int, string) {
 		t.Fatal(err)
 	}
 	work := t.TempDir()
-	repl := map[string]string{
-		filepath.Join(goroot(t), "src", "fmt", "marmot_spec.go"): mustAbs(t, "_lib/fmt/marmot_spec.go"),
-	}
+	repl := libOverlay(t)
 	var gen string
 	for _, p := range res.Changed {
 		for _, f := range p.Syntax {
@@ -95,6 +97,24 @@ func specOverlay(t *testing.T, dir string) (string, int, string) {
 		os.WriteFile(filepath.Join(d, "overlay.json"), js, 0o644)
 	}
 	return ov, res.Sites, gen
+}
+
+// libOverlay maps GOROOT/src paths to the entry point files under _lib.
+func libOverlay(t *testing.T) map[string]string {
+	m := map[string]string{}
+	root := goroot(t)
+	err := filepath.WalkDir("_lib", func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
+			return err
+		}
+		rel, _ := filepath.Rel("_lib", path)
+		m[filepath.Join(root, "src", rel)] = mustAbs(t, path)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
 }
 
 func mustAbs(t *testing.T, p string) string {

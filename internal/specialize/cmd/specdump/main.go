@@ -44,21 +44,32 @@ func run(out, lib, pkg string) error {
 		return err
 	}
 	goroot := strings.TrimSpace(string(gr))
-	specFile, err := filepath.Abs(filepath.Join(lib, "fmt", "marmot_spec.go"))
+	ov := map[string][]byte{}
+	repl := map[string]string{}
+	err = filepath.WalkDir(lib, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
+			return err
+		}
+		rel, _ := filepath.Rel(lib, path)
+		abs, _ := filepath.Abs(path)
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		key := filepath.Join(goroot, "src", rel)
+		ov[key] = src
+		repl[key] = abs
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	specSrc, err := os.ReadFile(specFile)
-	if err != nil {
-		return err
-	}
-	ovKey := filepath.Join(goroot, "src", "fmt", "marmot_spec.go")
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports |
 			packages.NeedDeps | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo |
 			packages.NeedTypesSizes | packages.NeedModule,
 		Env:     append(os.Environ(), "CGO_ENABLED=0"),
-		Overlay: map[string][]byte{ovKey: specSrc},
+		Overlay: ov,
 	}
 	pkgs, err := packages.Load(cfg, pkg)
 	if err != nil {
@@ -103,7 +114,7 @@ func run(out, lib, pkg string) error {
 	if err := os.WriteFile(filepath.Join(out, "go.mod"), []byte(mod), 0o644); err != nil {
 		return err
 	}
-	js, _ := json.Marshal(map[string]any{"Replace": map[string]string{ovKey: specFile}})
+	js, _ := json.Marshal(map[string]any{"Replace": repl})
 	if err := os.WriteFile(filepath.Join(out, "overlay.json"), js, 0o644); err != nil {
 		return err
 	}
