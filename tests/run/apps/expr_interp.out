@@ -1,0 +1,38 @@
+1 + 2 * 3                                                    => 7
+(1 + 2) * 3                                                  => 9
+2 ^ 3 ^ 2                                                    => 512
+-2 ^ 2                                                       => -4
+10 / 4 - 1                                                   => 1.5
+7 % 4 + 0.5                                                  => 3.5
+1 < 2 && 2 < 3 || 0                                          => true
+!(1 == 1)                                                    => false
+"foo" + "bar"                                                => "foobar"
+len("hello") * 2                                             => 10
+sqrt(16) + max(1, 9, 3)                                      => 13
+pi * 2                                                       => 6.283185307
+let x = 5 in x * x                                           => syntax error: expected "=" at 6, got "= "
+let x = 2 in let y = x + 3 in x * y                          => syntax error: expected "=" at 6, got "= "
+if 3 > 2 then "yes" else "no"                                => "yes"
+let sq = fn(a) a * a in sq(7)                                => syntax error: expected "=" at 7, got "= "
+let add = fn(a, b) a + b in add(3, 4)                        => syntax error: expected "=" at 8, got "= "
+let mk = fn(n) fn(x) x + n in let add5 = mk(5) in add5(10)   => syntax error: expected "=" at 7, got "= "
+let fact = fn(n) if n <= 1 then 1 else n * fact(n - 1) in fact(10) => syntax error: expected "=" at 9, got "= "
+let fib = fn(n) if n < 2 then n else fib(n - 1) + fib(n - 2) in fib(15) => syntax error: expected "=" at 8, got "= "
+let twice = fn(f, x) f(f(x)) in twice(fn(y) y * 3, 2)        => syntax error: expected "=" at 10, got "= "
+let compose = fn(f, g) fn(x) f(g(x)) in compose(fn(a) a + 1, fn(b) b * 2)(5) => syntax error: expected "=" at 12, got "= "
+1 / 0                                                        => error: division by zero
+undefinedVar + 1                                             => error: undefined: undefinedVar
+1 +                                                          => syntax error: unexpected "" at 3
+(1 + 2                                                       => syntax error: expected ")" at 6, got ""
+"a" + 1                                                      => error: type mismatch: string + float64
+let loop = fn(n) loop(n + 1) in loop(0)                      => syntax error: expected "=" at 9, got "= "
+sqrt(-4)                                                     => error: sqrt domain error
+3 $ 4                                                        => syntax error: unexpected character '$' at 2
+fn(x) x                                                      => <fn/1>
+sqrt                                                         => <builtin>
+let f = fn(a, b) a in f(1)                                   => syntax error: expected "=" at 6, got "= "
+1 2                                                          => syntax error: trailing input at 2: "2"
+"unterminated                                                => syntax error: unterminated string at 0
+let x = 1 in let x = x + 1 in let x = x * 10 in x            => syntax error: expected "=" at 6, got "= "
+<nil>
+[len max pi sqrt]

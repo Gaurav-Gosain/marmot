@@ -1,0 +1,22 @@
+put a -> [a]
+put b -> [b a]
+put c -> [c b a]
+put a -> [a c b]
+put d -> [d a c]
+put e -> [e d a]
+put a -> [a e d]
+put f -> [f a e]
+evicted: [b=1 c=2 d=4]
+6 true [a f e]
+false 1 1
+peek 7 [a f e]
+true false 2 [f e]
+[f] 4
+<nil>
+false [x y] [{5 6} {3 4}]
+size=10    hit=0.0137 evictions=49307  len=10    check=<nil>
+size=50    hit=0.0608 evictions=46911  len=50    check=<nil>
+size=200   hit=0.1876 evictions=40419  len=200   check=<nil>
+size=1000  hit=0.6187 evictions=18063  len=1000  check=<nil>
+0:6477 1:2549 2:1950 3:1661 4:1541 5:1344 6:1225 7:1130 8:1070 9:1053 
+recovered: capacity must be positive

@@ -1,0 +1,47 @@
+{"name":"marmot","version":1.5,"tags":["go","mlir","compiler","fast"],"stable":false,"owner":null,"users":[{"name":"ann","age":31,"langs":["go","c"]},{"name":"bob","age":27,"langs":[]},{"name":"céline \"cc\"","age":45.5,"langs":["rust"]}],"limits":{"mem":1024,"nested":{"deep":{"deeper":[1,[2,[3,[4]]]]}}},"empty":{},"esc":"tab\there\nnewline \\ slash / 世"}
+754 54
+{
+  "name": "marmot",
+  "version": 1.5,
+  "tags": [
+    "go",
+    "mlir",
+    "compiler",
+    "fast"
+  ],
+  "stable": fa
+"name"                                   string  "marmot"
+"users.1.name"                           string  "bob"
+"users.2.age"                            number  45.5
+"users.5"                                missing
+"limits.nested.deep.deeper.1.1.1.0"      number  4
+"tags.3"                                 string  "fast"
+"version"                                number  1.5
+"owner"                                  null    null
+"esc"                                    string  "tab\there\nnewline \\ slash / 世"
+"users.0.langs"                          array   ["go","c"]
+"nope.x"                                 missing
+""                                       object  {"name":"marmot","version":1.5,"tags":["go","mlir"...
+null=1 bool=1 number=9 string=12 array=9 object=8 depth 8
+roundtrip equal: true
+""           parse error at 0: unexpected end
+"{"          parse error at 1: unexpected end
+"[1,]"       parse error at 3: unexpected ']'
+"{\"a\" 1}"  parse error at 5: expected :
+"{\"a\":1,}" parse error at 7: expected string key
+"\"abc"      parse error at 4: unterminated string
+"tru"        parse error at 0: expected true
+"01"         <nil>
+"-"          parse error at 1: digit expected
+"1."         parse error at 2: fraction digit expected
+"1e"         parse error at 2: exponent digit expected
+"[1 2]"      parse error at 3: expected , or ]
+"{\"a\":1} x" parse error at 8: trailing data
+"\"\\x\""    parse error at 3: bad escape
+"\"a\x01\""  parse error at 2: control character in string
+"\"\\u12\""  parse error at 3: short unicode escape
+"nul"        parse error at 0: expected null
+"["          parse error at 1: unexpected end
+"{\"k\":[}"  parse error at 6: unexpected '}'
+<nil> 200
+<nil> 3000 8.994001e+06 false
