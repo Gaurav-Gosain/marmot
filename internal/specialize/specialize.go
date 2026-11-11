@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/tools/go/ast/astutil"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 )
@@ -39,7 +40,7 @@ type Input struct {
 const GenFile = "zz_marmot_spec.go"
 
 // Features are the specializations, each behind its own switch.
-var Features = []string{"fmt", "jsonenc", "jsondec", "sort", "regexp", "mapkey"}
+var Features = []string{"fmt", "jsonenc", "jsondec", "sort", "regexp", "mapkey", "split"}
 
 // releaseDefault lists the features on by default in release builds. A
 // feature joins it only after the full conformance matrix and a fuzz round
@@ -172,6 +173,8 @@ func RewriteWith(pkgs []*packages.Package, on map[string]bool) (*Result, error) 
 			rewriteSort(g, f)
 			rewriteRegexp(g, f)
 			rewriteMapKey(g, f)
+			g.curFile = f
+			rewriteSplit(g, f)
 			if g.sites > before {
 				g.blankUnusedImports(f)
 			}
@@ -308,6 +311,7 @@ type gen struct {
 	raw          []string          // declarations not subject to usePkg rewriting
 	allPkgs      []*packages.Package
 	needMapBytes bool
+	curFile      *ast.File
 }
 
 func newGen(p *packages.Package) *gen {
@@ -578,4 +582,30 @@ func calleeFunc(info *types.Info, call *ast.CallExpr) *types.Func {
 		return nil
 	}
 	return fn
+}
+
+// replaceStmt replaces statement old with new in the current file, with
+// undo.
+func (g *gen) replaceStmt(old, new ast.Stmt) {
+	f := g.curFile
+	done := false
+	astutil.Apply(f, nil, func(c *astutil.Cursor) bool {
+		if !done && c.Node() == old {
+			c.Replace(new)
+			done = true
+		}
+		return true
+	})
+	if !done {
+		return
+	}
+	g.sites++
+	g.undos = append(g.undos, func() {
+		astutil.Apply(f, nil, func(c *astutil.Cursor) bool {
+			if c.Node() == new {
+				c.Replace(old)
+			}
+			return true
+		})
+	})
 }
