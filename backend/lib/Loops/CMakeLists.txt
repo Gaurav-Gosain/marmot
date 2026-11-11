@@ -19,6 +19,7 @@ endif()
 add_library(MarmotLoops STATIC
   Affine.cpp
   Versioning.cpp
+  Idioms.cpp
   Interchange.cpp
   Jam.cpp
   MaskedJam.cpp

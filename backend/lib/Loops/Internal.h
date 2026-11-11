@@ -45,6 +45,9 @@ bool versionBoundsChecks(llvm::Function &F, llvm::Loop *L, llvm::LoopInfo &LI,
                          llvm::ScalarEvolution &SE, llvm::DominatorTree &DT,
                          llvm::AAResults &AA, std::string &why);
 
+// Loop idioms replaced by runtime kernels (Idioms.cpp, Rule D).
+void addIdioms(llvm::ModulePassManager &mpm, const Options &opts);
+
 // loop-parallelize (Parallelize.cpp).
 void addParallelize(llvm::ModulePassManager &mpm, const Options &opts);
 // reduction interchange (Interchange.cpp, Rule I).

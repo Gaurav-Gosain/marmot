@@ -312,6 +312,42 @@ func transposeInto(b, a []int64, w int) {
 	}
 }
 
+// Byte count idiom (Rule D): replaced by rt_count_byte.
+//go:noinline
+func countEq(b []byte, c byte, start int) int {
+	n := start
+	for _, x := range b {
+		if x == c {
+			n++
+		}
+	}
+	return n
+}
+
+//go:noinline
+func countNe(b []byte, c byte) int {
+	n := 0
+	for i := 0; i < len(b); i++ {
+		if b[i] != c {
+			n++
+		}
+	}
+	return n
+}
+
+// Not the idiom: the loop also writes.
+//go:noinline
+func countAndMark(b []byte, c byte) int {
+	n := 0
+	for i := range b {
+		if b[i] == c {
+			n++
+			b[i] = c + 1
+		}
+	}
+	return n
+}
+
 func main() {
 	a := make([]int64, n)
 	fill(a, 42)
@@ -425,5 +461,11 @@ func main() {
 		tb[i] = 0
 	}
 	transposeInto(tb, ta, 950)
+	bb := make([]byte, 100003)
+	for i := range bb {
+		bb[i] = byte(i*7 + i/13)
+	}
+	println("bytecount", countEq(bb, 3, 5), countEq(bb[17:99999], 200, 0), countNe(bb, 9), countEq(bb[:0], 1, 7))
+	println("countmark", countAndMark(bb, 3), countEq(bb, 3, 0), countEq(bb, 4, 0))
 	println("transpose-overlap", sum(tb), tb[5*900+7], tb[699*900+949])
 }

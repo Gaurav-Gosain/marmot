@@ -18,8 +18,10 @@ void registerLLVMPasses(PassBuilder &pb, const Options &opts) {
       [opts](ModulePassManager &mpm, OptimizationLevel ol, ThinOrFullLTOPhase) {
         if (ol.getSpeedupLevel() < 2 || ol.getSizeLevel() > 0)
           return;
-        if (opts.parallel)
+        if (opts.parallel) {
+          addIdioms(mpm, opts);
           addParallelize(mpm, opts);
+        }
       });
   // Jam chunk loops before the vectorizers, so the SLP vectorizer sees the
   // jammed inner loop.
