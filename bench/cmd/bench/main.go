@@ -141,6 +141,8 @@ type Result struct {
 	// above -max-load after all retries; the report drops the timing of noisy rows.
 	LoadEnd float64 `json:"load_avg_1m_end"`
 	Noisy   bool    `json:"noisy,omitempty"`
+	// Rev is the marmot commit (and snapshot) this row was measured with.
+	Rev string `json:"rev,omitempty"`
 }
 
 // Meta records the environment so a results file stands on its own.
@@ -236,6 +238,7 @@ func main() {
 		makeSnapshot()
 	}
 	meta := collectMeta(tcl)
+	benchRev = meta.GitRev
 	file := File{Meta: meta}
 	dir := *outDir
 	if dir == "" {
@@ -783,6 +786,7 @@ func measureQuiet(p Program, t Toolchain) Result {
 		start := loadAvg1()
 		r = measure(p, t)
 		r.Load, r.LoadEnd = start, loadAvg1()
+		r.Rev = benchRev
 		if *maxLoad <= 0 || (r.Load <= *maxLoad && r.LoadEnd <= *maxLoad) || r.Run == nil {
 			r.Noisy = false
 			return r
@@ -843,3 +847,6 @@ func holdAllSlots() func() {
 		}
 	}
 }
+
+// benchRev is the git revision and snapshot name recorded on every row of this run.
+var benchRev string
