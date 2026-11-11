@@ -293,7 +293,47 @@ theorem windows_disjoint (coef : Int) (x y : Win) (k k' : Int) (hne : k ≠ k')
   have := apart coef k k' hne
   omega
 
+/-- The strided rule (column accesses, the transpose case): iteration k touches the bytes
+c*k + t*j + [0, size) for rows j. With c >= size (columns of one row do not overlap) and
+c*K + size <= t (all columns of iterations 0..K fit in one row stride), two different
+iterations k, k' in [0, K] never touch the same byte. -/
+theorem strided_disjoint (c t size K k k' j j' u u' : Int) (hs : 0 < size) (hc : size ≤ c)
+    (ht : c * K + size ≤ t) (hk : 0 ≤ k ∧ k ≤ K) (hk' : 0 ≤ k' ∧ k' ≤ K)
+    (hu : 0 ≤ u ∧ u < size) (hu' : 0 ≤ u' ∧ u' < size)
+    (heq : c * k + t * j + u = c * k' + t * j' + u') : k = k' := by
+  have hc0 : 0 < c := by omega
+  -- |c*(k - k')| <= c*K
+  have hkk : c * k ≤ c * K := Int.mul_le_mul_of_nonneg_left hk.2 (by omega)
+  have hkk' : c * k' ≤ c * K := Int.mul_le_mul_of_nonneg_left hk'.2 (by omega)
+  have h0 : 0 ≤ c * k := Int.mul_nonneg (by omega) hk.1
+  have h0' : 0 ≤ c * k' := Int.mul_nonneg (by omega) hk'.1
+  -- first the rows agree: otherwise t*|j - j'| >= t > the column spread
+  have hj : j = j' := by
+    rcases Int.lt_trichotomy j j' with h | h | h
+    · have : t * j + t ≤ t * j' := by
+        have := Int.mul_le_mul_of_nonneg_left (show j + 1 ≤ j' by omega) (show 0 ≤ t by omega)
+        rw [Int.mul_add, Int.mul_one] at this; exact this
+      omega
+    · exact h
+    · have : t * j' + t ≤ t * j := by
+        have := Int.mul_le_mul_of_nonneg_left (show j' + 1 ≤ j by omega) (show 0 ≤ t by omega)
+        rw [Int.mul_add, Int.mul_one] at this; exact this
+      omega
+  subst hj
+  -- then c*(k - k') = u' - u with |u' - u| < size <= c
+  rcases Int.lt_trichotomy k k' with h | h | h
+  · have : c * k + c ≤ c * k' := by
+      have := Int.mul_le_mul_of_nonneg_left (show k + 1 ≤ k' by omega) (show 0 ≤ c by omega)
+      rw [Int.mul_add, Int.mul_one] at this; exact this
+    omega
+  · exact h
+  · have : c * k' + c ≤ c * k := by
+      have := Int.mul_le_mul_of_nonneg_left (show k' + 1 ≤ k by omega) (show 0 ≤ c by omega)
+      rw [Int.mul_add, Int.mul_one] at this; exact this
+    omega
+
 end RuleP
 
 #print axioms RuleP.schedule_eq
 #print axioms RuleP.windows_disjoint
+#print axioms RuleP.strided_disjoint
