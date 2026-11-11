@@ -129,6 +129,19 @@ type uncommontype struct {
 	// ifn(recv, args...). tfns or any entry may be nil when the program
 	// cannot call methods through reflect.
 	tfns *unsafe.Pointer
+	// mexprs, parallel to methods, describes each method as a method
+	// expression for reflect's Type.Method(i).Func; nil when unused.
+	mexprs *methodExpr
+}
+
+// methodExpr is a method of T as the function func(T, params...) results.
+type methodExpr struct {
+	// mtyp is the *functype of func(T, params...) results.
+	mtyp *_type
+	// fn is a static closure object {code} whose code takes the receiver
+	// as an ordinary first parameter, then the method parameters, then the
+	// hidden closure parameter.
+	fn unsafe.Pointer
 }
 
 // method is one entry of a method set.

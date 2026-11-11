@@ -302,7 +302,13 @@ func (t *rtype) Method(i int) Method {
 		panic("reflect: Method index out of range")
 	}
 	tm := u.MethodAt(i)
-	return Method{Name: tm.Name, Type: toType(tm.Mtyp), Index: i}
+	m := Method{Name: tm.Name, Type: toType(tm.Mtyp), Index: i}
+	if me := u.Mexpr(i); me != nil && me.Mtyp != nil {
+		// The method expression func(T, params...) results.
+		m.Type = toType(me.Mtyp)
+		m.Func = Value{me.Mtyp, me.Fn, flag(Func)}
+	}
+	return m
 }
 
 func (t *rtype) MethodByName(name string) (Method, bool) {

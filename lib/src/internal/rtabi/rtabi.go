@@ -68,6 +68,21 @@ type UncommonType struct {
 	Xcount    uint32
 	PtrToThis *Type
 	Tfns      *unsafe.Pointer
+	Mexprs    *MethodExpr
+}
+
+// MethodExpr is runtime.methodExpr.
+type MethodExpr struct {
+	Mtyp *Type
+	Fn   unsafe.Pointer
+}
+
+// Mexpr returns the method expression of method i, or nil.
+func (u *UncommonType) Mexpr(i int) *MethodExpr {
+	if u.Mexprs == nil {
+		return nil
+	}
+	return (*MethodExpr)(unsafe.Add(unsafe.Pointer(u.Mexprs), uintptr(i)*unsafe.Sizeof(MethodExpr{})))
 }
 
 // Tfn returns the reflect wrapper of method i, or nil.
