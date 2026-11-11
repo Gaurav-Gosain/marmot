@@ -32,6 +32,7 @@
 #include "llvm/Linker/Linker.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/TargetParser/Host.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/ThreadPool.h"
@@ -418,7 +419,9 @@ std::string fingerprint(const CompileOptions &opts) {
   std::string fp;
   raw_string_ostream os(fp);
   os << kCacheVersion << "|O" << opts.optLevel << "|" << int(opts.emit) << "|"
-     << opts.triple << "|" << opts.cpu << "|" << opts.features << "|"
+     << opts.triple << "|" << opts.cpu
+     << (opts.cpu == "native" ? "=" + sys::getHostCPUName().str() : std::string()) << "|"
+     << opts.features << "|"
      << opts.strings << opts.devirt << opts.boolPack << opts.escape << opts.bce << opts.openDefers
      << opts.initOptNone << opts.wpoImport << opts.wpoClosedWorld << opts.wpoPruneTypes
      << "|loops" << opts.loops.enable

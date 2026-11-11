@@ -95,8 +95,12 @@ makeTargetMachine(const CompileOptions &opts, llvm::Triple &triple,
     return nullptr;
   bool isHost = false;
   std::string cpu = opts.cpu.empty() ? defaultCPU(triple, isHost) : opts.cpu;
+  if (opts.cpu == "native") { // the host CPU and all its features
+    cpu = llvm::sys::getHostCPUName().str();
+    isHost = true;
+  }
   std::string features = opts.features;
-  if (isHost && opts.cpu.empty() && features.empty()) {
+  if (isHost && (opts.cpu.empty() || opts.cpu == "native") && features.empty()) {
     llvm::SubtargetFeatures f;
     for (auto &kv : llvm::sys::getHostCPUFeatures())
       f.AddFeature(kv.first(), kv.second);

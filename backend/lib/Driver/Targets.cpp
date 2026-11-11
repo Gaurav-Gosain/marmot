@@ -98,11 +98,16 @@ llvm::Triple targetTriple(const std::string &target) {
 std::string defaultCPU(const llvm::Triple &triple, bool &isHost) {
   llvm::Triple host = hostTriple();
   isHost = triple.getArch() == host.getArch() && triple.getOS() == host.getOS();
+  // x86-64 binaries are portable: x86-64-v2 (SSE4.2, POPCNT) even on the host.
+  // Hot loops get v3 clones chosen at run time (loops); -mcpu=native tunes for
+  // the host.
+  if (triple.getArch() == llvm::Triple::x86_64) {
+    isHost = false;
+    return "x86-64-v2";
+  }
   if (isHost)
     return llvm::sys::getHostCPUName().str();
   switch (triple.getArch()) {
-  case llvm::Triple::x86_64:
-    return "x86-64";
   case llvm::Triple::aarch64:
     return triple.isOSDarwin() ? "apple-m1" : "generic";
   default:

@@ -47,7 +47,7 @@ static cl::opt<std::string> rtBitcode("rt-bitcode",
                                       cl::value_desc("path"), cl::cat(cat));
 static cl::opt<std::string> targetTriple("target", cl::desc("Target triple (default: host)"),
                                          cl::cat(cat));
-static cl::opt<std::string> targetCPU("mcpu", cl::desc("Target CPU (default: host)"),
+static cl::opt<std::string> targetCPU("mcpu", cl::desc("Target CPU (default: x86-64-v2 on x86-64, the host CPU otherwise; native: the host CPU and its features)"),
                                       cl::cat(cat));
 static cl::opt<std::string> targetAttrs("mattr", cl::desc("Target features"),
                                         cl::cat(cat));
