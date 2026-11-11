@@ -27,17 +27,11 @@ func iter_newcoro(f func(*coro)) *coro { return newcoro(f) }
 //go:linkname iter_coroswitch iter.coroswitch
 func iter_coroswitch(c *coro) { coroswitch(c) }
 
-// coroSwitchArg passes the goroutine to wake to the park commit function.
-type coroSwitchArg struct {
-	next *g
-}
-
-// coroReadyCommit readies the other side after the switching goroutine is
-// off its stack, so the two never run at once.
+// coroReadyCommit readies the other side (a *g) after the switching
+// goroutine is off its stack, so the two never run at once.
 func coroReadyCommit(p unsafe.Pointer) {
-	a := (*coroSwitchArg)(p)
-	if a.next != nil {
-		rt_ready(a.next.handle)
+	if p != nil {
+		rt_ready((*g)(p).handle)
 	}
 }
 
@@ -52,17 +46,14 @@ func coroswitch(c *coro) {
 		c.started = true
 		c.other = gp
 		unlock(&c.lock)
-		start := corostart
-		newprocArg(start, unsafe.Pointer(c))
-		gopark(nil, nil)
+		rt_go(corostartPC, unsafe.Pointer(c))
+		goparkForever()
 		return
 	}
 	next := c.other
 	c.other = gp
 	unlock(&c.lock)
-	arg := &coroSwitchArg{next: next}
-	commit := coroReadyCommit
-	rt_park(funcPC(unsafe.Pointer(&commit)), unsafe.Pointer(arg))
+	rt_park(coroReadyCommitPC, unsafe.Pointer(next))
 }
 
 // corostart runs the coroutine body on its own goroutine. When the body
@@ -78,10 +69,4 @@ func corostart(p unsafe.Pointer) {
 	if next != nil {
 		rt_ready(next.handle)
 	}
-}
-
-// newprocArg starts a goroutine running fn(arg). fn must be a top-level
-// function.
-func newprocArg(fn func(unsafe.Pointer), arg unsafe.Pointer) {
-	rt_go(funcPC(unsafe.Pointer(&fn)), arg)
 }

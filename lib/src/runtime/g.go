@@ -37,6 +37,8 @@ type g struct {
 	selectDone uint32
 	// sudogcache is a free list of sudogs owned by this goroutine.
 	sudogcache *sudog
+	// selorder is the poll and lock order buffer reused by selectgo.
+	selorder []uint16
 	// FIPS 140 service indicator and bypass flag (crypto packages).
 	fipsIndicator  uint8
 	fipsOnlyBypass bool

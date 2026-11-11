@@ -148,11 +148,14 @@ func gopark(unlockf func(unsafe.Pointer), lock unsafe.Pointer) {
 	if unlockf != nil {
 		unlockf(lock)
 	}
-	if lock == nil && unlockf == nil {
-		select {}
-	}
 	<-hg.wake
 }
+
+func goparkunlock(l *mutex) { gopark(parkunlock, unsafe.Pointer(l)) }
+
+func goparkselect(gp *g) { gopark(selparkcommit, unsafe.Pointer(gp)) }
+
+func goparkForever() { select {} }
 
 func goready(gp *g) {
 	(*hostG)(gp.handle).wake <- struct{}{}

@@ -65,13 +65,19 @@ func selunlock(cases *scase, lockorder []uint16) {
 // that ran, and recvOK reports, for a receive case, whether a value was
 // received (false if the channel was closed).
 func selectgo(cases *scase, ncases int, block bool) (chosen int, recvOK bool) {
-	var orderbuf [2 * 16]uint16
-	var order []uint16
-	if ncases <= 16 {
-		order = orderbuf[:2*ncases]
-	} else {
-		order = unsafe.Slice((*uint16)(mallocgc(uintptr(4*ncases), nil)), 2*ncases)
+	// The poll and lock orders live in a buffer cached on the goroutine:
+	// a goroutine runs one select at a time.
+	gp := getg()
+	order := gp.selorder
+	if cap(order) < 2*ncases {
+		n := 2 * ncases
+		if n < 16 {
+			n = 16
+		}
+		order = unsafe.Slice((*uint16)(mallocgc(uintptr(2*n), nil)), n)
+		gp.selorder = order
 	}
+	order = order[:2*ncases]
 	pollorder := order[:0:ncases]
 	lockorder := order[ncases:][:0:ncases]
 
@@ -130,7 +136,7 @@ func selectgo(cases *scase, ncases int, block bool) (chosen int, recvOK bool) {
 			return -1, false
 		}
 		// select {} or only nil channels: block forever.
-		gopark(nil, nil)
+		goparkForever()
 		throw("unreachable")
 	}
 
@@ -197,7 +203,6 @@ func selectgo(cases *scase, ncases int, block bool) (chosen int, recvOK bool) {
 	}
 
 	// Pass 2: enqueue on every channel and park.
-	gp := getg()
 	gp.selectDone = 0
 	gp.param = nil
 	nextp := &gp.waiting
@@ -219,7 +224,7 @@ func selectgo(cases *scase, ncases int, block bool) (chosen int, recvOK bool) {
 			c.recvq.enqueue(sg)
 		}
 	}
-	gopark(selparkcommit, unsafe.Pointer(gp))
+	goparkselect(gp)
 
 	// Pass 3: the winner is in gp.param. Dequeue from the other channels.
 	sellock(cases, lockorder)

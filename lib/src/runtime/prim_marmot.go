@@ -17,7 +17,7 @@
 //	memcmp(a, b unsafe.Pointer, n uintptr) int
 //	writeErr(p unsafe.Pointer, n uintptr)
 //	getg() *g
-//	gopark(unlockf func(unsafe.Pointer), lock unsafe.Pointer)
+//	goparkunlock(l *mutex), goparkselect(gp *g), goparkForever()
 //	goready(gp *g)
 //	throw(s string)
 //	exit(code int32)
@@ -115,14 +115,49 @@ func getg() *g {
 	return gp
 }
 
-// gopark parks the current goroutine. unlockf(lock) runs after the
-// goroutine is off its stack. unlockf must be a top-level function.
-func gopark(unlockf func(unsafe.Pointer), lock unsafe.Pointer) {
-	if unlockf == nil {
-		rt_park(nil, lock)
-		return
-	}
-	rt_park(funcPC(unsafe.Pointer(&unlockf)), lock)
+// Park primitives. The C core calls the unlock callback by code address;
+// the addresses are computed once at init (taking the address of a func
+// variable on every park would allocate).
+var (
+	parkunlockPC      unsafe.Pointer
+	selparkcommitPC   unsafe.Pointer
+	gostartPC         unsafe.Pointer
+	timerFirePC       unsafe.Pointer
+	coroReadyCommitPC unsafe.Pointer
+	corostartPC       unsafe.Pointer
+)
+
+func initParkPCs() {
+	pu := parkunlock
+	parkunlockPC = funcPC(unsafe.Pointer(&pu))
+	sc := selparkcommit
+	selparkcommitPC = funcPC(unsafe.Pointer(&sc))
+	gs := gostart
+	gostartPC = funcPC(unsafe.Pointer(&gs))
+	tf := timerFire
+	timerFirePC = funcPC(unsafe.Pointer(&tf))
+	cr := coroReadyCommit
+	coroReadyCommitPC = funcPC(unsafe.Pointer(&cr))
+	cs := corostart
+	corostartPC = funcPC(unsafe.Pointer(&cs))
+}
+
+// goparkunlock parks the current goroutine and unlocks l once it is off
+// its stack, so a waker that takes l cannot miss the park.
+func goparkunlock(l *mutex) {
+	rt_park(parkunlockPC, unsafe.Pointer(l))
+}
+
+// goparkselect parks the current goroutine and unlocks the channels of its
+// select (gp.waiting) once it is off its stack.
+func goparkselect(gp *g) {
+	rt_park(selparkcommitPC, unsafe.Pointer(gp))
+}
+
+// goparkForever parks the current goroutine with nothing that will ever
+// wake it (select {}, nil channel operations).
+func goparkForever() {
+	rt_park(nil, nil)
 }
 
 func goready(gp *g) {

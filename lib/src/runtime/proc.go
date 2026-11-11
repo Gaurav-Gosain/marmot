@@ -8,6 +8,7 @@ import "unsafe"
 // init runs before every other package init (the compiler calls it
 // first).
 func init() {
+	initParkPCs()
 	hashkey ^= uintptr(rt_nanotime()) * 0x9e3779b97f4a7c15
 	sp := sigpanic
 	rt_set_sigpanic(funcPC(unsafe.Pointer(&sp)))
@@ -50,8 +51,7 @@ func newproc(fn func()) {
 	if fn == nil {
 		panic(errorString("invalid memory address or nil pointer dereference"))
 	}
-	start := gostart
-	rt_go(funcPC(unsafe.Pointer(&start)), *(*unsafe.Pointer)(unsafe.Pointer(&fn)))
+	rt_go(gostartPC, *(*unsafe.Pointer)(unsafe.Pointer(&fn)))
 }
 
 // gostart is the C entry of a new goroutine. arg is the closure object of

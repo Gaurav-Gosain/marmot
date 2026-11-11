@@ -89,7 +89,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool) bool {
 		if !block {
 			return false
 		}
-		gopark(nil, nil)
+		goparkForever()
 		throw("unreachable")
 	}
 
@@ -133,7 +133,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool) bool {
 	mysg.c = c
 	gp.param = nil
 	c.sendq.enqueue(mysg)
-	gopark(parkunlock, unsafe.Pointer(&c.lock))
+	goparkunlock(&c.lock)
 
 	closed := !mysg.success
 	gp.param = nil
@@ -241,7 +241,7 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 		if !block {
 			return
 		}
-		gopark(nil, nil)
+		goparkForever()
 		throw("unreachable")
 	}
 
@@ -291,7 +291,7 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 	mysg.c = c
 	gp.param = nil
 	c.recvq.enqueue(mysg)
-	gopark(parkunlock, unsafe.Pointer(&c.lock))
+	goparkunlock(&c.lock)
 
 	success := mysg.success
 	gp.param = nil

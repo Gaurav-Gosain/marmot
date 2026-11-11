@@ -67,7 +67,7 @@ func semacquire1(addr *uint32, lifo bool) {
 		}
 		root.tail = s
 	}
-	gopark(parkunlock, unsafe.Pointer(&root.lock))
+	goparkunlock(&root.lock)
 	// semrelease handed the unit to this waiter.
 	releaseSudog(gp, s)
 }
@@ -138,7 +138,7 @@ func notifyListWait(l *notifyList, t uint32) {
 		l.tail.next = s
 	}
 	l.tail = s
-	gopark(parkunlock, unsafe.Pointer(&l.lock))
+	goparkunlock(&l.lock)
 	releaseSudog(gp, s)
 }
 
