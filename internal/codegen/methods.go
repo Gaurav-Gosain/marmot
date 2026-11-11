@@ -36,6 +36,11 @@ func (p *Program) computeUsedMethods() {
 		if fn != nil && !seen[fn] {
 			seen[fn] = true
 			queue = append(queue, fn)
+			// Reflect method lookups, also when reached through the
+			// reflect.Type interface, need every exported method.
+			if p.isReflectMethodLookup(fn) {
+				p.keepExported = true
+			}
 		}
 	}
 	// Roots: main, package initializers, the runtime (called by generated
