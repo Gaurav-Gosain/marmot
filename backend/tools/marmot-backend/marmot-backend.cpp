@@ -109,7 +109,10 @@ int main(int argc, char **argv) {
   InitLLVM init(argc, argv);
   marmot::startWatchdog();
   cl::HideUnrelatedOptions(cat);
-  cl::ParseCommandLineOptions(argc, argv, "marmot MLIR backend\n");
+  // Extra options from MARMOT_BACKEND_FLAGS, for example
+  // MARMOT_BACKEND_FLAGS="-no-escape -no-bce" through the marmot driver.
+  cl::ParseCommandLineOptions(argc, argv, "marmot MLIR backend\n", nullptr, nullptr,
+                              "MARMOT_BACKEND_FLAGS");
   auto start = std::chrono::steady_clock::now();
 
   marmot::CompileOptions opts;
