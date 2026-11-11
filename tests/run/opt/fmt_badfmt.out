@@ -1,0 +1,8 @@
+true <nil> %!p(<nil>)
+%!d(string=wrong) %!s(int=5)
+%!d(MISSING)
+1 %!d(MISSING)
+extra
+%!(EXTRA int=1, string=x)%!!(int=1)|%!z(MISSING)|%!
+(MISSING)%!d(BADINDEX)|%!d(BADINDEX)|2
+5%x true

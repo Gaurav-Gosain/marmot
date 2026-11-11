@@ -1,0 +1,36 @@
+{"a":1,"c":7,"d":null,"e":2.5,"name":"n\"\u003c\u003e\u0026\u2028é","m":{"a":2,"z":1},"any":[1,"x",null,2.5,{"k":true}],"str":"12","raw":{"r":[1,2]},"nested":[{"a":2,"c":null,"d":null,"e":0}],"bytes":"Ynl0ZXMh","f32":0.1,"tags":{"t":["x"]}} <nil>
+{
+>  "a": {},
+>  "b": [],
+>  "c": [
+>    1
+>  ]
+>}
+0 <nil>
+-1 <nil>
+1 <nil>
+1e+21 <nil>
+1e-7 <nil>
+0.1 <nil>
+0.1 <nil>
+9223372036854775807 <nil>
+18446744073709551615 <nil>
+"\u0000\u001f\"\\/\t" <nil>
+true <nil>
+null <nil>
+-3 <nil>
+100000000000000000000 <nil>
+1.5e+300 <nil>
+5e-324 <nil>
+invalid character '>' looking for beginning of object key string
+<nil> 5 [104 105] 9 [1 2 3] 100 xé😀 map[k:3] map[n:[1 map[z:<nil>]]] 34 [1, 2 ] 2 hi 3.1415927 map[q:[1 2]]
+"{\"a\": \"x\"}": json: cannot unmarshal string into Go struct field Outer.a of type int
+"{\"a\": 1.5}": json: cannot unmarshal number 1.5 into Go struct field Outer.a of type int
+"{\"d\": {}}": json: cannot unmarshal object into Go struct field Outer.d of type []int
+"[": unexpected end of JSON input
+"{\"a\": 1,}": invalid character '}' looking for beginning of object key string
+"{\"str\": 5}": json: cannot unmarshal number into Go struct field Outer.str of type int
+"": unexpected end of JSON input
+"{\"a\": 99999999999999999999}": json: cannot unmarshal number 99999999999999999999 into Go struct field Outer.a of type int
+"nul": unexpected end of JSON input
+"{\"bytes\": \"!!\"}": json: cannot unmarshal string into Go struct field Outer.bytes of type []uint8: illegal base64 data at input byte 0

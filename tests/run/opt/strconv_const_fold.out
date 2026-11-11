@@ -1,0 +1,17 @@
+12345 <nil>
+strconv.Atoi: parsing "12a": invalid syntax
+strconv.Atoi: parsing "99999999999999999999": value out of range
++Inf strconv.ParseFloat: parsing "1e400": value out of range
+false strconv.ParseBool: parsing "maybe": invalid syntax
+0 "a\tb\x00é" -ff 0.33333
+ababab HÉLLO true 4 [a b  c] [a b] x bba Go Lang
+true true 3 3 x-y
+0 strconv.ParseUint: parsing "-1": invalid syntax
+127 strconv.ParseInt: parsing "200": value out of range
+0x1f 31 <nil>
+0b101 5 <nil>
+1_000 1000 <nil>
+-0 0 <nil>
++7 7 <nil>
+ 1 0 strconv.ParseInt: parsing " 1": invalid syntax
+ 0 strconv.ParseInt: parsing "": invalid syntax
