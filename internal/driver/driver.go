@@ -3,6 +3,8 @@
 package driver
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -96,7 +98,11 @@ func Build(cfg Config) (string, error) {
 		fmt.Fprintf(cfg.Stderr, "WORK=%s\n", work)
 	} else {
 		defer os.RemoveAll(work)
+		cleanupDirs.add(work)
+		defer cleanupDirs.remove(work)
 	}
+	stop := handleSignals()
+	defer stop()
 
 	goos, goarch := runtime.GOOS, runtime.GOARCH
 	lp, err := loader.Load(loader.Config{
@@ -264,7 +270,7 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 		if emit == "llvm" {
 			emitKind = "llvm"
 		}
-		args := []string{"-O", b.cfg.OptLevel, "--emit=" + emitKind, "--batch=" + listFile, "-j", "0"}
+		args := []string{"-O", b.cfg.OptLevel, "--emit=" + emitKind, "--batch=" + listFile, "-j", fmt.Sprint(maxJobs())}
 		if bc := filepath.Join(b.cfg.Root, "build", "lib", "rtcore.bc"); fileExists(bc) {
 			args = append(args, "--rt-bitcode="+bc)
 		}
@@ -274,7 +280,7 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 	} else {
 		var wg sync.WaitGroup
 		errs := make([]error, len(jobs))
-		sem := make(chan struct{}, runtime.NumCPU())
+		sem := make(chan struct{}, maxJobs())
 		for i, j := range jobs {
 			wg.Add(1)
 			go func() {
@@ -328,12 +334,38 @@ func (b *build) link(objs []string, out string) error {
 	return b.run(llvmTool("clang"), args...)
 }
 
+// toolTimeout bounds every external tool run.
+func toolTimeout() time.Duration {
+	if v := os.Getenv("MARMOT_TOOL_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return 10 * time.Minute
+}
+
 func (b *build) run(name string, args ...string) error {
 	if b.cfg.PrintCmd {
 		fmt.Fprintln(b.cfg.Stderr, name+" "+strings.Join(args, " "))
 	}
-	cmd := exec.Command(name, args...)
-	outb, err := cmd.CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), toolTimeout())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	var outBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &outBuf
+	startGroup(cmd)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	children.add(cmd.Process.Pid)
+	err := cmd.Wait()
+	children.remove(cmd.Process.Pid)
+	killGroup(cmd.Process.Pid) // stragglers in the tool's group
+	outb := outBuf.Bytes()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("%s timed out after %v", filepath.Base(name), toolTimeout())
+	}
 	if err != nil {
 		msg := strings.TrimSpace(string(outb))
 		if len(msg) > 4000 {

@@ -2,10 +2,10 @@ package codegen
 
 import (
 	"fmt"
-	"strings"
 	"go/constant"
 	"go/token"
 	"go/types"
+	"strings"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
 	"golang.org/x/tools/go/ssa"
@@ -26,7 +26,7 @@ type staticInit struct {
 	skip    map[ssa.Instruction]bool
 	cand    map[*ssa.Store]ssa.Value // candidate static stores and their roots
 	order   map[ssa.Instruction]int  // position in the run-once blocks
-	images  map[ssa.Value]*memImage // *ssa.Global or heap *ssa.Alloc
+	images  map[ssa.Value]*memImage  // *ssa.Global or heap *ssa.Alloc
 	objSyms map[*ssa.Alloc]string
 	dynamic map[ssa.Value]bool
 	loads   []*ssa.UnOp // loads of local literal objects used as static values

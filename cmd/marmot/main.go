@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/Gaurav-Gosain/marmot/internal/driver"
 )
@@ -140,7 +142,21 @@ func cmdBuild(args []string, run bool) int {
 	}
 	cmd := exec.Command(exe, progArgs...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintln(os.Stderr, "marmot:", err)
+		return 1
+	}
+	// Forward termination signals so the program never outlives marmot.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		for s := range sigs {
+			cmd.Process.Signal(s)
+		}
+	}()
+	err = cmd.Wait()
+	signal.Stop(sigs)
+	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
 			if code := ee.ExitCode(); code >= 0 {
