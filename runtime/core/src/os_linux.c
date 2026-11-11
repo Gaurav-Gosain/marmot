@@ -109,7 +109,16 @@ void os_write_err(const void *buf, uintptr_t n) {
   }
 }
 
-void os_exit(int32_t code) { _exit(code); }
+// PGO: an instrumented build links the LLVM profile runtime, whose strong
+// __llvm_profile_write_file replaces this weak no-op; it normally writes the
+// profile from atexit, which _exit skips, so write it here. Normal builds
+// call the no-op.
+__attribute__((weak)) int __llvm_profile_write_file(void) { return 0; }
+
+void os_exit(int32_t code) {
+  __llvm_profile_write_file();
+  _exit(code);
+}
 
 void os_futex_wait(_Atomic uint32_t *addr, uint32_t val, int64_t ns) {
   struct timespec ts, *tsp = NULL;
