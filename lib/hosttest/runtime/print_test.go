@@ -18,7 +18,13 @@ func runGo(t *testing.T, src string) (string, int) {
 	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("go", "run", file)
+	bin := filepath.Join(dir, "prog")
+	build := exec.Command("go", "build", "-o", bin, file)
+	build.Dir = dir
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	cmd := exec.Command(bin)
 	cmd.Dir = dir
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
@@ -29,10 +35,7 @@ func runGo(t *testing.T, src string) (string, int) {
 	} else if err != nil {
 		t.Fatal(err)
 	}
-	s := stderr.String()
-	// go run reports "exit status N" on its own line.
-	s = strings.TrimSuffix(s, "exit status "+itoa(int64(code))+"\n")
-	return s, code
+	return stderr.String(), code
 }
 
 var floatCases = []float64{
