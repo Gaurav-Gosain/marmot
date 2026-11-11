@@ -22,8 +22,8 @@ package maphash
 import (
 	"hash"
 	"internal/abi"
+	"internal/goarch"
 	"internal/rtabi"
-	"internal/runtime/maps"
 	"unsafe"
 )
 
@@ -319,6 +319,11 @@ func WriteComparable[T comparable](h *Hash, x T) {
 	writeComparable(h, x)
 }
 
+// use64BitHash is internal/runtime/maps.Use64BitHash; the overlay does not
+// import that package (it defines gc's runtime map entry points, which
+// marmot's runtime provides).
+const use64BitHash = goarch.PtrSize == 8
+
 //go:linkname runtime_typehash runtime.typehash
 func runtime_typehash(t *rtabi.Type, p unsafe.Pointer, seed uintptr) uintptr
 
@@ -337,7 +342,7 @@ func rthash(buf []byte, seed uint64) uint64 {
 	// The runtime hasher only works on uintptr. For 64-bit
 	// architectures, we use the hasher directly. Otherwise,
 	// we use two parallel hashers on the lower and upper 32 bits.
-	if maps.Use64BitHash {
+	if use64BitHash {
 		return uint64(runtime_memhash(unsafe.Pointer(&buf[0]), uintptr(seed), uintptr(len)))
 	}
 	lo := runtime_memhash(unsafe.Pointer(&buf[0]), uintptr(uint32(seed)), uintptr(len))
@@ -362,7 +367,7 @@ func comparableHash[T comparable](v T, seed Seed) uint64 {
 	if t == nil {
 		t = rtabi.TypeOf((*T)(nil)).Elem()
 	}
-	if maps.Use64BitHash {
+	if use64BitHash {
 		return uint64(runtime_typehash(t, abi.NoEscape(unsafe.Pointer(&v)), uintptr(s)))
 	}
 	lo := runtime_typehash(t, abi.NoEscape(unsafe.Pointer(&v)), uintptr(uint32(s)))
