@@ -9,7 +9,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Gaurav-Gosain/marmot/internal/codegen"
 	"github.com/Gaurav-Gosain/marmot/internal/loader"
+	"golang.org/x/tools/go/packages"
+	"golang.org/x/tools/go/ssa"
 )
 
 // Up-to-date check for unchanged rebuilds. The stamp hashes everything a
@@ -93,4 +96,85 @@ func copyExe(src, dst string) error {
 		return err
 	}
 	return os.Rename(tmp, dst)
+}
+
+// packageKeys computes, per package, a key over everything its module
+// depends on: its source files, its dependencies' keys, the whole-program
+// facts codegen uses (codegen.Program.PackageKey), the flags and the
+// marmot binary. "" means the package is not cacheable.
+func (b *build) packageKeys(lp *loader.Program, cg *codegen.Program, pkgs []*ssa.Package) []string {
+	exeSig := sha256.New()
+	if exe, err := os.Executable(); err == nil {
+		fileSig(exeSig, exe)
+	}
+	fmt.Fprintf(exeSig, "%s %s %s %s\n", b.cfg.OptLevel, b.cfg.Emit, b.cfg.Dialect, b.cfg.GC)
+	for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_DIALECT"} {
+		fmt.Fprintf(exeSig, "%s=%s\n", k, os.Getenv(k))
+	}
+	base := hex.EncodeToString(exeSig.Sum(nil))
+	byPath := map[string]*packages.Package{}
+	for _, p := range lp.All {
+		byPath[p.PkgPath] = p
+	}
+	memo := map[string]string{}
+	var key func(p *packages.Package) string
+	key = func(p *packages.Package) string {
+		if k, ok := memo[p.PkgPath]; ok {
+			return k
+		}
+		memo[p.PkgPath] = "" // cycle guard
+		h := sha256.New()
+		fmt.Fprintf(h, "pkg v1 %s %s\n", base, p.PkgPath)
+		files := append([]string{}, p.CompiledGoFiles...)
+		sort.Strings(files)
+		for _, f := range files {
+			fileSig(h, f)
+		}
+		deps := make([]string, 0, len(p.Imports))
+		for path := range p.Imports {
+			deps = append(deps, path)
+		}
+		sort.Strings(deps)
+		for _, d := range deps {
+			fmt.Fprintf(h, "dep %s %s\n", d, key(p.Imports[d]))
+		}
+		k := hex.EncodeToString(h.Sum(nil))[:32]
+		memo[p.PkgPath] = k
+		return k
+	}
+	out := make([]string, len(pkgs))
+	for i, sp := range pkgs {
+		p := byPath[sp.Pkg.Path()]
+		if p == nil || sp.Pkg.Path() == "command-line-arguments" {
+			continue // file arguments: the overlay import file is not on disk
+		}
+		h := sha256.New()
+		fmt.Fprintf(h, "%s\n%s\n", key(p), cg.PackageKey(sp))
+		out[i] = hex.EncodeToString(h.Sum(nil))[:32]
+	}
+	return out
+}
+
+func (b *build) pkgCacheFile(k string) string {
+	return filepath.Join(b.cfg.Root, "build", "cache", "pkg-"+k)
+}
+
+// cachedPackageObject returns the object key recorded for package key k.
+func (b *build) cachedPackageObject(k string) (string, bool) {
+	data, err := os.ReadFile(b.pkgCacheFile(k))
+	if err != nil {
+		return "", false
+	}
+	obj := strings.TrimSpace(string(data))
+	if !fileExists(filepath.Join(b.cfg.Root, "build", "cache", obj+".o")) {
+		return "", false
+	}
+	return obj, true
+}
+
+func (b *build) savePackageObject(k, obj string) {
+	tmp := b.pkgCacheFile(k) + ".tmp"
+	if os.WriteFile(tmp, []byte(obj+"\n"), 0o644) == nil {
+		os.Rename(tmp, b.pkgCacheFile(k))
+	}
 }

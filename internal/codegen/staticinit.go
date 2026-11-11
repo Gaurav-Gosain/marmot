@@ -629,6 +629,12 @@ func (s *staticInit) removeDeadInit(pkg *ssa.Package, blocks []*ssa.BasicBlock) 
 				if a, isA := root.(*ssa.Alloc); isA && !cand[a] {
 					keep = true
 				}
+				// The stored value must go too: dropping only the store of a
+				// call result (say os.Stdout = NewFile(...)) would leave the
+				// object unreachable and let its finalizer run.
+				if vi, ok := x.Val.(ssa.Instruction); ok && !cand[vi] && !s.skip[vi] {
+					keep = true
+				}
 				if ai, ok := x.Addr.(ssa.Instruction); ok && !gone(ai) {
 					keep = true
 				}

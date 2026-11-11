@@ -326,3 +326,17 @@ func (p *Program) globalDead(g *ssa.Global) bool {
 	}
 	return true
 }
+
+// PackageKey returns the whole-program facts that the module of pkg depends
+// on beyond its own sources and dependencies: method pruning and the set of
+// its package variables whose initialization is dropped.
+func (p *Program) PackageKey(pkg *ssa.Package) string {
+	var dead []string
+	for name, m := range pkg.Members {
+		if g, ok := m.(*ssa.Global); ok && p.globalDead(g) {
+			dead = append(dead, name)
+		}
+	}
+	sort.Strings(dead)
+	return p.usedMethodsHash + "|" + strings.Join(dead, ",")
+}

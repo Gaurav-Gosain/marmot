@@ -30,6 +30,9 @@ type Options struct {
 type Module struct {
 	Name string // import path, or "marmot:main" for the entry module
 	Text string
+	// ObjKey is set instead of Text when the driver reuses a cached object
+	// for an unchanged package (codegen skipped).
+	ObjKey string
 }
 
 // Error is a compile error at a source position.

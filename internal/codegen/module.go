@@ -58,6 +58,7 @@ func (p *Program) Generate(pkg *ssa.Package) (Module, error) {
 	}
 	m.drain()
 	m.static.emitObjects()
+	m.keepWriteOnlyGlobals(pkg, names)
 	return m.finish(pkg.Pkg.Path())
 }
 
@@ -318,4 +319,59 @@ func (m *moduleGen) stringData(s string) string {
 	fmt.Fprintf(&m.defs, "  llvm.mlir.global private unnamed_addr constant %s(%s) {addr_space = 0 : i32}\n",
 		mlir.Symbol(sym), mlir.Quote(s))
 	return sym
+}
+
+// keepWriteOnlyGlobals lists in llvm.used the package variables that hold
+// pointers, are never read and are still stored at run time. Whole program
+// optimization would otherwise delete them with their stores, and the
+// objects they keep alive (os.Stdout and its finalizer) would be collected.
+func (m *moduleGen) keepWriteOnlyGlobals(pkg *ssa.Package, names []string) {
+	var keep []cv
+	for _, n := range names {
+		g, ok := pkg.Members[n].(*ssa.Global)
+		if !ok || strings.Contains(n, "$") || m.p.globalRead[g] {
+			continue
+		}
+		et := g.Type().(*types.Pointer).Elem()
+		if len(ptrWords(et, m.p.opts.Sizes)) == 0 {
+			continue
+		}
+		if img := m.static.images[g]; img != nil && !m.static.dynamic[g] {
+			continue // static data has no finalizers
+		}
+		if m.p.globalDead(g) && !m.storedAtRunTime(g) {
+			continue
+		}
+		keep = append(keep, cAddr(m.globalSym(g)))
+	}
+	if len(keep) == 0 {
+		return
+	}
+	var b strings.Builder
+	t := mlir.Array(int64(len(keep)), mlir.Ptr)
+	fmt.Fprintf(&b, "  llvm.mlir.global appending @llvm.used() {addr_space = 0 : i32, section = \"llvm.metadata\"} : %s {\n", t)
+	n := 0
+	v := writeCV(&b, &n, cAgg(t, keep...))
+	fmt.Fprintf(&b, "    llvm.return %s : %s\n  }\n", v, t)
+	m.defs.WriteString(b.String())
+}
+
+// storedAtRunTime reports whether package init still stores into g.
+func (m *moduleGen) storedAtRunTime(g *ssa.Global) bool {
+	init := m.pkg.Func("init")
+	if init == nil {
+		return false
+	}
+	for _, b := range init.Blocks {
+		for _, instr := range b.Instrs {
+			st, ok := instr.(*ssa.Store)
+			if !ok || m.static.skip[instr] {
+				continue
+			}
+			if root, _, _ := addrPath(st.Addr); root == ssa.Value(g) {
+				return true
+			}
+		}
+	}
+	return false
 }

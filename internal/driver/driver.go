@@ -143,13 +143,28 @@ func Build(cfg Config) (string, error) {
 	}
 	mainSSA := lp.SSAPkgs[root.Types]
 
-	// Generate MLIR for every package in parallel.
+	// Generate MLIR for every package in parallel, skipping packages whose
+	// inputs are unchanged since a previous build produced their object.
 	pkgs := cg.Packages()
 	mods := make([]codegen.Module, len(pkgs)+1)
 	errs := make([]error, len(pkgs)+1)
+	pkgKeys := b.packageKeys(lp, cg, pkgs)
+	skipped := 0
+	for i, p := range pkgs {
+		if k := pkgKeys[i]; k != "" && !cfg.NoCache && cfg.Emit != "mlir" {
+			if obj, ok := b.cachedPackageObject(k); ok {
+				mods[i] = codegen.Module{Name: p.Pkg.Path(), ObjKey: obj}
+				skipped++
+			}
+		}
+	}
+	b.logf("codegen skipped for %d unchanged packages", skipped)
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, runtime.NumCPU())
 	for i, p := range pkgs {
+		if mods[i].ObjKey != "" {
+			continue
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -189,9 +204,14 @@ func Build(cfg Config) (string, error) {
 		}
 	}
 
-	objs, err := b.compile(mods, cfg.Emit)
+	objs, keys, err := b.compile(mods, cfg.Emit)
 	if err != nil {
 		return "", err
+	}
+	for i := range pkgs {
+		if pkgKeys[i] != "" && keys[i] != "" && mods[i].ObjKey == "" {
+			b.savePackageObject(pkgKeys[i], keys[i])
+		}
 	}
 	b.logf("compiled %d objects", len(objs))
 	switch cfg.Emit {
@@ -228,11 +248,11 @@ func defaultOutput(p *packages.Package, emit string) string {
 
 // compile turns modules into object files (or .ll for -emit llvm), reusing
 // cached objects keyed by the MLIR text and the flags.
-func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
+func (b *build) compile(mods []codegen.Module, emit string) ([]string, []string, error) {
 	backend := filepath.Join(b.cfg.Root, "build", "bin", "marmot-backend")
 	haveBackend := fileExists(backend) && os.Getenv("MARMOT_NO_BACKEND") == ""
 	if b.cfg.Dialect == "go" && !haveBackend {
-		return nil, fmt.Errorf("-dialect=go needs build/bin/marmot-backend")
+		return nil, nil, fmt.Errorf("-dialect=go needs build/bin/marmot-backend")
 	}
 	ext := ".o"
 	if emit == "llvm" {
@@ -241,9 +261,15 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 	cacheDir := filepath.Join(b.cfg.Root, "build", "cache")
 	os.MkdirAll(cacheDir, 0o755)
 	objs := make([]string, len(mods))
+	keys := make([]string, len(mods))
 	type job struct{ in, out, cached string }
 	var jobs []job
 	for i, m := range mods {
+		if m.ObjKey != "" {
+			keys[i] = m.ObjKey
+			objs[i] = filepath.Join(cacheDir, m.ObjKey+ext)
+			continue
+		}
 		h := sha256.New()
 		fmt.Fprintf(h, "v1\n%s\n%s\n%v\n%s\n", b.cfg.OptLevel, emit, haveBackend, b.cfg.Dialect)
 		if haveBackend {
@@ -253,6 +279,7 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 		}
 		io.WriteString(h, m.Text)
 		key := hex.EncodeToString(h.Sum(nil))[:32]
+		keys[i] = key
 		cached := filepath.Join(cacheDir, key+ext)
 		in := filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", i))
 		out := filepath.Join(b.work, fmt.Sprintf("m%03d%s", i, ext))
@@ -264,7 +291,7 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 			continue
 		}
 		if err := os.WriteFile(in, []byte(m.Text), 0o644); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		objs[i] = out
 		jobs = append(jobs, job{in, out, cached})
@@ -280,7 +307,7 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 		}
 	}
 	if len(jobs) == 0 {
-		return objs, nil
+		return objs, keys, nil
 	}
 	if haveBackend {
 		var list strings.Builder
@@ -298,7 +325,7 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 			args = append(args, "--rt-bitcode="+bc)
 		}
 		if err := b.run(backend, args...); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	} else {
 		var wg sync.WaitGroup
@@ -326,7 +353,7 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 		wg.Wait()
 		for _, e := range errs {
 			if e != nil {
-				return nil, e
+				return nil, nil, e
 			}
 		}
 	}
@@ -338,7 +365,7 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 			}
 		}
 	}
-	return objs, nil
+	return objs, keys, nil
 }
 
 func (b *build) link(objs []string, out string) error {
