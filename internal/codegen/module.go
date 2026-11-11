@@ -22,6 +22,7 @@ type moduleGen struct {
 	queue   []*ssa.Function
 	strs    map[string]string
 	nstr    int
+	nthunk  int
 	errs    []error
 }
 
@@ -236,11 +237,24 @@ func (m *moduleGen) funcAttrs(fn *ssa.Function, sym string) string {
 	if pr&pragmaNoinline != 0 {
 		attrs = append(attrs, "no_inline")
 	}
+	var pass []string
 	if isNoreturn(fn) {
-		attrs = append(attrs, `passthrough = ["noreturn"]`)
+		pass = append(pass, `"noreturn"`)
 	}
 	if sym == "rt_setjmp" {
-		attrs = append(attrs, `passthrough = ["returns_twice"]`)
+		pass = append(pass, `"returns_twice"`)
+	}
+	if len(fn.Blocks) > 0 {
+		if callsRecover(fn) {
+			// gorecover walks frame records: keep this frame and its record.
+			pass = append(pass, `["disable-tail-calls", "true"]`, `["frame-pointer", "all"]`)
+		} else {
+			// Frame records are required by the Darwin ABI and by recover.
+			pass = append(pass, `["frame-pointer", "non-leaf"]`)
+		}
+	}
+	if len(pass) > 0 {
+		attrs = append(attrs, "passthrough = ["+strings.Join(pass, ", ")+"]")
 	}
 	return strings.Join(attrs, ", ")
 }

@@ -166,7 +166,6 @@ func (p *Program) collect(pkg *ssa.Package) {
 	}
 }
 
-
 func (p *Program) parseDirective(fn *ssa.Function, text string) {
 	switch strings.Fields(text)[0] {
 	case "//go:noinline":
@@ -193,6 +192,19 @@ func (p *Program) symbol(fn *ssa.Function) string {
 func (p *Program) computeSymbol(fn *ssa.Function) string {
 	if ln, ok := p.linkname[fn]; ok {
 		return ln
+	}
+	if fn.Origin() != nil && len(fn.TypeArgs()) > 0 {
+		var b strings.Builder
+		b.WriteString(p.computeSymbol(fn.Origin()))
+		b.WriteByte('[')
+		for i, t := range fn.TypeArgs() {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			p.writeCanonical(&b, t)
+		}
+		b.WriteByte(']')
+		return b.String()
 	}
 	if fn.Parent() != nil {
 		// Anonymous function: name is parent$N.

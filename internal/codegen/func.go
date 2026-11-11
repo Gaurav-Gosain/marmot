@@ -28,6 +28,10 @@ type funcGen struct {
 	curPos  token.Pos
 	failed  bool
 	blkName map[*ssa.BasicBlock]string
+
+	frame         string             // _deferframe address, "" if none
+	noinlineCalls bool               // mark calls no_inline (defer thunks)
+	volatile      map[ssa.Value]bool // stack slots that live across setjmp
 }
 
 // function emits fn. shared functions get linkonce_odr linkage.
@@ -92,6 +96,9 @@ func (f *funcGen) gen(sym string, shared bool) {
 		head.WriteString(" -> " + ret)
 	}
 	attrs := []string{"no_unwind"}
+	if callsRecover(fn) && f.m.p.pragmas[fn]&pragmaNoinline == 0 {
+		attrs = append(attrs, "no_inline")
+	}
 	if a := f.m.funcAttrs(fn, sym); a != "" {
 		attrs = append(attrs, a)
 	}
@@ -106,9 +113,6 @@ func (f *funcGen) gen(sym string, shared bool) {
 	for i, b := range fn.Blocks {
 		f.blkName[b] = fmt.Sprintf("^bb%d", i)
 	}
-	if fn.Recover != nil {
-		f.fail(fn.Pos(), "defer/recover is not supported yet")
-	}
 	// Free variables: load from the closure object, after the code pointer.
 	if f.ctx != "" {
 		fields := []string{mlir.Ptr}
@@ -122,6 +126,10 @@ func (f *funcGen) gen(sym string, shared bool) {
 		}
 	}
 
+	if needsFrame(fn) {
+		f.volatile = volatileAllocs(fn)
+		f.setupFrame()
+	}
 	// Phis are block arguments; name them all first because branches
 	// may pass them before their block is emitted.
 	for _, b := range fn.Blocks {
@@ -146,6 +154,9 @@ func (f *funcGen) gen(sym string, shared bool) {
 	for i, b := range order {
 		if i > 0 || len(b.Preds) > 0 {
 			f.blockHeader(b, i == 0)
+		}
+		if b == fn.Recover {
+			f.rtcall("deferreturn", f.frame)
 		}
 		for _, instr := range b.Instrs {
 			f.curPos = instr.Pos()
@@ -259,9 +270,13 @@ func (f *funcGen) gepByte(base string, off int64) string {
 }
 
 // load reads a Go value of type t from p and returns it in register form.
-func (f *funcGen) load(p string, t types.Type) string {
+func (f *funcGen) load(p string, t types.Type, volatile ...bool) string {
 	mt := f.tm.memType(t)
-	v := f.op("llvm.load %s {alignment = %d : i64} : !llvm.ptr -> %s", p, f.m.p.opts.Sizes.Alignof(t), mt)
+	vol := ""
+	if len(volatile) > 0 && volatile[0] {
+		vol = "volatile "
+	}
+	v := f.op("llvm.load %s%s {alignment = %d : i64} : !llvm.ptr -> %s", vol, p, f.m.p.opts.Sizes.Alignof(t), mt)
 	if isBool(t) {
 		return f.op("llvm.trunc %s : i8 to i1", v)
 	}
@@ -269,12 +284,16 @@ func (f *funcGen) load(p string, t types.Type) string {
 }
 
 // store writes the register value v of type t to p.
-func (f *funcGen) store(v, p string, t types.Type) {
+func (f *funcGen) store(v, p string, t types.Type, volatile ...bool) {
 	mt := f.tm.memType(t)
 	if isBool(t) {
 		v = f.op("llvm.zext %s : i1 to i8", v)
 	}
-	f.emit("llvm.store %s, %s {alignment = %d : i64} : %s, !llvm.ptr", v, p, f.m.p.opts.Sizes.Alignof(t), mt)
+	vol := ""
+	if len(volatile) > 0 && volatile[0] {
+		vol = "volatile "
+	}
+	f.emit("llvm.store %s%s, %s {alignment = %d : i64} : %s, !llvm.ptr", vol, v, p, f.m.p.opts.Sizes.Alignof(t), mt)
 }
 
 // extract reads field i of an aggregate register value of LLVM type at,
@@ -452,7 +471,7 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 		if needsNilCheck(v.Addr) {
 			f.nilCheck(addr)
 		}
-		f.store(f.value(v.Val), addr, v.Val.Type())
+		f.store(f.value(v.Val), addr, v.Val.Type(), f.volatile[v.Addr])
 	case *ssa.Extract:
 		tt := f.tm.valType(v.Tuple.Type())
 		f.vals[v] = f.extractRaw(f.value(v.Tuple), tt, v.Index)
@@ -483,6 +502,28 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 		f.typeAssert(v)
 	case *ssa.ChangeInterface:
 		f.changeInterface(v)
+	case *ssa.Defer:
+		f.deferStmt(v)
+	case *ssa.RunDefers:
+		f.rtcall("deferreturn", f.frame)
+	case *ssa.Go:
+		f.goStmt(v)
+	case *ssa.MakeChan:
+		f.vals[v] = f.rtcall("makechan", f.typeDesc(v.Type().Underlying().(*types.Chan).Elem()), f.toInt64(f.value(v.Size), v.Size.Type()))
+	case *ssa.Send:
+		f.send(v)
+	case *ssa.Select:
+		f.selectStmt(v)
+	case *ssa.MakeMap:
+		f.makeMap(v)
+	case *ssa.Lookup:
+		f.lookup(v)
+	case *ssa.MapUpdate:
+		f.mapUpdate(v)
+	case *ssa.Range:
+		f.rangeStmt(v)
+	case *ssa.Next:
+		f.next(v)
 	default:
 		f.fail(instr.Pos(), "unsupported instruction %T: %v", instr, instr)
 	}
@@ -558,7 +599,11 @@ func (f *funcGen) alloc(v *ssa.Alloc) {
 	mt := f.tm.memType(et)
 	p := f.alloca(mt, f.m.p.opts.Sizes.Alignof(et))
 	z := f.zero(mt)
-	f.emit("llvm.store %s, %s {alignment = %d : i64} : %s, !llvm.ptr", z, p, f.m.p.opts.Sizes.Alignof(et), mt)
+	vol := ""
+	if f.volatile[v] {
+		vol = "volatile "
+	}
+	f.emit("llvm.store %s%s, %s {alignment = %d : i64} : %s, !llvm.ptr", vol, z, p, f.m.p.opts.Sizes.Alignof(et), mt)
 	f.vals[v] = p
 }
 
@@ -602,9 +647,9 @@ func (f *funcGen) unop(v *ssa.UnOp) string {
 		if needsNilCheck(v.X) {
 			f.nilCheck(x)
 		}
-		return f.load(x, v.Type())
+		return f.load(x, v.Type(), f.volatile[v.X])
 	case token.ARROW:
-		f.fail(v.Pos(), "channel receive is not supported yet")
+		return f.recv(v)
 	}
 	f.fail(v.Pos(), "unsupported unary op %s on %v", v.Op, t)
 	return ""
@@ -635,11 +680,15 @@ func (f *funcGen) directCall(fn *ssa.Function, args []string) string {
 		f.fail(token.NoPos, "internal error: call to %s with %d args, want %d", sym, len(args), len(params))
 	}
 	sig := fmt.Sprintf("(%s) -> %s", strings.Join(params, ", "), retOrVoid(ret))
+	attr := ""
+	if f.noinlineCalls {
+		attr = " {no_inline}"
+	}
 	if ret == "" {
-		f.emit("llvm.call %s(%s) : %s", mlir.Symbol(sym), strings.Join(args, ", "), sig)
+		f.emit("llvm.call %s(%s)%s : %s", mlir.Symbol(sym), strings.Join(args, ", "), attr, sig)
 		return ""
 	}
-	return f.op("llvm.call %s(%s) : %s", mlir.Symbol(sym), strings.Join(args, ", "), sig)
+	return f.op("llvm.call %s(%s)%s : %s", mlir.Symbol(sym), strings.Join(args, ", "), attr, sig)
 }
 
 func retOrVoid(r string) string {

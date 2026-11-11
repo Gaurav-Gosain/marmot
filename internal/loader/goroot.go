@@ -73,6 +73,14 @@ func mergeDir(dst, stock, overlay string) error {
 	}
 	ovHasGo := false
 	ovDirs := map[string]bool{}
+	// lib/src/go.mod only keeps lib/src out of the root module.
+	kept := ovEnts[:0:0]
+	for _, e := range ovEnts {
+		if e.Name() != "go.mod" && e.Name() != "go.sum" {
+			kept = append(kept, e)
+		}
+	}
+	ovEnts = kept
 	for _, e := range ovEnts {
 		if e.IsDir() {
 			ovDirs[e.Name()] = true

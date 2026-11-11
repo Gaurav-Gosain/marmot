@@ -149,9 +149,9 @@ func (f *funcGen) equal(x, y string, t types.Type) string {
 		return f.op("llvm.icmp \"eq\" %s, %s : !llvm.ptr", x, y)
 	case *types.Interface:
 		if u.NumMethods() == 0 {
-			return f.rtcall("efaceEqual", x, y)
+			return f.rtcall("efaceeq", x, y)
 		}
-		return f.rtcall("ifaceEqual", x, y)
+		return f.rtcall("ifaceeq", x, y)
 	case *types.Struct:
 		res := f.op("llvm.mlir.constant(true) : i1")
 		for i := 0; i < u.NumFields(); i++ {

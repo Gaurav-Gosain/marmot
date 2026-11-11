@@ -47,11 +47,15 @@ func (f *funcGen) call(c *ssa.CallCommon, instr ssa.Instruction) string {
 
 func (f *funcGen) indirectCall(code string, args, params []string, ret string) string {
 	t := fmt.Sprintf("!llvm.ptr, (%s) -> %s", strings.Join(params, ", "), retOrVoid(ret))
+	attr := ""
+	if f.noinlineCalls {
+		attr = " {no_inline}"
+	}
 	if ret == "" {
-		f.emit("llvm.call %s(%s) : %s", code, strings.Join(args, ", "), t)
+		f.emit("llvm.call %s(%s)%s : %s", code, strings.Join(args, ", "), attr, t)
 		return ""
 	}
-	return f.op("llvm.call %s(%s) : %s", code, strings.Join(args, ", "), t)
+	return f.op("llvm.call %s(%s)%s : %s", code, strings.Join(args, ", "), attr, t)
 }
 
 // invoke calls an interface method through the itab.
@@ -98,7 +102,7 @@ func (m *moduleGen) funcValueSym(fn *ssa.Function) string {
 	if ret != "" {
 		b.WriteString(" -> " + ret)
 	}
-	b.WriteString(" attributes {no_unwind} {\n")
+	b.WriteString(" attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n")
 	sig := fmt.Sprintf("(%s) -> %s", strings.Join(params, ", "), retOrVoid(ret))
 	if ret == "" {
 		fmt.Fprintf(&b, "    llvm.call %s(%s) : %s\n    llvm.return\n  }\n", mlir.Symbol(target), strings.Join(args, ", "), sig)
@@ -166,7 +170,28 @@ func (f *funcGen) builtin(b *ssa.Builtin, args []ssa.Value, instr ssa.Instructio
 	case "min", "max":
 		return f.minMax(b.Name() == "min", args, instr.(ssa.Value).Type())
 	case "recover":
-		return f.rtcall("gorecover")
+		fp := f.op("llvm.call_intrinsic \"llvm.frameaddress.p0\"(%s) : (i32) -> !llvm.ptr", f.constInt(0, mlir.I32))
+		return f.rtcall("gorecover", f.op("llvm.ptrtoint %s : !llvm.ptr to i64", fp))
+	case "ssa:deferstack":
+		f.setjmp()
+		return f.frame
+	case "close":
+		f.rtcall("closechan", f.value(args[0]))
+		return ""
+	case "delete":
+		f.mapDelete(args[0], args[1])
+		return ""
+	case "clear":
+		f.clear(args[0])
+		return ""
+	case "Sizeof", "Alignof":
+		// Constant except in instantiated generic code.
+		t := args[0].Type()
+		n := f.m.p.opts.Sizes.Sizeof(t)
+		if b.Name() == "Alignof" {
+			n = f.m.p.opts.Sizes.Alignof(t)
+		}
+		return f.constInt(n, mlir.I64)
 	case "Add": // unsafe.Add
 		p := f.value(args[0])
 		n := f.toInt64(f.value(args[1]), args[1].Type())
@@ -263,14 +288,16 @@ func (f *funcGen) print(ln bool, args []ssa.Value) {
 				}
 			case u.Info()&types.IsFloat != 0:
 				if u.Kind() == types.Float32 {
-					x = f.op("llvm.fpext %s : f32 to f64", x)
+					f.rtcall("printfloat32", x)
+				} else {
+					f.rtcall("printfloat64", x)
 				}
-				f.rtcall("printfloat", x)
 			case u.Info()&types.IsComplex != 0:
 				if u.Kind() == types.Complex64 {
-					x = f.convert(x, t, types.Typ[types.Complex128])
+					f.rtcall("printcomplex64", x)
+				} else {
+					f.rtcall("printcomplex128", x)
 				}
-				f.rtcall("printcomplex", x)
 			case u.Info()&types.IsString != 0:
 				f.rtcall("printstring", x)
 			case u.Kind() == types.UnsafePointer:

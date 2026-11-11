@@ -80,7 +80,11 @@ func (m *moduleGen) zeroBase() string {
 // constBox makes a private constant holding the value of c, so converting
 // a constant to an interface does not allocate.
 func (m *moduleGen) constBox(c *ssa.Const) string {
-	key := fmt.Sprintf("%s|%s", typeString(c.Type()), c.Value.ExactString())
+	exact := "zero"
+	if c.Value != nil {
+		exact = c.Value.ExactString()
+	}
+	key := fmt.Sprintf("%s|%s", m.p.canonical(c.Type()), exact)
 	if sym, ok := m.strs["box:"+key]; ok {
 		return sym
 	}
@@ -91,6 +95,8 @@ func (m *moduleGen) constBox(c *ssa.Const) string {
 	mt := m.tm.memType(t)
 	var val cv
 	switch {
+	case c.Value == nil:
+		val = cZero(mt)
 	case isString(t):
 		val = m.cString(constant.StringVal(c.Value))
 	case isBool(t):

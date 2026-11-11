@@ -5,6 +5,7 @@ import (
 	"go/token"
 	"go/types"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
@@ -60,7 +61,8 @@ func (p *Program) typeSym(t types.Type) string {
 	return "type:" + p.canonical(t)
 }
 
-// canonical is a unique, stable name for t used in symbols.
+// canonical is a unique, stable name for t used in symbols: full package
+// paths, aliases resolved, local named types qualified by position.
 func (p *Program) canonical(t types.Type) string {
 	var b strings.Builder
 	p.writeCanonical(&b, t)
@@ -68,14 +70,122 @@ func (p *Program) canonical(t types.Type) string {
 }
 
 func (p *Program) writeCanonical(b *strings.Builder, t types.Type) {
-	b.WriteString(typeString(t))
-	// Local named types share their printed name; add the position.
-	if n, ok := types.Unalias(t).(*types.Named); ok {
-		obj := n.Obj()
+	switch u := types.Unalias(t).(type) {
+	case *types.Basic:
+		if u.Kind() == types.UnsafePointer {
+			b.WriteString("unsafe.Pointer")
+		} else {
+			b.WriteString(u.Name())
+		}
+	case *types.Named:
+		obj := u.Obj()
+		if obj.Pkg() != nil {
+			b.WriteString(obj.Pkg().Path())
+			b.WriteByte('.')
+		}
+		b.WriteString(obj.Name())
 		if obj.Pkg() != nil && obj.Parent() != nil && obj.Parent() != obj.Pkg().Scope() {
 			pos := p.fset.Position(obj.Pos())
 			fmt.Fprintf(b, "·%d.%d", pos.Line, pos.Column)
 		}
+		if ta := u.TypeArgs(); ta != nil && ta.Len() > 0 {
+			b.WriteByte('[')
+			for i := 0; i < ta.Len(); i++ {
+				if i > 0 {
+					b.WriteByte(',')
+				}
+				p.writeCanonical(b, ta.At(i))
+			}
+			b.WriteByte(']')
+		}
+	case *types.Pointer:
+		b.WriteByte('*')
+		p.writeCanonical(b, u.Elem())
+	case *types.Slice:
+		b.WriteString("[]")
+		p.writeCanonical(b, u.Elem())
+	case *types.Array:
+		fmt.Fprintf(b, "[%d]", u.Len())
+		p.writeCanonical(b, u.Elem())
+	case *types.Map:
+		b.WriteString("map[")
+		p.writeCanonical(b, u.Key())
+		b.WriteByte(']')
+		p.writeCanonical(b, u.Elem())
+	case *types.Chan:
+		switch u.Dir() {
+		case types.SendRecv:
+			b.WriteString("chan(")
+		case types.SendOnly:
+			b.WriteString("chan<-(")
+		case types.RecvOnly:
+			b.WriteString("<-chan(")
+		}
+		p.writeCanonical(b, u.Elem())
+		b.WriteByte(')')
+	case *types.Signature:
+		b.WriteString("func(")
+		for i := 0; i < u.Params().Len(); i++ {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			if u.Variadic() && i == u.Params().Len()-1 {
+				b.WriteString("...")
+			}
+			p.writeCanonical(b, u.Params().At(i).Type())
+		}
+		b.WriteString(")(")
+		for i := 0; i < u.Results().Len(); i++ {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			p.writeCanonical(b, u.Results().At(i).Type())
+		}
+		b.WriteByte(')')
+	case *types.Interface:
+		b.WriteString("interface{")
+		for i, m := range sortedIfaceMethods(u) {
+			if i > 0 {
+				b.WriteByte(';')
+			}
+			b.WriteString(methodName(m))
+			p.writeCanonical(b, m.Type())
+		}
+		b.WriteByte('}')
+	case *types.Struct:
+		b.WriteString("struct{")
+		for i := 0; i < u.NumFields(); i++ {
+			if i > 0 {
+				b.WriteByte(';')
+			}
+			f := u.Field(i)
+			if f.Embedded() {
+				b.WriteString("~")
+			}
+			if !f.Exported() && f.Pkg() != nil {
+				b.WriteString(f.Pkg().Path() + ".")
+			}
+			b.WriteString(f.Name())
+			b.WriteByte(' ')
+			p.writeCanonical(b, f.Type())
+			if tag := u.Tag(i); tag != "" {
+				b.WriteString(strconv.Quote(tag))
+			}
+		}
+		b.WriteByte('}')
+	case *types.Tuple:
+		b.WriteByte('(')
+		for i := 0; i < u.Len(); i++ {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			p.writeCanonical(b, u.At(i).Type())
+		}
+		b.WriteByte(')')
+	case *types.TypeParam:
+		b.WriteString(u.Obj().Name())
+	default:
+		b.WriteString(t.String())
 	}
 }
 
@@ -348,7 +458,7 @@ func (m *moduleGen) ifaceFunc(t types.Type, sel *types.Selection) string {
 	if ret != "" {
 		b.WriteString(" -> " + ret)
 	}
-	b.WriteString(" attributes {no_unwind} {\n")
+	b.WriteString(" attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n")
 	recvT := params[0]
 	src := "%a0"
 	if isDirectIface(t) {

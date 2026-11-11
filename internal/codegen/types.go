@@ -92,6 +92,8 @@ func (m *typeMapper) memType(t types.Type) string {
 			s = tString
 		case types.UnsafePointer, types.UntypedNil:
 			s = mlir.Ptr
+		case types.Invalid:
+			s = mlir.I8 // unused range key or value
 		default:
 			panic(fmt.Sprintf("memType: unexpected basic type %v", u))
 		}
