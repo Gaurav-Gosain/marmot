@@ -67,109 +67,58 @@ const (
 
 func (e boundsError) RuntimeError() {}
 
-// Error formats the message without fmt. %x is e.x and %y is e.y.
+// boundsErrorFmt has the messages for each code, with %x and %y standing
+// for e.x and e.y.
+var boundsErrorFmt = [...]string{
+	boundsIndex:      "index out of range [%x] with length %y",
+	boundsSliceAlen:  "slice bounds out of range [:%x] with length %y",
+	boundsSliceAcap:  "slice bounds out of range [:%x] with capacity %y",
+	boundsSliceB:     "slice bounds out of range [%x:%y]",
+	boundsSlice3Alen: "slice bounds out of range [::%x] with length %y",
+	boundsSlice3Acap: "slice bounds out of range [::%x] with capacity %y",
+	boundsSlice3B:    "slice bounds out of range [:%x:%y]",
+	boundsSlice3C:    "slice bounds out of range [%x:%y:]",
+	boundsConvert:    "cannot convert slice with length %x to array or pointer to array with length %y",
+}
+
+// boundsNegErrorFmt has the messages used when x is negative.
+var boundsNegErrorFmt = [...]string{
+	boundsIndex:      "index out of range [%x]",
+	boundsSliceAlen:  "slice bounds out of range [:%x]",
+	boundsSliceAcap:  "slice bounds out of range [:%x]",
+	boundsSliceB:     "slice bounds out of range [%x:]",
+	boundsSlice3Alen: "slice bounds out of range [::%x]",
+	boundsSlice3Acap: "slice bounds out of range [::%x]",
+	boundsSlice3B:    "slice bounds out of range [:%x:]",
+	boundsSlice3C:    "slice bounds out of range [%x::]",
+	boundsConvert:    "cannot convert slice with length %x to array or pointer to array with length %y",
+}
+
+// Error formats the message without fmt.
 func (e boundsError) Error() string {
-	var b [96]byte
-	n := 0
+	f := boundsErrorFmt[e.code]
 	if e.signed && e.x < 0 {
-		n = appendBoundsNeg(b[:], e)
-	} else {
-		n = appendBounds(b[:], e)
+		f = boundsNegErrorFmt[e.code]
 	}
-	return "runtime error: " + string(b[:n])
-}
-
-func appendBounds(b []byte, e boundsError) int {
-	n := 0
-	switch e.code {
-	case boundsIndex:
-		n = appendStr(b, n, "index out of range [")
-		n = appendX(b, n, e)
-		n = appendStr(b, n, "] with length ")
-		n = appendInt(b, n, int64(e.y))
-	case boundsSliceAlen:
-		n = appendStr(b, n, "slice bounds out of range [:")
-		n = appendX(b, n, e)
-		n = appendStr(b, n, "] with length ")
-		n = appendInt(b, n, int64(e.y))
-	case boundsSliceAcap:
-		n = appendStr(b, n, "slice bounds out of range [:")
-		n = appendX(b, n, e)
-		n = appendStr(b, n, "] with capacity ")
-		n = appendInt(b, n, int64(e.y))
-	case boundsSliceB:
-		n = appendStr(b, n, "slice bounds out of range [")
-		n = appendX(b, n, e)
-		n = appendStr(b, n, ":")
-		n = appendInt(b, n, int64(e.y))
-		n = appendStr(b, n, "]")
-	case boundsSlice3Alen:
-		n = appendStr(b, n, "slice bounds out of range [::")
-		n = appendX(b, n, e)
-		n = appendStr(b, n, "] with length ")
-		n = appendInt(b, n, int64(e.y))
-	case boundsSlice3Acap:
-		n = appendStr(b, n, "slice bounds out of range [::")
-		n = appendX(b, n, e)
-		n = appendStr(b, n, "] with capacity ")
-		n = appendInt(b, n, int64(e.y))
-	case boundsSlice3B:
-		n = appendStr(b, n, "slice bounds out of range [:")
-		n = appendX(b, n, e)
-		n = appendStr(b, n, ":")
-		n = appendInt(b, n, int64(e.y))
-		n = appendStr(b, n, "]")
-	case boundsSlice3C:
-		n = appendStr(b, n, "slice bounds out of range [")
-		n = appendX(b, n, e)
-		n = appendStr(b, n, ":")
-		n = appendInt(b, n, int64(e.y))
-		n = appendStr(b, n, ":]")
-	case boundsConvert:
-		n = appendStr(b, n, "cannot convert slice with length ")
-		n = appendX(b, n, e)
-		n = appendStr(b, n, " to array or pointer to array with length ")
-		n = appendInt(b, n, int64(e.y))
+	var b [128]byte
+	n := appendStr(b[:], 0, "runtime error: ")
+	for i := 0; i < len(f); i++ {
+		if f[i] == '%' && i+1 < len(f) {
+			switch f[i+1] {
+			case 'x':
+				n = appendX(b[:], n, e)
+				i++
+				continue
+			case 'y':
+				n = appendInt(b[:], n, int64(e.y))
+				i++
+				continue
+			}
+		}
+		b[n] = f[i]
+		n++
 	}
-	return n
-}
-
-// appendBoundsNeg formats the messages used when x is negative.
-func appendBoundsNeg(b []byte, e boundsError) int {
-	n := 0
-	switch e.code {
-	case boundsIndex:
-		n = appendStr(b, n, "index out of range [")
-		n = appendX(b, n, e)
-		n = appendStr(b, n, "]")
-	case boundsSliceAlen, boundsSliceAcap:
-		n = appendStr(b, n, "slice bounds out of range [:")
-		n = appendX(b, n, e)
-		n = appendStr(b, n, "]")
-	case boundsSliceB:
-		n = appendStr(b, n, "slice bounds out of range [")
-		n = appendX(b, n, e)
-		n = appendStr(b, n, ":]")
-	case boundsSlice3Alen, boundsSlice3Acap:
-		n = appendStr(b, n, "slice bounds out of range [::")
-		n = appendX(b, n, e)
-		n = appendStr(b, n, "]")
-	case boundsSlice3B:
-		n = appendStr(b, n, "slice bounds out of range [:")
-		n = appendX(b, n, e)
-		n = appendStr(b, n, ":]")
-	case boundsSlice3C:
-		n = appendStr(b, n, "slice bounds out of range [")
-		n = appendX(b, n, e)
-		n = appendStr(b, n, "::]")
-	case boundsConvert:
-		// Not reachable: lengths are never negative.
-		n = appendStr(b, n, "cannot convert slice with length ")
-		n = appendX(b, n, e)
-		n = appendStr(b, n, " to array or pointer to array with length ")
-		n = appendInt(b, n, int64(e.y))
-	}
-	return n
+	return string(b[:n])
 }
 
 func appendStr(b []byte, n int, s string) int {

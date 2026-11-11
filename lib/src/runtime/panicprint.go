@@ -81,55 +81,35 @@ func printanycustomtype(v any) {
 	e := efaceOf(&v)
 	ts := e.typ.str
 	p := e.data
-	switch e.typ.kind {
-	case kindBool:
-		printstring(ts)
-		printstring("(")
-		printbool(*(*bool)(p))
-		printstring(")")
-	case kindInt:
-		printTypedInt(ts, int64(*(*int)(p)))
-	case kindInt8:
-		printTypedInt(ts, int64(*(*int8)(p)))
-	case kindInt16:
-		printTypedInt(ts, int64(*(*int16)(p)))
-	case kindInt32:
-		printTypedInt(ts, int64(*(*int32)(p)))
-	case kindInt64:
-		printTypedInt(ts, *(*int64)(p))
-	case kindUint:
-		printTypedUint(ts, uint64(*(*uint)(p)))
-	case kindUint8:
-		printTypedUint(ts, uint64(*(*uint8)(p)))
-	case kindUint16:
-		printTypedUint(ts, uint64(*(*uint16)(p)))
-	case kindUint32:
-		printTypedUint(ts, uint64(*(*uint32)(p)))
-	case kindUint64:
-		printTypedUint(ts, *(*uint64)(p))
-	case kindUintptr:
-		printTypedUint(ts, uint64(*(*uintptr)(p)))
-	case kindFloat32:
-		printstring(ts)
-		printstring("(")
-		printfloat32(*(*float32)(p))
-		printstring(")")
-	case kindFloat64:
-		printstring(ts)
-		printstring("(")
-		printfloat64(*(*float64)(p))
-		printstring(")")
-	case kindComplex64:
-		printstring(ts)
-		printcomplex64(*(*complex64)(p))
-	case kindComplex128:
-		printstring(ts)
-		printcomplex128(*(*complex128)(p))
-	case kindString:
+	k := e.typ.kind
+	switch {
+	case k == kindString:
 		printstring(ts)
 		printstring(`("`)
 		printindented(*(*string)(p))
 		printstring(`")`)
+	case k == kindComplex64:
+		printstring(ts)
+		printcomplex64(*(*complex64)(p))
+	case k == kindComplex128:
+		printstring(ts)
+		printcomplex128(*(*complex128)(p))
+	case k == kindBool || k >= kindInt && k <= kindFloat64:
+		printstring(ts)
+		printstring("(")
+		switch {
+		case k == kindBool:
+			printbool(*(*bool)(p))
+		case k <= kindInt64:
+			printint(loadInt(p, e.typ.size))
+		case k <= kindUintptr:
+			printuint(loadUint(p, e.typ.size))
+		case k == kindFloat32:
+			printfloat32(*(*float32)(p))
+		default:
+			printfloat64(*(*float64)(p))
+		}
+		printstring(")")
 	default:
 		printstring("(")
 		printstring(ts)
@@ -138,18 +118,30 @@ func printanycustomtype(v any) {
 	}
 }
 
-func printTypedInt(ts string, v int64) {
-	printstring(ts)
-	printstring("(")
-	printint(v)
-	printstring(")")
+// loadInt loads a signed integer of size bytes.
+func loadInt(p unsafe.Pointer, size uintptr) int64 {
+	switch size {
+	case 1:
+		return int64(*(*int8)(p))
+	case 2:
+		return int64(*(*int16)(p))
+	case 4:
+		return int64(*(*int32)(p))
+	}
+	return *(*int64)(p)
 }
 
-func printTypedUint(ts string, v uint64) {
-	printstring(ts)
-	printstring("(")
-	printuint(v)
-	printstring(")")
+// loadUint loads an unsigned integer of size bytes.
+func loadUint(p unsafe.Pointer, size uintptr) uint64 {
+	switch size {
+	case 1:
+		return uint64(*(*uint8)(p))
+	case 2:
+		return uint64(*(*uint16)(p))
+	case 4:
+		return uint64(*(*uint32)(p))
+	}
+	return *(*uint64)(p)
 }
 
 // printindented prints s, replacing "\n" with "\n\t".
@@ -242,5 +234,3 @@ func fatalpanic(p *_panic, goid int64) {
 	printunlock()
 	exit(2)
 }
-
-var _ = unsafe.Pointer(nil)
