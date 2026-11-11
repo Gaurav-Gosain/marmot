@@ -718,12 +718,20 @@ void gc_collect(bool forced) {
 
 RT_API void rt_gc_collect(void) { gc_collect(true); }
 
+// Exact counts: allocations still pending in per-P caches are added in with
+// the world stopped (like Go's ReadMemStats).
 RT_API void rt_gc_stats(rt_memstats *out) {
+  uint64_t pm = 0, pb = 0, pf = 0;
+  if (getm() && getm()->p) {
+    stop_the_world();
+    mcache_pending(&pm, &pb, &pf);
+    start_the_world();
+  }
   out->heap_alloc = atomic_load(&heap_live);
   out->heap_sys = heap_sys;
-  out->total_alloc = atomic_load(&stat_total_alloc);
-  out->mallocs = atomic_load(&stat_mallocs);
-  out->frees = atomic_load(&stat_frees);
+  out->total_alloc = atomic_load(&stat_total_alloc) + pb;
+  out->mallocs = atomic_load(&stat_mallocs) + pm;
+  out->frees = atomic_load(&stat_frees) + pf;
   out->num_gc = atomic_load(&num_gc);
   out->pause_total_ns = pause_total_ns;
 }

@@ -398,6 +398,44 @@ static uint32_t next_free_index(mspan *s) {
   }
 }
 
+// Objects of cached span s handed out since it was cached.
+static uint32_t span_handed_out(mspan *s) {
+  uint32_t left = 0;
+  if (s->freeindex < s->nelems) {
+    uint32_t fi = s->freeindex;
+    uint32_t nw = (s->nelems + 63) / 64;
+    for (uint32_t w = fi / 64; w < nw; w++) {
+      uint64_t free = ~s->allocbits[w];
+      if (w == fi / 64) free &= ~0ull << (fi % 64);
+      if (w == nw - 1 && s->nelems % 64) free &= (1ull << (s->nelems % 64)) - 1;
+      left += (uint32_t)popcount64(free);
+    }
+  }
+  return s->nfree_cached - left;
+}
+
+void mcache_pending(uint64_t *mallocs, uint64_t *bytes, uint64_t *frees) {
+  uint64_t n = 0, b = 0, f = 0;
+  spin_lock(&heap_lock);
+  for (int32_t i = 0; i < nmcaches; i++) {
+    mcache *c = all_mcaches[i];
+    for (int j = 0; j < NUM_SPANCLASS; j++) {
+      mspan *s = c->e[j].span;
+      if (s == &empty_span) continue;
+      uint32_t u = span_handed_out(s);
+      n += u;
+      b += (uint64_t)u * s->elemsize;
+    }
+    n += c->nreuse;
+    b += c->reuse_bytes;
+    f += c->nreuse;
+  }
+  spin_unlock(&heap_lock);
+  *mallocs = n;
+  *bytes = b;
+  *frees = f;
+}
+
 // Return a cached span to the central lists. heap_lock held.
 static void mcache_release(mspan *s) {
   // Objects at or after freeindex that are still free were never handed out.
@@ -636,6 +674,8 @@ RT_API void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uint
       // An object returned with rt_free: reuse it.
       ent->freed = *(void **)fr;
       uintptr_t p = (uintptr_t)fr, es = rt_class_size[cls];
+      m->mcache->nreuse++;
+      m->mcache->reuse_bytes += es;
       if (LIKELY(es <= 64 && (kind != RT_ALLOC_PRECISE || (elemsize == size && ptrmap)))) {
         uint64_t *q = (uint64_t *)p;
         for (uintptr_t i = 0; i < es / 8; i++) __atomic_store_n(&q[i], 0, __ATOMIC_RELAXED);

@@ -287,6 +287,16 @@ intptr_t rt_libcall_raw(void *fn, const uintptr_t *args, int32_t nargs, int32_t 
 // fn(args[0..4], f0): five word arguments plus one double (CFDateCreate and
 // friends); errno and syscall handling as rt_libcall.
 intptr_t rt_libcall_f64(void *fn, const uintptr_t *args, double f0, int32_t *err);
+
+// The marmot pc table of the running binary (docs/pcln.md): 1 and the
+// table's bytes (read only, live for the whole process), its length, and the
+// runtime address of the image base its offsets are relative to (Mach-O:
+// the main image's mach header, i.e. __TEXT vmaddr + slide; ELF: lowest
+// PT_LOAD address + load bias). 0 when the binary has no table. Mach-O:
+// section __TEXT,__marmot_pcln or __MARMOT,__pcln; ELF: non-alloc section
+// .marmot_pcln read from /proc/self/exe. No heap allocation: callable while
+// panicking.
+int32_t rt_pcln(const uint8_t **table, intptr_t *len, uintptr_t *base);
 // Mark the current goroutine as entering/leaving a blocking system call.
 void rt_entersyscall(void);
 void rt_exitsyscall(void);

@@ -56,7 +56,12 @@ typedef struct mcentry {
 
 struct mcache {
   mcentry e[NUM_SPANCLASS];
+  uint64_t nreuse;       // allocations served from an rt_free list (each also ends a dead object)
+  uint64_t reuse_bytes;  // their bytes
 };
+
+// World stopped: allocations made from the caches but not yet in stat_mallocs.
+void mcache_pending(uint64_t *mallocs, uint64_t *bytes, uint64_t *frees);
 
 // Exported (non-static) so the fast path can be inlined from rtcore.bc.
 extern uint8_t rt_size_to_class8[1024 / 8 + 1];
