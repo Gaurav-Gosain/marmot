@@ -1,0 +1,3 @@
+-sig_amd64.s
+-sig_other.s
+-sig.go

@@ -1,0 +1,14 @@
+// Package sig holds “code signatures” that can be called and will result
+// in certain code sequences being linked into the final binary. The
+// gc toolchain uses them to detect BoringCrypto builds; under marmot they
+// are empty functions.
+package sig
+
+// BoringCrypto indicates that the BoringCrypto module is present.
+func BoringCrypto() {}
+
+// FIPSOnly indicates that package crypto/tls/fipsonly is present.
+func FIPSOnly() {}
+
+// StandardCrypto indicates that standard Go crypto is present.
+func StandardCrypto() {}

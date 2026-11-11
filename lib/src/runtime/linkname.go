@@ -360,3 +360,77 @@ func debug_SetTraceback(level string) {}
 
 // setCrashFD is pulled by runtime/debug.
 func setCrashFD(fd uintptr) uintptr { return ^uintptr(0) }
+
+// os/signal. Until the C core delivers signals to Go, Notify registers
+// nothing: signals keep their default action and signal_recv never
+// returns.
+
+//go:linkname signal_enable os/signal.signal_enable
+func signal_enable(sig uint32) {}
+
+//go:linkname signal_disable os/signal.signal_disable
+func signal_disable(sig uint32) {}
+
+//go:linkname signal_ignore os/signal.signal_ignore
+func signal_ignore(sig uint32) {}
+
+//go:linkname signal_ignored os/signal.signal_ignored
+func signal_ignored(sig uint32) bool { return false }
+
+//go:linkname signal_recv os/signal.signal_recv
+func signal_recv() uint32 {
+	gopark(nil, nil)
+	return 0
+}
+
+//go:linkname signalWaitUntilIdle os/signal.signalWaitUntilIdle
+func signalWaitUntilIdle() {}
+
+// crypto. The FIPS service indicator and the bypass flag are
+// per-goroutine state in gc; marmot keeps them in g.
+
+//go:linkname fips_fatal crypto/internal/fips140.fatal
+func fips_fatal(s string) { throw(s) }
+
+//go:linkname fips_getIndicator crypto/internal/fips140.getIndicator
+func fips_getIndicator() uint8 { return getg().fipsIndicator }
+
+//go:linkname fips_setIndicator crypto/internal/fips140.setIndicator
+func fips_setIndicator(indicator uint8) { getg().fipsIndicator = indicator }
+
+//go:linkname fips140deps_time_monoTime crypto/internal/fips140deps/time.monoTime
+func fips140deps_time_monoTime() int64 { return rt_nanotime() }
+
+//go:linkname sysrand_fatal crypto/internal/sysrand.fatal
+func sysrand_fatal(s string) { throw(s) }
+
+//go:linkname fips140_setBypass crypto/fips140.setBypass
+func fips140_setBypass() { getg().fipsOnlyBypass = true }
+
+//go:linkname fips140_isBypassed crypto/fips140.isBypassed
+func fips140_isBypassed() bool { return getg().fipsOnlyBypass }
+
+//go:linkname fips140_unsetBypass crypto/fips140.unsetBypass
+func fips140_unsetBypass() { getg().fipsOnlyBypass = false }
+
+//go:linkname subtle_setDITEnabled crypto/subtle.setDITEnabled
+func subtle_setDITEnabled() bool { return false }
+
+//go:linkname subtle_setDITDisabled crypto/subtle.setDITDisabled
+func subtle_setDITDisabled() {}
+
+// weak. The collector has no weak references yet, so a weak pointer is a
+// strong one: Value never returns nil, which is allowed (the object may
+// simply never be collected).
+
+//go:linkname weak_runtime_registerWeakPointer weak.runtime_registerWeakPointer
+func weak_runtime_registerWeakPointer(p unsafe.Pointer) unsafe.Pointer {
+	h := (*unsafe.Pointer)(mallocConservative(ptrSize))
+	*h = p
+	return unsafe.Pointer(h)
+}
+
+//go:linkname weak_runtime_makeStrongFromWeak weak.runtime_makeStrongFromWeak
+func weak_runtime_makeStrongFromWeak(h unsafe.Pointer) unsafe.Pointer {
+	return *(*unsafe.Pointer)(h)
+}

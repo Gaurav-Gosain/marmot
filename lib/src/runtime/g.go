@@ -34,6 +34,9 @@ type g struct {
 	selectDone uint32
 	// sudogcache is a free list of sudogs owned by this goroutine.
 	sudogcache *sudog
+	// FIPS 140 service indicator and bypass flag (crypto packages).
+	fipsIndicator  uint8
+	fipsOnlyBypass bool
 }
 
 // sudog is a goroutine waiting on a channel.
