@@ -31,6 +31,8 @@ var (
 	flO    = flag.String("O", "", "marmot -O level")
 	flKeep = flag.Bool("keep", false, "keep all generated programs under .work/fuzz")
 	flShr  = flag.Bool("shrink", true, "shrink failing programs")
+	flExt2 = flag.Bool("ext2", true, "also generate loops over slices, structs, fmt verbs, json round trips, sorts and struct-keyed maps")
+	flRel  = flag.Bool("release", false, "build with marmot -release")
 	flRoot = flag.String("root", "", "MARMOT_ROOT to use (a snapshot made by tests/snapshot.sh); default is the live tree")
 	flGen  = flag.Int64("print", 0, "print the program for this seed and exit")
 	flExt  = flag.Bool("ext", true, "also generate maps, strings, floats and goroutines")
@@ -50,11 +52,13 @@ var types = []ivar{
 }
 
 type gen struct {
-	r     *rand.Rand
-	vars  []ivar
-	lines []string
-	ind   int
-	depth int
+	jtypes []jtype
+	decls  []string
+	r      *rand.Rand
+	vars   []ivar
+	lines  []string
+	ind    int
+	depth  int
 }
 
 func (g *gen) emit(f string, a ...any) {
@@ -199,6 +203,10 @@ func (g *gen) extStmt() {
 }
 
 func (g *gen) stmt() {
+	if *flExt2 && g.depth == 0 && g.r.Intn(3) == 0 {
+		g.ext2Stmt()
+		return
+	}
 	if *flExt && g.r.Intn(4) == 0 {
 		g.extStmt()
 		return
@@ -248,8 +256,31 @@ func (g *gen) block(n int) {
 
 func program(seed int64) string {
 	g := &gen{r: rand.New(rand.NewSource(seed))}
-	g.emit("package main")
-	g.emit("")
+	if *flExt2 {
+		g.genDecls()
+		g.emit("package main")
+		g.emit("")
+		g.emit("import (")
+		for _, im := range []string{"cmp", "encoding/json", "fmt", "slices", "sort", "strings"} {
+			g.emit("\t%q", im)
+		}
+		g.emit(")")
+		g.emit("")
+		g.emit("var _ = cmp.Compare[int]")
+		g.emit("var _ = json.Marshal")
+		g.emit("var _ = fmt.Sprint")
+		g.emit("var _ = slices.Sort[[]int]")
+		g.emit("var _ = sort.Ints")
+		g.emit("var _ strings.Builder")
+		g.emit("")
+		for _, d := range g.decls {
+			g.lines = append(g.lines, strings.TrimRight(d, "\n"))
+		}
+		g.emit("")
+	} else {
+		g.emit("package main")
+		g.emit("")
+	}
 	for _, t := range types {
 		g.emit("var z_%s %s", t.typ, t.typ)
 	}
@@ -351,6 +382,9 @@ func (rn *runner) check(src string) string {
 		return ""
 	}
 	args := []string{"build", "-o", filepath.Join(dir, "got")}
+	if *flRel {
+		args = append(args, "-release")
+	}
 	if *flO != "" {
 		args = append(args, "-O", *flO)
 	}

@@ -61,6 +61,7 @@ var (
 	flNoWrite = flag.Bool("nowrite", false, "do not write results.json and RESULTS.md")
 	flMatrix  = flag.Bool("matrix", false, "run every program at -O0, -O2 and -Oz (plus any -bflags variations); results are named NAME@CONFIG")
 	flBFlags  = flag.String("bflags", "", "with -matrix: extra configs as label=FLAGS pairs separated by ';', run at -O2 with MARMOT_BACKEND_FLAGS=FLAGS")
+	flModes   = flag.String("modes", "", "comma list of build modes to run every program in: dev, release, O0, O1, O2, O3, Os, Oz; results are named NAME@MODE")
 	flLive    = flag.Bool("live", false, "run against the live tree instead of a snapshot (other workers may be mid-edit)")
 )
 
@@ -218,7 +219,7 @@ func discover(testsDir, dir string, filter *regexp.Regexp) []string {
 			}
 			rel, _ := filepath.Rel(testsDir, p)
 			rel = strings.TrimSuffix(filepath.ToSlash(rel), ".go")
-			if dir != "" && !strings.HasPrefix(rel, strings.TrimSuffix(dir, "/")+"/") {
+			if dir != "" && !inDirs(rel, dir) {
 				return nil
 			}
 			if filter != nil && !filter.MatchString(rel) {
@@ -295,19 +296,34 @@ func normStderr(s string) string {
 }
 
 type config struct {
-	label string
-	o     string
-	env   []string
+	label   string
+	o       string
+	env     []string
+	release bool
 }
 
 func buildConfigs() []config {
+	if *flModes != "" {
+		var cs []config
+		for _, m := range strings.Split(*flModes, ",") {
+			switch {
+			case m == "dev":
+				cs = append(cs, config{label: "dev"})
+			case m == "release":
+				cs = append(cs, config{label: "release", release: true})
+			case strings.HasPrefix(m, "O"):
+				cs = append(cs, config{label: m, o: strings.ToLower(m[1:])})
+			}
+		}
+		return cs
+	}
 	if !*flMatrix {
 		return []config{{o: *flO}}
 	}
-	cs := []config{{"O0", "0", nil}, {"O2", "2", nil}, {"Oz", "z", nil}}
+	cs := []config{{label: "O0", o: "0"}, {label: "O2", o: "2"}, {label: "Oz", o: "z"}}
 	for _, kv := range strings.Split(*flBFlags, ";") {
 		if label, flags, ok := strings.Cut(kv, "="); ok && label != "" {
-			cs = append(cs, config{label, "2", []string{"MARMOT_BACKEND_FLAGS=" + flags}})
+			cs = append(cs, config{label: label, o: "2", env: []string{"MARMOT_BACKEND_FLAGS=" + flags}})
 		}
 	}
 	return cs
@@ -342,6 +358,9 @@ func runOne(root, testsDir, work, marmot, name string, cfg config) result {
 	}
 	exe := filepath.Join(tdir, "prog")
 	args := []string{"build", "-o", exe}
+	if cfg.release {
+		args = append(args, "-release")
+	}
 	if cfg.o != "" {
 		args = append(args, "-O", cfg.o)
 	}
@@ -639,4 +658,14 @@ func snapshot(root, sha string) (string, error) {
 		return "", fmt.Errorf("snapshot smoke test failed to run (exit %d): %s", r.exit, firstLines(r.stderr, 4))
 	}
 	return snap, nil
+}
+
+// inDirs reports whether rel is under one of the comma separated directories in dirs.
+func inDirs(rel, dirs string) bool {
+	for _, d := range strings.Split(dirs, ",") {
+		if d != "" && strings.HasPrefix(rel, strings.TrimSuffix(d, "/")+"/") {
+			return true
+		}
+	}
+	return false
 }
