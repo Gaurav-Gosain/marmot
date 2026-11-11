@@ -84,7 +84,21 @@ func (g *gen) fn() {
 	name := fmt.Sprintf("f%d", g.n)
 	t := g.intType()
 	b := &g.b
-	switch g.r.Intn(12) {
+	switch g.r.Intn(14) {
+	case 12: // append, with or without enough capacity, into a shared array
+		extra := g.r.Intn(3) * 1000
+		fmt.Fprintf(b, "//go:noinline\nfunc %s(s []%s, n int) []%s {\n\tfor i := 0; i < n; i++ {\n\t\ts = append(s, %s)\n\t}\n\treturn s\n}\n\n",
+			name, t, t, g.expr(t, "i"))
+		g.fns = append(g.fns, fmt.Sprintf("{ base := make([]%s, 5, N/2+%d); sh := base[:cap(base)]; r := %s(base, N/2); print(\"%s\", len(r), sum%s(r), sum%s(sh)) }",
+			t, extra, name, name, t, t))
+		return
+	case 13: // narrow polynomial recurrence over many elements
+		nt := g.pick("int8", "int16", "uint8", "uint16", "int32")
+		fmt.Fprintf(b, "//go:noinline\nfunc %s(buf []%s) {\n\tvar d, a %s\n\tfor i := range buf {\n\t\td += %d\n\t\ta += d\n\t\tbuf[i] = a\n\t}\n}\n\n",
+			name, nt, nt, 1+g.r.Intn(5))
+		g.fns = append(g.fns, fmt.Sprintf("{ pb := make([]%s, 70000+N); %s(pb); s := int64(0); for _, v := range pb { s = s*31 + int64(v) }; println(\"%s\", s, pb[65535], pb[65536+N%%7]) }",
+			nt, name, name))
+		return
 	case 0: // reduction
 		op := g.pick("+=", "^=", "|=", "&=", "-=")
 		fmt.Fprintf(b, "//go:noinline\nfunc %s(a []%s) %s {\n\tvar s %s = %d\n\tfor i := range a {\n\t\ts %s %s\n\t}\n\treturn s\n}\n\n",
