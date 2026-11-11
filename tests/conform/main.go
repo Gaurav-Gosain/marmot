@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -84,6 +85,14 @@ func main() {
 		}
 	}
 	defer cleanup()
+	// Clean up the work directory and snapshot when killed by a signal as well.
+	sigc := make(chan os.Signal, 1)
+	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		<-sigc
+		cleanup()
+		os.Exit(130)
+	}()
 
 	var filter *regexp.Regexp
 	if *flRun != "" {
