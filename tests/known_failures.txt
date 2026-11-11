@@ -59,6 +59,10 @@ goroot/unsafe_string_data
 goroot/unsafebuiltins
 goroot/zerodivide
 goroot/zerosize
-run/std/errors/basic
-run/std/fmt/basic
-run/std/fmt/sprint_scan
+run/std/reflect/kinds_names
+run/std/reflect/value_get_set
+run/std/template/basic
+run/std/template/control_flow
+run/std/template/errors
+run/std/template/nested_named
+run/std/template/pipelines_funcs
