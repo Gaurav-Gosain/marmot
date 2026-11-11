@@ -236,3 +236,39 @@ void regions_trim(void) {
   for (rchunk *c = pool; c; c = c->next)
     if (++k > POOL_KEEP) os_release((void *)chunk_data(c), c->size);
 }
+
+// Free every object of r but keep r (and one chunk) for reuse, for a region
+// that lives across loop iterations.
+RT_API void rt_region_reset(rt_region *r) {
+  rt_m *m = getm();
+  rcache *rc = cache_for(m);
+  if (m) m->locks++;
+  rchunk *keep = NULL, *c = r->chunks;
+  while (c) {
+    rchunk *next = c->next;
+    if (!keep && !c->big && next == NULL) {
+      keep = c;  // the oldest standard chunk
+    } else if (!c->big) {
+      chunk_put(rc, c);
+    } else {
+      c->region = NULL;
+      os_release((void *)chunk_data(c), c->size);
+      spin_lock(&region_lock);
+      c->next = bigpool;
+      bigpool = c;
+      spin_unlock(&region_lock);
+    }
+    c = next;
+  }
+  if (keep) {
+    keep->next = NULL;
+    keep->used = 0;
+    r->chunks = keep;
+    r->cur = chunk_data(keep);
+    r->end = chunk_data(keep) + keep->size;
+  } else {
+    r->chunks = NULL;
+    r->cur = r->end = 0;
+  }
+  if (m) m->locks--;
+}

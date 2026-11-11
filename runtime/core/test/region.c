@@ -58,6 +58,15 @@ void marmot_main(void) {
     CHECK(((char *)big)[199999] == 0);
     rt_region_free(rg);
   }
+  // Reset: one region reused across iterations, objects zeroed again.
+  rt_region *rr = rt_region_new();
+  for (int round = 0; round < 50; round++) {
+    long counter = 0;
+    rn *root = build(rr, 10, &counter);
+    CHECK(check(root) == counter);
+    rt_region_reset(rr);
+  }
+  rt_region_free(rr);
   // handoff: main and ponger alternate.
   rt_go(ponger, 0);
   rt_sleep(1000000);

@@ -156,6 +156,9 @@ typedef struct rt_region rt_region;
 rt_region *rt_region_new(void);
 void *rt_region_alloc(rt_region *r, uintptr_t size);
 void rt_region_free(rt_region *r);
+// Free all objects of r but keep r and one chunk for reuse (a region that
+// lives across loop iterations).
+void rt_region_reset(rt_region *r);
 
 // ---- Locks (for the Go runtime's own data structures) ----
 
