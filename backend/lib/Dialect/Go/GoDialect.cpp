@@ -32,14 +32,6 @@ static bool isMemoryType(Type t) {
 // Allocation family
 //===----------------------------------------------------------------------===//
 
-LogicalResult NewOp::inferReturnTypes(MLIRContext *ctx, std::optional<Location>,
-                                      ValueRange, DictionaryAttr, OpaqueProperties,
-                                      RegionRange,
-                                      SmallVectorImpl<Type> &results) {
-  results.push_back(LLVM::LLVMPointerType::get(ctx));
-  return success();
-}
-
 LogicalResult NewOp::verify() {
   if (!isMemoryType(getElemType()))
     return emitOpError("element type must be an LLVM memory type, got ")
@@ -71,10 +63,31 @@ LLVM::LLVMStructType MakeClosureOp::getEnvType() {
   return LLVM::LLVMStructType::getLiteral(getContext(), fields);
 }
 
-LogicalResult BoxOp::inferReturnTypes(MLIRContext *ctx, std::optional<Location>,
-                                      ValueRange, DictionaryAttr, OpaqueProperties,
-                                      RegionRange, SmallVectorImpl<Type> &results) {
-  results.push_back(LLVM::LLVMPointerType::get(ctx));
+//===----------------------------------------------------------------------===//
+// Indexing family
+//===----------------------------------------------------------------------===//
+
+LogicalResult IndexOp::verify() {
+  if (!isMemoryType(getElemType()))
+    return emitOpError("element type must be an LLVM memory type, got ")
+           << getElemType();
+  return success();
+}
+
+LogicalResult SliceOp::verify() {
+  if (!isMemoryType(getElemType()))
+    return emitOpError("element type must be an LLVM memory type, got ")
+           << getElemType();
+  auto st = cast<LLVM::LLVMStructType>(getType());
+  auto body = st.getBody();
+  Type intTy = getCap().getType();
+  unsigned want = getMax() ? 3 : 2;
+  bool ok = body.size() == want && isa<LLVM::LLVMPointerType>(body[0]);
+  for (unsigned i = 1; ok && i < body.size(); ++i)
+    ok = body[i] == intTy;
+  if (!ok)
+    return emitOpError("result must be !llvm.struct<(ptr, iN, iN)> with max and "
+                       "!llvm.struct<(ptr, iN)> without, where iN is the type of cap");
   return success();
 }
 

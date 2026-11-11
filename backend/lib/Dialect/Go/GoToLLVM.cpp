@@ -2,8 +2,14 @@
 //
 // The output is exactly the Phase A form documented per op in
 // docs/dialect.md. All values already have LLVM types, so no type conversion
-// is needed: one walk over the module rewrites every go op in place. This is
-// much cheaper than the dialect conversion framework.
+// is needed: one walk collects the go ops, then each is rewritten in place.
+// This is much cheaper than the dialect conversion framework.
+//
+// Checks that can panic split the block: the check branches to the rest of
+// the block or to a panic block. Each function gets one panic block per
+// runtime panic function and argument types; it takes the panic arguments as
+// block arguments, calls the noreturn runtime function, and is unreachable
+// after. The branch is weighted as never taken.
 #include "marmot/Dialect/Go/Passes.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -12,6 +18,8 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/TypeSwitch.h"
+
+#include <map>
 
 namespace marmot::go {
 #define GEN_PASS_DEF_GOTOLLVM
@@ -30,22 +38,32 @@ public:
         ptrTy(LLVM::LLVMPointerType::get(module.getContext())) {}
 
   LogicalResult run() {
-    WalkResult r = module.walk([&](Operation *op) {
-      if (op->getDialect() == nullptr ||
-          op->getDialect()->getNamespace() != GoDialect::getDialectNamespace())
-        return WalkResult::advance();
+    SmallVector<Operation *> ops;
+    Dialect *goDialect = module.getContext()->getLoadedDialect<GoDialect>();
+    if (!goDialect)
+      return success();
+    module.walk([&](Operation *op) {
+      if (op->getDialect() == goDialect)
+        ops.push_back(op);
+    });
+    for (Operation *op : ops) {
       b.setInsertionPoint(op);
       LogicalResult res = TypeSwitch<Operation *, LogicalResult>(op)
                               .Case([&](NewOp o) { return lower(o); })
                               .Case([&](MakeSliceOp o) { return lower(o); })
                               .Case([&](MakeClosureOp o) { return lower(o); })
                               .Case([&](BoxOp o) { return lower(o); })
+                              .Case([&](BoundsCheckOp o) { return lower(o); })
+                              .Case([&](NilCheckOp o) { return lower(o); })
+                              .Case([&](IndexOp o) { return lower(o); })
+                              .Case([&](SliceOp o) { return lower(o); })
                               .Default([&](Operation *o) {
                                 return o->emitOpError("no lowering to llvm");
                               });
-      return failed(res) ? WalkResult::interrupt() : WalkResult::advance();
-    });
-    return failure(r.wasInterrupted());
+      if (failed(res))
+        return failure();
+    }
+    return success();
   }
 
 private:
@@ -165,8 +183,134 @@ private:
     return success();
   }
 
+  // Declares a noreturn, cold runtime panic function.
+  FailureOr<LLVM::LLVMFuncOp> panicFunc(Operation *at, StringRef name,
+                                        ArrayRef<Type> params) {
+    bool existed = symbols.lookup(("runtime." + name).str()) != nullptr;
+    auto fn = runtimeFunc(at, name, Type(), params);
+    if (failed(fn) || existed)
+      return fn;
+    fn->setPassthroughAttr(b.getArrayAttr(
+        {b.getStringAttr("noreturn"), b.getStringAttr("cold"),
+         b.getStringAttr("nounwind")}));
+    return fn;
+  }
+
+  // The shared panic block of the function containing at, for runtime
+  // function name with the given argument types.
+  FailureOr<Block *> panicBlock(Operation *at, StringRef name,
+                                ArrayRef<Type> params) {
+    Region *body = &at->getParentOfType<LLVM::LLVMFuncOp>().getBody();
+    std::string key = name.str();
+    for (Type t : params) {
+      llvm::raw_string_ostream os(key);
+      os << "," << t;
+    }
+    auto &slot = panicBlocks[{body, key}];
+    if (slot)
+      return slot;
+    auto fn = panicFunc(at, name, params);
+    if (failed(fn))
+      return failure();
+    OpBuilder::InsertionGuard g(b);
+    Block *blk = b.createBlock(body, body->end());
+    SmallVector<Location> locs(params.size(), at->getLoc());
+    for (auto [t, l] : llvm::zip(params, locs))
+      blk->addArgument(t, l);
+    LLVM::CallOp::create(b, at->getLoc(), *fn, blk->getArguments());
+    LLVM::UnreachableOp::create(b, at->getLoc());
+    slot = blk;
+    return blk;
+  }
+
+  // Splits the block before at. If ok is false, control goes to the panic
+  // block of runtime function name with args; otherwise it continues at at.
+  // Leaves the insertion point at at.
+  LogicalResult emitCheck(Operation *at, Value ok, StringRef name,
+                          ValueRange args) {
+    SmallVector<Type> types(args.getTypes());
+    auto pb = panicBlock(at, name, types);
+    if (failed(pb))
+      return failure();
+    Block *before = at->getBlock();
+    Block *cont = before->splitBlock(at);
+    b.setInsertionPointToEnd(before);
+    LLVM::CondBrOp::create(b, at->getLoc(), ok, cont, ValueRange(), *pb, args,
+                           std::make_pair(uint32_t(1) << 20, uint32_t(1)));
+    b.setInsertionPoint(at);
+    return success();
+  }
+
+  Value icmp(Location loc, LLVM::ICmpPredicate p, Value x, Value y) {
+    return LLVM::ICmpOp::create(b, loc, p, x, y);
+  }
+
+  LogicalResult lower(BoundsCheckOp op) {
+    Value ok = icmp(op.getLoc(), LLVM::ICmpPredicate::ult, op.getIndex(), op.getLen());
+    if (failed(emitCheck(op, ok, "panicindex", {op.getIndex(), op.getLen()})))
+      return failure();
+    op.erase();
+    return success();
+  }
+
+  LogicalResult lower(NilCheckOp op) {
+    Location loc = op.getLoc();
+    Value null = LLVM::ZeroOp::create(b, loc, ptrTy);
+    Value ok = icmp(loc, LLVM::ICmpPredicate::ne, op.getPtr(), null);
+    if (failed(emitCheck(op, ok, "panicnil", {})))
+      return failure();
+    op.erase();
+    return success();
+  }
+
+  LogicalResult lower(IndexOp op) {
+    Location loc = op.getLoc();
+    Value ok = icmp(loc, LLVM::ICmpPredicate::ult, op.getIndex(), op.getLen());
+    if (failed(emitCheck(op, ok, "panicindex", {op.getIndex(), op.getLen()})))
+      return failure();
+    Value addr = LLVM::GEPOp::create(b, loc, ptrTy, op.getElemType(), op.getBase(),
+                                     ValueRange{op.getIndex()});
+    op.replaceAllUsesWith(addr);
+    op.erase();
+    return success();
+  }
+
+  LogicalResult lower(SliceOp op) {
+    Location loc = op.getLoc();
+    using P = LLVM::ICmpPredicate;
+    Value lo = op.getLo(), hi = op.getHi(), cap = op.getCap();
+    Value max = op.getMax();
+    // lo <= hi <= max <= cap, all unsigned (a negative index is huge).
+    Value ok = icmp(loc, P::ule, lo, hi);
+    Value top = max ? max : cap;
+    ok = LLVM::AndOp::create(b, loc, ok, icmp(loc, P::ule, hi, top));
+    if (max)
+      ok = LLVM::AndOp::create(b, loc, ok, icmp(loc, P::ule, max, cap));
+    if (failed(emitCheck(op, ok, "panicslice", {lo, hi, cap})))
+      return failure();
+    Value len = LLVM::SubOp::create(b, loc, hi, lo);
+    Value newCap = max ? LLVM::SubOp::create(b, loc, max, lo).getResult() : len;
+    // Do not form a pointer past the end of the object: an empty result keeps
+    // the base pointer (as gc does).
+    Value moved = LLVM::GEPOp::create(b, loc, ptrTy, op.getElemType(), op.getBase(),
+                                      ValueRange{lo});
+    Value zero = LLVM::ConstantOp::create(b, loc, lo.getType(), 0);
+    Value empty = icmp(loc, P::eq, newCap, zero);
+    Value ptr = LLVM::SelectOp::create(b, loc, empty, op.getBase(), moved);
+    Type resTy = op.getType();
+    Value s = LLVM::PoisonOp::create(b, loc, resTy);
+    s = LLVM::InsertValueOp::create(b, loc, s, ptr, ArrayRef<int64_t>{0});
+    s = LLVM::InsertValueOp::create(b, loc, s, len, ArrayRef<int64_t>{1});
+    if (max)
+      s = LLVM::InsertValueOp::create(b, loc, s, newCap, ArrayRef<int64_t>{2});
+    op.replaceAllUsesWith(s);
+    op.erase();
+    return success();
+  }
+
   ModuleOp module;
   SymbolTable symbols;
+  std::map<std::pair<Region *, std::string>, Block *> panicBlocks;
   OpBuilder b;
   Type ptrTy;
 };
