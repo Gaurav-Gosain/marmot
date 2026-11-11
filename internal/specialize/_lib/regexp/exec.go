@@ -5,10 +5,10 @@
 package regexp
 
 import (
-	"unsafe"
 	"io"
 	"regexp/syntax"
 	"sync"
+	"unsafe"
 )
 
 // A queue is a 'sparse array' holding pending threads of execution.
