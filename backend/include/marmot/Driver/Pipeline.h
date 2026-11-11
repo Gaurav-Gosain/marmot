@@ -27,6 +27,7 @@ struct CompileOptions {
   bool singleThreaded = false; // disable MLIR context threading (batch mode)
   bool initOptNone = true;     // compile package init functions with optnone
   bool escape = true;          // go-escape at -O1 and up
+  bool bce = true;             // go-bce at -O1 and up
   // Prepared runtime bitcode (see RuntimeBitcode.h), shared by all jobs.
   const RuntimeLib *rtBitcode = nullptr;
 };

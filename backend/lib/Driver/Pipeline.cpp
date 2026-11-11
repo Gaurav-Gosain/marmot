@@ -253,6 +253,8 @@ bool compileFile(const std::string &input, const std::string &output,
     if (opts.optLevel != '0') {
       if (opts.escape)
         pm.addPass(go::createGoEscape());
+      if (opts.bce)
+        pm.addPass(go::createGoBCE());
     }
     pm.addPass(go::createGoToLLVM());
     // Always: large aggregate values would hang code generation.

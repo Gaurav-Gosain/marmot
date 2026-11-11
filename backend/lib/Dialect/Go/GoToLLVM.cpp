@@ -380,7 +380,8 @@ private:
 
   LogicalResult lower(IndexOp op) {
     Location loc = op.getLoc();
-    if (failed(boundsCheck(op, op.getIndex(), op.getLen(), true, boundsIndex,
+    if (!op.getNocheck() &&
+        failed(boundsCheck(op, op.getIndex(), op.getLen(), true, boundsIndex,
                            op.getUnsignedIndex())))
       return failure();
     Value addr = LLVM::GEPOp::create(b, loc, ptrTy, op.getElemType(), op.getBase(),

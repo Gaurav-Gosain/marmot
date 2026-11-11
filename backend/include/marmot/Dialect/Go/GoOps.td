@@ -77,11 +77,12 @@ def Go_IndexOp : Go_Op<"index", [AllTypesMatch<["index", "len"]>,
                                  DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let summary = "bounds checked element address &base[index]";
   let arguments = (ins LLVM_DefaultPointer:$base, AnySignlessInteger:$index,
-                       AnySignlessInteger:$len, TypeAttr:$elem_type, UnitAttr:$unsigned_index);
+                       AnySignlessInteger:$len, TypeAttr:$elem_type, UnitAttr:$unsigned_index,
+                       UnitAttr:$nocheck);
   let results = (outs LLVM_DefaultPointer:$result);
   let assemblyFormat = [{
-    $base `[` $index `]` `len` $len `,` $elem_type (`unsigned` $unsigned_index^)? attr-dict
-    `:` type($index)
+    $base `[` $index `]` `len` $len `,` $elem_type (`unsigned` $unsigned_index^)?
+    (`nocheck` $nocheck^)? attr-dict `:` type($index)
   }];
   let hasVerifier = 1;
 }

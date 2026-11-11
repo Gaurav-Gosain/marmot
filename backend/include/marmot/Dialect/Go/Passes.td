@@ -45,4 +45,12 @@ def AggregateCopies : Pass<"aggregate-copies", "::mlir::ModuleOp"> {
   ];
 }
 
+def GoBCE : Pass<"go-bce", "::mlir::ModuleOp"> {
+  let summary = "Bounds check and nil check elimination";
+  let description = [{
+    Removes go.bounds_check and go.nil_check ops, and marks go.index
+    `nocheck`, when a rule in docs/passes.md proves the check cannot fail.
+  }];
+}
+
 #endif
