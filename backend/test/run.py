@@ -17,7 +17,7 @@ import os, platform, re, signal, subprocess, sys, concurrent.futures
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 LLVM = os.environ.get("LLVM_PREFIX", "/opt/homebrew/opt/llvm@22")
 BIN = os.path.join(LLVM, "bin")
-WORK = os.path.join(ROOT, ".work", "backend-test")
+WORK = os.path.join(ROOT, ".work", "backend", "test")
 TIMEOUT = 120  # seconds per RUN line (SPEC rule 10)
 JOBS = 4
 

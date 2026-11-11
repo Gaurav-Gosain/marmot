@@ -38,3 +38,11 @@ module {
 // RUN: %backend -O2 -batch %t.jobs -wpo -cache-dir %t.cache2 -time 2>&1 | %FileCheck %s --check-prefix=WPO
 // DEVHIT: cache {{[0-9]+}} hits 0 misses
 // WPO: cache {{[0-9]+}} hits {{[1-9][0-9]*}} misses
+// A size limit evicts least recently used entries.
+// RUN: rm -rf %t.cache3
+// RUN: env MARMOT_CACHE_MAX_MB=1 %backend -O2 -batch %t.jobs -wpo -cache-dir %t.cache3
+// RUN: test -f %t.cache3/.size
+// RUN: dd if=/dev/zero of=%t.cache3/ff/big.o bs=1048576 count=2 2>/dev/null || (mkdir -p %t.cache3/ff && dd if=/dev/zero of=%t.cache3/ff/big.o bs=1048576 count=2 2>/dev/null)
+// RUN: echo 3000000 > %t.cache3/.size
+// RUN: env MARMOT_CACHE_MAX_MB=1 %backend -O2 -batch %t.jobs -wpo -cache-dir %t.cache3
+// RUN: test ! -e %t.cache3/ff/big.o

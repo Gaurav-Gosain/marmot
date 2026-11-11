@@ -33,6 +33,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/Process.h"
 #include "llvm/Support/ThreadPool.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/xxhash.h"
@@ -43,6 +44,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <map>
 #include <mutex>
 #include <set>
@@ -82,12 +84,67 @@ public:
   std::optional<std::string> get(const std::string &key, StringRef kind) {
     if (!enabled())
       return std::nullopt;
-    auto buf = MemoryBuffer::getFile(path(key, kind), /*IsText=*/false,
-                                     /*RequiresNullTerminator=*/false);
+    std::string p = path(key, kind);
+    auto buf = MemoryBuffer::getFile(p, /*IsText=*/false, /*RequiresNullTerminator=*/false);
     if (!buf)
       return std::nullopt;
     ++hits;
+    // Recently used entries survive eviction.
+    int fd;
+    if (!sys::fs::openFileForReadWrite(p, fd, sys::fs::CD_OpenExisting, sys::fs::OF_None)) {
+      sys::fs::setLastAccessAndModificationTime(fd, std::chrono::system_clock::now());
+      sys::Process::SafelyCloseFileDescriptor(fd);
+    }
     return (*buf)->getBuffer().str();
+  }
+
+  // Keeps the cache under MARMOT_CACHE_MAX_MB (default 4096): a running
+  // total in <dir>/.size; past the limit, a scan deletes the least recently
+  // used entries down to 75% of it.
+  void evict() {
+    if (!enabled())
+      return;
+    uint64_t maxMB = 4096;
+    if (const char *e = getenv("MARMOT_CACHE_MAX_MB"))
+      if (uint64_t v = strtoull(e, nullptr, 10))
+        maxMB = v;
+    uint64_t limit = maxMB << 20;
+    SmallString<256> sizeFile(dir);
+    sys::path::append(sizeFile, ".size");
+    uint64_t total = 0;
+    if (auto buf = MemoryBuffer::getFile(sizeFile))
+      (*buf)->getBuffer().trim().getAsInteger(10, total);
+    total += written;
+    if (total > limit) {
+      struct Entry {
+        std::string path;
+        uint64_t size;
+        sys::TimePoint<> used;
+      };
+      std::vector<Entry> entries;
+      total = 0;
+      std::error_code ec;
+      for (sys::fs::recursive_directory_iterator it(dir, ec), end; it != end && !ec;
+           it.increment(ec)) {
+        sys::fs::file_status st;
+        if (sys::fs::status(it->path(), st) || st.type() != sys::fs::file_type::regular_file ||
+            sys::path::filename(it->path()) == ".size")
+          continue;
+        entries.push_back({it->path(), st.getSize(), st.getLastModificationTime()});
+        total += st.getSize();
+      }
+      llvm::sort(entries, [](const Entry &a, const Entry &b) { return a.used < b.used; });
+      for (const Entry &e : entries) {
+        if (total <= limit * 3 / 4)
+          break;
+        if (!sys::fs::remove(e.path))
+          total -= e.size;
+      }
+    }
+    std::error_code ec;
+    raw_fd_ostream os(sizeFile, ec);
+    if (!ec)
+      os << total << "\n";
   }
 
   void put(const std::string &key, StringRef kind, StringRef data) {
@@ -107,9 +164,12 @@ public:
     }
     if (sys::fs::rename(tmp, final))
       sys::fs::remove(tmp);
+    else
+      written += data.size();
   }
 
   std::atomic<unsigned> hits{0}, misses{0};
+  std::atomic<uint64_t> written{0};
 
 private:
   std::string path(const std::string &key, StringRef kind) const {
@@ -450,6 +510,10 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   std::vector<ModuleInfo> mods(jobs.size());
   std::vector<PhaseTimes> perJob(jobs.size());
   Cache cache(cacheDir);
+  struct EvictAtEnd {
+    Cache &c;
+    ~EvictAtEnd() { c.evict(); }
+  } evictAtEnd{cache};
   // Objects are cached only for -emit=obj.
   bool cacheObjects = cache.enabled() && opts.emit == Emit::Obj;
   const std::string fp = fingerprint(opts);
