@@ -123,7 +123,10 @@ struct AggregateCopiesPass
     }
 
     // Whatever large aggregate value is left would hang code generation.
-    WalkResult r = m.walk([&](Operation *op) {
+    // Global initializer regions become constant data, not code: skip them.
+    WalkResult r = m.walk<WalkOrder::PreOrder>([&](Operation *op) {
+      if (isa<LLVM::GlobalOp>(op))
+        return WalkResult::skip();
       auto tooBig = [&](Type t) { return size(t) > maxValueSize; };
       for (Type t : op->getResultTypes())
         if (tooBig(t)) {

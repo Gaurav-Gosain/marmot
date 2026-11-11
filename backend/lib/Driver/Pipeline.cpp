@@ -114,12 +114,20 @@ makeTargetMachine(const CompileOptions &opts, llvm::Triple &triple,
 // Every function gets the target CPU and features of the target machine, as
 // clang does. Without this the inliner refuses to inline runtime functions
 // that were compiled with explicit target attributes.
-void setTargetAttrs(llvm::Module &m, llvm::TargetMachine &tm) {
+void setTargetAttrs(llvm::Module &m, llvm::TargetMachine &tm, char level) {
   llvm::StringRef cpu = tm.getTargetCPU();
   llvm::StringRef features = tm.getTargetFeatureString();
   for (llvm::Function &f : m) {
     if (f.isDeclaration())
       continue;
+    // As clang does: -Os and -Oz act through function attributes in the
+    // optimizer and in code generation (including the machine outliner).
+    if ((level == 's' || level == 'z') &&
+        !f.hasFnAttribute(llvm::Attribute::OptimizeNone)) {
+      f.addFnAttr(llvm::Attribute::OptimizeForSize);
+      if (level == 'z')
+        f.addFnAttr(llvm::Attribute::MinSize);
+    }
     if (!cpu.empty())
       f.addFnAttr("target-cpu", cpu);
     else
@@ -173,6 +181,8 @@ void runLLVMPipeline(llvm::Module &m, llvm::TargetMachine &tm, char level) {
   pto.LoopUnrolling = level != 's' && level != 'z';
   pto.LoopVectorization = level == '2' || level == '3';
   pto.SLPVectorization = level == '2' || level == '3';
+  // Go generic instances and wrappers often compile to identical code.
+  pto.MergeFunctions = level == 's' || level == 'z';
   // Standard instrumentation makes -time-passes, -print-after and friends work.
   llvm::PassInstrumentationCallbacks pic;
   llvm::StandardInstrumentations si(m.getContext(), /*DebugLogging=*/false);
@@ -302,7 +312,7 @@ bool compileFile(const std::string &input, const std::string &output,
     if (!linkRuntimeBitcode(*lmod, *opts.rtBitcode, err))
       return fail(err);
   }
-  setTargetAttrs(*lmod, *tm);
+  setTargetAttrs(*lmod, *tm, opts.optLevel);
   if (opts.initOptNone && opts.optLevel != '0')
     markInitOptNone(*lmod);
   times.linkRt += timer.lap();

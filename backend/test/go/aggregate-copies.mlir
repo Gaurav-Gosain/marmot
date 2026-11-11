@@ -70,3 +70,12 @@ llvm.func @bad(%src: !llvm.ptr, %dst: !llvm.ptr) {
   llvm.store %v, %dst : !huge, !llvm.ptr
   llvm.return
 }
+
+// -----
+
+// A large zero-initialized global is constant data, not an SSA value in code.
+// CHECK-LABEL: llvm.mlir.global external @scratch
+llvm.mlir.global external @scratch() : !llvm.array<33554432 x i8> {
+  %0 = llvm.mlir.zero : !llvm.array<33554432 x i8>
+  llvm.return %0 : !llvm.array<33554432 x i8>
+}
