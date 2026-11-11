@@ -258,7 +258,7 @@ func (m *moduleGen) funcAttrs(fn *ssa.Function, sym string) string {
 		pass = append(pass, `"returns_twice"`)
 	}
 	if len(fn.Blocks) > 0 {
-		if callsRecover(fn) || callsGetcallerfp(fn) {
+		if callsRecover(fn) || callsGetcallerfp(fn) || m.p.isRecoverWrapper(fn) {
 			// gorecover walks frame records: keep this frame and its record,
 			// and keep the machine outliner (on at -Os/-Oz) away from it.
 			pass = append(pass, `["disable-tail-calls", "true"]`, `["frame-pointer", "all"]`, `"nooutline"`)

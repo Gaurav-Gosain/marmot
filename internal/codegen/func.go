@@ -54,6 +54,7 @@ type funcGen struct {
 	sunk              map[ssa.Instruction]bool              // loads moved after calls (evalorder.go)
 	sinkBefore        map[ssa.Instruction][]ssa.Instruction // emit these sunk loads before the instruction
 	sunkDone          map[ssa.Instruction]bool
+	wrapOld           string                         // recoverWrapEnter result (recoverwrap.go)
 	fuseLookup        map[*ssa.Lookup]*ssa.MapUpdate // map read-modify-write pairs (mapfuse.go)
 	fuseSlot          map[*ssa.MapUpdate]string
 }
@@ -127,7 +128,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 		head.WriteString(" -> " + ret)
 	}
 	attrs := []string{"no_unwind"}
-	if callsRecover(fn) && f.m.p.pragmas[fn]&pragmaNoinline == 0 {
+	if (callsRecover(fn) || f.m.p.isRecoverWrapper(fn)) && f.m.p.pragmas[fn]&pragmaNoinline == 0 {
 		attrs = append(attrs, "no_inline")
 	}
 	if a := f.m.funcAttrs(fn, sym); a != "" {
@@ -183,6 +184,9 @@ func (f *funcGen) gen(sym string, shared bool) {
 		f.volatile = volatileAllocs(fn, f.stackOK)
 		f.setupFrame()
 		f.implicitRunDefers = !hasRunDefers(fn)
+	}
+	if f.m.p.isRecoverWrapper(fn) {
+		f.wrapOld = f.recoverWrapEnter()
 	}
 	f.computeSinks()
 	f.sinkAllocs()
@@ -680,6 +684,9 @@ func (f *funcGen) succ(b *ssa.BasicBlock, i int) string {
 
 func (f *funcGen) ret(r *ssa.Return) {
 	f.freeFrameRegion()
+	if f.wrapOld != "" {
+		f.rtcall("recoverWrapExit", f.wrapOld)
+	}
 	if f.implicitRunDefers && r.Block() != f.fn.Recover {
 		// The function only hands its defer stack to range-over-func
 		// bodies; SSA has no RunDefers for it.

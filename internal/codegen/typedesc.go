@@ -513,7 +513,18 @@ func (m *moduleGen) ifaceFunc(t types.Type, sel *types.Selection) string {
 	if ret != "" {
 		b.WriteString(" -> " + ret)
 	}
-	b.WriteString(" attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n")
+	wrapRecover := callsRecover(fn) && m.p.runtimeFunc("recoverWrapEnter") != nil
+	if wrapRecover {
+		// Recover in the method must see this wrapper as transparent.
+		b.WriteString(" attributes {no_unwind, no_inline, passthrough = [[\"disable-tail-calls\", \"true\"], [\"frame-pointer\", \"all\"], \"nooutline\"]} {\n")
+		enter := m.funcRef(m.p.runtimeFunc("recoverWrapEnter"))
+		fmt.Fprintf(&b, "    %%wz = llvm.mlir.constant(0 : i32) : i32\n")
+		fmt.Fprintf(&b, "    %%wfp = llvm.call_intrinsic \"llvm.frameaddress.p0\"(%%wz) : (i32) -> !llvm.ptr\n")
+		fmt.Fprintf(&b, "    %%wfpi = llvm.ptrtoint %%wfp : !llvm.ptr to i64\n")
+		fmt.Fprintf(&b, "    %%wold = llvm.call %s(%%wfpi) : (i64) -> i64\n", mlir.Symbol(enter))
+	} else {
+		b.WriteString(" attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n")
+	}
 	recvT := params[0]
 	src := "%a0"
 	if isDirectIface(t) {
@@ -535,10 +546,14 @@ func (m *moduleGen) ifaceFunc(t types.Type, sel *types.Selection) string {
 		args = append(args, fmt.Sprintf("%%a%d", i))
 	}
 	sig := fmt.Sprintf("(%s) -> %s", strings.Join(params, ", "), retOrVoid(ret))
+	exit := ""
+	if wrapRecover {
+		exit = fmt.Sprintf("    llvm.call %s(%%wold) : (i64) -> ()\n", mlir.Symbol(m.funcRef(m.p.runtimeFunc("recoverWrapExit"))))
+	}
 	if ret == "" {
-		fmt.Fprintf(&b, "    llvm.call %s(%s) : %s\n    llvm.return\n  }\n", mlir.Symbol(target), strings.Join(args, ", "), sig)
+		fmt.Fprintf(&b, "    llvm.call %s(%s) : %s\n%s    llvm.return\n  }\n", mlir.Symbol(target), strings.Join(args, ", "), sig, exit)
 	} else {
-		fmt.Fprintf(&b, "    %%r = llvm.call %s(%s) : %s\n    llvm.return %%r : %s\n  }\n", mlir.Symbol(target), strings.Join(args, ", "), sig, ret)
+		fmt.Fprintf(&b, "    %%r = llvm.call %s(%s) : %s\n%s    llvm.return %%r : %s\n  }\n", mlir.Symbol(target), strings.Join(args, ", "), sig, exit, ret)
 	}
 	m.defs.WriteString(b.String())
 	return wsym

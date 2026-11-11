@@ -112,10 +112,10 @@ func deferCannotRecover(c *ssa.CallCommon) bool {
 	case *ssa.Builtin:
 		return true
 	case *ssa.Function:
-		return !callsRecover(v)
+		return !mayRecover(v)
 	case *ssa.MakeClosure:
 		fn, ok := v.Fn.(*ssa.Function)
-		return ok && !callsRecover(fn)
+		return ok && !mayRecover(fn)
 	}
 	return false
 }

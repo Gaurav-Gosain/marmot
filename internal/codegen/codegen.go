@@ -75,6 +75,7 @@ type Program struct {
 
 	escMu     sync.Mutex
 	locMu     sync.Mutex
+	recWrap   map[*ssa.Function]bool
 	locFiles  map[string]string
 	esc       escapeState
 	regions   regionState
