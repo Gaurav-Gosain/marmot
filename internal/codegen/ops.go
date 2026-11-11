@@ -464,8 +464,12 @@ func isRuneElem(t types.Type) bool {
 }
 
 // floatToInt converts like the gc compiler on arm64: saturating conversion
-// to 64 or 32 bits, then truncation for narrower types.
+// to 64 or 32 bits, then truncation for narrower types. On amd64 it follows
+// gc's CVTTSD2SQ/CVTTSD2SL semantics instead.
 func (f *funcGen) floatToInt(x, ft, tt string, signed bool) string {
+	if f.m.p.opts.GOARCH == "amd64" {
+		return f.floatToIntAMD64(x, ft, tt, signed)
+	}
 	w := intBits(tt)
 	mid := mlir.I64
 	if w <= 32 {
@@ -480,4 +484,46 @@ func (f *funcGen) floatToInt(x, ft, tt string, signed bool) string {
 		r = f.op("llvm.trunc %s : %s to %s", r, mid, tt)
 	}
 	return r
+}
+
+// cvtt models CVTTSD2SQ (w=64) and CVTTSD2SL (w=32): truncation toward
+// zero, and the minimum integer for NaN and out of range values.
+func (f *funcGen) cvtt(x, ft string, w int) string {
+	it := fmt.Sprintf("i%d", w)
+	lo := -float64(uint64(1) << (w - 1))
+	hi := float64(uint64(1) << (w - 1))
+	clo := f.op("llvm.mlir.constant(%s : %s) : %s", mlir.FloatAttr(lo, ft), ft, ft)
+	chi := f.op("llvm.mlir.constant(%s : %s) : %s", mlir.FloatAttr(hi, ft), ft, ft)
+	ge := f.op("llvm.fcmp \"oge\" %s, %s : %s", x, clo, ft)
+	lt := f.op("llvm.fcmp \"olt\" %s, %s : %s", x, chi, ft)
+	in := f.and(ge, lt)
+	r := f.op("llvm.call_intrinsic \"llvm.fptosi.sat.%s.%s\"(%s) : (%s) -> %s", it, ft, x, ft, it)
+	min := f.constInt(-int64(uint64(1)<<(w-1)), it)
+	return f.op("llvm.select %s, %s, %s : i1, %s", in, r, min, it)
+}
+
+// floatToIntAMD64 follows gc on amd64 (cmd/compile/internal/ssagen).
+func (f *funcGen) floatToIntAMD64(x, ft, tt string, signed bool) string {
+	w := intBits(tt)
+	switch {
+	case w == 64 && signed:
+		return f.cvtt(x, ft, 64)
+	case w == 64:
+		// x < 2^63 ? cvtt(x) : cvtt(x - 2^63) | 1<<63
+		two63 := f.op("llvm.mlir.constant(%s : %s) : %s", mlir.FloatAttr(9223372036854775808.0, ft), ft, ft)
+		small := f.op("llvm.fcmp \"olt\" %s, %s : %s", x, two63, ft)
+		a := f.cvtt(x, ft, 64)
+		y := f.op("llvm.fsub %s, %s : %s", x, two63, ft)
+		b := f.op("llvm.or %s, %s : i64", f.cvtt(y, ft, 64), f.constInt(-9223372036854775808, mlir.I64))
+		return f.op("llvm.select %s, %s, %s : i1, i64", small, a, b)
+	case w == 32 && !signed:
+		r := f.cvtt(x, ft, 64)
+		return f.op("llvm.trunc %s : i64 to i32", r)
+	default:
+		r := f.cvtt(x, ft, 32) // int32, and int8/16, uint8/16 by truncation
+		if w < 32 {
+			r = f.op("llvm.trunc %s : i32 to %s", r, tt)
+		}
+		return r
+	}
 }
