@@ -15,6 +15,7 @@
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
 
 #include "llvm/ADT/DenseSet.h"
 
@@ -237,6 +238,26 @@ bool lowerGpuLoops(Module &m, const std::string &gpuArch, std::string &err) {
     }
     cb->replaceAllUsesWith(repl);
     cb->eraseFromParent();
+  }
+  // rtcore loads registered modules on its startup thread, so the first rt_gpu_for finds the
+  // kernel compiled: one constructor per module calls rt_gpu_register(ptx, ptxlen) for each
+  // embedded image, with the same pointer the calls pass.
+  if (!compiled.empty()) {
+    FunctionCallee reg = m.getOrInsertFunction(
+        "rt_gpu_register", FunctionType::get(Type::getVoidTy(ctx), {ptr, i64}, false));
+    auto *ctor = Function::Create(FunctionType::get(Type::getVoidTy(ctx), false),
+                                  GlobalValue::InternalLinkage, "marmot.gpu.register", m);
+    IRBuilder<> b(BasicBlock::Create(ctx, "entry", ctor));
+    SmallVector<std::pair<Constant *, uint64_t>, 4> images;
+    for (auto &[body, c] : compiled)
+      images.push_back({c.first, c.second.second});
+    llvm::sort(images, [](auto &x, auto &y) {
+      return x.first->getName() < y.first->getName(); // deterministic order
+    });
+    for (auto &[img, len] : images)
+      b.CreateCall(reg, {img, ConstantInt::get(i64, len)});
+    b.CreateRetVoid();
+    appendToGlobalCtors(m, ctor, 65535);
   }
   for (Function &f : m)
     f.removeFnAttr(kGpuBody);

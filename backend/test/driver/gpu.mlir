@@ -3,8 +3,14 @@
 // the call is false and the caller's CPU path runs.
 // RUN: %backend -O2 -no-loops -gpu=sm_86 -emit=llvm -o %t.ll %s
 // RUN: %FileCheck %s < %t.ll
+// RUN: %FileCheck %s --check-prefix=REG < %t.ll
 // RUN: %backend -O2 -no-loops -emit=llvm -o - %s | %FileCheck %s --check-prefix=CPU
 // RUN: %backend -O0 -gpu -emit=llvm -o - %s | %FileCheck %s --check-prefix=CPU
+// REG: @llvm.global_ctors = appending global {{.*}} @marmot.gpu.register
+// REG: define internal void @marmot.gpu.register()
+// REG-NEXT: entry:
+// REG-NEXT: call void @rt_gpu_register(ptr {{.*}}@saxpy_body.ptx, i64 {{[0-9]+}})
+// CPU-NOT: rt_gpu_register
 // CHECK: @saxpy_body.ptx = private unnamed_addr constant {{.*}}.target sm_86
 // CHECK-SAME: .entry saxpy_body_kernel
 // CHECK-SAME: mul.rn.f64
