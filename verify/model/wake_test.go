@@ -25,7 +25,10 @@ type wstate struct {
 	sendq    []int
 	gs       []gor
 	noDekker bool // the variant without the retry after enqueueing: must lose a wake-up
+	closer   int  // 0: no close, 1: will close, 2: closed
 }
+
+func (s *wstate) closed() bool { return s.closer == 2 }
 
 func (s *wstate) clone() *wstate {
 	t := *s
@@ -35,7 +38,7 @@ func (s *wstate) clone() *wstate {
 	return &t
 }
 
-func (s *wstate) key() string { return fmt.Sprint(s.count, s.lock, s.recvq, s.sendq, s.gs) }
+func (s *wstate) key() string { return fmt.Sprint(s.count, s.lock, s.recvq, s.sendq, s.gs, s.closer) }
 
 func remove(q []int, g int) []int {
 	for i, x := range q {
@@ -62,8 +65,26 @@ func (s *wstate) notify(q *[]int) bool {
 
 func (s *wstate) finishOne(i int) {
 	g := &s.gs[i]
-	g.left--
+	if g.left > 0 {
+		g.left--
+	}
 	g.pc = 0
+}
+
+// closechanBuf under c.lock: set the bit, wake every waiter
+func (s *wstate) doClose() bool {
+	if s.closer != 1 || s.lock != -1 {
+		return false
+	}
+	s.closer = 2
+	for _, q := range [][]int{s.recvq, s.sendq} {
+		for _, g := range q {
+			s.gs[g].parked = false
+			s.gs[g].pc = 0
+		}
+	}
+	s.recvq, s.sendq = nil, nil
+	return true
 }
 
 func (s *wstate) step(i int) bool {
@@ -74,6 +95,10 @@ func (s *wstate) step(i int) bool {
 	if g.send {
 		switch g.pc {
 		case 0: // ringPush
+			if s.closed() { // send on closed channel: panics, the goroutine ends
+				g.left = 0
+				return true
+			}
 			if s.count < s.n {
 				s.count++
 				g.pc = 1
@@ -101,6 +126,12 @@ func (s *wstate) step(i int) bool {
 			s.sendq = append(s.sendq, i)
 			g.pc = 4
 		case 4: // r := c.ringPush(ep) (the Dekker retry)
+			if s.closed() {
+				s.sendq = remove(s.sendq, i)
+				s.lock = -1
+				g.left = 0
+				return true
+			}
 			if !s.noDekker && s.count < s.n {
 				s.count++
 				s.sendq = remove(s.sendq, i)
@@ -121,6 +152,8 @@ func (s *wstate) step(i int) bool {
 		if s.count > 0 {
 			s.count--
 			g.pc = 1
+		} else if s.closed() { // ringClosedDrained
+			g.left = 0
 		} else {
 			g.pc = 2
 		}
@@ -145,7 +178,7 @@ func (s *wstate) step(i int) bool {
 		s.recvq = append(s.recvq, i)
 		g.pc = 4
 	case 4: // if c.ringLen() > 0 || closed { dequeue self; unlock; retry }
-		if !s.noDekker && s.count > 0 {
+		if !s.noDekker && (s.count > 0 || s.closed()) {
 			s.recvq = remove(s.recvq, i)
 			s.lock = -1
 			g.pc = 0
@@ -175,9 +208,13 @@ func wexplore(s *wstate, seen map[string]bool, lost *string, states *int) {
 			wexplore(t, seen, lost, states)
 		}
 	}
+	if t := s.clone(); t.doClose() {
+		moved = true
+		wexplore(t, seen, lost, states)
+	}
 	if !moved {
 		for _, g := range s.gs {
-			if g.left > 0 {
+			if g.left != 0 {
 				*lost = "stuck: " + k
 				return
 			}
@@ -186,13 +223,26 @@ func wexplore(s *wstate, seen map[string]bool, lost *string, states *int) {
 }
 
 func wrun(n, senders, perSender, receivers int, noDekker bool) (string, int) {
+	return wrunc(n, senders, perSender, receivers, noDekker, false)
+}
+
+// with close: receivers receive until the channel is closed and drained (left -1), and
+// the closer closes at any moment.
+func wrunc(n, senders, perSender, receivers int, noDekker, withClose bool) (string, int) {
 	s := &wstate{n: n, lock: -1, noDekker: noDekker}
+	if withClose {
+		s.closer = 1
+	}
 	total := senders * perSender
 	for i := 0; i < senders; i++ {
 		s.gs = append(s.gs, gor{send: true, left: perSender})
 	}
 	for i := 0; i < receivers; i++ {
-		s.gs = append(s.gs, gor{left: total / receivers})
+		left := total / receivers
+		if withClose {
+			left = -1
+		}
+		s.gs = append(s.gs, gor{left: left})
 	}
 	lost, states := "", 0
 	wexplore(s, map[string]bool{}, &lost, &states)
@@ -215,4 +265,14 @@ func TestWakeWithoutDekkerFails(t *testing.T) {
 		t.Fatal("removing the retry after enqueueing lost no wake-up: the model checks nothing")
 	}
 	t.Log("caught:", lost)
+}
+
+func TestWakeClose(t *testing.T) {
+	for _, c := range [][4]int{{1, 1, 2, 1}, {1, 2, 1, 2}, {2, 2, 2, 1}, {1, 2, 2, 2}} {
+		lost, states := wrunc(c[0], c[1], c[2], c[3], false, true)
+		t.Logf("close: cap %d, %d senders x %d, %d receivers: %d states", c[0], c[1], c[2], c[3], states)
+		if lost != "" {
+			t.Fatalf("goroutine left parked: %s", lost)
+		}
+	}
 }
