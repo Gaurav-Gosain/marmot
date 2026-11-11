@@ -1,0 +1,18 @@
+1 true false
+t true false
+T true false
+TRUE true false
+true true false
+True true false
+0 false false
+f false false
+F false false
+FALSE false false
+false false false
+False false false
+yes false true
+ false true
+tRUE false true
+true false true false true
+"abc" (0x0,0x0)
+64

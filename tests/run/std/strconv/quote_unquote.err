@@ -1,0 +1,28 @@
+"" ""
+true true
+"plain" "plain"
+true true
+"tab\there" "tab\there"
+true true
+"nl\n" "nl\n"
+true true
+"quote\"" "quote\""
+true true
+"back\\" "back\\"
+true true
+"uni é 世" "uni \u00e9 \u4e16"
+true true
+"\x00\x01\x7f" "\x00\x01\x7f"
+true true
+"\xff" "\xff"
+true true
+"emoji 😀" "emoji \U0001f600"
+true true
+'x' '\n' '世' '\u4e16'
+a false
+raw\n false
+c false
+ true
+ true
+é false
+A false

@@ -1,0 +1,14 @@
+Atoi  true false 0
+5
+0
+7
+Atoi  1 true false 0
+Atoi 1  true false 0
+9223372036854775807
+Atoi 9223372036854775808 false true 9223372036854775807
+-9223372036854775808
+Atoi -9223372036854775809 false true -9223372036854775808
+Atoi 1_000 true false 0
+Atoi 0x10 true false 0
+Atoi ١ true false 0
+true

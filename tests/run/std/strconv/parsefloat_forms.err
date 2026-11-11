@@ -1,0 +1,22 @@
+1 1 false
+-1.5 -1.5 false
++.5 0.5 false
+5. 5 false
+1e3 1000 false
+1E-3 0.001 false
+0x1p4 16 false
+inf +Inf false
+-Infinity -Inf false
+nan NaN false
+1_0.5 10.5 false
+ 0 true
+. 0 true
+1e 0 true
+1.5.5 0 true
+  1 0 true
+1e400 +Inf true
+-1e400 -Inf true
+4.9e-324 5e-324 false
+2.4e-324 0 false
+1.100000023841858 true true
+true
