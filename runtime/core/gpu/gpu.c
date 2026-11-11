@@ -59,8 +59,8 @@ static struct {
                            unsigned, CUstream, void **, void **);
 } cu;
 
-static rt_spin gpu_lock;
-static int gpu_state;  // 0 not tried, 1 ready, 2 unavailable
+static rt_spin gpu_lock;  // module cache and buffer pool
+static int gpu_state;  // 0 not tried, 1 ready, 2 unavailable, 3 in progress
 static CUcontext ctx;
 static CUdevice dev;
 static int sm_count, cc_major, cc_minor, clock_khz;
@@ -138,19 +138,30 @@ static bool gpu_init_locked(void) {
   return true;
 }
 
-// Ready the GPU for this thread; false if there is none.
+// Wait until *st leaves state 3 (in progress), outside the P: CUDA setup
+// takes 50 to 300 ms.
+static void wait_done(int *st) {
+  if (__atomic_load_n(st, __ATOMIC_ACQUIRE) != 3) return;
+  rt_entersyscall();
+  while (__atomic_load_n(st, __ATOMIC_ACQUIRE) == 3) os_usleep(200);
+  rt_exitsyscall();
+}
+
+// Ready the GPU for this thread; false if there is none. The first caller
+// (or the prewarm thread) initializes; others wait for it.
 static bool gpu_enter(void) {
   int s = __atomic_load_n(&gpu_state, __ATOMIC_ACQUIRE);
   if (s == 0) {
-    rt_m *m = getm();
-    if (m) m->locks++;
-    spin_lock(&gpu_lock);
-    if (gpu_state == 0) __atomic_store_n(&gpu_state, gpu_init_locked() ? 1 : 2, __ATOMIC_RELEASE);
-    spin_unlock(&gpu_lock);
-    if (m) m->locks--;
-    s = gpu_state;
+    int z = 0;
+    if (__atomic_compare_exchange_n(&gpu_state, &z, 3, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+      rt_entersyscall();
+      bool ok = gpu_init_locked();
+      rt_exitsyscall();
+      __atomic_store_n(&gpu_state, ok ? 1 : 2, __ATOMIC_RELEASE);
+    }
   }
-  if (s != 1) return false;
+  wait_done(&gpu_state);
+  if (__atomic_load_n(&gpu_state, __ATOMIC_ACQUIRE) != 1) return false;
   cu.CtxSetCurrent(ctx);
   return true;
 }
@@ -404,9 +415,22 @@ static const char calib_ptx[] =
 
 static int64_t launch_ns = -1;
 static double h2d_gbps, d2h_gbps;
+static int calib_state;  // 0 not done, 1 done, 3 in progress
 
+static void calibrate_once(void);
+
+// The cost model's numbers; waits if another thread is measuring them.
 static void calibrate(void) {
-  if (launch_ns >= 0) return;
+  int z = 0;
+  if (__atomic_load_n(&calib_state, __ATOMIC_ACQUIRE) == 0 &&
+      __atomic_compare_exchange_n(&calib_state, &z, 3, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    calibrate_once();
+    __atomic_store_n(&calib_state, 1, __ATOMIC_RELEASE);
+  }
+  wait_done(&calib_state);
+}
+
+static void calibrate_once(void) {
   int64_t tc = os_nanotime();
   void *mod = rt_gpu_module(calib_ptx, sizeof calib_ptx);
   void *f = rt_gpu_function(mod, "marmot_nop");
@@ -520,10 +544,31 @@ static bool gpu_for_enabled(void) {
   return e && e[0] == '1';
 }
 
+static void prewarm_thread(void *arg) {
+  (void)arg;
+  if (gpu_enter()) calibrate();
+}
+
+// Called at startup (entry.c, weak reference: only programs that link
+// rt_gpu_for have it). With MARMOT_GPU=1, CUDA setup and the cost model
+// calibration (0.1 to 0.4 s) run on a separate thread while the program
+// starts; rt_gpu_for leaves loops on the CPU until they are done.
+void rt_gpu_prewarm(void) {
+  if (!gpu_for_enabled()) return;
+  if (!os_thread_create(prewarm_thread, NULL, 256 << 10)) return;
+}
+
+// True when setup and calibration are finished (or never started), so
+// rt_gpu_for would not wait.
+static bool gpu_settled(void) {
+  return __atomic_load_n(&gpu_state, __ATOMIC_ACQUIRE) != 3 &&
+         __atomic_load_n(&calib_state, __ATOMIC_ACQUIRE) != 3;
+}
+
 RT_API bool rt_gpu_for(const char *ptx, int64_t ptxlen, const char *kname, int64_t n, void *ctx,
                        int64_t ctxsize, rt_gpu_range *ranges, int64_t nranges, int64_t cost) {
   if (n <= 0 || nranges < 0 || nranges > 64 || ctxsize < 0 || ctxsize > 4096) return false;
-  if (!gpu_for_enabled() || !gpu_enter()) return false;
+  if (!gpu_for_enabled() || !gpu_settled() || !gpu_enter()) return false;
   // Merge ranges (insertion sort by base; at most 64).
   mrange mr[64];
   int nm = 0;

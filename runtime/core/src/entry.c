@@ -19,6 +19,12 @@ RT_API void rt_fatal(const char *msg, uintptr_t len) {
   os_exit(2);
 }
 
+#if RT_OS_LINUX
+// gpu.c: defined only when the program links rt_gpu_for (weak reference,
+// does not pull gpu.o from the archive).
+extern void rt_gpu_prewarm(void) __attribute__((weak));
+#endif
+
 static void rt_init(int argc, char **argv, char **envp) {
   g_argc = argc;
   g_argv = argv;
@@ -28,6 +34,9 @@ static void rt_init(int argc, char **argv, char **envp) {
   sched_init();
   timer_init();
   gc_init();
+#if RT_OS_LINUX
+  if (rt_gpu_prewarm) rt_gpu_prewarm();
+#endif
 }
 
 RT_API int main(int argc, char **argv, char **envp) {
