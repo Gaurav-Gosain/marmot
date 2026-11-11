@@ -53,21 +53,115 @@ static bool stack_alloc(rt_g *g, uintptr_t size) {
   return true;
 }
 
+// Goroutine table: chunks of pointers that never move, with a bitmap of
+// goroutines that may be alive, so the GC skips dead ones a word at a time.
+#define GCHUNK 4096
+typedef struct gchunk {
+  rt_g *g[GCHUNK];
+  _Atomic uint64_t live[GCHUNK / 64];
+} gchunk;
+#define MAX_GCHUNKS 16384  // 64M goroutines
+static gchunk *gchunks[MAX_GCHUNKS];
+static uint32_t nallg;
+
+static void gtable_add(rt_g *g) {
+  spin_lock(&sched.glock);
+  uint32_t i = nallg;
+  if (i / GCHUNK >= MAX_GCHUNKS) rt_throw("too many goroutines");
+  if (i % GCHUNK == 0) gchunks[i / GCHUNK] = persistent_alloc(sizeof(gchunk), 64);
+  gchunks[i / GCHUNK]->g[i % GCHUNK] = g;
+  g->gidx = i;
+  __atomic_store_n(&nallg, i + 1, __ATOMIC_RELEASE);
+  spin_unlock(&sched.glock);
+}
+
+static void glive_set(rt_g *g, bool live) {
+  gchunk *c = gchunks[g->gidx / GCHUNK];
+  uint64_t bit = 1ull << (g->gidx % 64);
+  if (live)
+    atomic_fetch_or(&c->live[(g->gidx % GCHUNK) / 64], bit);
+  else
+    atomic_fetch_and(&c->live[(g->gidx % GCHUNK) / 64], ~bit);
+}
+
+// Allocate a goroutine structure. stacksize 0: the stack is mapped when the
+// goroutine first runs (execute), so goroutines created faster than they
+// run cost only this structure.
 static rt_g *galloc(uintptr_t stacksize) {
   spin_lock(&sched.glock);
   rt_g *g = fixalloc_alloc(&g_alloc);
   spin_unlock(&sched.glock);
-  if (!stack_alloc(g, stacksize)) rt_throw("out of memory allocating goroutine stack");
-  spin_lock(&sched.glock);
-  g->alllink = sched.allg;
-  sched.allg = g;
-  spin_unlock(&sched.glock);
+  if (stacksize && !stack_alloc(g, stacksize))
+    rt_throw("out of memory allocating goroutine stack");
+  gtable_add(g);
   return g;
 }
 
-// Free goroutine lists: per P, overflow to global.
+// Stacks of size g_stacksize are cached apart from goroutine structures: a
+// goroutine gives its stack back when it exits and takes one when it first
+// runs. Per-P cache of 32, global cache of up to MAX_FREE_STACKS (linked
+// through a word near the top of each stack, which is already resident),
+// the rest are unmapped.
+#define MAX_FREE_STACKS 1024
+static rt_spin stack_lock;
+static uintptr_t gstack_free;  // global list head: mapping base
+static int32_t ngstack_free;
+
+INLINE uintptr_t *stack_link(uintptr_t base) {
+  return (uintptr_t *)(base + rt_pagesize + g_stacksize - 16);
+}
+
+static void stack_give(rt_p *p, rt_g *g) {
+  uintptr_t base = g->map_base;
+  g->map_base = g->map_size = g->stack_lo = g->stack_hi = 0;
+  if (p->nstackcache < 32) {
+    p->stackcache[p->nstackcache++] = base;
+    return;
+  }
+  // Local cache full: move half of it to the global cache, keep this one.
+  spin_lock(&stack_lock);
+  while (p->nstackcache > 16) {
+    uintptr_t b = p->stackcache[--p->nstackcache];
+    if (ngstack_free >= MAX_FREE_STACKS) {
+      os_unmap((void *)b, g_stacksize + rt_pagesize);
+      continue;
+    }
+    *stack_link(b) = gstack_free;
+    gstack_free = b;
+    ngstack_free++;
+  }
+  spin_unlock(&stack_lock);
+  p->stackcache[p->nstackcache++] = base;
+}
+
+static void stack_take(rt_p *p, rt_g *g) {
+  uintptr_t base = 0;
+  if (p && p->nstackcache == 0 && ngstack_free > 0) {
+    spin_lock(&stack_lock);
+    while (p->nstackcache < 16 && gstack_free) {
+      uintptr_t b = gstack_free;
+      gstack_free = *stack_link(b);
+      ngstack_free--;
+      p->stackcache[p->nstackcache++] = b;
+    }
+    spin_unlock(&stack_lock);
+  }
+  if (p && p->nstackcache > 0) base = p->stackcache[--p->nstackcache];
+  if (base) {
+    uintptr_t ps = rt_pagesize;
+    g->map_base = base;
+    g->map_size = g_stacksize + ps;
+    g->stack_lo = base + ps;
+    g->stack_hi = base + ps + g_stacksize;
+    return;
+  }
+  if (!stack_alloc(g, g_stacksize)) rt_throw("out of memory allocating goroutine stack");
+}
+
+// Free goroutine structures: per P, overflow to global.
 static void gfput(rt_p *p, rt_g *g) {
-  if (g->stack_hi - g->stack_lo != g_stacksize) return;  // main: never reused
+  if (g->stack_hi && g->stack_hi - g->stack_lo != g_stacksize) return;  // main: never reused
+  if (g->stack_hi) stack_give(p, g);
   atomic_store_explicit(&g->status, G_IDLE, memory_order_relaxed);
   g->schedlink = p->gfree;
   p->gfree = g;
@@ -562,6 +656,11 @@ static void gstart(void *arg) {
 }
 
 static void execute(rt_m *m, rt_g *g) {
+  if (UNLIKELY(!g->sp)) {
+    // First run: take a stack now.
+    if (!g->stack_hi) stack_take(m->p, g);
+    g->sp = rt_ctx_init((void *)g->stack_hi, gstart, g);
+  }
   m->curg = g;
   g->m = m;
   atomic_store_explicit(&g->status, G_RUNNING, memory_order_relaxed);
@@ -583,6 +682,7 @@ static void goexit_final(rt_g *g) {
   g->slot = NULL;
   g->param = NULL;
   atomic_store(&g->status, G_DEAD);
+  glive_set(g, false);
 }
 
 static void resetspinning(rt_m *m) {
@@ -791,7 +891,7 @@ static rt_g *newproc(void (*fn)(void *), void *arg, bool system) {
   m->locks++;
   rt_p *p = m->p;
   rt_g *g = p ? gfget(p) : NULL;
-  if (!g) g = galloc(g_stacksize);
+  if (!g) g = galloc(0);
   g->fn = fn;
   g->arg = arg;
   g->slot = NULL;
@@ -799,7 +899,8 @@ static rt_g *newproc(void (*fn)(void *), void *arg, bool system) {
   g->system = system;
   g->preempt = false;
   g->id = atomic_fetch_add(&sched.goidgen, 1) + 1;
-  g->sp = rt_ctx_init((void *)g->stack_hi, gstart, g);
+  g->sp = NULL;  // context built by execute
+  glive_set(g, true);
   if (!system) atomic_fetch_add(&sched.ngoroutines, 1);
   atomic_store_explicit(&g->status, G_RUNNABLE, memory_order_release);
   if (p && atomic_load(&p->status) == P_RUNNING) {
@@ -1015,35 +1116,41 @@ static void sysmon_start(void) {
 
 // ---- GC support ----
 
-void sched_scan_roots(void (*scan)(uintptr_t lo, uintptr_t hi)) {
-  for (rt_g *g = sched.allg; g; g = g->alllink) {
-    uint32_t s = atomic_load(&g->status);
-    if (s == G_IDLE || s == G_DEAD) continue;
-    scan((uintptr_t)&g->arg, (uintptr_t)(&g->arg + 1));
-    scan((uintptr_t)&g->slot, (uintptr_t)(&g->slot + 1));
-    scan((uintptr_t)&g->param, (uintptr_t)(&g->param + 1));
-    uintptr_t lo;
-    if (s == G_RUNNING) {
-      rt_m *m = g->m;
-      if (!m || !m->stop_sp) rt_throw("gc: running goroutine has no stop point");
-      lo = (uintptr_t)m->stop_sp;
-    } else if (s == G_SYSCALL) {
-      scan((uintptr_t)g->syscallregs, (uintptr_t)(g->syscallregs + 24));
-      lo = (uintptr_t)g->syscallsp;
-    } else {
-      lo = (uintptr_t)g->sp;
-    }
-    if (lo < g->stack_lo || lo > g->stack_hi) rt_throw("gc: goroutine sp outside its stack");
-    scan(lo, g->stack_hi);
+static void scan_g(rt_g *g, void (*scan)(uintptr_t lo, uintptr_t hi)) {
+  uint32_t s = atomic_load(&g->status);
+  if (s == G_IDLE || s == G_DEAD) return;
+  scan((uintptr_t)&g->arg, (uintptr_t)(&g->arg + 1));
+  scan((uintptr_t)&g->slot, (uintptr_t)(&g->slot + 1));
+  scan((uintptr_t)&g->param, (uintptr_t)(&g->param + 1));
+  if (s == G_RUNNABLE && !g->sp) return;  // not started: no stack yet
+  uintptr_t lo;
+  if (s == G_RUNNING) {
+    rt_m *m = g->m;
+    if (!m || !m->stop_sp) rt_throw("gc: running goroutine has no stop point");
+    lo = (uintptr_t)m->stop_sp;
+  } else if (s == G_SYSCALL) {
+    scan((uintptr_t)g->syscallregs, (uintptr_t)(g->syscallregs + 24));
+    lo = (uintptr_t)g->syscallsp;
+  } else {
+    lo = (uintptr_t)g->sp;
   }
+  if (lo < g->stack_lo || lo > g->stack_hi) rt_throw("gc: goroutine sp outside its stack");
+  scan(lo, g->stack_hi);
 }
 
-// Release memory of free goroutine stacks. World stopped.
-void sched_release_free_stacks(void) {
-  uintptr_t keep = 64 << 10;
-  for (rt_g *g = sched.allg; g; g = g->alllink) {
-    if (atomic_load(&g->status) != G_IDLE) continue;
-    if (g->stack_hi - g->stack_lo > keep) os_release((void *)g->stack_lo, g->stack_hi - g->stack_lo - keep);
+// World stopped.
+void sched_scan_roots(void (*scan)(uintptr_t lo, uintptr_t hi)) {
+  uint32_t n = __atomic_load_n(&nallg, __ATOMIC_ACQUIRE);
+  for (uint32_t c = 0; c * GCHUNK < n; c++) {
+    gchunk *ch = gchunks[c];
+    for (uint32_t w = 0; w < GCHUNK / 64; w++) {
+      uint64_t bits = atomic_load_explicit(&ch->live[w], memory_order_relaxed);
+      while (bits) {
+        uint32_t b = (uint32_t)__builtin_ctzll(bits);
+        bits &= bits - 1;
+        scan_g(ch->g[w * 64 + b], scan);
+      }
+    }
   }
 }
 
@@ -1093,6 +1200,7 @@ void sched_start_main(void) {
   g->fn = main_entry;
   g->id = atomic_fetch_add(&sched.goidgen, 1) + 1;
   g->sp = rt_ctx_init((void *)g->stack_hi, gstart, g);
+  glive_set(g, true);
   atomic_fetch_add(&sched.ngoroutines, 1);
   atomic_store(&g->status, G_RUNNABLE);
   rt_main_g = g;

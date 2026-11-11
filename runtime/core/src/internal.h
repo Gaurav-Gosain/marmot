@@ -159,7 +159,7 @@ struct rt_g {
   void *param;            // rt_gparam, GC root
   rt_m *m;                // M running this G, or NULL
   rt_g *schedlink;        // run queue and free list link
-  rt_g *alllink;          // all goroutines list
+  uint32_t gidx;          // index in the goroutine table
   void *syscallsp;        // sp saved at rt_entersyscall
   void *syscallregs[24];  // callee-saved registers at rt_entersyscall
   rt_timer *sleeptimer;   // rt_sleep, allocated on first use (not GC memory)
@@ -200,8 +200,10 @@ struct rt_p {
   _Atomic uint32_t schedtick;
   uint32_t sysmon_schedtick;
   int64_t sysmon_schedwhen;
-  rt_g *gfree;                   // local free goroutines
+  rt_g *gfree;                   // local free goroutines (no stacks)
   int32_t ngfree;
+  uintptr_t stackcache[32];      // free stacks: mapping base addresses
+  int32_t nstackcache;
 };
 
 struct rt_m {
@@ -284,8 +286,7 @@ typedef struct schedt {
   note stopnote;
   _Atomic uint32_t worldgen;  // bumped by start-the-world; Ms wait on it
   // Goroutine accounting.
-  rt_spin glock;              // protects allg
-  rt_g *allg;
+  rt_spin glock;              // protects the goroutine table (sched.c)
   _Atomic int64_t ngoroutines; // user goroutines alive
   _Atomic int64_t goidgen;
   bool main_exited;           // main goroutine called rt_goexit
@@ -308,7 +309,6 @@ void wakep(void);
 // Iterate goroutines and Ms for the GC. World must be stopped.
 void sched_scan_roots(void (*scan)(uintptr_t lo, uintptr_t hi));
 rt_g *new_system_g(void (*fn)(void *), void *arg);
-void sched_release_free_stacks(void);
 // signal.c
 void signal_init(void);
 void signal_init_thread(rt_m *m);
