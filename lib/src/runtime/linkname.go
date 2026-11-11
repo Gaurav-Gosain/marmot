@@ -407,3 +407,14 @@ func weak_runtime_registerWeakPointer(p unsafe.Pointer) unsafe.Pointer {
 func weak_runtime_makeStrongFromWeak(h unsafe.Pointer) unsafe.Pointer {
 	return *(*unsafe.Pointer)(h)
 }
+
+// crypto/rand and crypto/internal/boring/bcache.
+
+//go:linkname crypto_rand_fatal crypto/rand.fatal
+func crypto_rand_fatal(s string) { throw(s) }
+
+// bcache_registerCache would let the collector clear BoringCrypto caches;
+// marmot has no BoringCrypto, so the caches are simply kept.
+//
+//go:linkname bcache_registerCache crypto/internal/boring/bcache.registerCache
+func bcache_registerCache(p unsafe.Pointer) {}

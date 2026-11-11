@@ -1,0 +1,6 @@
+-chacha8_amd64.s
+-chacha8_arm64.s
+-chacha8_loong64.s
+-chacha8_riscv64.s
+-chacha8_stub.s
+-chacha8.go
