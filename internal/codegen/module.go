@@ -16,15 +16,16 @@ type moduleGen struct {
 	pkg *ssa.Package // nil for the entry module
 	tm  *typeMapper
 
-	defs    strings.Builder // definitions: globals and functions
-	decls   map[string]string
-	defined map[string]bool
-	queue   []*ssa.Function
-	strs    map[string]string
-	nstr    int
-	nthunk  int
-	static  *staticInit
-	errs    []error
+	defs        strings.Builder // definitions: globals and functions
+	decls       map[string]string
+	defined     map[string]bool
+	queue       []*ssa.Function
+	strs        map[string]string
+	nstr        int
+	nthunk      int
+	regionQueue []*ssa.Function
+	static      *staticInit
+	errs        []error
 }
 
 func (p *Program) newModule(pkg *ssa.Package) *moduleGen {
@@ -56,7 +57,9 @@ func (p *Program) Generate(pkg *ssa.Package) (Module, error) {
 	for _, fn := range p.byPkg[pkg] {
 		m.function(fn, false)
 	}
-	m.drain()
+	for m.drain(); len(m.regionQueue) > 0; m.drain() {
+		m.drainRegions()
+	}
 	m.static.emitObjects()
 	m.keepWriteOnlyGlobals(pkg, names)
 	return m.finish(pkg.Pkg.Path())

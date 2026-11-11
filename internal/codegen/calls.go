@@ -15,6 +15,13 @@ func (f *funcGen) call(c *ssa.CallCommon, instr ssa.Instruction) string {
 	if c.IsInvoke() {
 		return f.invoke(c)
 	}
+	if pl := f.regionCalls[instr]; pl != nil {
+		return f.regionCall(c, pl)
+	}
+	if fn := c.StaticCallee(); f.region != "" && fn != nil && !c.IsInvoke() && fn.Signature.Results().Len() == 1 &&
+		isPtrRepr(fn.Signature.Results().At(0).Type()) && f.m.p.regionCloneable(fn) {
+		return f.callRegionClone(c, fn, f.region) // inside a clone: same region
+	}
 	switch fn := c.Value.(type) {
 	case *ssa.Builtin:
 		return f.builtin(fn, c.Args, instr)

@@ -33,11 +33,14 @@ type funcGen struct {
 	frame             string // _deferframe address, "" if none
 	noinlineCalls     bool   // mark calls no_inline (defer thunks)
 	curBlock          *ssa.BasicBlock
-	open              *openDefers                // open-coded defers, nil if not used
-	stackOK           map[ssa.Value]bool         // heap Allocs and closures that live in the frame
-	appendElems       map[*ssa.Slice][]ssa.Value // append(s, a, b): elements by varargs slice
-	skipInstr         map[ssa.Instruction]bool   // instructions folded into others
-	forceUnsafe       bool                       // the access goes through a locally punned pointer
+	open              *openDefers // open-coded defers, nil if not used
+	stackOK           map[ssa.Value]bool
+	region            string                            // region clone: the rt_region parameter
+	regionCalls       map[ssa.Instruction]*regionPlan   // calls that use a region clone
+	regionFree        map[ssa.Instruction][]*regionPlan // free these regions after the instruction         // heap Allocs and closures that live in the frame
+	appendElems       map[*ssa.Slice][]ssa.Value        // append(s, a, b): elements by varargs slice
+	skipInstr         map[ssa.Instruction]bool          // instructions folded into others
+	forceUnsafe       bool                              // the access goes through a locally punned pointer
 	implicitRunDefers bool
 	curArgs           []ssa.Value        // SSA arguments of a call being expanded as an intrinsic
 	volatile          map[ssa.Value]bool // stack slots that live across setjmp
@@ -89,6 +92,9 @@ func (f *funcGen) fail(pos token.Pos, format string, args ...any) {
 func (f *funcGen) gen(sym string, shared bool) {
 	fn := f.fn
 	params, ret := f.m.signature(fn)
+	if f.region != "" {
+		params = append(params, mlir.Ptr)
+	}
 	var head strings.Builder
 	head.WriteString("  llvm.func ")
 	if shared {
@@ -120,6 +126,9 @@ func (f *funcGen) gen(sym string, shared bool) {
 	for i, p := range fn.Params {
 		f.vals[p] = argNames[i]
 	}
+	if f.region != "" {
+		f.region = argNames[len(argNames)-1]
+	}
 	if len(fn.FreeVars) > 0 {
 		f.ctx = argNames[len(argNames)-1]
 	}
@@ -141,6 +150,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 
 	f.findAppendElems()
 	f.stackOK = f.m.p.stackAllocs(fn)
+	f.findRegionCalls()
 	if od := openDefersFor(fn); od != nil && os.Getenv("MARMOT_NO_OPENDEFER") == "" {
 		f.open = od
 		f.setupOpenDefers()
@@ -184,6 +194,9 @@ func (f *funcGen) gen(sym string, shared bool) {
 			f.curPos = instr.Pos()
 			f.curBlock = b
 			f.instr(instr)
+			for _, pl := range f.regionFree[instr] {
+				f.emit("llvm.call @rt_region_free(%s) : (!llvm.ptr) -> ()", pl.r)
+			}
 		}
 	}
 	var out strings.Builder
@@ -677,6 +690,15 @@ func (f *funcGen) nilCheck(p string) {
 
 func (f *funcGen) alloc(v *ssa.Alloc) {
 	et := v.Type().(*types.Pointer).Elem()
+	if v.Heap && !f.stackOK[v] && f.region != "" {
+		size := f.m.p.opts.Sizes.Sizeof(et)
+		if size == 0 {
+			f.vals[v] = f.addressOf(f.m.zeroBase())
+			return
+		}
+		f.vals[v] = f.op("llvm.call @rt_region_alloc(%s, %s) : (!llvm.ptr, i64) -> !llvm.ptr", f.region, f.constInt(size, mlir.I64))
+		return
+	}
 	if v.Heap && !f.stackOK[v] {
 		f.vals[v] = f.newObject(et)
 		return

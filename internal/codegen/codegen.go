@@ -70,8 +70,9 @@ type Program struct {
 	mu   sync.Mutex
 	syms map[*ssa.Function]string
 
-	escMu sync.Mutex
-	esc   escapeState
+	escMu   sync.Mutex
+	esc     escapeState
+	regions regionState
 
 	usedMethods     map[string]bool // method keys called through interfaces
 	usedMethodsHash string
