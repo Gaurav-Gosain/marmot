@@ -443,16 +443,6 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
       return fail(err);
   }
   setTargetAttrs(lmod, tm, opts.optLevel);
-  // With line info (the pc table, tracebacks), Go functions keep their frames
-  // as gc does: no sibling calls and no tail recursion turned into loops, so a
-  // caller that ends with a call still shows up in a traceback. Runtime
-  // functions keep tail calls (tracebacks hide them; allocation wrappers that
-  // tail call mallocgc cost 10% on bintrees otherwise).
-  if (opts.debugLevel > 0)
-    for (llvm::Function &f : lmod)
-      if (!f.isDeclaration() && f.getSubprogram() && !f.getName().starts_with("runtime.") &&
-          !f.getName().starts_with("internal/"))
-        f.addFnAttr("disable-tail-calls", "true");
   keepRecoverFramesUnmerged(lmod);
   if (opts.initOptNone && opts.optLevel != '0')
     markInitOptNone(lmod);
@@ -461,6 +451,17 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
   if (opts.verifyEach && llvm::verifyModule(lmod, &errs))
     return fail("LLVM IR verification failed");
   runLLVMPipeline(lmod, tm, opts.optLevel, opts.loops, opts);
+  // With line info (the pc table, tracebacks), Go functions keep their frames
+  // as gc does: code generation emits no sibling calls, so a caller that ends
+  // with a call still shows up in a traceback. Set after the optimizer, so
+  // TailCallElim still turns self recursion into loops (bintrees check():
+  // 10% more instructions without it). Runtime functions keep sibling calls
+  // (tracebacks hide them).
+  if (opts.debugLevel > 0 && !opts.keepTailCalls)
+    for (llvm::Function &f : lmod)
+      if (!f.isDeclaration() && f.getSubprogram() && !f.getName().starts_with("runtime.") &&
+          !f.getName().starts_with("internal/"))
+        f.addFnAttr("disable-tail-calls", "true");
   // At -O0 (no pipeline) marmot_gpu_for calls may still be there: CPU path.
   if (!lowerGpuLoops(lmod, "", err))
     return fail(err);

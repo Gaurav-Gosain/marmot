@@ -119,6 +119,9 @@ static cl::opt<std::string> gpuArch(
     "gpu", cl::ValueOptional,
     cl::desc("Offload marked parallel loops to an NVIDIA GPU (PTX for ARCH, default sm_86)"),
     cl::value_desc("arch"), cl::cat(cat));
+static cl::opt<bool> keepTailCalls(
+    "keep-tail-calls",
+    cl::desc("Allow sibling calls in Go code with -g (frames then go missing from tracebacks)"));
 static cl::opt<int> debugLevel(
     "g", cl::desc("Debug info from source locations: 0 none, 1 line tables (default), 2 full"),
     cl::init(1), cl::cat(cat));
@@ -189,6 +192,7 @@ int main(int argc, char **argv) {
   opts.wpoPruneTypes = !noPruneTypes;
   opts.pgoUse = pgoUse;
   opts.debugLevel = debugLevel;
+  opts.keepTailCalls = keepTailCalls;
   opts.prepareOnly = prepareOnly;
   if (prepareOnly && (batchFile.empty() || cacheDir.empty())) {
     errs() << "marmot-backend: -prepare-only needs -batch and -cache-dir\n";

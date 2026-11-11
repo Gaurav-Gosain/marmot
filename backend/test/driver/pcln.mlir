@@ -16,3 +16,11 @@
 // SYMS: main{{$}}
 // SYMS-NEXT: main.helper{{$}}
 // SYMS-NEXT: main.add /src/p/main.go:7
+// Version 3: inlined frames (DW_TAG_inlined_subroutine), innermost first.
+// RUN: %clang -g -O1 -c %S/Inputs/pcln_inline.c -o %t.inl.o
+// RUN: %clang %t.inl.o -o %t.inl.exe
+// RUN: rm -rf %t.inl.dSYM && %dsymutil %t.inl.exe -o %t.inl.dSYM
+// RUN: %pcln -table-version=3 -o %t.inl.pcln %t.inl.dSYM/Contents/Resources/DWARF/%{basename_t}.inl.exe -base-from %t.inl.exe
+// RUN: python3 %S/Inputs/pcln_decode.py %t.inl.pcln --inline $(python3 %S/Inputs/pcln_offsets.py %t.inl.exe outer 0) | %FileCheck %s --check-prefix=INL
+// INL: mid {{.*}}pcln_inline.c:8 <- outer {{.*}}pcln_inline.c:13
+// INL-NEXT: leaf {{.*}}pcln_inline.c:4 <- mid {{.*}}pcln_inline.c:9 <- outer {{.*}}pcln_inline.c:13

@@ -12,6 +12,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstring>
+#include <functional>
 #include <map>
 
 using namespace llvm;
@@ -23,6 +24,9 @@ static cl::opt<std::string> output("o", cl::desc("Output table"), cl::Required);
 static cl::opt<std::string> mainPkg(
     "main-pkg", cl::desc("Package path of the main package; its functions are named main.X, as gc "
                          "names them"));
+static cl::opt<unsigned> version("table-version",
+                                 cl::desc("Table version: 2, or 3 with inlined frames"),
+                                 cl::init(2));
 static cl::opt<std::string> baseFrom(
     "base-from", cl::desc("Binary whose image base the table is relative to (default: input)"));
 
@@ -112,9 +116,20 @@ void textSymbols(const ObjectFile &obj,
   }
 }
 
+// An inlined call: the callee's name, the call site, and the code ranges of
+// the inlined body (DW_TAG_inlined_subroutine).
+struct Inline {
+  int parent; // -1: the function itself
+  unsigned depth;
+  std::string name;
+  uint32_t callFile, callLine;
+  std::vector<std::pair<uint64_t, uint64_t>> ranges;
+};
+
 struct Func {
   uint64_t lo, hi;
   std::string name;
+  std::vector<Inline> inl;
   std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> rows; // pc, line, file index
 };
 
@@ -123,6 +138,8 @@ struct Func {
 int main(int argc, char **argv) {
   InitLLVM init(argc, argv);
   cl::ParseCommandLineOptions(argc, argv, "marmot pc table builder\n");
+  if (const char *v = getenv("MARMOT_PCLN_VERSION"); v && !version.getNumOccurrences())
+    version = atoi(v);
   auto objOr = ObjectFile::createObjectFile(input);
   if (!objOr) {
     errs() << "marmot-pcln: " << input << ": " << toString(objOr.takeError()) << "\n";
@@ -169,6 +186,45 @@ int main(int argc, char **argv) {
       f.lo = lo;
       f.hi = hi;
       f.name = name ? name : "?";
+      // Inlined calls, at any depth (also inside lexical blocks).
+      std::function<void(DWARFDie, int, unsigned)> walk = [&](DWARFDie d, int parent,
+                                                                unsigned depth) {
+        for (DWARFDie c : d.children()) {
+          int here = parent;
+          unsigned cdepth = depth;
+          if (c.getTag() == dwarf::DW_TAG_inlined_subroutine) {
+            Inline in;
+            in.parent = parent;
+            in.depth = cdepth = depth + 1;
+            const char *n = c.getName(DINameKind::LinkageName);
+            if (!n)
+              n = c.getName(DINameKind::ShortName);
+            in.name = n ? n : "?";
+            uint32_t cf = 0, cl = 0, cc = 0, cd = 0;
+            c.getCallerFrame(cf, cl, cc, cd);
+            std::string fname;
+            if (cf && lt->getFileNameByIndex(
+                          cf, cu->getCompilationDir(),
+                          DILineInfoSpecifier::FileLineInfoKind::AbsoluteFilePath, fname))
+              in.callFile = fileId(fname);
+            else
+              in.callFile = 0;
+            in.callLine = cl;
+            if (auto rs = c.getAddressRanges()) {
+              for (auto &r : *rs)
+                if (r.HighPC > r.LowPC)
+                  in.ranges.push_back({r.LowPC, r.HighPC});
+            } else {
+              consumeError(rs.takeError());
+            }
+            here = f.inl.size();
+            f.inl.push_back(std::move(in));
+          }
+          walk(c, here, cdepth);
+        }
+      };
+      if (version >= 3)
+        walk(die, -1, 0);
     }
     for (const auto &row : lt->Rows) {
       if (row.EndSequence || row.Line == 0)
@@ -254,9 +310,54 @@ int main(int argc, char **argv) {
   for (const std::string &f : files)
     fileRec.push_back(prefixed(f, false));
 
-  std::string ftab, lines;
+  std::string ftab, lines, inlIdx, inl;
   uint64_t textEnd = 0;
+  uint32_t ninl = 0, funcIndex = 0;
   for (auto &[lo, f] : funcs) {
+    // Inline tree (version 3): nodes, then pc ranges mapped to the innermost
+    // node that covers them.
+    if (!f.inl.empty()) {
+      std::vector<std::tuple<uint64_t, uint64_t, unsigned>> segs; // [lo, hi) -> node + 1
+      std::vector<uint64_t> cuts;
+      for (auto &in : f.inl)
+        for (auto &[a, b] : in.ranges)
+          cuts.push_back(a), cuts.push_back(b);
+      llvm::sort(cuts);
+      cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
+      for (size_t c = 0; c + 1 < cuts.size(); ++c) {
+        uint64_t a = cuts[c], b = cuts[c + 1];
+        int best = -1;
+        for (size_t k = 0; k < f.inl.size(); ++k)
+          for (auto &[ra, rb] : f.inl[k].ranges)
+            if (ra <= a && b <= rb && (best < 0 || f.inl[k].depth > f.inl[best].depth))
+              best = k;
+        if (best < 0)
+          continue;
+        if (!segs.empty() && std::get<1>(segs.back()) == a && std::get<2>(segs.back()) == best + 1)
+          std::get<1>(segs.back()) = b;
+        else
+          segs.push_back({a, b, best + 1});
+      }
+      u32(inlIdx, funcIndex);
+      u32(inlIdx, inl.size());
+      ++ninl;
+      uvarint(inl, f.inl.size());
+      for (auto &in : f.inl) {
+        uvarint(inl, in.parent + 1);
+        uvarint(inl, prefixed(renameMain(in.name), true));
+        uvarint(inl, in.callFile);
+        uvarint(inl, in.callLine);
+      }
+      uvarint(inl, segs.size());
+      uint64_t at = f.lo;
+      for (auto &[a, b, node] : segs) {
+        uvarint(inl, (a - at) / quantum);
+        uvarint(inl, (b - a) / quantum);
+        uvarint(inl, node);
+        at = b;
+      }
+    }
+    ++funcIndex;
     std::stable_sort(f.rows.begin(), f.rows.end());
     // Only rows that change the line or the file (DWARF also has rows for
     // columns and statement flags).
@@ -299,12 +400,13 @@ int main(int argc, char **argv) {
   for (const std::string &p : pkgs)
     u32(pkgTab, addStr(p));
 
-  const uint32_t hdr = 8 + 4 * 13;
+  const uint32_t hdr = 8 + 4 * (version >= 3 ? 16 : 13);
   uint32_t funcOff = hdr, fileOff = funcOff + ftab.size(), dirOff = fileOff + fileTab.size(),
            pkgOff = dirOff + dirTab.size(), lineOff = pkgOff + pkgTab.size(),
-           strOff2 = lineOff + lines.size();
+           inlIdxOff = lineOff + lines.size(), inlOff = inlIdxOff + inlIdx.size(),
+           strOff2 = inlOff + inl.size();
   std::string table = "MRMTPCLN";
-  u32(table, 2);
+  u32(table, version >= 3 ? 3 : 2);
   u32(table, funcs.size());
   u32(table, files.size());
   u32(table, dirs.size());
@@ -317,7 +419,12 @@ int main(int argc, char **argv) {
   u32(table, pkgOff);
   u32(table, lineOff);
   u32(table, strOff2);
-  table += ftab + fileTab + dirTab + pkgTab + lines + strs;
+  if (version >= 3) {
+    u32(table, ninl);
+    u32(table, inlIdxOff);
+    u32(table, inlOff);
+  }
+  table += ftab + fileTab + dirTab + pkgTab + lines + inlIdx + inl + strs;
 
   std::error_code ec;
   raw_fd_ostream os(output, ec);
@@ -328,6 +435,6 @@ int main(int argc, char **argv) {
   os << table;
   errs() << "marmot-pcln: " << funcs.size() << " functions, " << files.size() << " files, "
          << table.size() << " bytes (functions " << ftab.size() << ", lines " << lines.size()
-         << ", strings " << strs.size() << ")\n";
+         << ", inline " << inlIdx.size() + inl.size() << ", strings " << strs.size() << ")\n";
   return 0;
 }
