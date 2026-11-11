@@ -39,6 +39,8 @@ type Config struct {
 	Target   string
 	Dialect  string
 	Release  bool // whole program optimization (-wpo) and all specializations
+	PGOGen   bool   // instrument for profile generation
+	PGO      string // indexed profile to optimize with
 	Tags     []string
 	Patterns []string
 	Stderr   io.Writer
@@ -329,6 +331,18 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 		if b.wpo() {
 			args = append(args, "-wpo")
 		}
+		if b.cfg.PGOGen {
+			out := b.cfg.Output
+			if out == "" {
+				out = "."
+			}
+			dir, _ := filepath.Abs(filepath.Dir(out))
+			args = append(args, "-pgo-gen="+filepath.Join(dir, "marmot-%m.profraw"))
+		}
+		if b.cfg.PGO != "" {
+			p, _ := filepath.Abs(b.cfg.PGO)
+			args = append(args, "-pgo="+p)
+		}
 		if !b.cfg.NoCache {
 			args = append(args, "-cache-dir", filepath.Join(b.cfg.Root, "build", "cache", "backend"))
 		}
@@ -386,6 +400,9 @@ func (b *build) link(objs []string, out string) error {
 	args := []string{"-o", out}
 	args = append(args, objs...)
 	args = append(args, rt, "-lpthread")
+	if b.cfg.PGOGen {
+		args = append(args, "-fprofile-generate")
+	}
 	if mp := os.Getenv("MARMOT_LINKMAP"); mp != "" && runtime.GOOS == "darwin" {
 		args = append(args, "-Wl,-map,"+mp)
 	}

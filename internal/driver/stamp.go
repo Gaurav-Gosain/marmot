@@ -46,11 +46,15 @@ func (b *build) buildStamp(goos, goarch string) string {
 	fileSig(h, filepath.Join(b.cfg.Root, "build", "bin", "marmot-backend"))
 	fileSig(h, b.rtLib("librtcore.a"))
 	fileSig(h, b.rtLib("rtcore.bc"))
-	for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_NO_BACKEND", "MARMOT_DIALECT", "MARMOT_KEEP_SYMBOLS", "MARMOT_LINKMAP", "MARMOT_WPO", "MARMOT_SPEC"} {
+	for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_NO_BACKEND", "MARMOT_DIALECT", "MARMOT_KEEP_SYMBOLS", "MARMOT_LINKMAP", "MARMOT_WPO", "MARMOT_SPEC", "MARMOT_BACKEND_FLAGS"} {
 		fmt.Fprintf(h, "%s=%s\n", k, os.Getenv(k))
 	}
 	for _, f := range files {
 		fileSig(h, f)
+	}
+	fmt.Fprintf(h, "pgo-gen=%v\n", b.cfg.PGOGen)
+	if b.cfg.PGO != "" {
+		fileSig(h, b.cfg.PGO)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }
