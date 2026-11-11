@@ -479,7 +479,10 @@ func (m *moduleGen) ifaceFunc(t types.Type, sel *types.Selection) string {
 		fmt.Fprintf(&b, "    llvm.store %%a0, %%slot : !llvm.ptr, !llvm.ptr\n")
 		src = "%slot"
 	}
-	if isBool(t) {
+	if m.tm.isBig(t) {
+		// Big receivers are passed by pointer to the immutable boxed copy.
+		fmt.Fprintf(&b, "    %%recv = llvm.bitcast %s : !llvm.ptr to !llvm.ptr\n", src)
+	} else if isBool(t) {
 		fmt.Fprintf(&b, "    %%r8 = llvm.load %s : !llvm.ptr -> i8\n    %%recv = llvm.trunc %%r8 : i8 to i1\n", src)
 	} else {
 		fmt.Fprintf(&b, "    %%recv = llvm.load %s : !llvm.ptr -> %s\n", src, recvT)

@@ -88,7 +88,7 @@ func (f *funcGen) setjmp() {
 		if rt == "" {
 			f.emit("llvm.return")
 		} else {
-			f.emit("llvm.return %s : %s", f.zero(rt), rt)
+			f.emit("llvm.return %s : %s", f.zeroOf(f.fn.Signature.Results()), rt)
 		}
 		f.b = saved
 	}

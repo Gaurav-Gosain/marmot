@@ -31,6 +31,7 @@ type funcGen struct {
 
 	frame         string             // _deferframe address, "" if none
 	noinlineCalls bool               // mark calls no_inline (defer thunks)
+	curBlock      *ssa.BasicBlock
 	curArgs       []ssa.Value        // SSA arguments of a call being expanded as an intrinsic
 	volatile      map[ssa.Value]bool // stack slots that live across setjmp
 }
@@ -164,6 +165,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 				continue
 			}
 			f.curPos = instr.Pos()
+			f.curBlock = b
 			f.instr(instr)
 		}
 	}
@@ -275,6 +277,11 @@ func (f *funcGen) gepByte(base string, off int64) string {
 
 // load reads a Go value of type t from p and returns it in register form.
 func (f *funcGen) load(p string, t types.Type, volatile ...bool) string {
+	if f.tm.isBig(t) {
+		tmp := f.tempFor(t)
+		f.memmove(tmp, p, f.m.p.opts.Sizes.Sizeof(t))
+		return tmp
+	}
 	mt := f.tm.memType(t)
 	vol := ""
 	if len(volatile) > 0 && volatile[0] {
@@ -289,6 +296,10 @@ func (f *funcGen) load(p string, t types.Type, volatile ...bool) string {
 
 // store writes the register value v of type t to p.
 func (f *funcGen) store(v, p string, t types.Type, volatile ...bool) {
+	if f.tm.isBig(t) {
+		f.memmove(p, v, f.m.p.opts.Sizes.Sizeof(t))
+		return
+	}
 	mt := f.tm.memType(t)
 	if isBool(t) {
 		v = f.op("llvm.zext %s : i1 to i8", v)
@@ -342,7 +353,11 @@ func (f *funcGen) alloca(t string, align int64) string {
 }
 
 // spill stores v of Go type t in a fresh stack slot and returns its address.
+// The slot must only be read. Big values already live in memory.
 func (f *funcGen) spill(v string, t types.Type) string {
+	if f.tm.isBig(t) {
+		return v
+	}
 	p := f.alloca(f.tm.memType(t), f.m.p.opts.Sizes.Alignof(t))
 	f.store(v, p, t)
 	return p
@@ -385,7 +400,7 @@ func (f *funcGen) value(v ssa.Value) string {
 func (f *funcGen) constant(c constant.Value, t types.Type) string {
 	vt := f.tm.valType(t)
 	if c == nil {
-		return f.zero(vt)
+		return f.zeroOf(t)
 	}
 	switch u := t.Underlying().(type) {
 	case *types.Basic:
@@ -483,7 +498,13 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 		f.fieldAddr(v)
 	case *ssa.Field:
 		st := v.X.Type().Underlying().(*types.Struct)
-		f.vals[v] = f.extract(f.value(v.X), f.tm.memType(v.X.Type()), v.Field, st.Field(v.Field).Type())
+		ft := st.Field(v.Field).Type()
+		if f.tm.isBig(v.X.Type()) {
+			p := f.gep(f.value(v.X), f.tm.memType(v.X.Type()), 0, v.Field)
+			f.vals[v] = f.load(p, ft)
+		} else {
+			f.vals[v] = f.extract(f.value(v.X), f.tm.memType(v.X.Type()), v.Field, ft)
+		}
 	case *ssa.IndexAddr:
 		f.indexAddr(v)
 	case *ssa.Index:
@@ -564,13 +585,13 @@ func (f *funcGen) ret(r *ssa.Return) {
 	case 0:
 		f.emit("llvm.return")
 	case 1:
-		v := f.value(r.Results[0])
+		v := f.escapeBig(f.value(r.Results[0]), r.Results[0].Type())
 		f.emit("llvm.return %s : %s", v, f.tm.valType(r.Results[0].Type()))
 	default:
 		rt := f.tm.valType(f.fn.Signature.Results())
 		vs := make([]string, len(r.Results))
 		for i, x := range r.Results {
-			vs[i] = f.value(x)
+			vs[i] = f.escapeBig(f.value(x), x.Type())
 		}
 		agg := f.build(rt, vs...)
 		f.emit("llvm.return %s : %s", agg, rt)
@@ -601,7 +622,16 @@ func (f *funcGen) alloc(v *ssa.Alloc) {
 		return
 	}
 	mt := f.tm.memType(et)
+	if f.m.p.opts.Sizes.Sizeof(et) > maxStackVar {
+		f.vals[v] = f.newObject(et)
+		return
+	}
 	p := f.alloca(mt, f.m.p.opts.Sizes.Alignof(et))
+	if f.tm.isBig(et) && !f.volatile[v] {
+		f.memset(p, f.m.p.opts.Sizes.Sizeof(et))
+		f.vals[v] = p
+		return
+	}
 	z := f.zero(mt)
 	vol := ""
 	if f.volatile[v] {

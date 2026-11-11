@@ -152,6 +152,12 @@ func (f *funcGen) equal(x, y string, t types.Type) string {
 			return f.rtcall("efaceeq", x, y)
 		}
 		return f.rtcall("ifaceeq", x, y)
+	case *types.Struct, *types.Array:
+		if f.tm.isBig(t) {
+			return f.rtcall("typeequal", f.typeDesc(t), x, y)
+		}
+	}
+	switch u := t.Underlying().(type) {
 	case *types.Struct:
 		res := f.op("llvm.mlir.constant(true) : i1")
 		for i := 0; i < u.NumFields(); i++ {

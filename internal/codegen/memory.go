@@ -84,6 +84,13 @@ func (f *funcGen) index(v *ssa.Index) {
 		f.vals[v] = f.op("llvm.load %s : !llvm.ptr -> i8", bp)
 	case *types.Array:
 		at := f.tm.memType(v.X.Type())
+		if f.tm.isBig(v.X.Type()) {
+			i := f.index64(v.Index)
+			n := f.constInt(u.Len(), mlir.I64)
+			f.boundsCheck(i, n, isSigned(v.Index.Type()))
+			f.vals[v] = f.load(f.gepDyn(x, f.tm.memType(u.Elem()), i), u.Elem())
+			return
+		}
 		if c, ok := v.Index.(*ssa.Const); ok && c.Value != nil {
 			i := c.Int64()
 			if i < 0 || i >= u.Len() {

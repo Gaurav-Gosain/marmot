@@ -35,6 +35,9 @@ func (f *funcGen) boxValue(x ssa.Value) string {
 		return f.addressOf(f.m.zeroBase())
 	}
 	if c, ok := x.(*ssa.Const); ok {
+		if c.Value == nil && f.tm.isBig(t) {
+			return f.addressOf(f.m.zeroGlobal(t)) // boxed values are never written
+		}
 		return f.addressOf(f.m.constBox(c))
 	}
 	p := f.newObject(t)
@@ -64,6 +67,9 @@ func (f *funcGen) fromDataWord(data string, t types.Type) string {
 	}
 	if f.m.p.opts.Sizes.Sizeof(t) == 0 {
 		return f.zero(f.tm.valType(t))
+	}
+	if f.tm.isBig(t) {
+		return data // boxed values are never written
 	}
 	return f.load(data, t)
 }
@@ -204,7 +210,7 @@ func (f *funcGen) typeAssert(v *ssa.TypeAssert) {
 	}
 	vt := f.tm.valType(at)
 	yes, done := f.newBlock(), f.newBlock()
-	z := f.zero(vt)
+	z := f.zeroOf(at)
 	f.emit("llvm.cond_br %s, %s, %s(%s : %s)", ok, yes, done, z, vt)
 	fmt.Fprintf(f.b, "  %s:\n", yes)
 	val := f.fromDataWord(data, at)

@@ -4,6 +4,7 @@ package loader
 
 import (
 	"fmt"
+	"sort"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -115,7 +116,29 @@ func Load(cfg Config) (*Program, error) {
 	if len(pkgs) == 0 {
 		return nil, fmt.Errorf("no packages matched %v", cfg.Patterns)
 	}
-	prog, ssaPkgs := ssautil.AllPackages(pkgs, ssa.InstantiateGenerics)
+	// x/tools/go/ssa cannot build methods with their own type parameters
+	// (Go 1.27); report them instead of crashing.
+	var unsupported []string
+	for _, p := range all {
+		for id, obj := range p.TypesInfo.Defs {
+			fn, ok := obj.(*types.Func)
+			if !ok {
+				continue
+			}
+			sig := fn.Signature()
+			if sig.Recv() != nil && sig.TypeParams().Len() > 0 {
+				unsupported = append(unsupported, fmt.Sprintf("%s: generic method %s is not supported yet", p.Fset.Position(id.Pos()), fn.Name()))
+			}
+		}
+	}
+	if len(unsupported) > 0 {
+		sort.Strings(unsupported)
+		return nil, fmt.Errorf("%s", strings.Join(unsupported, "\n"))
+	}
+	prog, ssaPkgs, err := buildSSA(pkgs)
+	if err != nil {
+		return nil, err
+	}
 	if !userRuntime {
 		var roots []*packages.Package
 		for _, p := range pkgs {
@@ -125,7 +148,6 @@ func Load(cfg Config) (*Program, error) {
 		}
 		pkgs = roots
 	}
-	prog.Build()
 	m := map[*types.Package]*ssa.Package{}
 	for _, p := range prog.AllPackages() {
 		m[p.Pkg] = p
@@ -153,4 +175,16 @@ func packageName(file string) (string, error) {
 		return "", err
 	}
 	return f.Name.Name, nil
+}
+
+// buildSSA builds SSA for all packages, turning builder panics into errors.
+func buildSSA(pkgs []*packages.Package) (prog *ssa.Program, ssaPkgs []*ssa.Package, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("internal error building SSA: %v", r)
+		}
+	}()
+	prog, ssaPkgs = ssautil.AllPackages(pkgs, ssa.InstantiateGenerics)
+	prog.Build()
+	return prog, ssaPkgs, nil
 }

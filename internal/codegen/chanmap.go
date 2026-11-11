@@ -34,7 +34,14 @@ func (f *funcGen) recv(v *ssa.UnOp) string {
 func (f *funcGen) zeroSlot(t types.Type) string {
 	mt := f.tm.memType(t)
 	a := f.m.p.opts.Sizes.Alignof(t)
+	if f.m.p.opts.Sizes.Sizeof(t) > maxStackVar {
+		return f.newObject(t)
+	}
 	p := f.alloca(mt, a)
+	if f.tm.isBig(t) {
+		f.memset(p, f.m.p.opts.Sizes.Sizeof(t))
+		return p
+	}
 	f.emit("llvm.store %s, %s {alignment = %d : i64} : %s, !llvm.ptr", f.zero(mt), p, a, mt)
 	return p
 }
@@ -187,7 +194,7 @@ func (f *funcGen) next(v *ssa.Next) {
 		n := f.extractRaw(s, tString, 1)
 		more := f.op("llvm.icmp \"slt\" %s, %s : i64", i, n)
 		body, done := f.newBlock(), f.newBlock()
-		zero := f.zero(rt)
+		zero := f.zeroOf(v.Type())
 		f.emit("llvm.cond_br %s, %s, %s(%s : %s)", more, body, done, zero, rt)
 		fmt.Fprintf(f.b, "  %s:\n", body)
 		// ASCII fast path.
@@ -247,7 +254,7 @@ func (f *funcGen) next(v *ssa.Next) {
 	kp := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", f.gep(it, hmt, 0, keyIdx))
 	more := f.op("llvm.icmp \"ne\" %s, %s : !llvm.ptr", kp, f.null())
 	body, done := f.newBlock(), f.newBlock()
-	zero := f.zero(rt)
+	zero := f.zeroOf(v.Type())
 	f.emit("llvm.cond_br %s, %s, %s(%s : %s)", more, body, done, zero, rt)
 	fmt.Fprintf(f.b, "  %s:\n", body)
 	ep := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", f.gep(it, hmt, 0, elemIdx))

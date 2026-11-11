@@ -51,11 +51,30 @@ func (m *typeMapper) valType(t types.Type) string {
 			}
 			s = mlir.Struct(fs...)
 		}
+	case *types.Struct, *types.Array:
+		if m.isBig(t) {
+			s = mlir.Ptr
+		} else {
+			s = m.memType(t)
+		}
 	default:
 		s = m.memType(t)
 	}
 	m.val[t] = s
 	return s
+}
+
+// bigValueSize is the size above which struct and array values are kept in
+// memory: their register form is a pointer to an immutable copy.
+const bigValueSize = 128
+
+// isBig reports whether values of t use the indirect register form.
+func (m *typeMapper) isBig(t types.Type) bool {
+	switch t.Underlying().(type) {
+	case *types.Struct, *types.Array:
+		return m.sizes.Sizeof(t) > bigValueSize
+	}
+	return false
 }
 
 // memType is the LLVM type of a value of type t stored in memory.
