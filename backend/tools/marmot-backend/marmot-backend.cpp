@@ -117,6 +117,11 @@ static cl::opt<std::string> gpuArch(
 static cl::opt<int> debugLevel(
     "g", cl::desc("Debug info from source locations: 0 none, 1 line tables (default), 2 full"),
     cl::init(1), cl::cat(cat));
+static cl::opt<bool> prepareOnly(
+    "prepare-only",
+    cl::desc("Batch with -cache-dir: fill the cache (with -wpo: only the program "
+             "independent first phase) and write no outputs"),
+    cl::cat(cat));
 static cl::opt<bool> verifyEach("verify-each",
                                 cl::desc("Verify IR after every pass"), cl::cat(cat));
 
@@ -178,6 +183,11 @@ int main(int argc, char **argv) {
   opts.wpoClosedWorld = !noClosedWorld;
   opts.pgoUse = pgoUse;
   opts.debugLevel = debugLevel;
+  opts.prepareOnly = prepareOnly;
+  if (prepareOnly && (batchFile.empty() || cacheDir.empty())) {
+    errs() << "marmot-backend: -prepare-only needs -batch and -cache-dir\n";
+    return 1;
+  }
   if (gpuArch.getNumOccurrences())
     opts.gpuArch = gpuArch.empty() ? "sm_86" : std::string(gpuArch);
   opts.loops.gpu = !opts.gpuArch.empty();

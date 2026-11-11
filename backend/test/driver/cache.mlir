@@ -29,3 +29,12 @@ module {
     llvm.return %r : i32
   }
 }
+// -prepare-only fills the cache without outputs; the real build then hits.
+// RUN: rm -rf %t.cache2 %t.a.o %t.b.o
+// RUN: %backend -O2 -batch %t.jobs -wpo -cache-dir %t.cache2 -prepare-only
+// RUN: test ! -e %t.a.o
+// RUN: %backend -O2 -batch %t.jobs -cache-dir %t.cache2 -prepare-only
+// RUN: %backend -O2 -batch %t.jobs -cache-dir %t.cache2 -time 2>&1 | %FileCheck %s --check-prefix=DEVHIT
+// RUN: %backend -O2 -batch %t.jobs -wpo -cache-dir %t.cache2 -time 2>&1 | %FileCheck %s --check-prefix=WPO
+// DEVHIT: cache {{[0-9]+}} hits 0 misses
+// WPO: cache {{[0-9]+}} hits {{[1-9][0-9]*}} misses

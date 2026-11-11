@@ -40,6 +40,7 @@ struct CompileOptions {
   // Debug info from the MLIR op locations: 0 none, 1 line tables (default),
   // 2 full. Nothing is emitted for a module without file locations.
   int debugLevel = 1;
+  bool prepareOnly = false;    // batch: fill the cache (phase 1 for -wpo), write no outputs
   std::string gpuArch;         // -gpu=sm_86: PTX for "marmot-gpu-body" loops (docs/gpu.md)
   bool devirt = true;          // go-devirt at -O1 and up
   bool strings = true;         // go-strings at -O1 and up

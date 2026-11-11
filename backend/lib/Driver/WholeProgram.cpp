@@ -578,6 +578,14 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   if (!ok)
     return false;
 
+  // -prepare-only with -wpo: the program dependent part is not cacheable
+  // ahead of time; phase 1 (escape rounds, bitcode, summaries) is done.
+  if (wpo && opts.prepareOnly) {
+    stats.cacheHits = cache.hits;
+    stats.cacheMisses = cache.misses;
+    return ok;
+  }
+
   // Dev mode: every module on its own.
   if (!wpo) {
     parallel([&](unsigned i, raw_ostream &es, PhaseTimes &t) {
@@ -585,7 +593,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       std::string key = hashHex(m.keyB + "|obj");
       if (cacheObjects) {
         if (auto obj = cache.get(key, "o")) {
-          if (!writeFile(m.job.out, *obj))
+          if (!opts.prepareOnly && !writeFile(m.job.out, *obj))
             es << m.job.out << ": cannot write\n";
           return;
         }
@@ -598,11 +606,16 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         es << m.job.in << ": " << (tm ? toString(mOr.takeError()) : err) << "\n";
         return;
       }
-      if (!optimizeAndEmit(**mOr, *tm, m.job.in, m.job.out, opts, t, es))
+      std::string out = m.job.out;
+      if (opts.prepareOnly) // the object goes to the cache only
+        out = m.job.out + ".prepare.tmp";
+      if (!optimizeAndEmit(**mOr, *tm, m.job.in, out, opts, t, es))
         return;
       if (cacheObjects)
-        if (auto obj = MemoryBuffer::getFile(m.job.out, false, false))
+        if (auto obj = MemoryBuffer::getFile(out, false, false))
           cache.put(key, "o", (*obj)->getBuffer());
+      if (opts.prepareOnly)
+        sys::fs::remove(out);
     });
     stats.cacheHits = cache.hits;
     stats.cacheMisses = cache.misses;
