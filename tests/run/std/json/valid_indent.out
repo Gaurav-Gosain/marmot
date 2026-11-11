@@ -1,0 +1,24 @@
+true {}
+true [1,2,3]
+false {"a":}
+false [1,]
+false "unterminated
+false nul
+false {"a":1}extra
+true  1 
+true -0.5e+10
+false 01
+true "\ud800"
+true {"a":{"b":[null]}}
+{
+	"a": [
+		1,
+		2,
+		{
+			"b": null
+		}
+	],
+	"c": "d"
+}
+{"a":[1,2]}
+"\u003ca\u0026b\u003e"

@@ -1,0 +1,21 @@
+{"name":"Ann \"A\" \u003cb\u003e","age":30,"email":null,"tags":["x","y"],"addr":{"street":"1 Main"},"score":1.5,"active":"true","raw":{"k":[1,2]},"labels":null} <nil>
+{
+  "a": [
+    1,
+    2
+  ],
+  "b": 1,
+  "c": null
+}
+1 <nil>
+"s" <nil>
+2.5 <nil>
+true <nil>
+null <nil>
+null <nil>
+[] <nil>
+null <nil>
+1e+21 <nil>
+1e-7 <nil>
+"é\u2028\u0001" <nil>
+1152921504606846976 <nil>

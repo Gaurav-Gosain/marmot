@@ -1,0 +1,11 @@
+.txt
+.gz
+.hidden
+
+
+.
+/a/b/ c.txt
+true noslash
+true false true
+/ : a/b a/b
+[/a][/b][][/c]

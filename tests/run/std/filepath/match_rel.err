@@ -1,0 +1,14 @@
+*.go main.go true false
+*.go dir/main.go false false
+a?c abc true false
+[a-c]x bx true false
+[^a-c]x bx false false
+a*b*c aXXbYYc true false
+\* * true false
+[ a false true
+  true false
+c/d false
+../c false
+. false
+ true
+../../../c false

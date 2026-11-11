@@ -1,0 +1,11 @@
+{"type":"a","n":1}
+{
+> "k": 2
+>}
+"<tag>&"
+map[n:1 type:x]
+map[n:2 type:y]
+[1 2]
+tail
+json: unknown field "bogus"
+12345678901234567890 json.Number

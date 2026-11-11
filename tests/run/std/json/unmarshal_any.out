@@ -1,0 +1,10 @@
+a=[1 2 map[k:v]] ([]interface {})
+b=true (bool)
+f=1.5 (float64)
+n=1 (float64)
+o=map[p:map[q:1000]] (map[string]interface {})
+s=x (string)
+z=<nil> (<nil>)
+[1 two [3] <nil>] 4
+9007199254740993
+9.007199254740992e+15

@@ -1,0 +1,10 @@
+true bob@example.com [9 24]
+[bob@example.com bob example]
+[bob@example.com alice@test.com] [bob@example.com]
+[[bob@example.com bob example] [alice@test.com alice test]]
+[[9 24] [26 40]]
+2 (\w+)@(\w+)\.com
+true <nil>
+false <nil>
+error parsing regexp: missing closing ): `(unclosed`
+error parsing regexp: invalid nested repetition operator: `**`

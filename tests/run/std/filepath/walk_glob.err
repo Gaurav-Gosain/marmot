@@ -1,0 +1,11 @@
+. true
+a true
+a/1.txt false
+a/b true
+a/b/2.go false
+c true
+c/3.txt false
+top.txt false
+2
+1 top.txt
+1.txt 3.txt top.txt 

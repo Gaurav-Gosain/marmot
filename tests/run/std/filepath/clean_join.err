@@ -1,0 +1,14 @@
+.
+.
+/
+a/b
+a/b
+a/c
+../a
+/a
+a/b
+/a
+..
+/x/y
+a/c /x   a/b
+b.txt a . / /a/b . / .

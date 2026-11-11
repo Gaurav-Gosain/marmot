@@ -1,0 +1,9 @@
+true a string 10
+unexpected end of JSON input
+true invalid character 'x' after top-level value
+json: Unmarshal(non-pointer main.S)
+json: Unmarshal(nil)
+json: unsupported value: NaN
+json: unsupported type: chan int
+json: unsupported value: jsontext: object member name must be a string after offset 2
+json: unsupported type: func()
