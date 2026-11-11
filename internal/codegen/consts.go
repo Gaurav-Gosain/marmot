@@ -15,6 +15,7 @@ type cv struct {
 	i     int64
 	sym   string
 	f     float64
+	img   *memImage
 	elems []cv
 }
 
@@ -26,6 +27,7 @@ const (
 	cvAddr
 	cvAgg
 	cvFloat
+	cvImage // static init only: resolved before emission
 )
 
 func cInt(v int64, typ string) cv { return cv{typ: typ, kind: cvInt, i: v} }

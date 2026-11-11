@@ -160,6 +160,9 @@ func (f *funcGen) gen(sym string, shared bool) {
 			f.rtcall("deferreturn", f.frame)
 		}
 		for _, instr := range b.Instrs {
+			if f.m.static != nil && f.m.static.skip[instr] {
+				continue
+			}
 			f.curPos = instr.Pos()
 			f.instr(instr)
 		}

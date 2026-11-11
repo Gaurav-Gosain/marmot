@@ -23,6 +23,7 @@ type moduleGen struct {
 	strs    map[string]string
 	nstr    int
 	nthunk  int
+	static  *staticInit
 	errs    []error
 }
 
@@ -40,6 +41,7 @@ func (p *Program) newModule(pkg *ssa.Package) *moduleGen {
 // Generate returns the MLIR module for pkg.
 func (p *Program) Generate(pkg *ssa.Package) (Module, error) {
 	m := p.newModule(pkg)
+	m.static = m.analyzeStaticInit(pkg)
 	// Globals.
 	names := make([]string, 0, len(pkg.Members))
 	for n := range pkg.Members {
@@ -55,12 +57,14 @@ func (p *Program) Generate(pkg *ssa.Package) (Module, error) {
 		m.function(fn, false)
 	}
 	m.drain()
+	m.static.emitObjects()
 	return m.finish(pkg.Pkg.Path())
 }
 
 // GenerateMain returns the entry module that defines marmot_main.
 func (p *Program) GenerateMain(mainPkg *ssa.Package) (Module, error) {
 	m := p.newModule(nil)
+	m.static = &staticInit{}
 	var b strings.Builder
 	b.WriteString("  llvm.func @marmot_main() {\n")
 	call := func(fn *ssa.Function) {
@@ -276,6 +280,10 @@ func (m *moduleGen) global(g *ssa.Global) {
 	sym := m.globalSym(g)
 	m.defined[sym] = true
 	t := m.tm.memType(g.Type().(*types.Pointer).Elem())
+	if img := m.static.images[g]; img != nil && !m.static.dynamic[g] {
+		m.constGlobal(sym, "external", false, m.static.value(img))
+		return
+	}
 	fmt.Fprintf(&m.defs, "  llvm.mlir.global external %s() {addr_space = 0 : i32} : %s {\n    %%0 = llvm.mlir.zero : %s\n    llvm.return %%0 : %s\n  }\n",
 		mlir.Symbol(sym), t, t, t)
 }

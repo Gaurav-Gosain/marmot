@@ -148,6 +148,32 @@ func (m *typeMapper) structType(st *types.Struct) string {
 	return mlir.Struct(fs...)
 }
 
+// structFieldCount returns the number of LLVM fields of st's memory type
+// (the Go fields plus an optional tail padding array).
+func (m *typeMapper) structFieldCount(st *types.Struct) int {
+	if m.structPadType(st) != "" {
+		return st.NumFields() + 1
+	}
+	return st.NumFields()
+}
+
+// structPadType returns the tail padding array type of st, or "".
+func (m *typeMapper) structPadType(st *types.Struct) string {
+	var off, maxAlign int64 = 0, 1
+	for i := 0; i < st.NumFields(); i++ {
+		f := st.Field(i)
+		a := m.sizes.Alignof(f.Type())
+		if a > maxAlign {
+			maxAlign = a
+		}
+		off = align(off, a) + m.sizes.Sizeof(f.Type())
+	}
+	if goSize := m.sizes.Sizeof(st); goSize != align(off, maxAlign) {
+		return mlir.Array(goSize-off, mlir.I8)
+	}
+	return ""
+}
+
 func align(x, a int64) int64 { return (x + a - 1) / a * a }
 
 // isBool reports whether t is a boolean type (i1 in registers).
