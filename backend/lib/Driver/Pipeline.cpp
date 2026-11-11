@@ -105,7 +105,8 @@ makeTargetMachine(const CompileOptions &opts, llvm::Triple &triple,
   to.FunctionSections = true;
   to.DataSections = true;
   // With a profile, split cold blocks of hot functions into a cold section.
-  to.EnableMachineFunctionSplitter = !opts.pgoUse.empty();
+  // LLVM supports the splitter for ELF only (it crashes the Mach-O asm printer).
+  to.EnableMachineFunctionSplitter = !opts.pgoUse.empty() && triple.isOSBinFormatELF();
   return std::unique_ptr<llvm::TargetMachine>(target->createTargetMachine(
       triple, cpu, features, to, llvm::Reloc::PIC_, std::nullopt,
       codegenLevel(opts.optLevel)));
