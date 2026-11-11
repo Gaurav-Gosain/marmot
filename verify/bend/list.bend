@@ -370,3 +370,50 @@ def mem_before(z, x, l, m):
       m
     case Con{y, r}:
       mem_before.go(z, x, y, r, eqn(x, y), m, k => mem_before(z, x, r, k))
+
+law bclash:
+  for -b: Bool
+  for e1: {b == True{} : Bool}
+  for e2: {b == False{} : Bool}
+  Empty
+
+def bclash(b, e1, e2):
+  tf(Equal.trans(Bool, True{}, b, False{}, Equal.sym(Bool, b, True{}, e1), e2))
+
+law mem_hit:
+  for +h: Nat
+  for +z: Nat
+  for +r: +List<Nat>
+  for zh: {z == h : Nat}
+  {mem(h, Con{z, r}) == True{} : Bool}
+
+def mem_hit(h, z, r, zh):
+  %zh : {mem(_, Con{z, r}) == True{} : Bool}
+  mem_head(z, r)
+
+law or_false_r:
+  for a: Bool
+  for -b: Bool
+  for e: {or(a, b) == False{} : Bool}
+  {b == False{} : Bool}
+
+def or_false_r(a, b, e):
+  match a:
+    case True{}:
+      Empty.absurd({b == False{} : Bool}, tf(e))
+    case False{}:
+      e
+
+law or_tf:
+  for a: Bool
+  for -b: Bool
+  for m: {or(a, b) == True{} : Bool}
+  for nb: {b == False{} : Bool}
+  {a == True{} : Bool}
+
+def or_tf(a, b, m, nb):
+  match a:
+    case True{}:
+      {==}
+    case False{}:
+      Empty.absurd({False{} == True{} : Bool}, bclash(b, m, nb))
