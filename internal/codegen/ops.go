@@ -367,6 +367,57 @@ func (f *funcGen) complexOp(op token.Token, x, y, vt string) string {
 
 var tComplex128 = mlir.Struct(mlir.F64, mlir.F64)
 
+// readOnlyBytes reports whether []byte(s) conversion v is only read
+// (len, cap, element loads): then it can alias the string's bytes, as gc
+// does for range loops over []byte(s).
+func readOnlyBytes(v *ssa.Convert) bool {
+	for _, r := range *v.Referrers() {
+		switch x := r.(type) {
+		case *ssa.DebugRef:
+		case *ssa.Call:
+			bi, ok := x.Call.Value.(*ssa.Builtin)
+			if !ok || (bi.Name() != "len" && bi.Name() != "cap") {
+				return false
+			}
+		case *ssa.IndexAddr:
+			for _, rr := range *x.Referrers() {
+				if u, ok := rr.(*ssa.UnOp); !ok || u.Op != token.MUL {
+					if _, dbg := rr.(*ssa.DebugRef); !dbg {
+						return false
+					}
+				}
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// tempString reports whether string(b) conversion v is only used as a map
+// lookup key or in comparisons, where a temporary view of b is enough
+// (gc's slicebytetostringtmp).
+func tempString(v *ssa.Convert) bool {
+	for _, r := range *v.Referrers() {
+		switch x := r.(type) {
+		case *ssa.DebugRef:
+		case *ssa.Lookup:
+			if x.Index != ssa.Value(v) {
+				return false
+			}
+		case *ssa.BinOp:
+			switch x.Op {
+			case token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ:
+			default:
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // convert implements the Convert instruction.
 func (f *funcGen) convert(x string, from, to types.Type) string {
 	ft, tt := f.tm.valType(from), f.tm.valType(to)

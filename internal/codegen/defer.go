@@ -97,14 +97,14 @@ func (f *funcGen) setjmp() {
 
 // volatileAllocs returns the stack slots read by the Recover block. They
 // must live in memory across the setjmp, so all their accesses are volatile.
-func volatileAllocs(fn *ssa.Function) map[ssa.Value]bool {
+func volatileAllocs(fn *ssa.Function, stackOK map[ssa.Value]bool) map[ssa.Value]bool {
 	if fn.Recover == nil {
 		return nil
 	}
 	m := map[ssa.Value]bool{}
 	for _, instr := range fn.Recover.Instrs {
 		if u, ok := instr.(*ssa.UnOp); ok && u.Op == token.MUL {
-			if a, ok := u.X.(*ssa.Alloc); ok && !a.Heap {
+			if a, ok := u.X.(*ssa.Alloc); ok && (!a.Heap || stackOK[a]) {
 				m[a] = true
 			}
 		}

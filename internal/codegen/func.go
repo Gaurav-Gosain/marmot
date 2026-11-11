@@ -5,6 +5,7 @@ import (
 	"go/constant"
 	"go/token"
 	"go/types"
+	"os"
 	"strings"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
@@ -32,6 +33,8 @@ type funcGen struct {
 	frame             string // _deferframe address, "" if none
 	noinlineCalls     bool   // mark calls no_inline (defer thunks)
 	curBlock          *ssa.BasicBlock
+	open              *openDefers                // open-coded defers, nil if not used
+	stackOK           map[ssa.Value]bool         // heap Allocs and closures that live in the frame
 	appendElems       map[*ssa.Slice][]ssa.Value // append(s, a, b): elements by varargs slice
 	skipInstr         map[ssa.Instruction]bool   // instructions folded into others
 	forceUnsafe       bool                       // the access goes through a locally punned pointer
@@ -137,8 +140,12 @@ func (f *funcGen) gen(sym string, shared bool) {
 	}
 
 	f.findAppendElems()
-	if needsFrame(fn) {
-		f.volatile = volatileAllocs(fn)
+	f.stackOK = f.m.p.stackAllocs(fn)
+	if od := openDefersFor(fn); od != nil && os.Getenv("MARMOT_NO_OPENDEFER") == "" {
+		f.open = od
+		f.setupOpenDefers()
+	} else if needsFrame(fn) {
+		f.volatile = volatileAllocs(fn, f.stackOK)
 		f.setupFrame()
 		f.implicitRunDefers = !hasRunDefers(fn)
 	}
@@ -167,7 +174,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 		if i > 0 || len(b.Preds) > 0 {
 			f.blockHeader(b, i == 0)
 		}
-		if b == fn.Recover {
+		if b == fn.Recover && f.frame != "" {
 			f.rtcall("deferreturn", f.frame)
 		}
 		for _, instr := range b.Instrs {
@@ -531,6 +538,17 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 	case *ssa.Slice:
 		f.slice(v)
 	case *ssa.Convert:
+		if bs, ok := v.Type().Underlying().(*types.Slice); ok && isString(v.X.Type()) && !isRuneElem(bs.Elem()) && readOnlyBytes(v) {
+			x := f.value(v.X)
+			n := f.extractRaw(x, tString, 1)
+			f.vals[v] = f.build(tSlice, f.extractRaw(x, tString, 0), n, n) // no copy
+			break
+		}
+		if bs, ok := v.X.Type().Underlying().(*types.Slice); ok && isString(v.Type()) && !isRuneElem(bs.Elem()) && tempString(v) {
+			x := f.value(v.X)
+			f.vals[v] = f.makeString(f.extractRaw(x, tSlice, 0), f.extractRaw(x, tSlice, 1)) // no copy
+			break
+		}
 		f.vals[v] = f.convert(f.value(v.X), v.X.Type(), v.Type())
 	case *ssa.ChangeType:
 		f.vals[v] = f.value(v.X)
@@ -547,9 +565,17 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 	case *ssa.ChangeInterface:
 		f.changeInterface(v)
 	case *ssa.Defer:
-		f.deferStmt(v)
+		if f.open != nil {
+			f.openDefer(v)
+		} else {
+			f.deferStmt(v)
+		}
 	case *ssa.RunDefers:
-		f.rtcall("deferreturn", f.frame)
+		if f.open != nil {
+			f.openRunDefers()
+		} else {
+			f.rtcall("deferreturn", f.frame)
+		}
 	case *ssa.Go:
 		f.goStmt(v)
 	case *ssa.MakeChan:
@@ -651,7 +677,7 @@ func (f *funcGen) nilCheck(p string) {
 
 func (f *funcGen) alloc(v *ssa.Alloc) {
 	et := v.Type().(*types.Pointer).Elem()
-	if v.Heap {
+	if v.Heap && !f.stackOK[v] {
 		f.vals[v] = f.newObject(et)
 		return
 	}

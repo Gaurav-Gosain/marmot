@@ -70,6 +70,9 @@ type Program struct {
 	mu   sync.Mutex
 	syms map[*ssa.Function]string
 
+	escMu sync.Mutex
+	esc   escapeState
+
 	usedMethods     map[string]bool // method keys called through interfaces
 	usedMethodsHash string
 	keepExported    bool // reflect method lookups: keep all exported methods
@@ -311,3 +314,22 @@ func (p *Program) runtimeFunc(name string) *ssa.Function {
 }
 
 var _ = mlir.Ptr
+
+// gDeferOffset returns the byte offset of the _defer field of runtime.g.
+func (p *Program) gDeferOffset() (int64, bool) {
+	obj := p.runtime.Pkg.Scope().Lookup("g")
+	if obj == nil {
+		return 0, false
+	}
+	st, ok := obj.Type().Underlying().(*types.Struct)
+	if !ok {
+		return 0, false
+	}
+	offs := p.opts.Sizes.Offsetsof(structFields(st))
+	for i := 0; i < st.NumFields(); i++ {
+		if st.Field(i).Name() == "_defer" {
+			return offs[i], true
+		}
+	}
+	return 0, false
+}

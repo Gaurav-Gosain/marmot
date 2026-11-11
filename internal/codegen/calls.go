@@ -144,6 +144,17 @@ func (f *funcGen) makeClosure(v *ssa.MakeClosure) {
 		fields = append(fields, types.NewField(token.NoPos, nil, fmt.Sprintf("X%d", i), b.Type(), false))
 	}
 	st := types.NewStruct(fields, nil)
+	if f.stackOK[v] {
+		// The closure does not escape: build it in the frame.
+		mt := f.tm.memType(st)
+		obj := f.alloca(mt, 8)
+		f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr", f.addressOf(sym), obj)
+		for i, b := range v.Bindings {
+			f.store(f.value(b), f.gep(obj, mt, 0, i+1), b.Type())
+		}
+		f.vals[v] = obj
+		return
+	}
 	if f.goOps() && !f.anyBig(v.Bindings) {
 		args := make([]string, len(v.Bindings))
 		tys := make([]string, len(v.Bindings))
