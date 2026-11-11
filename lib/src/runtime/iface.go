@@ -8,6 +8,11 @@ import "unsafe"
 // itabTable is an open addressing hash set of itabs built at run time,
 // including negative results (flags&itabBad for a type that does not
 // implement the interface). Compiler emitted itabs are not in it.
+//
+// Readers do not lock: the current table is published through an atomic
+// pointer, a slot goes from nil to a fully built itab with an atomic store
+// and never changes again, and growing builds a new table and publishes
+// it. Writers serialize on itabLock.
 type itabTableType struct {
 	size    uintptr // a power of two
 	count   uintptr
@@ -18,7 +23,7 @@ const itabBad = 1
 
 var (
 	itabLock  mutex
-	itabTable itabTableType
+	itabTable unsafe.Pointer // *itabTableType, read atomically
 )
 
 func itabHashFunc(inter *interfacetype, typ *_type) uintptr {
@@ -26,18 +31,16 @@ func itabHashFunc(inter *interfacetype, typ *_type) uintptr {
 	return h ^ h>>29
 }
 
-func (t *itabTableType) slot(i uintptr) **itab {
-	return (**itab)(unsafe.Add(t.entries, i*ptrSize))
+func (t *itabTableType) slot(i uintptr) *unsafe.Pointer {
+	return (*unsafe.Pointer)(unsafe.Add(t.entries, i*ptrSize))
 }
 
+// find looks (inter, typ) up without locking.
 func (t *itabTableType) find(inter *interfacetype, typ *_type) *itab {
-	if t.size == 0 {
-		return nil
-	}
 	mask := t.size - 1
 	h := itabHashFunc(inter, typ) & mask
 	for i := uintptr(1); ; i++ {
-		m := *t.slot(h)
+		m := (*itab)(atomicLoadp(t.slot(h)))
 		if m == nil {
 			return nil
 		}
@@ -48,33 +51,49 @@ func (t *itabTableType) find(inter *interfacetype, typ *_type) *itab {
 	}
 }
 
-func (t *itabTableType) add(m *itab) {
-	if (t.count+1)*4 > t.size*3 {
-		// Grow to keep the load factor under 3/4.
-		old := *t
-		n := old.size * 2
-		if n == 0 {
-			n = 64
-		}
-		t.size = n
-		t.count = 0
-		t.entries = mallocConservative(n * ptrSize)
-		for i := uintptr(0); i < old.size; i++ {
-			if e := *old.slot(i); e != nil {
-				t.add(e)
-			}
-		}
-	}
+// insert puts m into t, which has room. itabLock is held.
+func (t *itabTableType) insert(m *itab) {
 	mask := t.size - 1
 	h := itabHashFunc(m.inter, m.typ) & mask
 	for i := uintptr(1); ; i++ {
 		if *t.slot(h) == nil {
-			*t.slot(h) = m
+			atomicStorep(t.slot(h), unsafe.Pointer(m))
 			t.count++
 			return
 		}
 		h = (h + i) & mask
 	}
+}
+
+func newItabTable(size uintptr) *itabTableType {
+	t := (*itabTableType)(mallocConservative(unsafe.Sizeof(itabTableType{})))
+	t.size = size
+	t.entries = mallocConservative(size * ptrSize)
+	return t
+}
+
+// itabAdd adds m to the table, growing it first if needed. itabLock is
+// held.
+func itabAdd(m *itab) {
+	t := (*itabTableType)(atomicLoadp(&itabTable))
+	if t == nil {
+		t = newItabTable(64)
+		atomicStorep(&itabTable, unsafe.Pointer(t))
+	}
+	if (t.count+1)*4 > t.size*3 {
+		// Keep the load factor under 3/4: copy into a table twice the
+		// size and publish it. Readers of the old table still see valid
+		// itabs.
+		nt := newItabTable(t.size * 2)
+		for i := uintptr(0); i < t.size; i++ {
+			if e := *t.slot(i); e != nil {
+				nt.insert((*itab)(e))
+			}
+		}
+		atomicStorep(&itabTable, unsafe.Pointer(nt))
+		t = nt
+	}
+	t.insert(m)
 }
 
 // itabFun returns the address of fun[i] of m.
@@ -89,17 +108,25 @@ func getitab(inter *interfacetype, typ *_type, canfail bool) *itab {
 	if inter.mcount == 0 {
 		throw("internal error: getitab with an empty interface")
 	}
-	lock(&itabLock)
-	m := itabTable.find(inter, typ)
-	if m == nil {
-		n := inter.mcount
-		m = (*itab)(mallocConservative(unsafe.Sizeof(itab{}) + (n-1)*ptrSize))
-		m.inter = inter
-		m.typ = typ
-		itabInit(m)
-		itabTable.add(m)
+	var m *itab
+	if t := (*itabTableType)(atomicLoadp(&itabTable)); t != nil {
+		m = t.find(inter, typ)
 	}
-	unlock(&itabLock)
+	if m == nil {
+		lock(&itabLock)
+		if t := (*itabTableType)(atomicLoadp(&itabTable)); t != nil {
+			m = t.find(inter, typ)
+		}
+		if m == nil {
+			n := inter.mcount
+			m = (*itab)(mallocConservative(unsafe.Sizeof(itab{}) + (n-1)*ptrSize))
+			m.inter = inter
+			m.typ = typ
+			itabInit(m)
+			itabAdd(m)
+		}
+		unlock(&itabLock)
+	}
 	if m.flags&itabBad == 0 {
 		return m
 	}

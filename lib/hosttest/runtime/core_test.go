@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"unicode/utf8"
 	"unsafe"
@@ -564,5 +566,41 @@ func TestSizeClassUp(t *testing.T) {
 		if got := sizeClassUp(n); got != want {
 			t.Fatalf("sizeClassUp(%d) = %d, want %d", n, got, want)
 		}
+	}
+}
+
+func TestGetitabConcurrent(t *testing.T) {
+	sig := &_type{kind: kindFunc, str: "func()"}
+	imeths := []imethod{{name: "M", ityp: sig}}
+	inter := &interfacetype{typ: _type{kind: kindInterface, str: "main.J"}, methods: &imeths[0], mcount: 1}
+	code := unsafe.Pointer(new(int))
+	const ntypes = 300
+	types := make([]*_type, ntypes)
+	for i := range types {
+		ms := []method{{name: "M", mtyp: sig, ifn: code}}
+		if i%3 == 0 {
+			ms[0].name = "N" // does not implement
+		}
+		types[i] = &_type{kind: kindStruct, str: "main.T", uncommon: &uncommontype{methods: &ms[0], mcount: 1}}
+	}
+	var wg sync.WaitGroup
+	var bad int32
+	for w := 0; w < 8; w++ {
+		w := w
+		goroutine(&wg, func() {
+			for r := 0; r < 3; r++ {
+				for i := range types {
+					j := (i*7 + w*13) % ntypes
+					m := assertE2I2(inter, types[j])
+					if (m != nil) != (j%3 != 0) || m != nil && (m.typ != types[j] || *itabFun(m, 0) != code) {
+						atomic.AddInt32(&bad, 1)
+					}
+				}
+			}
+		})
+	}
+	wg.Wait()
+	if bad != 0 {
+		t.Errorf("%d wrong itab results", bad)
 	}
 }

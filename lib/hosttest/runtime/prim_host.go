@@ -177,11 +177,13 @@ func exit(code int32) {
 
 func nanotime() int64 { return 0 }
 
-func atomicLoad32(p *uint32) uint32               { return atomic.LoadUint32(p) }
-func atomicStore32(p *uint32, v uint32)           { atomic.StoreUint32(p, v) }
-func atomicCas32(p *uint32, old, new uint32) bool { return atomic.CompareAndSwapUint32(p, old, new) }
-func atomicXadd32(p *uint32, d int32) uint32      { return atomic.AddUint32(p, uint32(d)) }
-func atomicXadd64(p *uint64, d int64) uint64      { return atomic.AddUint64(p, uint64(d)) }
+func atomicLoad32(p *uint32) uint32                    { return atomic.LoadUint32(p) }
+func atomicStore32(p *uint32, v uint32)                { atomic.StoreUint32(p, v) }
+func atomicCas32(p *uint32, old, new uint32) bool      { return atomic.CompareAndSwapUint32(p, old, new) }
+func atomicLoadp(p *unsafe.Pointer) unsafe.Pointer     { return atomic.LoadPointer(p) }
+func atomicStorep(p *unsafe.Pointer, v unsafe.Pointer) { atomic.StorePointer(p, v) }
+func atomicXadd32(p *uint32, d int32) uint32           { return atomic.AddUint32(p, uint32(d)) }
+func atomicXadd64(p *uint64, d int64) uint64           { return atomic.AddUint64(p, uint64(d)) }
 
 // _defer is defined in panic.go, which is marmot only.
 type _defer struct{}
