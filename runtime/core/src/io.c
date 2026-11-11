@@ -16,6 +16,7 @@ RT_API intptr_t rt_write(int32_t fd, const void *buf, uintptr_t n) {
   } while (r < 0 && errno == EINTR);
   if (r < 0) r = -(intptr_t)errno;
   rt_exitsyscall();
+  if (r == -EPIPE && (fd == 1 || fd == 2)) signal_raise_sigpipe();
   return r;
 }
 

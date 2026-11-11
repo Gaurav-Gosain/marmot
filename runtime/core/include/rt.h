@@ -92,6 +92,8 @@ void **rt_gslot(void);
 // Per-goroutine scratch word used to pass a value across park/ready
 // (channel element pointer, select case index).
 void **rt_gparam(rt_g *g);
+// ID of the running goroutine (main is 1), for panic messages.
+int64_t rt_goid(void);
 // Number of goroutines that exist.
 intptr_t rt_numgoroutine(void);
 // Get and set the number of scheduler threads. n < 1 only queries.
@@ -142,6 +144,16 @@ void rt_exitsyscall(void);
 #define RT_JMPBUF_WORDS 32
 int32_t rt_setjmp(void *buf) __attribute__((returns_twice));
 void rt_longjmp(void *buf, int32_t val) __attribute__((noreturn));
+
+// ---- Faults ----
+
+// Register the Go runtime's handler for memory faults in goroutine code. On
+// SIGSEGV or SIGBUS outside the runtime core, the faulting goroutine calls
+// fn(addr, kind) as if the faulting instruction had called it. kind 1 is a nil
+// dereference (addr below 64 KiB), kind 2 any other fault. fn must not return
+// (it panics). Without a handler the process prints the gc runtime's message
+// and exits 2. Stack overflow is always fatal: "fatal error: stack overflow".
+void rt_set_sigpanic(void (*fn)(uintptr_t addr, int32_t kind));
 
 #ifdef __cplusplus
 }

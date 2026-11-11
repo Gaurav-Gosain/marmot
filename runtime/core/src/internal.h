@@ -39,6 +39,7 @@ typedef struct rt_m rt_m;
 typedef struct rt_p rt_p;
 typedef struct mcache mcache;
 typedef struct mspan mspan;
+typedef struct rt_timer rt_timer;
 
 // ---- OS layer (os_darwin.c, os_linux.c) ----
 
@@ -157,7 +158,8 @@ struct rt_g {
   rt_g *schedlink;        // run queue and free list link
   rt_g *alllink;          // all goroutines list
   void *syscallsp;        // sp saved at rt_entersyscall
-  int64_t waketime;       // rt_sleep
+  void *syscallregs[24];  // callee-saved registers at rt_entersyscall
+  rt_timer *sleeptimer;   // rt_sleep, allocated on first use (not GC memory)
 };
 
 // Request from a goroutine to its M's scheduler after switching to g0.
@@ -166,7 +168,7 @@ enum {
   REQ_PARK,
   REQ_GOSCHED,
   REQ_EXIT,
-  REQ_PREEMPT,
+  REQ_EXITSYSCALL,  // exitsyscall found no P: queue the goroutine globally
 };
 
 enum {
@@ -174,6 +176,7 @@ enum {
   P_RUNNING,
   P_SYSCALL,
   P_GCSTOP,
+  P_DEAD,      // beyond GOMAXPROCS after a shrink
 };
 
 #define RUNQ_SIZE 256
@@ -208,7 +211,7 @@ struct rt_m {
   int64_t id;
   _Atomic int32_t locks;    // >0: runtime critical section, no async stop
   bool spinning;            // looking for work
-  bool blocked;             // sleeping in notesleep in findrunnable
+  bool idle;                // on the idle M list
   note park;
   // Scheduling request from curg.
   int32_t req;
@@ -239,8 +242,11 @@ typedef struct schedt {
   int32_t mcount;             // Ms created
   int32_t nmsys;              // Ms not counted for deadlock (sysmon)
   rt_m *allm;
-  rt_p **allp;
-  int32_t nprocs;             // GOMAXPROCS
+  rt_p *allp[256];           // MAXPROCS
+  _Atomic int32_t nallp;      // allocated Ps
+  _Atomic int32_t nprocs;     // GOMAXPROCS
+  rt_m *timer_m;              // idle M sleeping until the next timer
+  int64_t timer_until;
   rt_g *gfree;                // global free goroutines
   int32_t ngfree;
   // Stop the world.
@@ -253,7 +259,7 @@ typedef struct schedt {
   rt_g *allg;
   _Atomic int64_t ngoroutines; // user goroutines alive
   _Atomic int64_t goidgen;
-  _Atomic int32_t nsyscall;   // goroutines in syscalls (for deadlock)
+  bool main_exited;           // main goroutine called rt_goexit
 } schedt;
 extern schedt sched;
 extern rt_g *rt_main_g;
@@ -268,26 +274,28 @@ void start_the_world(void);
 void rt_safepoint(void);
 // Called by an M that sees gcwaiting set (from a safepoint or signal).
 void sched_stop_self(void *sp, uintptr_t hi);
-// Make g runnable on the current P or globally.
-void ready_g(rt_g *g, bool next);
 void wakep(void);
+// Like rt_go for runtime goroutines: not counted, ignored by deadlock checks.
 // Iterate goroutines and Ms for the GC. World must be stopped.
 void sched_scan_roots(void (*scan)(uintptr_t lo, uintptr_t hi));
 rt_g *new_system_g(void (*fn)(void *), void *arg);
-void preempt_init(void);
-void preempt_m(rt_m *m);
 void sched_release_free_stacks(void);
+// signal.c
+void signal_init(void);
+void signal_init_thread(rt_m *m);
+void signal_preempt(rt_m *m);
+void signal_raise_sigpipe(void);
 
 // ---- Timers (timer.c) ----
 
-typedef struct rt_timer rt_timer;
 void timer_init(void);
 // Run due timers. Returns the next deadline or -1. Called on g0 with a P.
 int64_t timers_check(int64_t now);
 int64_t timers_next(void);
 void timers_scan_roots(void (*scan)(uintptr_t lo, uintptr_t hi));
-// Internal timer that readies g at time when, without the timer goroutine.
-void timer_sleep_g(rt_g *g, int64_t when);
+extern _Atomic int64_t timer_next_when;  // INT64_MAX when no timers
+// Called by timer code after adding a timer that fires at when.
+void sched_timer_added(int64_t when);
 
 // ---- Memory (malloc.c, gc.c) ----
 
