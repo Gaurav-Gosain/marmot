@@ -26,6 +26,9 @@ func TestLoopsReport(t *testing.T) {
 		`{"func":"g","loop":"bb2","phis":[{"kind":"ind"}],
 		  "accesses":[{"id":"s","base":"o","store":true,"size":8,"coef":8,"lo":0,"hi":0,"stride":800,"count":99}],
 		  "pairs":[{"a":"s","b":"s","why":"strided"}]}`,
+		// symbolic row start, constant span 0 (par.go escape)
+		`{"accesses":[{"id":0,"base":"o","store":true,"size":4,"coef":4,"lo":"sym","hi":"sym","span":0}],
+		  "pairs":[{"a":0,"b":0,"why":"window"}]}`,
 	}
 	for _, s := range ok {
 		if bad, _ := CheckLoop(loop(t, s)); len(bad) != 0 {
@@ -46,6 +49,9 @@ func TestLoopsReport(t *testing.T) {
 		// strided with too many columns for the row stride
 		`{"accesses":[{"id":"s","base":"o","store":true,"size":8,"coef":8,"lo":0,"hi":0,"stride":800,"count":100}],
 		  "pairs":[{"a":"s","b":"s","why":"strided"}]}`,
+		// symbolic start, span too wide
+		`{"accesses":[{"id":0,"base":"o","store":true,"size":4,"coef":4,"lo":"sym","hi":"sym","span":4}],
+		  "pairs":[{"a":0,"b":0,"why":"window"}]}`,
 	}
 	for _, s := range reject {
 		if bad, _ := CheckLoop(loop(t, s)); len(bad) == 0 {

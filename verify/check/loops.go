@@ -67,6 +67,7 @@ type Access struct {
 	Stride *Num   `json:"stride"` // strided: the row stride t
 	Count  *Num   `json:"count"`  // strided: the largest iteration index K
 	Row    bool   `json:"row"`
+	Span   *Num   `json:"span"` // hi - lo when constant (lo, hi themselves may be symbolic)
 }
 
 type Pair struct {
@@ -162,6 +163,13 @@ func CheckLoop(r LoopReport) (bad, unverified []string) {
 func windowOK(x, y Access) string {
 	if x.Base != y.Base {
 		return "different bases"
+	}
+	// a store against itself: the condition is hi - lo + size <= |coef|; span = hi - lo
+	if x.ID == y.ID && !x.Coef.Sym && x.Coef.V != 0 && x.Span != nil && !x.Span.Sym {
+		if x.Span.V+x.Size > abs(x.Coef.V) {
+			return fmt.Sprintf("span %d + size %d > |coef| %d", x.Span.V, x.Size, abs(x.Coef.V))
+		}
+		return ""
 	}
 	if x.Coef.Sym || y.Coef.Sym || x.Lo.Sym || x.Hi.Sym || y.Lo.Sym || y.Hi.Sym {
 		return "symbolic bounds (needs a run time check)"
