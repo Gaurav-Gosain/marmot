@@ -7,6 +7,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -312,20 +314,10 @@ func runOnce(bin string) (string, error) {
 	cmd := exec.Command(bin)
 	var so, se bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &so, &se
-	if err := cmd.Start(); err != nil {
-		return "", err
-	}
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	select {
-	case err := <-done:
-		// Go's println writes to stderr, TinyGo's to stdout. Compare the two streams joined so
-		// the destination does not matter.
-		return so.String() + se.String(), err
-	case <-time.After(time.Duration(*timeoutSec) * time.Second):
-		cmd.Process.Kill()
-		return "", fmt.Errorf("timeout after %ds", *timeoutSec)
-	}
+	_, err := runGroup(cmd, time.Duration(*timeoutSec)*time.Second)
+	// Go's println writes to stderr, TinyGo's to stdout. Compare the two streams joined so
+	// the destination does not matter.
+	return so.String() + se.String(), err
 }
 
 func hyperfineBuild(argv []string, clean string, runs, warmup int, env []string) (*Stat, error) {
@@ -335,9 +327,9 @@ func hyperfineBuild(argv []string, clean string, runs, warmup int, env []string)
 	if clean != "" {
 		cc := exec.Command("sh", "-c", clean)
 		cc.Dir, cc.Env = root, env
-		cc.Run()
+		runGroup(cc, 2*time.Minute)
 	}
-	if out, err := c.CombinedOutput(); err != nil {
+	if out, err := runGroup(c, 10*time.Minute); err != nil {
 		return nil, fmt.Errorf("%v: %s", err, out)
 	}
 	args := []string{"--runs", strconv.Itoa(runs), "--warmup", strconv.Itoa(warmup), "--style", "none", "-N"}
@@ -357,7 +349,8 @@ func hyperfine(args []string, command string, env []string, dir string) (*Stat, 
 	args = append(args, "--export-json", tmp, command)
 	c := exec.Command("hyperfine", args...)
 	c.Dir, c.Env = dir, env
-	if out, err := c.CombinedOutput(); err != nil {
+	// Generous bound: the longest legitimate hyperfine call is a few minutes.
+	if out, err := runGroup(c, 15*time.Minute); err != nil {
 		return nil, fmt.Errorf("hyperfine: %v: %s", err, out)
 	}
 	data, err := os.ReadFile(tmp)
@@ -419,7 +412,7 @@ func peakRSS(bin string) int64 {
 		var se bytes.Buffer
 		c := exec.Command("/usr/bin/time", "-l", bin)
 		c.Stderr = &se
-		c.Run()
+		runGroup(c, time.Duration(*timeoutSec)*time.Second)
 		if m := rssRe.FindSubmatch(se.Bytes()); m != nil {
 			n, _ := strconv.ParseInt(string(m[1]), 10, 64)
 			v = append(v, n)
@@ -529,4 +522,34 @@ func check(err error) {
 		fmt.Fprintln(os.Stderr, "bench:", err)
 		os.Exit(1)
 	}
+}
+
+// runGroup runs c in its own process group and kills the whole group when the timeout passes
+// or when the command ends, so no child (compiler backend, benchmark program) can be orphaned.
+func runGroup(c *exec.Cmd, timeout time.Duration) ([]byte, error) {
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var buf bytes.Buffer
+	if c.Stdout == nil {
+		c.Stdout = &buf
+	}
+	if c.Stderr == nil {
+		c.Stderr = &buf
+	}
+	if err := c.Start(); err != nil {
+		return nil, err
+	}
+	done := make(chan error, 1)
+	go func() { done <- c.Wait() }()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	var err error
+	select {
+	case err = <-done:
+	case <-ctx.Done():
+		err = fmt.Errorf("timeout after %v", timeout)
+		syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
+		<-done
+	}
+	syscall.Kill(-c.Process.Pid, syscall.SIGKILL) // reap stragglers
+	return buf.Bytes(), err
 }
