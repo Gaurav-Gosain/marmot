@@ -3,6 +3,7 @@ package codegen
 import (
 	"strings"
 
+	"github.com/Gaurav-Gosain/marmot/internal/mlir"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -37,6 +38,11 @@ var atomicOps = map[string]atomicOp{
 // intrinsic expands a call to fn inline if it is an intrinsic. ok is false
 // when fn is an ordinary function.
 func (f *funcGen) intrinsic(fn *ssa.Function, args []string) (res string, ok bool) {
+	if fn.Pkg != nil && fn.Pkg.Pkg.Path() == "math/bits" && fn.Signature.Recv() == nil {
+		if r, ok := f.bitsIntrinsic(fn, args); ok {
+			return r, true
+		}
+	}
 	if len(fn.Blocks) > 0 || fn.Pkg == nil {
 		return "", false
 	}
@@ -108,4 +114,102 @@ func (f *funcGen) funcPC() string {
 	fv := f.extractRaw(x, tIface, 1)
 	code := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", fv)
 	return f.op("llvm.ptrtoint %s : !llvm.ptr to i64", code)
+}
+
+// bitsIntrinsic lowers math/bits functions to LLVM intrinsics, as gc does.
+func (f *funcGen) bitsIntrinsic(fn *ssa.Function, args []string) (string, bool) {
+	name := fn.Name()
+	width := func(suffix string) (string, int) {
+		switch suffix {
+		case "8":
+			return "i8", 8
+		case "16":
+			return "i16", 16
+		case "32":
+			return "i32", 32
+		}
+		return "i64", 64 // "64" and "" (uint)
+	}
+	call := func(intr, t string, a ...string) string {
+		ts := make([]string, len(a))
+		for i := range a {
+			ts[i] = t
+		}
+		return f.op("llvm.call_intrinsic %q(%s) : (%s) -> %s", intr, strings.Join(a, ", "), strings.Join(ts, ", "), t)
+	}
+	toInt := func(v, t string) string {
+		if t == "i64" {
+			return v
+		}
+		return f.op("llvm.zext %s : %s to i64", v, t)
+	}
+	for _, p := range []struct {
+		prefix, intr string
+	}{{"TrailingZeros", "cttz"}, {"LeadingZeros", "ctlz"}, {"Len", "ctlz"}, {"OnesCount", "ctpop"}} {
+		if !strings.HasPrefix(name, p.prefix) {
+			continue
+		}
+		t, w := width(strings.TrimPrefix(name, p.prefix))
+		if strings.TrimPrefix(name, p.prefix) != "" && t == "i64" && strings.TrimPrefix(name, p.prefix) != "64" {
+			return "", false
+		}
+		var r string
+		if p.intr == "ctpop" {
+			r = f.op("llvm.call_intrinsic \"llvm.ctpop.%s\"(%s) : (%s) -> %s", t, args[0], t, t)
+		} else {
+			fls := f.op("llvm.mlir.constant(false) : i1")
+			r = f.op("llvm.call_intrinsic \"llvm.%s.%s\"(%s, %s) : (%s, i1) -> %s", p.intr, t, args[0], fls, t, t)
+		}
+		r = toInt(r, t)
+		if p.prefix == "Len" {
+			r = f.op("llvm.sub %s, %s : i64", f.constInt(int64(w), mlir.I64), r)
+		}
+		return r, true
+	}
+	switch {
+	case strings.HasPrefix(name, "RotateLeft"):
+		t, _ := width(strings.TrimPrefix(name, "RotateLeft"))
+		k := args[1]
+		if t != "i64" {
+			k = f.op("llvm.trunc %s : i64 to %s", k, t)
+		}
+		return f.op("llvm.call_intrinsic \"llvm.fshl.%s\"(%s, %s, %s) : (%s, %s, %s) -> %s", t, args[0], args[0], k, t, t, t, t), true
+	case strings.HasPrefix(name, "ReverseBytes"):
+		t, w := width(strings.TrimPrefix(name, "ReverseBytes"))
+		if w == 8 {
+			return "", false
+		}
+		return call("llvm.bswap."+t, t, args[0]), true
+	case strings.HasPrefix(name, "Reverse"):
+		t, _ := width(strings.TrimPrefix(name, "Reverse"))
+		return call("llvm.bitreverse."+t, t, args[0]), true
+	case name == "Mul64" || name == "Mul":
+		a := f.op("llvm.zext %s : i64 to i128", args[0])
+		b := f.op("llvm.zext %s : i64 to i128", args[1])
+		p := f.op("llvm.mul %s, %s : i128", a, b)
+		lo := f.op("llvm.trunc %s : i128 to i64", p)
+		hi := f.op("llvm.trunc %s : i128 to i64", f.op("llvm.lshr %s, %s : i128", p, f.op("llvm.mlir.constant(64 : i128) : i128")))
+		return f.build(mlir.Struct(mlir.I64, mlir.I64), hi, lo), true
+	case name == "Add64" || name == "Add":
+		a := f.op("llvm.zext %s : i64 to i128", args[0])
+		b := f.op("llvm.zext %s : i64 to i128", args[1])
+		c := f.op("llvm.zext %s : i64 to i128", args[2])
+		s := f.op("llvm.add %s, %s : i128", f.op("llvm.add %s, %s : i128", a, b), c)
+		sum := f.op("llvm.trunc %s : i128 to i64", s)
+		carry := f.op("llvm.trunc %s : i128 to i64", f.op("llvm.lshr %s, %s : i128", s, f.op("llvm.mlir.constant(64 : i128) : i128")))
+		return f.build(mlir.Struct(mlir.I64, mlir.I64), sum, carry), true
+	case name == "Sub64" || name == "Sub":
+		d1 := f.op("llvm.sub %s, %s : i64", args[0], args[1])
+		d := f.op("llvm.sub %s, %s : i64", d1, args[2])
+		// borrowOut = ((^x & y) | (^(x ^ y) & diff)) >> 63, as in math/bits.
+		m1 := f.constInt(-1, mlir.I64)
+		nx := f.op("llvm.xor %s, %s : i64", args[0], m1)
+		t1 := f.op("llvm.and %s, %s : i64", nx, args[1])
+		xy := f.op("llvm.xor %s, %s : i64", args[0], args[1])
+		nxy := f.op("llvm.xor %s, %s : i64", xy, m1)
+		t2 := f.op("llvm.and %s, %s : i64", nxy, d)
+		bo := f.op("llvm.lshr %s, %s : i64", f.op("llvm.or %s, %s : i64", t1, t2), f.constInt(63, mlir.I64))
+		return f.build(mlir.Struct(mlir.I64, mlir.I64), d, bo), true
+	}
+	return "", false
 }
