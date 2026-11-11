@@ -20,6 +20,10 @@
 #include "../src/internal.h"
 
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 typedef int CUresult;
 typedef int CUdevice;
@@ -57,7 +61,14 @@ static struct {
   CUresult (*MemGetInfo)(size_t *, size_t *);
   CUresult (*LaunchKernel)(CUfunction, unsigned, unsigned, unsigned, unsigned, unsigned, unsigned,
                            unsigned, CUstream, void **, void **);
+  CUresult (*DriverGetVersion)(int *);
+  // Optional (cubin cache): PTX to cubin through the driver's linker.
+  CUresult (*LinkCreate)(unsigned, int *, void **, void **);
+  CUresult (*LinkAddData)(void *, int, void *, size_t, const char *, unsigned, int *, void **);
+  CUresult (*LinkComplete)(void *, void **, size_t *);
+  CUresult (*LinkDestroy)(void *);
 } cu;
+static int driver_version;
 
 static rt_spin gpu_lock;  // module cache and buffer pool
 static int gpu_state;  // 0 not tried, 1 ready, 2 unavailable, 3 in progress
@@ -108,7 +119,12 @@ static bool resolve(void *h) {
   SYM(StreamSynchronize, "cuStreamSynchronize");
   SYM(MemGetInfo, "cuMemGetInfo_v2");
   SYM(LaunchKernel, "cuLaunchKernel");
+  SYM(DriverGetVersion, "cuDriverGetVersion");
 #undef SYM
+  *(void **)&cu.LinkCreate = dlsym(h, "cuLinkCreate_v2");
+  *(void **)&cu.LinkAddData = dlsym(h, "cuLinkAddData_v2");
+  *(void **)&cu.LinkComplete = dlsym(h, "cuLinkComplete");
+  *(void **)&cu.LinkDestroy = dlsym(h, "cuLinkDestroy");
   return true;
 }
 
@@ -126,6 +142,7 @@ static bool gpu_init_locked(void) {
   trace("cuInit", t0);
   t0 = os_nanotime();
   if (cu.DeviceGet(&dev, 0) != 0) return false;
+  cu.DriverGetVersion(&driver_version);
   cu.DeviceGetAttribute(&sm_count, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, dev);
   cu.DeviceGetAttribute(&cc_major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, dev);
   cu.DeviceGetAttribute(&cc_minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, dev);
@@ -177,8 +194,145 @@ typedef struct modent {
 static modent mods[64];
 static int nmods;
 
+// ---- cubin cache: PTX compiled once per (PTX, driver, device) ----
+//
+// $MARMOT_GPU_CACHE (default $XDG_CACHE_HOME/marmot/gpu or
+// ~/.cache/marmot/gpu; "0" disables) holds HASH.cubin files. The driver's
+// own JIT cache (~/.nv/ComputeCache) does the same job when it is enabled
+// and large enough; this one does not depend on it.
+
+static bool cache_dir(char *buf, int cap) {
+  const char *e = rt_getenv("MARMOT_GPU_CACHE");
+  if (e && e[0] == '0' && e[1] == 0) return false;
+  const char *parts[3] = {0};
+  if (e && e[0]) {
+    parts[0] = e;
+  } else if ((e = rt_getenv("XDG_CACHE_HOME")) && e[0]) {
+    parts[0] = e, parts[1] = "/marmot/gpu";
+  } else if ((e = rt_getenv("HOME")) && e[0]) {
+    parts[0] = e, parts[1] = "/.cache/marmot/gpu";
+  } else {
+    return false;
+  }
+  int n = 0;
+  for (int i = 0; i < 3 && parts[i]; i++)
+    for (const char *q = parts[i]; *q; q++) {
+      if (n >= cap - 40) return false;
+      buf[n++] = *q;
+    }
+  buf[n] = 0;
+  // mkdir -p
+  for (int i = 1; i <= n; i++)
+    if (buf[i] == '/' || buf[i] == 0) {
+      char c = buf[i];
+      buf[i] = 0;
+      mkdir(buf, 0755);
+      buf[i] = c;
+    }
+  return true;
+}
+
+static void hex64(char *out, uint64_t v) {
+  for (int i = 15; i >= 0; i--, v >>= 4) out[i] = "0123456789abcdef"[v & 15];
+}
+
+// path = DIR/HASH.cubin for PTX image ptx of n bytes.
+static bool cache_path(char *path, int cap, const void *ptx, uintptr_t n) {
+  if (!cache_dir(path, cap)) return false;
+  uint64_t h = rt_hash_bytes(ptx, (intptr_t)n, 0x6d61726d6f74ull);
+  h = rt_hash_u64(h ^ (uint64_t)driver_version * 1000003u ^ (uint64_t)(cc_major * 10 + cc_minor), 0);
+  int k = 0;
+  while (path[k]) k++;
+  path[k++] = '/';
+  hex64(path + k, h);
+  k += 16;
+  __builtin_memcpy(path + k, ".cubin", 7);
+  return true;
+}
+
+static void *read_file(const char *path, uintptr_t *size) {
+  int fd = open(path, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) return NULL;
+  struct stat st;
+  void *buf = NULL;
+  if (fstat(fd, &st) == 0 && st.st_size > 0) {
+    *size = (uintptr_t)st.st_size;
+    buf = os_map(*size);
+    if (buf && read(fd, buf, *size) != (ssize_t)*size) {
+      os_unmap(buf, *size);
+      buf = NULL;
+    }
+  }
+  close(fd);
+  return buf;
+}
+
+static void write_file(const char *path, const void *data, uintptr_t n) {
+  char tmp[600];
+  int k = 0;
+  while (path[k] && k < 560) tmp[k] = path[k], k++;
+  __builtin_memcpy(tmp + k, ".tmp", 4);
+  hex64(tmp + k + 4, (uint64_t)getpid());
+  tmp[k + 20] = 0;
+  int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+  if (fd < 0) return;
+  bool ok = write(fd, data, n) == (ssize_t)n;
+  close(fd);
+  if (!ok || rename(tmp, path) != 0) unlink(tmp);
+}
+
+static bool is_ptx(const uint8_t *p) {
+  // Not an ELF cubin (0x7f 'E') and not a fatbin (0x50ed55ba little endian).
+  return !(p[0] == 0x7f && p[1] == 'E') && !(p[0] == 0x50 && p[1] == 0xed && p[2] == 0x55 && p[3] == 0xba);
+}
+
+static CUresult load_ptx(CUmodule *mod, void *image, uintptr_t len, const char *path);
+
+// Blocking: JIT or cache read. Called with the P released.
+static CUresult load_module(CUmodule *mod, const void *image, uintptr_t len) {
+  char path[600];
+  if (!is_ptx(image) || !cu.LinkCreate || !cu.LinkAddData || !cu.LinkComplete || !cu.LinkDestroy)
+    return cu.ModuleLoadData(mod, image);
+  if (len == 0) len = __builtin_strlen(image) + 1;
+  if (!cache_path(path, sizeof path, image, len)) return cu.ModuleLoadData(mod, image);
+  // The JIT wants NUL-terminated text: copy an image given without its NUL.
+  void *text = (void *)image, *copy = NULL;
+  if (((const char *)image)[len - 1] != 0) {
+    copy = os_map(len + 1);
+    if (!copy) return cu.ModuleLoadData(mod, image);
+    __builtin_memcpy(copy, image, len);
+    text = copy;
+  }
+  CUresult r = load_ptx(mod, text, copy ? len + 1 : len, path);
+  if (copy) os_unmap(copy, len + 1);
+  return r;
+}
+
+static CUresult load_ptx(CUmodule *mod, void *image, uintptr_t len, const char *path) {
+  uintptr_t n = 0;
+  int64_t t0 = os_nanotime();
+  void *cubin = read_file(path, &n);
+  if (cubin) {
+    CUresult r = cu.ModuleLoadData(mod, cubin);
+    os_unmap(cubin, n);
+    trace("module from cubin cache", t0);
+    if (r == 0) return 0;
+    unlink(path);  // stale or corrupt
+  }
+  void *link = NULL;
+  if (cu.LinkCreate(0, NULL, NULL, &link) != 0) return cu.ModuleLoadData(mod, image);
+  void *out = NULL;
+  size_t outn = 0;
+  CUresult r = cu.LinkAddData(link, 1 /* CU_JIT_INPUT_PTX */, (void *)image, len, "marmot", 0, NULL, NULL);
+  if (r == 0) r = cu.LinkComplete(link, &out, &outn);
+  if (r == 0) r = cu.ModuleLoadData(mod, out);
+  if (r == 0) write_file(path, out, outn);
+  cu.LinkDestroy(link);
+  trace("module JIT (cubin cache miss)", t0);
+  return r == 0 ? 0 : cu.ModuleLoadData(mod, image);
+}
+
 RT_API void *rt_gpu_module(const void *image, uintptr_t len) {
-  (void)len;
   if (!gpu_enter()) return NULL;
   spin_lock(&gpu_lock);
   for (int i = 0; i < nmods; i++)
@@ -191,11 +345,17 @@ RT_API void *rt_gpu_module(const void *image, uintptr_t len) {
   CUmodule mod = NULL;
   int64_t t0 = os_nanotime();
   rt_entersyscall();  // PTX JIT can take milliseconds
-  CUresult r = cu.ModuleLoadData(&mod, image);
+  CUresult r = load_module(&mod, image, len);
   rt_exitsyscall();
-  trace("module load (PTX JIT unless cached)", t0);
+  trace("module load", t0);
   if (r != 0) return NULL;
   spin_lock(&gpu_lock);
+  for (int i = 0; i < nmods; i++)
+    if (mods[i].image == image) {  // loaded by another thread meanwhile
+      CUmodule m = mods[i].mod;
+      spin_unlock(&gpu_lock);
+      return m;
+    }
   if (nmods < 64) mods[nmods++] = (modent){image, mod};
   spin_unlock(&gpu_lock);
   return mod;
@@ -544,9 +704,29 @@ static bool gpu_for_enabled(void) {
   return e && e[0] == '1';
 }
 
+// Modules registered at startup (rt_gpu_register), loaded by the prewarm
+// thread so the first rt_gpu_for finds them compiled.
+static struct {
+  const void *image;
+  uintptr_t len;
+} reg[16];
+static int nreg;
+static int prewarm_busy;  // 1 while the prewarm thread runs
+
+RT_API void rt_gpu_register(const void *image, uintptr_t len) {
+  if (nreg < 16) {
+    reg[nreg].image = image;
+    reg[nreg++].len = len;
+  }
+}
+
 static void prewarm_thread(void *arg) {
   (void)arg;
-  if (gpu_enter()) calibrate();
+  if (gpu_enter()) {
+    for (int i = 0; i < nreg; i++) rt_gpu_module(reg[i].image, reg[i].len);
+    calibrate();
+  }
+  __atomic_store_n(&prewarm_busy, 0, __ATOMIC_RELEASE);
 }
 
 // Called at startup (entry.c, weak reference: only programs that link
@@ -555,13 +735,15 @@ static void prewarm_thread(void *arg) {
 // starts; rt_gpu_for leaves loops on the CPU until they are done.
 void rt_gpu_prewarm(void) {
   if (!gpu_for_enabled()) return;
-  if (!os_thread_create(prewarm_thread, NULL, 256 << 10)) return;
+  __atomic_store_n(&prewarm_busy, 1, __ATOMIC_RELEASE);
+  if (!os_thread_create(prewarm_thread, NULL, 256 << 10)) __atomic_store_n(&prewarm_busy, 0, __ATOMIC_RELEASE);
 }
 
 // True when setup and calibration are finished (or never started), so
 // rt_gpu_for would not wait.
 static bool gpu_settled(void) {
-  return __atomic_load_n(&gpu_state, __ATOMIC_ACQUIRE) != 3 &&
+  return !__atomic_load_n(&prewarm_busy, __ATOMIC_ACQUIRE) &&
+         __atomic_load_n(&gpu_state, __ATOMIC_ACQUIRE) != 3 &&
          __atomic_load_n(&calib_state, __ATOMIC_ACQUIRE) != 3;
 }
 

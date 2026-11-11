@@ -189,7 +189,15 @@ typedef struct rt_gpu_info {
 } rt_gpu_info;
 int32_t rt_gpu_available(void);
 int32_t rt_gpu_info_get(rt_gpu_info *out);  // 1 with a GPU (fills out), else 0
+// PTX (text, len bytes with or without the NUL; len 0: NUL-terminated),
+// cubin or fatbin image; cached by image address. PTX is compiled once per
+// (PTX, driver, device) into $MARMOT_GPU_CACHE (default
+// ~/.cache/marmot/gpu; "0" disables) and loaded from there afterwards.
 void *rt_gpu_module(const void *image, uintptr_t len);
+// Register a module image at startup (a constructor in the program, before
+// main): with MARMOT_GPU=1 the startup thread that creates the context also
+// loads it, so the first rt_gpu_for does not compile. At most 16.
+void rt_gpu_register(const void *image, uintptr_t len);
 void *rt_gpu_function(void *module, const char *name);
 void *rt_gpu_alloc(uintptr_t bytes);        // device buffer from a pool, NULL on failure
 void rt_gpu_free(void *dptr, uintptr_t bytes);
