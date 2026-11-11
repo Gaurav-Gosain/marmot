@@ -1,0 +1,11 @@
+-asm_linux_386.s
+-asm_linux_amd64.s
+-asm_linux_arm.s
+-asm_linux_arm64.s
+-asm_linux_loong64.s
+-asm_linux_mips64x.s
+-asm_linux_mipsx.s
+-asm_linux_ppc64x.s
+-asm_linux_riscv64.s
+-asm_linux_s390x.s
+-syscall_linux.go

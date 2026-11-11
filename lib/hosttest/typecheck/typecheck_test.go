@@ -166,28 +166,39 @@ func TestTypecheckOverlay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fset := token.NewFileSet()
-	ctx := build.Default
-	ctx.GOOS = "darwin"
-	ctx.GOARCH = "arm64"
-	ctx.CgoEnabled = false
-	ctx.BuildTags = []string{"marmot", "purego", "math_big_pure_go"}
-	ctx.GOROOT = runtime.GOROOT()
-	im := &overlayImporter{
-		root:  root,
-		fset:  fset,
-		ctx:   ctx,
-		pkgs:  map[string]*types.Package{},
-		stock: importer.ForCompiler(fset, "source", nil).(types.ImporterFrom),
-		tmp:   t.TempDir(),
-	}
-	for _, path := range overlayPackages(root) {
-		if _, err := im.Import(path); err != nil {
-			t.Errorf("%s: %v", path, err)
-		}
-	}
-	for _, err := range im.errors {
-		t.Error(err)
+	// darwin/arm64 is the host target; the linux ports are checked so that
+	// OS and architecture specific overlay files stay consistent.
+	for _, target := range [][2]string{{"darwin", "arm64"}, {"linux", "amd64"}, {"linux", "arm64"}} {
+		t.Run(target[0]+"_"+target[1], func(t *testing.T) {
+			fset := token.NewFileSet()
+			ctx := build.Default
+			ctx.GOOS = target[0]
+			ctx.GOARCH = target[1]
+			ctx.CgoEnabled = false
+			ctx.BuildTags = []string{"marmot", "purego", "math_big_pure_go"}
+			ctx.GOROOT = runtime.GOROOT()
+			im := &overlayImporter{
+				root:  root,
+				fset:  fset,
+				ctx:   ctx,
+				pkgs:  map[string]*types.Package{},
+				stock: importer.ForCompiler(fset, "source", nil).(types.ImporterFrom),
+				tmp:   t.TempDir(),
+			}
+			for _, path := range overlayPackages(root) {
+				if _, err := im.Import(path); err != nil {
+					// A package that has no files for this target (for
+					// example internal/runtime/syscall/linux on darwin).
+					if strings.Contains(err.Error(), "build constraints exclude all Go files") || strings.Contains(err.Error(), "no buildable Go source files") {
+						continue
+					}
+					t.Errorf("%s: %v", path, err)
+				}
+			}
+			for _, err := range im.errors {
+				t.Error(err)
+			}
+		})
 	}
 }
 
