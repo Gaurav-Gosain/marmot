@@ -3,6 +3,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"crypto/sha512"
 	"fmt"
 	"hash/maphash"
 	"time"
@@ -53,4 +55,8 @@ func main() {
 	bench("hash 16B", 16, 50000000, func() int { return int(maphash.Bytes(seed, buf[sink&7:sink&7+16])) })
 	bench("Equal 1MiB", n, 2000, func() int { return b2i(bytes.Equal(buf, cpy)) })
 	bench("Index 64B in short string", 64, 20000000, func() int { return bytes.Index(buf[sink&1:sink&1+64], []byte("uvw")) })
+	h256 := sha256.New()
+	bench("sha256 blocks 1MiB", n, 200, func() int { h256.Write(buf); return 0 })
+	h512 := sha512.New()
+	bench("sha512 blocks 1MiB", n, 200, func() int { h512.Write(buf); return 0 })
 }

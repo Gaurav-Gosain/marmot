@@ -241,6 +241,12 @@ intptr_t rt_utf8_count(const void *p, intptr_t n);    // utf8.RuneCount
 uint64_t rt_hash_bytes(const void *p, intptr_t n, uint64_t seed);
 uint64_t rt_hash_u64(uint64_t x, uint64_t seed);
 
+// SHA-256 and SHA-512 block functions with the Go block() contract: update
+// state h with the n/64 (n/128) complete blocks at p, in order. ARMv8 SHA2
+// instructions on arm64, SHA-NI on x86-64 when present, portable C else.
+void rt_sha256_block(uint32_t h[8], const uint8_t *p, intptr_t n);
+void rt_sha512_block(uint64_t h[8], const uint8_t *p, intptr_t n);
+
 // ---- Signals (os/signal) ----
 
 // Queue sig for rt_signal_recv instead of its default action. Returns 0 or

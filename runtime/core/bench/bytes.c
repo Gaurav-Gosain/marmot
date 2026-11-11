@@ -32,4 +32,8 @@ void marmot_main(void) {
   BENCH("hash 16B", 16, 50000000, rt_hash_bytes(buf + (sink & 7), 16, 1));
   BENCH("Equal 1MiB", n, 2000, rt_mem_equal(buf, buf + 0, n));
   BENCH("Index 64B in short string", 64, 20000000, rt_index(buf + (sink & 1), 64, "uvw", 3));
+  uint32_t h256[8] = {0};
+  uint64_t h512[8] = {0};
+  BENCH("sha256 blocks 1MiB", n, 200, (rt_sha256_block(h256, (const uint8_t *)buf, n), h256[0]));
+  BENCH("sha512 blocks 1MiB", n, 200, (rt_sha512_block(h512, (const uint8_t *)buf, n), h512[0]));
 }
