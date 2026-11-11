@@ -1,0 +1,6 @@
+EOF unexpected EOF short write multiple Read calls return no data or error
+0 true true
+0 true
+0 true
+true
+io: read/write on closed pipe short buffer

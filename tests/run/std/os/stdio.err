@@ -1,0 +1,5 @@
+err line 1
+via fmt err
+0 true
+true /dev/stdout /dev/stderr
+true true
