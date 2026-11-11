@@ -1,9 +1,9 @@
 // GPU offload (docs/gpu.md): a "marmot-gpu-body" function becomes an
 // embedded PTX kernel and marmot_gpu_for becomes rt_gpu_for; without -gpu
 // the call is false and the caller's CPU path runs.
-// RUN: %backend -O2 -gpu=sm_86 -emit=llvm -o %t.ll %s
+// RUN: %backend -O2 -no-loops -gpu=sm_86 -emit=llvm -o %t.ll %s
 // RUN: %FileCheck %s < %t.ll
-// RUN: %backend -O2 -emit=llvm -o - %s | %FileCheck %s --check-prefix=CPU
+// RUN: %backend -O2 -no-loops -emit=llvm -o - %s | %FileCheck %s --check-prefix=CPU
 // RUN: %backend -O0 -gpu -emit=llvm -o - %s | %FileCheck %s --check-prefix=CPU
 // CHECK: @saxpy_body.ptx = private unnamed_addr constant {{.*}}.target sm_86
 // CHECK-SAME: .entry saxpy_body_kernel

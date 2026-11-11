@@ -8,6 +8,7 @@
 #include "marmot/Dialect/Go/Passes.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/LLVMIR/Transforms/Passes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Verifier.h"
@@ -361,6 +362,27 @@ std::unique_ptr<llvm::Module> lowerAndTranslate(ParsedModule &pm, const std::str
     mpm.addPass(go::createGoToLLVM());
     // Always: large aggregate values would hang code generation.
     mpm.addPass(go::createAggregateCopies());
+    // Line tables (or full debug info) from the op locations the frontend
+    // emits: a DISubprogram per function, a DILocation per instruction.
+    bool hasFileLocs =
+        opts.debugLevel > 0 &&
+        module
+            .walk([](mlir::Operation *op) {
+              // Locations into the .mlir text itself come from the parser,
+              // not from the frontend; they do not count.
+              auto fl = mlir::dyn_cast<mlir::FileLineColLoc>(op->getLoc());
+              if (fl && !fl.getFilename().getValue().ends_with(".mlir") &&
+                  !fl.getFilename().getValue().ends_with(".mlirbc"))
+                return mlir::WalkResult::interrupt();
+              return mlir::WalkResult::advance();
+            })
+            .wasInterrupted();
+    if (hasFileLocs) {
+      mlir::LLVM::DIScopeForLLVMFuncOpPassOptions dopts;
+      dopts.emissionKind = opts.debugLevel > 1 ? mlir::LLVM::DIEmissionKind::Full
+                                               : mlir::LLVM::DIEmissionKind::LineTablesOnly;
+      mpm.addPass(mlir::LLVM::createDIScopeForLLVMFuncOpPass(dopts));
+    }
     if ((opts.optLevel == '2' || opts.optLevel == '3') && opts.loops.enable)
       loops::addMLIRPasses(mpm, opts.loops);
     if (mlir::failed(mpm.run(module)))

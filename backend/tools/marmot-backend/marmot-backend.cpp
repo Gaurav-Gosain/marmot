@@ -114,6 +114,9 @@ static cl::opt<std::string> gpuArch(
     "gpu", cl::ValueOptional,
     cl::desc("Offload marked parallel loops to an NVIDIA GPU (PTX for ARCH, default sm_86)"),
     cl::value_desc("arch"), cl::cat(cat));
+static cl::opt<int> debugLevel(
+    "g", cl::desc("Debug info from source locations: 0 none, 1 line tables (default), 2 full"),
+    cl::init(1), cl::cat(cat));
 static cl::opt<bool> verifyEach("verify-each",
                                 cl::desc("Verify IR after every pass"), cl::cat(cat));
 
@@ -174,6 +177,7 @@ int main(int argc, char **argv) {
   opts.wpoImport = !noImport;
   opts.wpoClosedWorld = !noClosedWorld;
   opts.pgoUse = pgoUse;
+  opts.debugLevel = debugLevel;
   if (gpuArch.getNumOccurrences())
     opts.gpuArch = gpuArch.empty() ? "sm_86" : std::string(gpuArch);
   opts.loops.gpu = !opts.gpuArch.empty();

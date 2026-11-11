@@ -34,6 +34,7 @@ SUBST = [
     ("%mlir-opt", os.path.join(BIN, "mlir-opt")),
     ("%llvm-readobj", os.path.join(BIN, "llvm-readobj")),
     ("%llvm-profdata", os.path.join(BIN, "llvm-profdata")),
+    ("%llvm-dwarfdump", os.path.join(BIN, "llvm-dwarfdump")),
 ]
 
 

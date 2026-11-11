@@ -37,6 +37,9 @@ struct CompileOptions {
   loops::Options loops;        // loop optimizer (owner: loops), -O2 and -O3
   std::string pgoUse;          // -pgo=FILE: indexed profile (llvm-profdata merge output)
   std::string pgoGen;          // -pgo-gen[=pattern]: instrument; raw profile file pattern
+  // Debug info from the MLIR op locations: 0 none, 1 line tables (default),
+  // 2 full. Nothing is emitted for a module without file locations.
+  int debugLevel = 1;
   std::string gpuArch;         // -gpu=sm_86: PTX for "marmot-gpu-body" loops (docs/gpu.md)
   bool devirt = true;          // go-devirt at -O1 and up
   bool strings = true;         // go-strings at -O1 and up
