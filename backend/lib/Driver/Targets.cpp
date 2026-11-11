@@ -76,4 +76,38 @@ llvm::Triple hostTriple() {
   return t;
 }
 
+llvm::Triple targetTriple(const std::string &target) {
+  if (target.empty())
+    return hostTriple();
+  if (target.find('/') != std::string::npos) {
+    std::string os = target.substr(0, target.find('/'));
+    std::string arch = target.substr(target.find('/') + 1);
+    std::string llarch = arch == "amd64" ? "x86_64" : arch == "arm64" ? "aarch64" : arch;
+    if (os == "darwin") {
+      llvm::Triple h = hostTriple();
+      std::string ver = h.isMacOSX() ? h.getOSName().str() : "macosx11.0";
+      return llvm::Triple((arch == "arm64" ? "arm64" : llarch) + "-apple-" + ver);
+    }
+    if (os == "linux")
+      return llvm::Triple(llarch + "-unknown-linux-gnu");
+    return llvm::Triple(llarch + "-unknown-" + os);
+  }
+  return llvm::Triple(llvm::Triple::normalize(target));
+}
+
+std::string defaultCPU(const llvm::Triple &triple, bool &isHost) {
+  llvm::Triple host = hostTriple();
+  isHost = triple.getArch() == host.getArch() && triple.getOS() == host.getOS();
+  if (isHost)
+    return llvm::sys::getHostCPUName().str();
+  switch (triple.getArch()) {
+  case llvm::Triple::x86_64:
+    return "x86-64";
+  case llvm::Triple::aarch64:
+    return triple.isOSDarwin() ? "apple-m1" : "generic";
+  default:
+    return "";
+  }
+}
+
 } // namespace marmot

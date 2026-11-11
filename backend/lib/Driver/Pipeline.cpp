@@ -20,6 +20,7 @@
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/MC/TargetRegistry.h"
@@ -83,25 +84,20 @@ void registerDialects(mlir::DialectRegistry &registry) {
 std::unique_ptr<llvm::TargetMachine>
 makeTargetMachine(const CompileOptions &opts, llvm::Triple &triple,
                   std::string &err) {
-  triple = opts.triple.empty() ? hostTriple()
-                               : llvm::Triple(llvm::Triple::normalize(opts.triple));
+  triple = targetTriple(opts.triple);
   if (!initTargetFor(triple, err))
     return nullptr;
   const llvm::Target *target = llvm::TargetRegistry::lookupTarget(triple, err);
   if (!target)
     return nullptr;
-  bool isHost = opts.triple.empty() ||
-                triple.getArch() == hostTriple().getArch();
-  std::string cpu = opts.cpu;
+  bool isHost = false;
+  std::string cpu = opts.cpu.empty() ? defaultCPU(triple, isHost) : opts.cpu;
   std::string features = opts.features;
-  if (cpu.empty() && isHost) {
-    cpu = llvm::sys::getHostCPUName().str();
-    if (features.empty()) {
-      llvm::SubtargetFeatures f;
-      for (auto &kv : llvm::sys::getHostCPUFeatures())
-        f.AddFeature(kv.first(), kv.second);
-      features = f.getString();
-    }
+  if (isHost && opts.cpu.empty() && features.empty()) {
+    llvm::SubtargetFeatures f;
+    for (auto &kv : llvm::sys::getHostCPUFeatures())
+      f.AddFeature(kv.first(), kv.second);
+    features = f.getString();
   }
   llvm::TargetOptions to;
   to.FunctionSections = true;
@@ -169,6 +165,26 @@ void markInitOptNone(llvm::Module &m) {
     f.addFnAttr(llvm::Attribute::OptimizeNone);
     f.addFnAttr(llvm::Attribute::NoInline);
     f.addFnAttr(llvm::Attribute::Cold);
+  }
+}
+
+// Functions whose identity is observable through their frame (they call
+// recover, which checks that its caller was called directly by a deferred
+// call) must never become a thunk to an identical function. MergeFunctions
+// compares attributes, so a unique attribute keeps each one apart.
+void keepRecoverFramesUnmerged(llvm::Module &m) {
+  for (llvm::Function &f : m) {
+    if (f.isDeclaration())
+      continue;
+    bool usesFrame = false;
+    for (llvm::BasicBlock &bb : f)
+      for (llvm::Instruction &inst : bb)
+        if (auto *call = llvm::dyn_cast<llvm::CallBase>(&inst))
+          if (llvm::Function *callee = call->getCalledFunction())
+            usesFrame |= callee->getName() == "runtime.gorecover" ||
+                         callee->getIntrinsicID() == llvm::Intrinsic::frameaddress;
+    if (usesFrame)
+      f.addFnAttr("marmot-frame", f.getName());
   }
 }
 
@@ -365,6 +381,7 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
       return fail(err);
   }
   setTargetAttrs(lmod, tm, opts.optLevel);
+  keepRecoverFramesUnmerged(lmod);
   if (opts.initOptNone && opts.optLevel != '0')
     markInitOptNone(lmod);
   times.linkRt += timer.lap();

@@ -34,3 +34,9 @@ module {
     llvm.return
   }
 }
+// RUN: %backend -Oz -emit=llvm -o - %S/Inputs/recover-merge.mlir | %FileCheck %s --check-prefix=REC
+// Two identical functions that call recover are not merged into a thunk.
+// REC: define {{.*}}@"a$1"(
+// REC-NEXT: call {{.*}}@llvm.frameaddress
+// REC: define {{.*}}@"b$1"(
+// REC-NEXT: call {{.*}}@llvm.frameaddress
