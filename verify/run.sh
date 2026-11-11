@@ -4,8 +4,24 @@
 # The checker is Bend 2 from a copy of the bend2go checkout in ~/marmot/verify-tools/bend
 # (see verify/README.md for the version). Every file is checked twice: by bend2 and,
 # with --verdict, by the BendTT kernel whose soundness is proved in Lean.
+#   verify/run.sh -l [file.bend ...]  quick local check with bend2 only (no kernel recheck),
+#                                     from a local copy in .work/verify/tools/bend
 set -eu
 cd "$(dirname "$0")/.."
+if [ "${1:-}" = -l ]; then
+	shift
+	B=$PWD/.work/verify/tools/bend/bend2/main.ts
+	[ -f "$B" ] || scripts/linux/remote.sh get marmot/verify-tools/bend .work/verify/tools/ >/dev/null
+	cd verify/bend
+	st=0
+	for f in ${*:-$(ls *.bend)}; do
+		f=$(basename "$f")
+		out=$(timeout 120 bun "$B" "$f" 2>&1 | grep -v 'is available' || true)
+		printf '%s: %s\n' "$f" "$(echo "$out" | head -1)"
+		case "$out" in 'ALL PROOFS CHECK'*) ;; *) echo "$out" | head -40; st=1 ;; esac
+	done
+	exit $st
+fi
 R=scripts/linux/remote.sh
 $R put verify/bend marmot/verify-tools/work/ >/dev/null
 files=${*:-$(cd verify/bend && ls *.bend)}
