@@ -414,7 +414,8 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
   std::string err;
   // Runtime bitcode is only useful when the optimizer can inline it.
   if (opts.rtBitcode && opts.optLevel != '0') {
-    if (!linkRuntimeBitcode(lmod, *opts.rtBitcode, err))
+    const RuntimeLib *rt = opts.rtBitcode->get(err);
+    if (!rt || !linkRuntimeBitcode(lmod, *rt, err))
       return fail(err);
   }
   setTargetAttrs(lmod, tm, opts.optLevel);

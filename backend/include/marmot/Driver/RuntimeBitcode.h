@@ -4,6 +4,7 @@
 
 #include "llvm/ADT/StringSet.h"
 #include <memory>
+#include <mutex>
 #include <string>
 
 namespace llvm {
@@ -23,9 +24,23 @@ struct RuntimeLib {
   llvm::StringSet<> referenced;
 };
 
-inline const llvm::StringSet<> &runtimeReferencedSymbols(const RuntimeLib &lib) {
-  return lib.referenced;
-}
+// The runtime bitcode, prepared on first use (a batch whose objects all come
+// from the cache never parses it). Thread safe.
+class LazyRuntimeLib {
+public:
+  explicit LazyRuntimeLib(std::string path) : path(std::move(path)) {}
+  // Null with err set if preparing failed.
+  const RuntimeLib *get(std::string &err) const;
+  // Hash of the file's bytes, for cache keys (cheap: no parsing).
+  const std::string &fileHash() const;
+
+private:
+  std::string path;
+  mutable std::once_flag once, hashOnce;
+  mutable RuntimeLib lib;
+  mutable std::string error, hash;
+  mutable bool ok = false;
+};
 
 // Loads rtcore.bc and rewrites it once into an import library:
 //  - external function definitions that are safe to copy are kept; after

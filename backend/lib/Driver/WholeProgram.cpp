@@ -54,7 +54,7 @@ namespace marmot {
 namespace {
 
 // Bump when the meaning of a cache entry changes.
-constexpr const char *kCacheVersion = "marmot-backend-cache-12";
+constexpr const char *kCacheVersion = "marmot-backend-cache-13";
 
 // Largest function, in LLVM instructions, imported into other modules.
 constexpr unsigned kImportLimit = 40;
@@ -302,7 +302,7 @@ std::string fingerprint(const CompileOptions &opts) {
      << opts.loops.parallel << opts.loops.fastFP << opts.loops.remarks
      << opts.loops.versioning << opts.loops.typeAlias << opts.loops.gpu << "|";
   if (opts.rtBitcode)
-    os << hashHex(opts.rtBitcode->bitcode->getBuffer());
+    os << opts.rtBitcode->fileHash();
   os << "|gpu=" << opts.gpuArch << "|pgo-gen=" << opts.pgoGen << "|pgo=";
   if (!opts.pgoUse.empty()) {
     if (auto buf = MemoryBuffer::getFile(opts.pgoUse))
@@ -622,9 +622,16 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   StringSet<> roots;
   roots.insert("main");
   roots.insert("marmot_main");
-  if (opts.rtBitcode)
-    for (const auto &e : runtimeReferencedSymbols(*opts.rtBitcode))
+  if (opts.rtBitcode) {
+    std::string err;
+    const RuntimeLib *rt = opts.rtBitcode->get(err);
+    if (!rt) {
+      errs << "marmot-backend: " << err << "\n";
+      return false;
+    }
+    for (const auto &e : rt->referenced)
       roots.insert(e.getKey());
+  }
   for (auto &e : defsByName)
     if (isCName(e.getKey()))
       roots.insert(e.getKey());

@@ -11,7 +11,9 @@
 #include "llvm/IR/Operator.h"
 #include "llvm/Linker/Linker.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/xxhash.h"
 
 using namespace llvm;
 
@@ -157,6 +159,26 @@ bool linkRuntimeBitcode(Module &m, const RuntimeLib &rt, std::string &err) {
     if (!f.isDeclaration() && rt.importable.contains(f.getName()))
       f.setLinkage(GlobalValue::AvailableExternallyLinkage);
   return true;
+}
+
+const RuntimeLib *LazyRuntimeLib::get(std::string &err) const {
+  std::call_once(once, [&] { ok = prepareRuntimeBitcode(path, lib, error); });
+  if (!ok)
+    err = error;
+  return ok ? &lib : nullptr;
+}
+
+const std::string &LazyRuntimeLib::fileHash() const {
+  std::call_once(hashOnce, [&] {
+    if (auto buf = MemoryBuffer::getFile(path)) {
+      XXH128_hash_t h = xxh3_128bits(arrayRefFromStringRef((*buf)->getBuffer()));
+      raw_string_ostream os(hash);
+      os << format_hex_no_prefix(h.high64, 16) << format_hex_no_prefix(h.low64, 16);
+    } else {
+      hash = "missing:" + path;
+    }
+  });
+  return hash;
 }
 
 } // namespace marmot

@@ -200,14 +200,11 @@ int main(int argc, char **argv) {
   opts.openDefers = !noOpenDefers;
   opts.timePhases = timePhases;
 
-  marmot::RuntimeLib rt;
+  // Prepared on first use: a fully cached batch never parses it.
+  std::unique_ptr<marmot::LazyRuntimeLib> rt;
   if (!rtBitcode.empty() && opts.optLevel != '0' && emitKind != marmot::Emit::MLIR) {
-    std::string err;
-    if (!marmot::prepareRuntimeBitcode(rtBitcode, rt, err)) {
-      errs() << "marmot-backend: " << err << "\n";
-      return 1;
-    }
-    opts.rtBitcode = &rt;
+    rt = std::make_unique<marmot::LazyRuntimeLib>(rtBitcode);
+    opts.rtBitcode = rt.get();
   }
   double prepMs = std::chrono::duration<double, std::milli>(
                       std::chrono::steady_clock::now() - start).count();
@@ -294,7 +291,7 @@ int main(int argc, char **argv) {
     double wall = std::chrono::duration<double, std::milli>(
                       std::chrono::steady_clock::now() - start).count();
     total.print(errs(), work.size() > 1 ? "sum of jobs" : work[0].in);
-    errs() << format("rt-bitcode prep %.2f ms, wall %.2f ms, %zu job(s)\n", prepMs,
+    errs() << format("startup %.2f ms, wall %.2f ms, %zu job(s)\n", prepMs,
                      wall, work.size());
   }
   return ok ? 0 : 1;
