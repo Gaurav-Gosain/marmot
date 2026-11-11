@@ -24,3 +24,26 @@
 // RUN: python3 %S/Inputs/pcln_decode.py %t.inl.pcln --inline $(python3 %S/Inputs/pcln_offsets.py %t.inl.exe outer 0) | %FileCheck %s --check-prefix=INL
 // INL: mid {{.*}}pcln_inline.c:8 <- outer {{.*}}pcln_inline.c:13
 // INL-NEXT: leaf {{.*}}pcln_inline.c:4 <- mid {{.*}}pcln_inline.c:9 <- outer {{.*}}pcln_inline.c:13
+// Fragments (no dsymutil, one link): the backend writes OUT.pcln, the link
+// carries a placeholder section, marmot-pcln writes the table into it and
+// rehashes the code signature.
+// RUN: rm -rf %t.fr && mkdir -p %t.fr && printf '%S/debuginfo.mlir %t.fr/a.o\n' > %t.fr/jobs
+// RUN: %backend -O1 -batch %t.fr/jobs -pcln-frags -cache-dir %t.fr/cache
+// RUN: test -f %t.fr/a.o.pcln && echo %t.fr/a.o.pcln > %t.fr/frags
+// RUN: echo %t.main.o > %t.fr/extra
+// RUN: %pcln -frags %t.fr/frags -estimate -extra-objects %t.fr/extra > %t.fr/size
+// RUN: head -c $(cat %t.fr/size) /dev/zero > %t.fr/ph
+// RUN: %clang %t.fr/a.o %t.main.o -Wl,-sectcreate,__TEXT,__marmot_pcln,%t.fr/ph -o %t.fr/exe
+// RUN: %pcln -frags %t.fr/frags -patch %t.fr/exe
+// RUN: codesign -v %t.fr/exe
+// RUN: %t.fr/exe; test $? -eq 15
+// RUN: %llvm-objcopy --dump-section __TEXT,__marmot_pcln=%t.fr/table %t.fr/exe %t.fr/junk
+// RUN: python3 %S/Inputs/pcln_decode.py %t.fr/table $(python3 %S/Inputs/pcln_offsets.py %t.fr/exe main.add 0 4 8) | %FileCheck %s --check-prefix=FRAG
+// FRAG: main.add /src/p/main.go:7
+// FRAG-NEXT: main.add /src/p/main.go:8
+// FRAG-NEXT: main.add /src/p/main.go:9
+// A placeholder that is too small: exit 3 and the size needed.
+// RUN: head -c 8 /dev/zero > %t.fr/ph2
+// RUN: %clang %t.fr/a.o %t.main.o -Wl,-sectcreate,__TEXT,__marmot_pcln,%t.fr/ph2 -o %t.fr/exe2
+// RUN: %not %pcln -frags %t.fr/frags -patch %t.fr/exe2 2>&1 | %FileCheck %s --check-prefix=SMALL
+// SMALL: needs {{[0-9]+}} bytes

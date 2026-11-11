@@ -566,8 +566,8 @@ bool patchMachO(const std::string &binary, StringRef table, std::string &err) {
     return false;
   }
   if (table.size() > size) {
-    err = binary + ": table of " + std::to_string(table.size()) + " bytes, section of " +
-          std::to_string(size);
+    err = binary + ": the table needs " + std::to_string(table.size()) +
+          " bytes, the __marmot_pcln section has " + std::to_string(size);
     return false;
   }
   objOr->reset(); // data is changed below

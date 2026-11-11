@@ -9,7 +9,9 @@
 //   marmot-pcln -frags LIST -estimate [-extra-objects LIST]  prints an upper bound
 //                                                            of the table size
 //   marmot-pcln -frags LIST -patch BINARY    writes the table into BINARY's
-//                                            __TEXT,__marmot_pcln placeholder
+//                                            __TEXT,__marmot_pcln placeholder; exit
+//                                            3 and the size needed on stdout if
+//                                            the placeholder is too small
 //   marmot-pcln -frags LIST -binary BINARY -o table.bin
 #include "marmot/Driver/Pcln.h"
 
@@ -185,8 +187,10 @@ int fromFragments() {
         consumeError(std::move(e));
       }
     }
+    // Margin for text symbols from neither list (linker-made, system
+    // libraries); a placeholder that is still too small makes -patch exit 3.
     std::string table = pcln::encode(t, 0, 1, version, renameMain);
-    outs() << table.size() << "\n";
+    outs() << table.size() + table.size() / 20 + 256 << "\n";
     return 0;
   }
   std::string binPath = patch.empty() ? binaryOpt : patch;
@@ -212,8 +216,16 @@ int fromFragments() {
   pcln::addTextSymbols(bin, t);
   std::string table = pcln::encode(t, pcln::imageBase(bin), quantumOf(bin), version, renameMain);
   if (!patch.empty()) {
-    if (!pcln::patchMachO(patch, table, err))
-      return fail(err);
+    if (!pcln::patchMachO(patch, table, err)) {
+      fail(err);
+      // Too small a placeholder: exit 3, so the caller can relink with the
+      // size printed on stdout.
+      if (err.find("the table needs") != std::string::npos) {
+        outs() << table.size() << "\n";
+        return 3;
+      }
+      return 1;
+    }
   } else {
     std::error_code ec;
     raw_fd_ostream os(output, ec);

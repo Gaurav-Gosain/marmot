@@ -35,6 +35,7 @@ SUBST = [
     ("%llvm-readobj", os.path.join(BIN, "llvm-readobj")),
     ("%llvm-profdata", os.path.join(BIN, "llvm-profdata")),
     ("%llvm-dwarfdump", os.path.join(BIN, "llvm-dwarfdump")),
+    ("%llvm-objcopy", os.path.join(BIN, "llvm-objcopy")),
     ("%dsymutil", os.path.join(BIN, "dsymutil")),
     ("%pcln", os.path.join(ROOT, "build", "bin", "marmot-pcln")),
 ]
