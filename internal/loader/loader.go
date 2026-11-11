@@ -4,13 +4,13 @@ package loader
 
 import (
 	"fmt"
-	"sort"
 	"go/parser"
 	"go/token"
 	"go/types"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
