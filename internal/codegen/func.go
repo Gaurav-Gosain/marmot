@@ -29,11 +29,12 @@ type funcGen struct {
 	failed  bool
 	blkName map[*ssa.BasicBlock]string
 
-	frame         string // _deferframe address, "" if none
-	noinlineCalls bool   // mark calls no_inline (defer thunks)
-	curBlock      *ssa.BasicBlock
-	curArgs       []ssa.Value        // SSA arguments of a call being expanded as an intrinsic
-	volatile      map[ssa.Value]bool // stack slots that live across setjmp
+	frame             string // _deferframe address, "" if none
+	noinlineCalls     bool   // mark calls no_inline (defer thunks)
+	curBlock          *ssa.BasicBlock
+	implicitRunDefers bool
+	curArgs           []ssa.Value        // SSA arguments of a call being expanded as an intrinsic
+	volatile          map[ssa.Value]bool // stack slots that live across setjmp
 }
 
 // function emits fn. shared functions get linkonce_odr linkage.
@@ -135,6 +136,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 	if needsFrame(fn) {
 		f.volatile = volatileAllocs(fn)
 		f.setupFrame()
+		f.implicitRunDefers = !hasRunDefers(fn)
 	}
 	// Phis are block arguments; name them all first because branches
 	// may pass them before their block is emitted.
@@ -598,6 +600,11 @@ func (f *funcGen) succ(b *ssa.BasicBlock, i int) string {
 }
 
 func (f *funcGen) ret(r *ssa.Return) {
+	if f.implicitRunDefers && r.Block() != f.fn.Recover {
+		// The function only hands its defer stack to range-over-func
+		// bodies; SSA has no RunDefers for it.
+		f.rtcall("deferreturn", f.frame)
+	}
 	switch len(r.Results) {
 	case 0:
 		f.emit("llvm.return")

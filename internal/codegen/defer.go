@@ -20,7 +20,7 @@ import (
 const jmpbufWords = 32
 
 var (
-	tDefer      = mlir.Struct(mlir.Ptr, mlir.Ptr, mlir.Ptr, mlir.I8) // link, fn, frame, wrapped
+	tDefer      = mlir.Struct(mlir.Ptr, mlir.Ptr, mlir.Ptr, mlir.I8, mlir.I8) // link, fn, frame, wrapped, rangefunc
 	tDeferFrame = mlir.Array(jmpbufWords, mlir.I64)
 )
 
@@ -154,7 +154,11 @@ func (f *funcGen) deferStmt(v *ssa.Defer) {
 	if wrapped {
 		w = 1
 	}
-	agg := f.build(tDefer, f.null(), fv, frame, f.constInt(w, mlir.I8))
+	rf := int64(0)
+	if !own {
+		rf = 1 // a range-over-func body deferring to the enclosing function
+	}
+	agg := f.build(tDefer, f.null(), fv, frame, f.constInt(w, mlir.I8), f.constInt(rf, mlir.I8))
 	f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, !llvm.ptr", agg, rec, tDefer)
 	f.rtcall("deferpush", rec)
 }
@@ -165,6 +169,7 @@ var deferRecordType = types.NewStruct([]*types.Var{
 	types.NewField(token.NoPos, nil, "fn", types.Typ[types.UnsafePointer], false),
 	types.NewField(token.NoPos, nil, "frame", types.Typ[types.UnsafePointer], false),
 	types.NewField(token.NoPos, nil, "wrapped", types.Typ[types.Bool], false),
+	types.NewField(token.NoPos, nil, "rangefunc", types.Typ[types.Bool], false),
 }, nil)
 
 func (f *funcGen) goStmt(v *ssa.Go) {
@@ -282,4 +287,16 @@ func (f *funcGen) isOwnDeferStack(ds ssa.Value) bool {
 		}
 		return false
 	}
+}
+
+// hasRunDefers reports whether fn contains RunDefers instructions.
+func hasRunDefers(fn *ssa.Function) bool {
+	for _, b := range fn.Blocks {
+		for _, instr := range b.Instrs {
+			if _, ok := instr.(*ssa.RunDefers); ok {
+				return true
+			}
+		}
+	}
+	return false
 }

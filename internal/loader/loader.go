@@ -54,7 +54,7 @@ func Load(cfg Config) (*Program, error) {
 		return nil, fmt.Errorf("merged GOROOT: %v", err)
 	}
 	// purego selects the pure Go fallbacks of packages with assembly.
-	tags := append([]string{"marmot", "purego"}, cfg.Tags...)
+	tags := append([]string{"marmot", "purego", "math_big_pure_go"}, cfg.Tags...)
 	env := append(os.Environ(),
 		"GOROOT="+goroot,
 		"CGO_ENABLED=0",
@@ -178,4 +178,73 @@ func buildSSA(pkgs []*packages.Package) (prog *ssa.Program, ssaPkgs []*ssa.Packa
 	prog, ssaPkgs = ssautil.AllPackages(pkgs, ssa.InstantiateGenerics)
 	prog.Build()
 	return prog, ssaPkgs, nil
+}
+
+// InputFiles lists every Go file the build of cfg.Patterns reads (all
+// packages and dependencies, the runtime included), using the merged
+// GOROOT. It is cheap compared with Load and is used for up-to-date checks.
+func InputFiles(cfg Config) ([]string, string, error) {
+	realRoot, err := goEnv("GOROOT")
+	if err != nil {
+		return nil, "", err
+	}
+	libSrc := filepath.Join(cfg.Root, "lib", "src")
+	if v := os.Getenv("MARMOT_LIBSRC"); v != "" {
+		libSrc = v
+	}
+	goroot, err := MergedGOROOT(realRoot, libSrc, filepath.Join(cfg.Root, "build"))
+	if err != nil {
+		return nil, "", err
+	}
+	tags := append([]string{"marmot", "purego", "math_big_pure_go"}, cfg.Tags...)
+	env := append(os.Environ(), "GOROOT="+goroot, "CGO_ENABLED=0", "GOOS="+cfg.GOOS,
+		"GOARCH="+cfg.GOARCH, "GOFLAGS=-tags="+strings.Join(tags, ","), "GOTOOLCHAIN=local")
+	list := func(patterns ...string) (string, error) {
+		cmd := exec.Command("go", append([]string{"list", "-e", "-deps", "-f",
+			"{{.Dir}}{{range .GoFiles}}\t{{.}}{{end}}{{range .EmbedFiles}}\t{{.}}{{end}}{{if .Error}}\tERROR{{end}}"}, patterns...)...)
+		cmd.Dir = cfg.Dir
+		cmd.Env = env
+		out, err := cmd.Output()
+		return string(out), err
+	}
+	patterns := append([]string{}, cfg.Patterns...)
+	var outs []string
+	if len(patterns) > 0 && strings.HasSuffix(patterns[0], ".go") {
+		for i, p := range patterns {
+			if !filepath.IsAbs(p) {
+				patterns[i] = filepath.Join(cfg.Dir, p)
+			}
+		}
+		a, err := list(patterns...)
+		if err != nil {
+			return nil, "", err
+		}
+		b, err := list("runtime")
+		if err != nil {
+			return nil, "", err
+		}
+		outs = []string{a, b}
+	} else {
+		a, err := list(append(patterns, "runtime")...)
+		if err != nil {
+			return nil, "", err
+		}
+		outs = []string{a}
+	}
+	var files []string
+	for _, out := range outs {
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			fs := strings.Split(line, "\t")
+			if len(fs) == 0 || fs[0] == "" {
+				continue
+			}
+			for _, f := range fs[1:] {
+				if f == "ERROR" {
+					return nil, "", fmt.Errorf("package errors")
+				}
+				files = append(files, filepath.Join(fs[0], f))
+			}
+		}
+	}
+	return files, goroot, nil
 }

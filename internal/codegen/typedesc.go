@@ -406,9 +406,10 @@ func (m *moduleGen) uncommon(sym string, t types.Type) string {
 	}
 	methods := cNull()
 	tfns := cNull()
+	mexprs := cNull()
 	var xcount int64
 	if len(ms) > 0 {
-		var es, tfnEs []cv
+		var es, tfnEs, mexprEs []cv
 		for _, sel := range ms {
 			fn := sel.Obj().(*types.Func)
 			if fn.Exported() {
@@ -425,6 +426,9 @@ func (m *moduleGen) uncommon(sym string, t types.Type) string {
 				}
 			}
 			tfnEs = append(tfnEs, tfn)
+			if m.p.reflectCall || m.p.keepExported {
+				mexprEs = append(mexprEs, m.methodExprEntry(t, sel))
+			}
 			es = append(es, cStruct(m.cString(methodName(fn)),
 				cAddr(m.typeDescSym(stripRecv(fn.Type().(*types.Signature)))), ifn))
 		}
@@ -436,6 +440,11 @@ func (m *moduleGen) uncommon(sym string, t types.Type) string {
 			m.constGlobal(tsym, "linkonce_odr", true, cArray(mlir.Ptr, tfnEs...))
 			tfns = cAddr(tsym)
 		}
+		if m.p.reflectCall || m.p.keepExported {
+			esym := sym + ".mexprs"
+			m.constGlobal(esym, "linkonce_odr", true, cArray(mlir.Struct(mlir.Ptr, mlir.Ptr), mexprEs...))
+			mexprs = cAddr(esym)
+		}
 	}
 	// ptrToThis: *T for a defined non-pointer type T.
 	ptrToThis := cNull()
@@ -446,7 +455,7 @@ func (m *moduleGen) uncommon(sym string, t types.Type) string {
 	}
 	usym := sym + ".uncommon"
 	m.constGlobal(usym, "linkonce_odr", true, cStruct(m.cString(pkgPathOf(t)), methods,
-		cInt(int64(len(ms)), mlir.I32), cInt(xcount, mlir.I32), ptrToThis, tfns))
+		cInt(int64(len(ms)), mlir.I32), cInt(xcount, mlir.I32), ptrToThis, tfns, mexprs))
 	return usym
 }
 
@@ -829,4 +838,26 @@ var (
 // Such methods cannot satisfy interfaces and have no runtime entry.
 func isGenericMethod(sel *types.Selection) bool {
 	return sel.Obj().(*types.Func).Signature().TypeParams().Len() > 0
+}
+
+// methodExprEntry returns {mtyp, fn} for reflect's Method(i).Func: mtyp is
+// the descriptor of func(T, params...) results, fn a static func value of
+// the method expression T.M (receiver as the first ordinary parameter).
+// Both are nil when the method's code is pruned.
+func (m *moduleGen) methodExprEntry(t types.Type, sel *types.Selection) cv {
+	fn := sel.Obj().(*types.Func)
+	if !m.p.methodLive(fn, t) {
+		return cStruct(cNull(), cNull())
+	}
+	sig := fn.Type().(*types.Signature)
+	vars := []*types.Var{types.NewParam(token.NoPos, nil, "recv", t)}
+	for i := 0; i < sig.Params().Len(); i++ {
+		vars = append(vars, sig.Params().At(i))
+	}
+	esig := types.NewSignatureType(nil, nil, nil, types.NewTuple(vars...), sig.Results(), sig.Variadic())
+	code := m.p.prog.MethodValue(sel)
+	if code == nil {
+		return cStruct(cNull(), cNull())
+	}
+	return cStruct(cAddr(m.typeDescSym(esig)), cAddr(m.funcValueSym(code)))
 }

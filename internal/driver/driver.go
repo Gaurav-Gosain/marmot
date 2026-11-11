@@ -105,6 +105,14 @@ func Build(cfg Config) (string, error) {
 	defer stop()
 
 	goos, goarch := runtime.GOOS, runtime.GOARCH
+	stamp := ""
+	if cfg.Output != "" && cfg.Emit == "exe" {
+		stamp = b.buildStamp(goos, goarch)
+		if b.upToDate(stamp, cfg.Output) {
+			b.logf("up to date (stamp %s)", stamp)
+			return cfg.Output, nil
+		}
+	}
 	lp, err := loader.Load(loader.Config{
 		Dir: cfg.Dir, Root: cfg.Root, Tags: cfg.Tags, GOOS: goos, GOARCH: goarch, Patterns: cfg.Patterns,
 		Log: b.logf,
@@ -198,6 +206,7 @@ func Build(cfg Config) (string, error) {
 		return "", err
 	}
 	b.logf("linked %s", out)
+	b.saveStamp(stamp, out)
 	return out, nil
 }
 
@@ -346,7 +355,10 @@ func (b *build) link(objs []string, out string) error {
 	if runtime.GOOS == "darwin" {
 		// Only main is exported: every other symbol becomes local and -x
 		// drops it from the symbol table (Go symbol names are long).
-		args = append(args, "-Wl,-dead_strip", "-Wl,-x", "-Wl,-exported_symbol,_main")
+		args = append(args, "-Wl,-dead_strip")
+		if os.Getenv("MARMOT_KEEP_SYMBOLS") == "" {
+			args = append(args, "-Wl,-x", "-Wl,-exported_symbol,_main")
+		}
 	} else {
 		args = append(args, "-Wl,--gc-sections", "-s")
 	}
