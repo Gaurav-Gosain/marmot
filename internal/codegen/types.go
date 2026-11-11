@@ -66,7 +66,7 @@ func (m *typeMapper) valType(t types.Type) string {
 
 // bigValueSize is the size above which struct and array values are kept in
 // memory: their register form is a pointer to an immutable copy.
-const bigValueSize = 128
+const bigValueSize = 256
 
 // isBig reports whether values of t use the indirect register form.
 func (m *typeMapper) isBig(t types.Type) bool {
