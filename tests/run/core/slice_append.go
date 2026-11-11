@@ -15,7 +15,7 @@ func main() {
 	s = append(s[:5], s[10:]...)
 	println(len(s), s[5], s[len(s)-1])
 	var t []int
-	t = append(t)
+	t = append(t, t...)
 	println(t == nil)
 	t = append(t, []int{}...)
 	println(t == nil)
