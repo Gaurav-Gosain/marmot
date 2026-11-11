@@ -84,6 +84,11 @@ type WithTime struct {
 	T time.Time
 }
 
+type Tricky struct {
+	Fmt  string ` + "`json:\"fmt.\"`" + `
+	JSON int    ` + "`json:\"json\"`" + `
+}
+
 type Unicode struct {
 	Ünï string ` + "`json:\"u\"`" + `
 }
@@ -152,6 +157,8 @@ func main() {
 	show(json.Marshal(map[string][]float64{"b": {1, 2.5}, "a": nil, "": {}}))
 	show(json.Marshal([][]int{{1}, nil, {}}))
 	show(json.Marshal(map[string]*Item{"n": nil}))
+	show(json.Marshal(Tricky{"see fmt.Println and json.Marshal", 2}))
+	fmt.Fprintf(&out, "text fmt.Println json.Marshal os.Stdout io.Writer strconv.Itoa %d\n", 1)
 	show(json.Marshal(3))
 	show(json.Marshal("s<>"))
 	show(json.Marshal(true))

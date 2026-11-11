@@ -8,6 +8,7 @@ import (
 	"go/printer"
 	"go/token"
 	"go/types"
+	"go/version"
 	"os"
 	"path/filepath"
 	"strings"
@@ -244,6 +245,16 @@ func (g *gen) sortSort(call *ast.CallExpr, stable bool) {
 	if stable {
 		name = "marmot_sortStable"
 	}
+	if g.oldFile() {
+		// No generic calls in a file before go1.18: call a plain wrapper.
+		ts := g.typeExpr(t)
+		if ts == "" {
+			return
+		}
+		w := g.newName("sortw")
+		g.decls = append(g.decls, fmt.Sprintf("func %s(d %s) { %s(d) }\n", w, ts, name))
+		name = w
+	}
 	g.replaceCall(call, name, []ast.Expr{call.Args[0]})
 }
 
@@ -272,6 +283,19 @@ func (g *gen) sortSlice(call *ast.CallExpr, stable bool) {
 	name := "marmot_sortSlice"
 	if stable {
 		name = "marmot_sortSliceStable"
+	}
+	if g.oldFile() {
+		ts := g.typeExpr(t)
+		lt := "marmot_lessfn"
+		if cl, ok := lessArg.(*ast.CompositeLit); ok {
+			lt = cl.Type.(*ast.Ident).Name
+		}
+		if ts == "" {
+			return
+		}
+		w := g.newName("sortw")
+		g.decls = append(g.decls, fmt.Sprintf("func %s(x %s, l %s) { %s(x, l) }\n", w, ts, lt, name))
+		name = w
 	}
 	g.replaceCall(call, name, []ast.Expr{call.Args[0], lessArg})
 }
@@ -386,4 +410,11 @@ func (g *gen) closureStruct(e ast.Expr, method string) (ast.Expr, bool) {
 	// identifiers are re-type-checked in place of the literal, where the
 	// literal's free variables are in scope under the same names.
 	return lt, true
+}
+
+// oldFile reports whether the file being rewritten is compiled at a
+// language version without generics (its module declares go < 1.18).
+func (g *gen) oldFile() bool {
+	v := g.info.FileVersions[g.curFile]
+	return v != "" && version.Compare(v, "go1.18") < 0
 }

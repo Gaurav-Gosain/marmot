@@ -550,13 +550,13 @@ func (g *gen) fmtCall(call *ast.CallExpr, name string) {
 	fname := g.newName("fmt")
 	src := fmt.Sprintf("func %s(%s) %s {\n%s}\n", fname, strings.Join(params, ", "), result, body.String())
 	// The generated file refers to fmt, io and os by these names.
-	var repl []string
-	for _, r := range [][3]string{{"fmt.", "fmt", "."}, {"io.Writer", "io", ".Writer"}, {"os.Stdout", "os", ".Stdout"}} {
-		if strings.Contains(src, r[0]) {
-			repl = append(repl, r[0], g.importName(r[1])+r[2])
+	src = rewriteQualifiers(src, func(name string) (string, bool) {
+		switch name {
+		case "fmt", "io", "os":
+			return g.importName(name), true
 		}
-	}
-	src = strings.NewReplacer(repl...).Replace(src)
+		return "", false
+	})
 	g.decls = append(g.decls, src)
 	newArgs := append(append([]ast.Expr{}, head...), args...)
 	g.replaceCall(call, fname, newArgs)
