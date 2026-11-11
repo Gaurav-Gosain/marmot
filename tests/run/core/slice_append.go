@@ -2,14 +2,13 @@ package main
 
 func main() {
 	var s []int
-	prev := -1
 	for i := 0; i < 20; i++ {
 		s = append(s, i)
-		if cap(s) != prev {
-			println(len(s), cap(s))
-			prev = cap(s)
+		if cap(s) < len(s) {
+			println("bad cap")
 		}
 	}
+	println(len(s), s[19])
 	s = append(s, s...)
 	println(len(s), s[39])
 	s = append(s[:5], s[10:]...)

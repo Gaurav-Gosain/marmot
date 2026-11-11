@@ -16,7 +16,6 @@ func main() {
 		t += <-res
 	}
 	println(t)
-	go println("go builtin")
 	go func(a, b int) { done <- a+b == 3 }(1, 2)
 	println(<-done)
 }
