@@ -165,6 +165,31 @@ theorem out_never (own : Alloc → Prop) (prog : List Instr) (a : Alloc) (ha : o
     (h : NoEscape prog a T) (s s' : St) (r : Run own prog s s') (inv : Inv a T s) : ¬ s'.out a :=
   (no_escape own prog a ha T h s s' r inv).2.2
 
+/-- the names an instruction reads -/
+def reads : Instr → List Name
+  | .alloc _ _ => []
+  | .derive _ srcs => srcs
+  | .load _ addr => [addr]
+  | .store v addr => [v, addr]
+  | .pure _ srcs => srcs
+  | .call _ args => args
+  | .sink v => [v]
+
+/-- In-place reuse (reuse.go, as corrected after verify/testdata/progs/reusealias.go): the
+chain values of an append chain are the taint set T of its backing array a (element
+accesses only load and store through addresses, slices are never stored or passed on). If
+after the freeing append no instruction reads a name of T (no chain value is used after the
+free on any path), then no instruction after the free reads a value that can point to the
+freed array, and memory holds none: the free is invisible. The run after the free starts
+from a state where the invariant holds (by `no_escape` over the run up to the free). -/
+theorem no_use_after_free (own : Alloc → Prop) (prog : List Instr) (a : Alloc) (ha : own a)
+    (T : Name → Prop) (h : NoEscape prog a T) (s s' : St) (r : Run own prog s s') (inv : Inv a T s)
+    (dead : ∀ i ∈ prog, ∀ x ∈ reads i, ¬ T x) :
+    Inv a T s' ∧ ∀ i ∈ prog, ∀ x ∈ reads i, ¬ (s'.env x).prov a := by
+  have hi := no_escape own prog a ha T h s s' r inv
+  exact ⟨hi, fun i hi' x hx hp => dead i hi' x hx (hi.1 x hp)⟩
+
 end Escape
 
 #print axioms Escape.no_escape
+#print axioms Escape.no_use_after_free
