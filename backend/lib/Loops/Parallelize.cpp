@@ -26,17 +26,23 @@
 #include "Internal.h"
 
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/MemoryLocation.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Scalar/LICM.h"
+#include "llvm/Transforms/Scalar/LoopPassManager.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/LoopSimplify.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
@@ -69,6 +75,10 @@ struct IndVar {
   Value *start = nullptr;
   Value *step = nullptr;        // invariant in the loop
   Type *gepElemTy = nullptr;    // pointer induction: gep gepElemTy, phi, step
+  // Polynomial induction {c0, +, c1, +, c2} (value c0 + c1*k + c2*k(k-1)/2):
+  // the coefficients, expanded in the preheader and passed as live-ins.
+  const SCEVAddRecExpr *poly = nullptr;
+  SmallVector<Value *, 3> coef;
 };
 
 // The bytes an access touches in iteration k of the loop:
@@ -82,6 +92,27 @@ struct Access {
   Value *baseValue = nullptr;
   const SCEV *coef = nullptr, *lo = nullptr, *hi = nullptr;
   uint64_t size = 0;
+  int family = -1; // row access: index into Plan::families
+};
+
+// Rows reached through one row pointer load `p = load(table + slot)`, with
+// slot = start + step*j for j in [0, count] (one row per iteration of L when
+// perIter). Accesses through p touch [p + extLo, p + extHi).
+struct Family {
+  LoadInst *rowLoad = nullptr;
+  const SCEV *slot = nullptr; // SCEV of the row pointer's address (the key)
+  Value *table = nullptr;
+  const SCEV *start = nullptr, *step = nullptr, *count = nullptr;
+  const SCEV *extLo = nullptr, *extHi = nullptr;
+  bool written = false, perIter = false;
+  std::vector<Instruction *> insts;
+};
+
+// One entry of the run time disjointness test: a family's rows, or an
+// object's whole-loop byte range [s, e).
+struct RangeSource {
+  int family = -1;
+  const SCEV *s = nullptr, *e = nullptr;
 };
 
 struct Plan {
@@ -97,6 +128,17 @@ struct Plan {
   };
   std::vector<Overlap> overlaps;
   uint64_t costPerIter = 1;
+  // Memory access classes for alias scopes in the chunk function: accesses
+  // in different classes never overlap when one of the classes is written
+  // (proved by alias analysis or by the run time checks above).
+  struct AccessClass {
+    std::vector<Instruction *> insts;
+    bool store = false;
+  };
+  std::vector<AccessClass> classes;
+  std::vector<Family> families;
+  // Sources that rt_ranges_disjoint must find pairwise disjoint.
+  std::vector<RangeSource> disjoint;
 };
 
 const char *kindName(RedKind k) {
@@ -190,6 +232,7 @@ private:
   const DataLayout &DL;
 
   std::string why;
+  bool extraExits = false; // analyze rejected L only for its extra exits
   bool reject(const Twine &msg) {
     why = msg.str();
     return false;
@@ -206,11 +249,13 @@ private:
   bool analyzeReduction(Loop *L, PHINode *phi, Reduction &R);
   bool analyzeBody(Loop *L, Plan &P, std::vector<Access> &accs);
   bool analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs);
+  bool rowAccess(Loop *L, Plan &P, Access &a);
   bool decompose(const SCEV *S, Loop *L, const SCEV *&coef, const SCEV *&lo,
                  const SCEV *&hi);
   bool liveOuts(Loop *L, Plan &P);
   uint64_t cost(Loop *L);
   void transform(Plan &P);
+  Value *emitRowCheck(Plan &P, SCEVExpander &exp, Instruction *at);
   Function *outline(Plan &P, StructType *ctxTy);
 };
 
@@ -240,7 +285,25 @@ bool Parallelizer::visit(Loop *L) {
       transform(P);
       return true;
     }
-    remark(L, "not parallel: " + why);
+    if (extraExits && opts.versioning) {
+      extraExits = false;
+      std::string vwhy;
+      if (versionBoundsChecks(F, L, LI, SE, DT, AA, vwhy)) {
+        if (std::getenv("MARMOT_LOOPS_DEBUG")) {
+          F.print(errs());
+          if (verifyFunction(F, &errs()))
+            errs() << "loops: verify failed after versioning\n";
+        }
+        remark(L, "bounds checks versioned (" + vwhy + "); fast copy next");
+        markDecided(L);
+        L->getLoopLatch()->getTerminator()->setMetadata("marmot.par.orig",
+                                                         MDNode::get(F.getContext(), {}));
+        return true;
+      }
+      remark(L, "not parallel: " + why + "; not versioned: " + vwhy);
+    } else {
+      remark(L, "not parallel: " + why);
+    }
     markDecided(L);
   } else if (L->getLoopLatch() &&
              L->getLoopLatch()->getTerminator()->getMetadata("marmot.par.orig")) {
@@ -258,9 +321,11 @@ bool Parallelizer::analyze(Loop *L, Plan &P) {
   if (!L->isLoopSimplifyForm())
     return reject("not in simplified form");
   BasicBlock *latch = L->getLoopLatch();
-  if (L->getExitingBlock() != latch)
+  if (L->getExitingBlock() != latch) {
+    extraExits = true;
     return reject("more than one exit, or the exit is not at the latch "
                   "(bounds check or break in the loop)");
+  }
   if (!L->getExitBlock())
     return reject("no unique exit block");
   auto *br = dyn_cast<BranchInst>(latch->getTerminator());
@@ -308,9 +373,25 @@ bool Parallelizer::analyze(Loop *L, Plan &P) {
   auto ok = [&](const SCEV *s) { return exp.isSafeToExpandAt(s, at); };
   if (!ok(btc))
     return reject("trip count not expandable");
+  for (IndVar &iv : P.ivs)
+    if (iv.poly)
+      for (const SCEV *op : iv.poly->operands())
+        if (!ok(op))
+          return reject("induction coefficients not expandable");
   for (auto &c : P.leChecks)
     if (!ok(c.first) || !ok(c.second))
       return reject("run time check not expandable");
+  for (RangeSource &r : P.disjoint) {
+    if (r.family < 0) {
+      if (!ok(r.s) || !ok(r.e))
+        return reject("run time alias check not expandable");
+      continue;
+    }
+    Family &f = P.families[r.family];
+    for (const SCEV *x : {f.start, f.step, f.count, f.extLo, f.extHi})
+      if (!ok(x))
+        return reject("row check not expandable");
+  }
   for (auto &o : P.overlaps)
     if (!ok(o.s1) || !ok(o.e1) || !ok(o.s2) || !ok(o.e2))
       return reject("run time alias check not expandable");
@@ -359,6 +440,23 @@ bool Parallelizer::analyzeHeaderPhis(Loop *L, Plan &P) {
           P.ivs.push_back({&phi, start, gep->getOperand(1), gep->getSourceElementType()});
           continue;
         }
+      }
+    }
+    // Any other integer recurrence of degree at most 2 in L, like the
+    // (i+j)*(i+j+1)/2 that strength reduction leaves in spectralnorm.
+    if (phi.getType()->isIntegerTy() && SE.isSCEVable(phi.getType())) {
+      auto *ar = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(&phi));
+      bool usedOutside = false;
+      for (User *u : phi.users())
+        if (auto *ui = dyn_cast<Instruction>(u); ui && !L->contains(ui))
+          usedOutside = true;
+      if (ar && ar->getLoop() == L && ar->getNumOperands() <= 3 && !usedOutside &&
+          all_of(ar->operands(), [&](const SCEV *op) { return SE.isLoopInvariant(op, L); })) {
+        IndVar iv;
+        iv.phi = &phi;
+        iv.poly = ar;
+        P.ivs.push_back(iv);
+        continue;
       }
     }
     Reduction R;
@@ -532,86 +630,104 @@ bool Parallelizer::analyzeBody(Loop *L, Plan &P, std::vector<Access> &accs) {
   return true;
 }
 
-// Splits S (an integer offset) into coef*k + [lo, hi] for iteration k of L.
-// Inner loop recurrences contribute their whole range over the inner loop's
-// iterations; that range must not depend on L's iteration.
-bool Parallelizer::decompose(const SCEV *S, Loop *L, const SCEV *&coef,
-                             const SCEV *&lo, const SCEV *&hi) {
-  Type *ty = S->getType();
-  if (SE.isLoopInvariant(S, L)) {
-    coef = SE.getZero(ty);
-    lo = hi = S;
-    return true;
+bool Parallelizer::decompose(const SCEV *S, Loop *L, const SCEV *&coef, const SCEV *&lo,
+                             const SCEV *&hi) {
+  return decomposeAffine(SE, S, L, coef, lo, hi, nullptr);
+}
+
+// Rule P, memory part: different iterations touch disjoint bytes of every
+// object some iteration writes.
+// A load or store through a row pointer loaded in L (c[i][j] with c a
+// [][]T): records it in a Family.
+bool Parallelizer::rowAccess(Loop *L, Plan &P, Access &a) {
+  Type *ity = DL.getIntPtrType(F.getContext());
+  const SCEV *s = SE.getSCEV(a.ptr);
+  auto *bu = dyn_cast<SCEVUnknown>(SE.getPointerBase(s));
+  if (!bu)
+    return false;
+  auto *rowLd = dyn_cast<LoadInst>(bu->getValue());
+  if (!rowLd || !L->contains(rowLd) || !rowLd->isSimple() || !rowLd->getType()->isPointerTy())
+    return false;
+  // The row pointer is read in every iteration of the loops around it.
+  for (Loop *m = LI.getLoopFor(rowLd->getParent()); m; m = m->getParentLoop()) {
+    if (!DT.dominates(rowLd->getParent(), m->getLoopLatch()))
+      return false;
+    if (m == L)
+      break;
   }
-  if (auto *ar = dyn_cast<SCEVAddRecExpr>(S)) {
-    if (!ar->isAffine())
-      return false;
-    const Loop *al = ar->getLoop();
-    const SCEV *step = ar->getStepRecurrence(SE);
-    if (!SE.isLoopInvariant(step, L))
-      return false;
-    if (al == L) {
-      if (!SE.isLoopInvariant(ar->getStart(), L))
-        return false;
-      coef = step;
-      lo = hi = ar->getStart();
-      return true;
-    }
-    if (!L->contains(al))
-      return false;
-    const SCEV *c, *l, *h;
-    if (!decompose(ar->getStart(), L, c, l, h))
-      return false;
-    const SCEV *maxBtc = SE.getSymbolicMaxBackedgeTakenCount(al);
-    if (isa<SCEVCouldNotCompute>(maxBtc) || !SE.isLoopInvariant(maxBtc, L))
-      return false;
-    const SCEV *ext = SE.getMulExpr(step, SE.getTruncateOrZeroExtend(maxBtc, ty));
-    if (SE.isKnownNonNegative(step))
-      h = SE.getAddExpr(h, ext);
-    else if (SE.isKnownNonPositive(step))
-      l = SE.getAddExpr(l, ext);
-    else
-      return false;
-    coef = c;
-    lo = l;
-    hi = h;
-    return true;
+  const SCEV *slot = SE.getSCEV(rowLd->getPointerOperand());
+  // Offset of the access inside its row, over all of L.
+  const SCEV *off = SE.getMinusSCEV(s, bu);
+  const SCEV *oc, *ol, *oh;
+  if (isa<SCEVCouldNotCompute>(off) || off->getType() != ity || !decompose(off, L, oc, ol, oh))
+    return false;
+  const SCEV *btc = SE.getTruncateOrZeroExtend(SE.getBackedgeTakenCount(L), ity);
+  const SCEV *span = SE.getMulExpr(oc, btc);
+  const SCEV *zero = SE.getZero(ity);
+  const SCEV *lo, *hi;
+  if (oc->isZero() || SE.isKnownNonNegative(oc)) {
+    lo = ol;
+    hi = SE.getAddExpr(SE.getAddExpr(oh, span), SE.getConstant(ity, a.size));
+  } else if (SE.isKnownNegative(oc)) {
+    lo = SE.getAddExpr(ol, span);
+    hi = SE.getAddExpr(oh, SE.getConstant(ity, a.size));
+  } else {
+    return false;
   }
-  if (auto *add = dyn_cast<SCEVAddExpr>(S)) {
-    const SCEV *c = SE.getZero(ty), *l = SE.getZero(ty), *h = SE.getZero(ty);
-    for (const SCEV *op : add->operands()) {
-      const SCEV *oc, *ol, *oh;
-      if (!decompose(op, L, oc, ol, oh))
-        return false;
-      c = SE.getAddExpr(c, oc);
-      l = SE.getAddExpr(l, ol);
-      h = SE.getAddExpr(h, oh);
-    }
-    coef = c;
-    lo = l;
-    hi = h;
-    return true;
-  }
-  if (auto *mul = dyn_cast<SCEVMulExpr>(S)) {
-    if (mul->getNumOperands() != 2)
+  (void)zero;
+  int fi = -1;
+  for (size_t i = 0; i < P.families.size(); i++)
+    if (P.families[i].slot == slot)
+      fi = int(i);
+  if (fi < 0) {
+    Family f;
+    f.rowLoad = rowLd;
+    f.slot = slot;
+    const SCEV *tb = SE.getPointerBase(slot);
+    auto *tu = dyn_cast<SCEVUnknown>(tb);
+    if (!tu || !SE.isLoopInvariant(tb, L))
       return false;
-    auto *k = dyn_cast<SCEVConstant>(mul->getOperand(0));
-    if (!k)
+    f.table = tu->getValue();
+    const SCEV *soff = SE.getMinusSCEV(slot, tb);
+    const SCEV *sc, *sl, *sh;
+    SmallVector<Term, 2> terms;
+    if (isa<SCEVCouldNotCompute>(soff) ||
+        !decomposeAffine(SE, soff, L, sc, sl, sh, &terms))
       return false;
-    const SCEV *oc, *ol, *oh;
-    if (!decompose(mul->getOperand(1), L, oc, ol, oh))
-      return false;
-    coef = SE.getMulExpr(k, oc);
-    if (k->getAPInt().isNonNegative()) {
-      lo = SE.getMulExpr(k, ol);
-      hi = SE.getMulExpr(k, oh);
+    f.start = sl;
+    if (!sc->isZero() && terms.empty()) {
+      f.step = sc;
+      f.count = btc;
+      f.perIter = true;
+    } else if (sc->isZero() && terms.size() == 1 && SE.isKnownNonNegative(terms[0].step)) {
+      f.step = terms[0].step;
+      f.count = SE.getTruncateOrZeroExtend(terms[0].count, ity);
+    } else if (sc->isZero() && terms.empty()) {
+      f.step = SE.getZero(ity);
+      f.count = SE.getZero(ity);
     } else {
-      lo = SE.getMulExpr(k, oh);
-      hi = SE.getMulExpr(k, ol);
+      return false;
     }
-    return true;
+    // Nothing in L writes the row pointers.
+    MemoryLocation loc =
+        MemoryLocation::getBeforeOrAfter(rowLd->getPointerOperand(), rowLd->getAAMetadata());
+    for (BasicBlock *bb : L->blocks())
+      for (Instruction &I : *bb)
+        if (I.mayWriteToMemory() && isModSet(AA.getModRefInfo(&I, loc)))
+          return false;
+    f.extLo = lo;
+    f.extHi = hi;
+    P.families.push_back(f);
+    fi = int(P.families.size() - 1);
+  } else {
+    Family &f = P.families[fi];
+    f.extLo = SE.getSMinExpr(f.extLo, lo);
+    f.extHi = SE.getSMaxExpr(f.extHi, hi);
   }
-  return false;
+  P.families[fi].written |= a.store;
+  P.families[fi].insts.push_back(a.inst);
+  a.family = fi;
+  return true;
 }
 
 // Rule P, memory part: different iterations touch disjoint bytes of every
@@ -636,14 +752,20 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
       a.affine = false;
   }
   for (Access &a : accs)
-    if (a.store && !a.affine)
+    if (!a.affine)
+      rowAccess(L, P, a);
+  for (Access &a : accs)
+    if (a.store && !a.affine && a.family < 0)
       return reject("store address is not affine in the loop's induction "
                     "or its base pointer changes in the loop");
+  for (Family &f : P.families)
+    if (f.written && !f.perIter)
+      return reject("every iteration writes the same rows");
 
   // Same base: iteration windows of width |coef| must hold every access.
   for (size_t i = 0; i < accs.size(); i++) {
     Access &x = accs[i];
-    if (!x.store)
+    if (!x.store || !x.affine)
       continue;
     for (size_t j = 0; j < accs.size(); j++) {
       Access &y = accs[j];
@@ -673,8 +795,8 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
     }
   }
 
-  // Different bases: whole-loop byte ranges must not overlap, unless alias
-  // analysis already says the objects differ.
+  // Different objects: whole-loop byte ranges must not overlap, unless alias
+  // analysis (including the Go type classes) already says they differ.
   const SCEV *btc = SE.getTruncateOrZeroExtend(SE.getBackedgeTakenCount(L), ity);
   auto add3 = [&](const SCEV *a, const SCEV *b, const SCEV *c) {
     return SE.getAddExpr(SE.getAddExpr(a, b), c);
@@ -688,28 +810,45 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
     const SCEV *e = SE.getAddExpr(add3(a.base, a.hi, size), neg ? zero : span);
     return {s, e};
   };
-  // Group ranges by base so each pair of objects gets one check.
-  struct Group {
-    Value *base;
+  // Units: an affine object (group), a row family, or one variant load.
+  struct Unit {
+    Value *base = nullptr; // group
+    int family = -1;
     bool store = false;
-    bool affine = true;
+    bool variant = false;
     const SCEV *s = nullptr, *e = nullptr;
     std::vector<Access *> accs;
   };
-  std::vector<Group> groups;
-  std::vector<Access *> variant;
+  std::vector<Unit> units;
   for (Access &a : accs) {
-    if (!a.affine) {
-      variant.push_back(&a);
+    if (a.family >= 0) {
+      Unit *u = nullptr;
+      for (Unit &uu : units)
+        if (uu.family == a.family)
+          u = &uu;
+      if (!u) {
+        units.push_back({});
+        u = &units.back();
+        u->family = a.family;
+      }
+      u->store |= a.store;
+      u->accs.push_back(&a);
       continue;
     }
-    Group *g = nullptr;
-    for (Group &gg : groups)
-      if (gg.base == a.baseValue)
+    if (!a.affine) {
+      units.push_back({});
+      units.back().variant = true;
+      units.back().accs.push_back(&a);
+      continue;
+    }
+    Unit *g = nullptr;
+    for (Unit &gg : units)
+      if (gg.family < 0 && !gg.variant && gg.base == a.baseValue)
         g = &gg;
     if (!g) {
-      groups.push_back({a.baseValue});
-      g = &groups.back();
+      units.push_back({});
+      g = &units.back();
+      g->base = a.baseValue;
     }
     if (!a.coef || (!SE.isKnownNonNegative(a.coef) && !SE.isKnownNegative(a.coef)))
       return reject("stride of unknown sign");
@@ -719,24 +858,58 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
     g->store |= a.store;
     g->accs.push_back(&a);
   }
-  for (size_t i = 0; i < groups.size(); i++) {
-    if (!groups[i].store)
+  // True when alias analysis proves every store of u disjoint from every
+  // access of v.
+  auto noAlias = [&](Unit &u, Unit &v) {
+    for (Access *x : u.accs) {
+      if (!x->store)
+        continue;
+      for (Access *y : v.accs)
+        if (!AA.isNoAlias(
+                MemoryLocation::getBeforeOrAfter(x->ptr, x->inst->getAAMetadata()),
+                MemoryLocation::getBeforeOrAfter(y->ptr, y->inst->getAAMetadata())))
+          return false;
+    }
+    return true;
+  };
+  std::vector<bool> inSet(units.size(), false);
+  for (size_t i = 0; i < units.size(); i++) {
+    Unit &u = units[i];
+    if (!u.store)
       continue;
-    for (size_t j = 0; j < groups.size(); j++) {
-      if (i == j || (groups[j].store && j < i))
+    if (u.family >= 0)
+      inSet[i] = true; // its rows must be pairwise disjoint
+    for (size_t j = 0; j < units.size(); j++) {
+      Unit &v = units[j];
+      if (i == j || (v.store && j < i))
         continue;
-      if (AA.isNoAlias(MemoryLocation::getBeforeOrAfter(groups[i].base),
-                       MemoryLocation::getBeforeOrAfter(groups[j].base)))
+      if (noAlias(u, v) && (!v.store || noAlias(v, u)))
         continue;
-      P.overlaps.push_back({groups[i].s, groups[i].e, groups[j].s, groups[j].e});
+      if (v.variant)
+        return reject("load through a pointer computed in the loop may alias a "
+                      "stored object");
+      if (u.family < 0 && v.family < 0) {
+        P.overlaps.push_back({u.s, u.e, v.s, v.e});
+        continue;
+      }
+      inSet[i] = inSet[j] = true;
     }
-    for (Access *v : variant) {
-      if (AA.isNoAlias(MemoryLocation::getBeforeOrAfter(groups[i].base),
-                       MemoryLocation::getBeforeOrAfter(v->ptr)))
-        continue;
-      return reject("load through a pointer computed in the loop may alias a "
-                    "stored object");
-    }
+  }
+  for (size_t i = 0; i < units.size(); i++) {
+    if (!inSet[i])
+      continue;
+    RangeSource r;
+    r.family = units[i].family;
+    r.s = units[i].s;
+    r.e = units[i].e;
+    P.disjoint.push_back(r);
+  }
+  for (Unit &u : units) {
+    Plan::AccessClass c;
+    c.store = u.store;
+    for (Access *a : u.accs)
+      c.insts.push_back(a->inst);
+    P.classes.push_back(std::move(c));
   }
   return true;
 }
@@ -839,24 +1012,34 @@ Function *Parallelizer::outline(Plan &P, StructType *ctxTy) {
     auto it = vmap.find(v);
     return it == vmap.end() ? v : static_cast<Value *>(it->second);
   };
-  for (IndVar &iv : P.ivs) {
-    auto *nphi = cast<PHINode>(vmap[iv.phi]);
-    Value *start = mapped(iv.start);
-    Value *step = mapped(iv.step);
-    Value *s;
-    if (iv.gepElemTy) {
-      Value *n = b.CreateMul(lo, b.CreateSExtOrTrunc(step, i64));
-      s = b.CreateGEP(iv.gepElemTy, start, n, iv.phi->getName() + ".lo");
-    } else {
-      Value *k = b.CreateSExtOrTrunc(lo, step->getType());
-      s = b.CreateAdd(start, b.CreateMul(step, k), iv.phi->getName() + ".lo");
-    }
-    nphi->setIncomingValueForBlock(entry, s);
-  }
   for (Reduction &R : P.reds) {
     auto *nphi = cast<PHINode>(vmap[R.phi]);
     nphi->setIncomingValueForBlock(entry,
                                    identity(R.kind, cast<IntegerType>(R.phi->getType())));
+  }
+  // Alias scopes: one per access class, in a domain of this chunk function.
+  if (P.classes.size() > 1) {
+    MDBuilder mdb(C);
+    MDNode *domain = mdb.createAnonymousAliasScopeDomain(body->getName());
+    std::vector<MDNode *> scopes;
+    for (size_t i = 0; i < P.classes.size(); i++)
+      scopes.push_back(mdb.createAnonymousAliasScope(domain));
+    for (size_t i = 0; i < P.classes.size(); i++) {
+      SmallVector<Metadata *, 8> others;
+      for (size_t j = 0; j < P.classes.size(); j++)
+        if (j != i && (P.classes[i].store || P.classes[j].store))
+          others.push_back(scopes[j]);
+      MDNode *scope = MDNode::get(C, {scopes[i]});
+      MDNode *noalias = MDNode::get(C, others);
+      for (Instruction *I : P.classes[i].insts) {
+        auto *ni = cast<Instruction>(vmap[I]);
+        ni->setMetadata(LLVMContext::MD_alias_scope,
+                        MDNode::concatenate(ni->getMetadata(LLVMContext::MD_alias_scope), scope));
+        if (!others.empty())
+          ni->setMetadata(LLVMContext::MD_noalias,
+                          MDNode::concatenate(ni->getMetadata(LLVMContext::MD_noalias), noalias));
+      }
+    }
   }
   // Partial results restart from the identity, so a no-wrap flag that held
   // for the serial sums may not hold for them.
@@ -873,13 +1056,57 @@ Function *Parallelizer::outline(Plan &P, StructType *ctxTy) {
   PHINode *k = PHINode::Create(i64, 2, "k");
   k->insertBefore(header->begin());
   k->addIncoming(lo, entry);
+  // Inductions become start + step*k: one counter, and the value for any
+  // iteration k is exact (wrapping arithmetic, like the serial loop's).
+  for (IndVar &iv : P.ivs) {
+    auto *nphi = cast<PHINode>(vmap[iv.phi]);
+    Value *v;
+    if (iv.poly) {
+      // c0 + c1*k + c2*binomial(k, 2); binomial(k, 2) = k(k-1)/2 computed
+      // by halving the even factor, so it is exact modulo 2^w.
+      Type *ty = iv.phi->getType();
+      Value *kk = hb.CreateSExtOrTrunc(k, ty);
+      v = mapped(iv.coef[0]);
+      if (iv.coef.size() > 1)
+        v = hb.CreateAdd(v, hb.CreateMul(mapped(iv.coef[1]), kk));
+      if (iv.coef.size() > 2) {
+        Value *km1 = hb.CreateSub(kk, ConstantInt::get(ty, 1));
+        Value *even = hb.CreateICmpEQ(hb.CreateAnd(kk, ConstantInt::get(ty, 1)),
+                                      ConstantInt::get(ty, 0));
+        Value *a = hb.CreateSelect(even, hb.CreateLShr(kk, 1), kk);
+        Value *b = hb.CreateSelect(even, km1, hb.CreateLShr(km1, 1));
+        v = hb.CreateAdd(v, hb.CreateMul(mapped(iv.coef[2]), hb.CreateMul(a, b)));
+      }
+      v->setName(iv.phi->getName() + ".k");
+      nphi->replaceAllUsesWith(v);
+      nphi->eraseFromParent();
+      continue;
+    }
+    Value *start = mapped(iv.start);
+    Value *step = mapped(iv.step);
+    if (iv.gepElemTy) {
+      Value *n = hb.CreateMul(k, hb.CreateSExtOrTrunc(step, i64));
+      v = hb.CreateGEP(iv.gepElemTy, start, n, iv.phi->getName() + ".k");
+    } else {
+      Value *kk = hb.CreateSExtOrTrunc(k, step->getType());
+      v = hb.CreateAdd(start, hb.CreateMul(step, kk), iv.phi->getName() + ".k");
+    }
+    nphi->replaceAllUsesWith(v);
+    nphi->eraseFromParent();
+  }
   Instruction *term = latch->getTerminator();
   IRBuilder<> lb(term);
   Value *k1 = lb.CreateAdd(k, ConstantInt::get(i64, 1), "k.next");
-  Value *more = lb.CreateICmpULT(k1, hi, "k.more");
-  lb.CreateCondBr(more, header, exit);
+  // rt_parallel_for only calls with lo < hi, so k.next != hi is exact and
+  // gives ScalarEvolution the cheap trip count hi - lo.
+  Value *more = lb.CreateICmpNE(k1, hi, "k.more");
+  BranchInst *nbr = lb.CreateCondBr(more, header, exit);
   term->eraseFromParent();
   k->addIncoming(k1, latch);
+  // The chunk loop's iterations are independent (Rule P). With an inner
+  // loop, mark it for loop-jam (Jam.cpp).
+  if (!L->getSubLoops().empty())
+    nbr->setMetadata("marmot.jam", MDNode::get(C, {}));
 
   // Combine partial reductions.
   IRBuilder<> eb(exit);
@@ -892,6 +1119,111 @@ Function *Parallelizer::outline(Plan &P, StructType *ctxTy) {
   }
   eb.CreateRetVoid();
   return body;
+}
+
+// Fills two scratch arrays with the byte ranges of every family's rows and
+// every listed object, and asks rt_ranges_disjoint whether they overlap.
+// More than MaxRows ranges: no parallel run. Emitted before `at`, which it
+// splits (the row loops need their own blocks).
+constexpr uint64_t MaxRows = 4096;
+
+Value *Parallelizer::emitRowCheck(Plan &P, SCEVExpander &exp, Instruction *at) {
+  LLVMContext &C = F.getContext();
+  Type *i64 = Type::getInt64Ty(C);
+  Type *i8 = Type::getInt8Ty(C);
+  Type *ptr = PointerType::getUnqual(C);
+  Module &M = *F.getParent();
+  // Expand everything first, while the dominator tree is exact (see
+  // Versioning.cpp: the expander may rewrite uses for LCSSA).
+  struct Ex {
+    Value *s = nullptr, *e = nullptr;                                     // object
+    Value *start = nullptr, *step = nullptr, *count = nullptr, *elo = nullptr, *ehi = nullptr;
+  };
+  std::vector<Ex> ex(P.disjoint.size());
+  for (size_t k = 0; k < P.disjoint.size(); k++) {
+    RangeSource &r = P.disjoint[k];
+    if (r.family < 0) {
+      ex[k].s = exp.expandCodeFor(r.s, i64, at);
+      ex[k].e = exp.expandCodeFor(r.e, i64, at);
+      continue;
+    }
+    Family &f = P.families[r.family];
+    ex[k].start = exp.expandCodeFor(f.start, i64, at);
+    ex[k].step = exp.expandCodeFor(f.step, i64, at);
+    ex[k].count = exp.expandCodeFor(f.count, i64, at);
+    ex[k].elo = exp.expandCodeFor(f.extLo, i64, at);
+    ex[k].ehi = exp.expandCodeFor(f.extHi, i64, at);
+  }
+  // Count the ranges.
+  IRBuilder<> b(at);
+  Value *n = ConstantInt::get(i64, 0);
+  std::vector<Value *> counts;
+  for (size_t k = 0; k < P.disjoint.size(); k++) {
+    Value *c = P.disjoint[k].family >= 0 ? b.CreateAdd(ex[k].count, ConstantInt::get(i64, 1))
+                                         : ConstantInt::get(i64, 1);
+    counts.push_back(c);
+    n = b.CreateAdd(n, c);
+  }
+  Value *small = b.CreateICmpULE(n, ConstantInt::get(i64, MaxRows), "rows.small");
+  // Split: at's block ends with "if small goto fill else goto join".
+  BasicBlock *head = at->getParent();
+  BasicBlock *join = head->splitBasicBlock(at->getIterator(), "rows.join");
+  BasicBlock *fill = BasicBlock::Create(C, "rows.fill", &F, join);
+  head->getTerminator()->eraseFromParent();
+  IRBuilder<> hb(head);
+  hb.CreateCondBr(small, fill, join);
+  IRBuilder<> fb(fill);
+  Value *saved = fb.CreateStackSave("rows.sp");
+  Value *los = fb.CreateAlloca(i64, n, "rows.lo");
+  Value *his = fb.CreateAlloca(i64, n, "rows.hi");
+  Value *idx = ConstantInt::get(i64, 0);
+  BasicBlock *cur = fill;
+  for (size_t k = 0; k < P.disjoint.size(); k++) {
+    RangeSource &r = P.disjoint[k];
+    IRBuilder<> cb(cur);
+    if (r.family < 0) {
+      cb.CreateStore(ex[k].s, cb.CreateGEP(i64, los, idx));
+      cb.CreateStore(ex[k].e, cb.CreateGEP(i64, his, idx));
+      idx = cb.CreateAdd(idx, ConstantInt::get(i64, 1));
+      continue;
+    }
+    Family &f = P.families[r.family];
+    Value *table = f.table;
+    Value *start = ex[k].start, *step = ex[k].step, *count = ex[k].count;
+    Value *elo = ex[k].elo, *ehi = ex[k].ehi;
+    BasicBlock *body = BasicBlock::Create(C, "rows.loop", &F, join);
+    BasicBlock *after = BasicBlock::Create(C, "rows.next", &F, join);
+    cb.CreateBr(body);
+    IRBuilder<> lb(body);
+    PHINode *j = lb.CreatePHI(i64, 2, "j");
+    j->addIncoming(ConstantInt::get(i64, 0), cur);
+    Value *slot = lb.CreateGEP(i8, table, lb.CreateAdd(start, lb.CreateMul(step, j)));
+    LoadInst *row = lb.CreateLoad(ptr, slot, "row");
+    row->setAAMetadata(f.rowLoad->getAAMetadata());
+    Value *ri = lb.CreatePtrToInt(row, i64);
+    Value *at2 = lb.CreateAdd(idx, j);
+    lb.CreateStore(lb.CreateAdd(ri, elo), lb.CreateGEP(i64, los, at2));
+    lb.CreateStore(lb.CreateAdd(ri, ehi), lb.CreateGEP(i64, his, at2));
+    Value *j2 = lb.CreateAdd(j, ConstantInt::get(i64, 1));
+    j->addIncoming(j2, body);
+    BranchInst *back = lb.CreateCondBr(lb.CreateICmpULE(j2, count), body, after);
+    back->setMetadata("marmot.par", MDNode::get(C, {}));
+    IRBuilder<> ab(after);
+    idx = ab.CreateAdd(idx, counts[k]);
+    cur = after;
+  }
+  IRBuilder<> eb(cur);
+  FunctionCallee rd = M.getOrInsertFunction(
+      "rt_ranges_disjoint", FunctionType::get(Type::getInt32Ty(C), {i64, ptr, ptr}, false));
+  Value *res = eb.CreateCall(rd, {n, los, his});
+  eb.CreateStackRestore(saved);
+  Value *okFill = eb.CreateICmpNE(res, ConstantInt::get(Type::getInt32Ty(C), 0));
+  eb.CreateBr(join);
+  IRBuilder<> jb(join, join->begin());
+  PHINode *ok = jb.CreatePHI(Type::getInt1Ty(C), 2, "rows.ok");
+  ok->addIncoming(ConstantInt::getFalse(C), head);
+  ok->addIncoming(okFill, cur);
+  return ok;
 }
 
 void Parallelizer::transform(Plan &P) {
@@ -908,6 +1240,18 @@ void Parallelizer::transform(Plan &P) {
   // Mark the serial version so its inner loops are left alone.
   latch->getTerminator()->setMetadata("marmot.par.orig", MDNode::get(C, {}));
 
+  {
+    SCEVExpander exp(SE, "par");
+    Instruction *at = pre->getTerminator();
+    for (IndVar &iv : P.ivs)
+      if (iv.poly)
+        for (const SCEV *op : iv.poly->operands()) {
+          Value *v = exp.expandCodeFor(op, iv.phi->getType(), at);
+          iv.coef.push_back(v);
+          if (!is_contained(P.liveIns, v) && !isa<Constant>(v))
+            P.liveIns.push_back(v);
+        }
+  }
   SmallVector<Type *, 16> fields;
   for (Value *v : P.liveIns)
     fields.push_back(v->getType());
@@ -939,6 +1283,13 @@ void Parallelizer::transform(Plan &P) {
     b.SetInsertPoint(at);
     Value *disjoint = b.CreateOr(b.CreateICmpULE(e1, s2), b.CreateICmpULE(e2, s1));
     cond = b.CreateAnd(cond, disjoint, "par.noalias");
+  }
+  if (!P.disjoint.empty()) {
+    Value *rows = emitRowCheck(P, exp, at);
+    // The row check split the preheader: `at` now ends the join block.
+    pre = at->getParent();
+    b.SetInsertPoint(at);
+    cond = b.CreateAnd(cond, rows, "par.rows");
   }
   b.SetInsertPoint(at);
   uint64_t grainIters = std::max<uint64_t>(1, (GrainWork + P.costPerIter - 1) / P.costPerIter);
@@ -995,6 +1346,11 @@ public:
         auto &SE = FAM.getResult<ScalarEvolutionAnalysis>(*F);
         auto &DT = FAM.getResult<DominatorTreeAnalysis>(*F);
         auto &AA = FAM.getResult<AAManager>(*F);
+        auto &AC = FAM.getResult<AssumptionAnalysis>(*F);
+        // Loops lose their preheaders and dedicated exits in the function
+        // simplification pipeline; restore them.
+        for (Loop *L : LI)
+          simplifyLoop(L, &DT, &LI, &SE, &AC, nullptr, /*PreserveLCSSA=*/false);
         Parallelizer par(*F, LI, SE, DT, AA, opts);
         bool did = false;
         for (Loop *L : LI)
@@ -1007,6 +1363,13 @@ public:
         if (!did)
           break;
         changed = true;
+        // A versioned fast copy has no checks left in front of its loads:
+        // hoist the invariant ones (row headers) before looking at it.
+        FunctionPassManager fpm;
+        fpm.addPass(createFunctionToLoopPassAdaptor(LICMPass(LICMOptions()),
+                                                    /*UseMemorySSA=*/true));
+        fpm.run(*F, FAM);
+        FAM.invalidate(*F, PreservedAnalyses::none());
       }
     }
     // Drop our markers.

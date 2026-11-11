@@ -21,6 +21,14 @@ void registerLLVMPasses(PassBuilder &pb, const Options &opts) {
         if (opts.parallel)
           addParallelize(mpm, opts);
       });
+  // Jam chunk loops before the vectorizers, so the SLP vectorizer sees the
+  // jammed inner loop.
+  pb.registerVectorizerStartEPCallback([opts](FunctionPassManager &fpm, OptimizationLevel ol) {
+    if (ol.getSpeedupLevel() < 2 || ol.getSizeLevel() > 0 || !opts.parallel)
+      return;
+    addInterchange(fpm, opts);
+    addJam(fpm, opts);
+  });
 }
 
 } // namespace loops

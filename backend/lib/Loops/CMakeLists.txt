@@ -17,10 +17,18 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 
 add_library(MarmotLoops STATIC
+  Affine.cpp
+  Versioning.cpp
+  Interchange.cpp
+  Jam.cpp
   Parallelize.cpp
   Register.cpp
 )
 target_include_directories(MarmotLoops PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(NOT MARMOT_LOOPS_STANDALONE)
+  # MLIR passes: only inside the backend build.
+  target_sources(MarmotLoops PRIVATE TypeAlias.cpp)
+endif()
 set_target_properties(MarmotLoops PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(MARMOT_LOOPS_STANDALONE)
