@@ -19,6 +19,9 @@ func rt_poll_wait(pd unsafe.Pointer, mode int32, deadline int64) int32
 //go:linkname rt_poll_evict rt_poll_evict
 func rt_poll_evict(pd unsafe.Pointer)
 
+//go:linkname rt_poll_wake rt_poll_wake
+func rt_poll_wake(pd unsafe.Pointer, mode int32)
+
 // Error codes returned to internal/poll (see internal/poll/fd_poll_runtime.go).
 const (
 	pollNoError        = 0
@@ -131,6 +134,9 @@ func poll_runtime_pollWait(ctx uintptr, mode int) int {
 				continue
 			}
 			return pollErrTimeout
+		case 3:
+			// Woken by a deadline change: check the new deadline.
+			continue
 		default:
 			return pollErrClosing
 		}
@@ -142,8 +148,8 @@ func poll_runtime_pollWaitCanceled(ctx uintptr, mode int) {}
 
 // poll_runtime_pollSetDeadline sets the read ('r'), write ('w') or both
 // ('r'+'w') deadlines. d is relative: 0 means none, negative means already
-// expired. A goroutine already waiting sees the new deadline when its
-// current wait ends.
+// expired. A goroutine already waiting is woken to apply the new
+// deadline.
 //
 //go:linkname poll_runtime_pollSetDeadline internal/poll.runtime_pollSetDeadline
 func poll_runtime_pollSetDeadline(ctx uintptr, d int64, mode int) {
@@ -164,6 +170,12 @@ func poll_runtime_pollSetDeadline(ctx uintptr, d int64, mode int) {
 		p.wd = d
 	}
 	unlock(&p.lock)
+	if mode == 'r' || mode == 'r'+'w' {
+		rt_poll_wake(p.pd, 'r')
+	}
+	if mode == 'w' || mode == 'r'+'w' {
+		rt_poll_wake(p.pd, 'w')
+	}
 }
 
 //go:linkname poll_runtime_pollUnblock internal/poll.runtime_pollUnblock
