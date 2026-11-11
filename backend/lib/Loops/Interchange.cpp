@@ -94,9 +94,11 @@ bool Interchanger::inductionOf(Loop *L, PHINode *phi, IV &iv) {
 }
 
 bool Interchanger::tryLoop(Loop *J) {
+  // The transform rebuilds J: name it now.
+  std::string jname = J->getHeader()->getName().str();
   auto note = [&](bool ok) {
     if (opts.remarks)
-      errs() << "loops: " << F.getName() << ": interchange loop " << J->getHeader()->getName()
+      errs() << "loops: " << F.getName() << ": interchange loop " << jname
              << ": " << (ok ? "done" : "no: " + why) << "\n";
     return ok;
   };

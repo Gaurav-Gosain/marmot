@@ -23,6 +23,7 @@ add_library(MarmotLoops STATIC
   Interchange.cpp
   Jam.cpp
   MaskedJam.cpp
+  Multiversion.cpp
   Parallelize.cpp
   Register.cpp
   Tile.cpp

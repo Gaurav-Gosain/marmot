@@ -1995,6 +1995,8 @@ public:
     for (Function &G : M)
       if (G.hasFnAttribute("marmot-par-body") && verifyFunction(G, &errs()))
         report_fatal_error("loops: invalid chunk function " + G.getName());
+    if (multiversion(M, opts))
+      changed = true;
     // Drop our markers.
     for (Function *F : fns)
       for (BasicBlock &bb : *F)

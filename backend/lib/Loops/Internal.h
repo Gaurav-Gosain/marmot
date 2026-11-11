@@ -56,6 +56,8 @@ void addInterchange(llvm::FunctionPassManager &fpm, const Options &opts);
 void addMaskedJam(llvm::FunctionPassManager &fpm, const Options &opts);
 // tiling of chunk loops (Tile.cpp, Rule T2).
 void addTile(llvm::FunctionPassManager &fpm, const Options &opts);
+// Rule X: x86-64 versions of chunk functions, picked at run time (-loops-mv).
+bool multiversion(llvm::Module &M, const Options &opts);
 // loop-jam (Jam.cpp): unroll-and-jam of chunk loops by JamCount.
 constexpr unsigned JamCount = 4;
 void addJam(llvm::FunctionPassManager &fpm, const Options &opts);
