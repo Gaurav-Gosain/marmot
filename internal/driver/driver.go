@@ -128,7 +128,7 @@ func Build(cfg Config) (string, error) {
 			ssaPkgs = append(ssaPkgs, sp)
 		}
 	}
-	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes})
+	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, GoDialect: cfg.Dialect == "go"})
 	if err != nil {
 		return "", err
 	}
@@ -221,6 +221,9 @@ func defaultOutput(p *packages.Package, emit string) string {
 func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 	backend := filepath.Join(b.cfg.Root, "build", "bin", "marmot-backend")
 	haveBackend := fileExists(backend) && os.Getenv("MARMOT_NO_BACKEND") == ""
+	if b.cfg.Dialect == "go" && !haveBackend {
+		return nil, fmt.Errorf("-dialect=go needs build/bin/marmot-backend")
+	}
 	ext := ".o"
 	if emit == "llvm" {
 		ext = ".ll"
@@ -232,7 +235,7 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 	var jobs []job
 	for i, m := range mods {
 		h := sha256.New()
-		fmt.Fprintf(h, "v1\n%s\n%s\n%v\n", b.cfg.OptLevel, emit, haveBackend)
+		fmt.Fprintf(h, "v1\n%s\n%s\n%v\n%s\n", b.cfg.OptLevel, emit, haveBackend, b.cfg.Dialect)
 		if haveBackend {
 			if fi, err := os.Stat(backend); err == nil {
 				fmt.Fprintf(h, "%d %d\n", fi.Size(), fi.ModTime().UnixNano())

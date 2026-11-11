@@ -125,6 +125,17 @@ func (f *funcGen) makeClosure(v *ssa.MakeClosure) {
 		fields = append(fields, types.NewField(token.NoPos, nil, fmt.Sprintf("X%d", i), b.Type(), false))
 	}
 	st := types.NewStruct(fields, nil)
+	if f.goOps() && !f.anyBig(v.Bindings) {
+		args := make([]string, len(v.Bindings))
+		tys := make([]string, len(v.Bindings))
+		for i, b := range v.Bindings {
+			args[i] = f.value(b)
+			tys[i] = f.tm.valType(b.Type())
+		}
+		f.vals[v] = f.op("go.make_closure %s(%s), %s : (%s) -> !llvm.ptr", mlir.Symbol(sym),
+			strings.Join(args, ", "), mlir.Symbol(f.m.typeDescSym(st)), strings.Join(tys, ", "))
+		return
+	}
 	obj := f.newObject(st)
 	mt := f.tm.memType(st)
 	code := f.addressOf(sym)
@@ -362,4 +373,15 @@ func (f *funcGen) minMax(isMin bool, args []ssa.Value, t types.Type) string {
 		}
 	}
 	return acc
+}
+
+// anyBig reports whether any value has a big (indirect) type; go dialect
+// ops take values directly, so those keep the llvm form.
+func (f *funcGen) anyBig(vs []ssa.Value) bool {
+	for _, v := range vs {
+		if f.tm.isBig(v.Type()) {
+			return true
+		}
+	}
+	return false
 }

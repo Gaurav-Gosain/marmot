@@ -200,6 +200,10 @@ func (f *funcGen) makeSlice(v *ssa.MakeSlice) {
 	if isSigned(v.Len.Type()) || isSigned(v.Cap.Type()) || true {
 		// makeslice checks len and cap (negative, len > cap, too large).
 	}
+	if f.goOps() {
+		f.vals[v] = f.op("go.make_slice %s, %s(%s, %s) : i64", mlir.Symbol(f.m.typeDescSym(st.Elem())), f.tm.memType(st.Elem()), l, c)
+		return
+	}
 	p := f.rtcall("makeslice", f.typeDesc(st.Elem()), l, c)
 	f.vals[v] = f.build(tSlice, p, l, c)
 }

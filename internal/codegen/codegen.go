@@ -21,6 +21,9 @@ import (
 type Options struct {
 	GOOS, GOARCH string
 	Sizes        types.Sizes
+	// GoDialect emits the go dialect (docs/dialect.md) instead of the
+	// equivalent llvm dialect sequences (Phase B, -dialect=go).
+	GoDialect bool
 }
 
 // Module is the MLIR text for one Go package (or the synthetic entry module).

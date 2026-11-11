@@ -40,6 +40,9 @@ func (f *funcGen) boxValue(x ssa.Value) string {
 		}
 		return f.addressOf(f.m.constBox(c))
 	}
+	if f.goOps() && !f.tm.isBig(t) {
+		return f.op("go.box %s, %s : %s", mlir.Symbol(f.m.typeDescSym(t)), f.value(x), f.tm.valType(t))
+	}
 	p := f.newObject(t)
 	f.store(f.value(x), p, t)
 	return p

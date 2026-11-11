@@ -70,7 +70,11 @@ func cmdBuild(args []string, run bool) int {
 	nocache := fs.Bool("nocache", false, "do not use the object cache")
 	gc := fs.String("gc", "precise", "garbage collector: precise or none")
 	target := fs.String("target", "", "target triple (default: host)")
-	dialect := fs.String("dialect", "llvm", "MLIR dialect level: llvm or go")
+	defDialect := "llvm"
+	if d := os.Getenv("MARMOT_DIALECT"); d != "" {
+		defDialect = d
+	}
+	dialect := fs.String("dialect", defDialect, "MLIR dialect level: llvm or go (default from $MARMOT_DIALECT)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -78,6 +82,12 @@ func cmdBuild(args []string, run bool) int {
 	case "0", "1", "2", "3", "s", "z":
 	default:
 		fmt.Fprintf(os.Stderr, "marmot: bad -O level %q\n", *opt)
+		return 2
+	}
+	switch *dialect {
+	case "llvm", "go":
+	default:
+		fmt.Fprintf(os.Stderr, "marmot: bad -dialect %q\n", *dialect)
 		return 2
 	}
 	switch *emit {

@@ -643,8 +643,14 @@ func (f *funcGen) alloc(v *ssa.Alloc) {
 
 // newObject allocates a zeroed heap object of type t.
 func (f *funcGen) newObject(t types.Type) string {
+	if f.goOps() {
+		return f.op("go.new %s, %s", mlir.Symbol(f.m.typeDescSym(t)), f.tm.memType(t))
+	}
 	return f.rtcall("newobject", f.typeDesc(t))
 }
+
+// goOps reports whether to emit go dialect ops.
+func (f *funcGen) goOps() bool { return f.m.p.opts.GoDialect }
 
 func (f *funcGen) fieldAddr(v *ssa.FieldAddr) {
 	x := f.value(v.X)
