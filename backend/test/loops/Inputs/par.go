@@ -380,6 +380,18 @@ func histoPeek(b []byte) (int, [16]int) {
 	return peek, h
 }
 
+// Narrow polynomial induction (verify's polyinduct16): a 16-bit second order
+// recurrence over 2^20 iterations; the closed form must be exact past 2^16.
+//go:noinline
+func poly16(buf []int16) {
+	var d, a int16
+	for i := range buf {
+		d += 1
+		a += d
+		buf[i] = a
+	}
+}
+
 func main() {
 	a := make([]int64, n)
 	fill(a, 42)
@@ -510,5 +522,8 @@ func main() {
 	println("histoglobal", ghist[0], ghist[33], ghist[63])
 	pk, ph := histoPeek(hb[:200000])
 	println("histopeek", pk, ph[3])
+	p16 := make([]int16, 1<<20)
+	poly16(p16)
+	println("poly16", p16[65535], p16[65536], p16[1<<19], p16[1<<20-1])
 	println("transpose-overlap", sum(tb), tb[5*900+7], tb[699*900+949])
 }

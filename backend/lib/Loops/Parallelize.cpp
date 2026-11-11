@@ -1314,20 +1314,26 @@ Function *Parallelizer::outline(Plan &P, StructType *ctxTy) {
     auto *nphi = cast<PHINode>(vmap[iv.phi]);
     Value *v;
     if (iv.poly) {
-      // c0 + c1*k + c2*binomial(k, 2); binomial(k, 2) = k(k-1)/2 computed
-      // by halving the even factor, so it is exact modulo 2^w.
+      // c0 + c1*k + c2*binomial(k, 2), modulo 2^w. binomial(k, 2) =
+      // k(k-1)/2 is computed from the 64-bit counter k (0 <= k < 2^63) by
+      // halving the even one of k and k-1, then multiplying: exact modulo
+      // 2^64, so its truncation is exact modulo 2^w. Truncating k first is
+      // wrong for w < 64: k(k-1)/2 mod 2^w depends on k mod 2^(w+1) (found
+      // by verify with an int16 recurrence over 2^20 elements).
       Type *ty = iv.phi->getType();
       Value *kk = hb.CreateSExtOrTrunc(k, ty);
       v = mapped(iv.coef[0]);
       if (iv.coef.size() > 1)
         v = hb.CreateAdd(v, hb.CreateMul(mapped(iv.coef[1]), kk));
       if (iv.coef.size() > 2) {
-        Value *km1 = hb.CreateSub(kk, ConstantInt::get(ty, 1));
-        Value *even = hb.CreateICmpEQ(hb.CreateAnd(kk, ConstantInt::get(ty, 1)),
-                                      ConstantInt::get(ty, 0));
-        Value *a = hb.CreateSelect(even, hb.CreateLShr(kk, 1), kk);
-        Value *b = hb.CreateSelect(even, km1, hb.CreateLShr(km1, 1));
-        v = hb.CreateAdd(v, hb.CreateMul(mapped(iv.coef[2]), hb.CreateMul(a, b)));
+        Value *km1 = hb.CreateSub(k, ConstantInt::get(i64, 1));
+        Value *even = hb.CreateICmpEQ(hb.CreateAnd(k, ConstantInt::get(i64, 1)),
+                                      ConstantInt::get(i64, 0));
+        Value *a = hb.CreateSelect(even, hb.CreateLShr(k, 1), k);
+        Value *b2 = hb.CreateSelect(even, km1, hb.CreateLShr(km1, 1));
+        // (Go integers are at most 64 bits, so this is a truncation.)
+        Value *binom = hb.CreateZExtOrTrunc(hb.CreateMul(a, b2), ty);
+        v = hb.CreateAdd(v, hb.CreateMul(mapped(iv.coef[2]), binom));
       }
       v->setName(iv.phi->getName() + ".k");
       nphi->replaceAllUsesWith(v);
