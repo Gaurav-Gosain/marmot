@@ -74,6 +74,7 @@ type Program struct {
 	esc       escapeState
 	regions   regionState
 	panicMemo map[panicKey]int
+	byValue   map[*ssa.Function]map[int]bool
 
 	usedMethods     map[string]bool // method keys called through interfaces
 	usedMethodsHash string

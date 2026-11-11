@@ -127,13 +127,23 @@ func (p *Program) escapes(v ssa.Value, seen map[ssa.Value]bool, noPhi bool) bool
 			}
 		case *ssa.MakeClosure:
 			fn, ok := x.Fn.(*ssa.Function)
-			if !ok || p.escapes(x, seen, noPhi) {
+			if !ok {
 				return true
 			}
+			byv := p.byValueFreeVars(fn)
+			byRef := false
 			for i, b := range x.Bindings {
-				if b == v && p.freeVarEscapes(fn, i) {
-					return true
+				if b == v && !byv[i] {
+					byRef = true
+					if p.freeVarEscapes(fn, i) {
+						return true
+					}
 				}
+			}
+			// Captured by value: only a copy of the contents goes into the
+			// closure. By reference: the closure must not escape either.
+			if byRef && p.escapes(x, seen, noPhi) {
+				return true
 			}
 		default:
 			// Return, MakeInterface, Go, Send, Panic, MapUpdate, Select,
@@ -212,4 +222,101 @@ func (p *Program) stackAllocs(fn *ssa.Function) map[ssa.Value]bool {
 		}
 	}
 	return out
+}
+
+// byValueFreeVars returns the free variables of closure fn that can be
+// captured by value: at every MakeClosure of fn the binding is an Alloc
+// whose stores all happen before the closure is made (in the same block,
+// earlier, or in a dominating block), that is not otherwise written, and
+// fn only loads through the free variable. gc captures such variables by
+// value too.
+func (p *Program) byValueFreeVars(fn *ssa.Function) map[int]bool {
+	if fn.Parent() == nil || fn.Synthetic != "" || len(fn.FreeVars) == 0 {
+		return nil
+	}
+	p.escMu.Lock()
+	if r, ok := p.byValue[fn]; ok {
+		p.escMu.Unlock()
+		return r
+	}
+	p.escMu.Unlock()
+	out := map[int]bool{}
+	refs := fn.Referrers()
+	for i, fv := range fn.FreeVars {
+		ok := refs != nil && len(*refs) > 0
+		for _, r := range *fv.Referrers() {
+			if u, isLoad := r.(*ssa.UnOp); isLoad && u.Op == token.MUL {
+				continue
+			}
+			if _, dbg := r.(*ssa.DebugRef); dbg {
+				continue
+			}
+			ok = false
+		}
+		if ok {
+			for _, r := range *refs {
+				mc, isMC := r.(*ssa.MakeClosure)
+				if !isMC || mc.Fn != ssa.Value(fn) || !allocSettled(mc, mc.Bindings[i]) {
+					ok = false
+					break
+				}
+			}
+		}
+		if ok {
+			out[i] = true
+		}
+	}
+	p.escMu.Lock()
+	if p.byValue == nil {
+		p.byValue = map[*ssa.Function]map[int]bool{}
+	}
+	p.byValue[fn] = out
+	p.escMu.Unlock()
+	return out
+}
+
+// allocSettled reports whether b is an Alloc whose every store comes before
+// mc (dominating it) and whose other uses only read it.
+func allocSettled(mc *ssa.MakeClosure, b ssa.Value) bool {
+	a, ok := b.(*ssa.Alloc)
+	if !ok {
+		return false
+	}
+	pos := func(instr ssa.Instruction) int {
+		for i, x := range instr.Block().Instrs {
+			if x == instr {
+				return i
+			}
+		}
+		return -1
+	}
+	for _, r := range *a.Referrers() {
+		switch x := r.(type) {
+		case *ssa.DebugRef:
+		case *ssa.UnOp:
+			if x.Op != token.MUL {
+				return false
+			}
+		case *ssa.Store:
+			if x.Addr != ssa.Value(a) || x.Val == ssa.Value(a) {
+				return false
+			}
+			sb, mb := x.Block(), mc.Block()
+			if sb == mb {
+				if pos(x) > pos(mc) {
+					return false
+				}
+			} else if !sb.Dominates(mb) || inLoop(sb) {
+				return false
+			}
+		case *ssa.MakeClosure:
+			// Also captured by another closure: that one could write it.
+			if x != mc {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }

@@ -33,7 +33,8 @@ type funcGen struct {
 	frame             string // _deferframe address, "" if none
 	noinlineCalls     bool   // mark calls no_inline (defer thunks)
 	curBlock          *ssa.BasicBlock
-	open              *openDefers // open-coded defers, nil if not used
+	fvValue           map[ssa.Value]bool // free variables captured by value
+	open              *openDefers        // open-coded defers, nil if not used
 	stackOK           map[ssa.Value]bool
 	region            string                            // region clone: the rt_region parameter
 	regionCalls       map[ssa.Instruction]*regionPlan   // calls that use a region clone
@@ -137,14 +138,24 @@ func (f *funcGen) gen(sym string, shared bool) {
 	}
 	// Free variables: load from the closure object, after the code pointer.
 	if f.ctx != "" {
+		byv := f.m.p.byValueFreeVars(fn)
+		fvt := make([]types.Type, len(fn.FreeVars))
 		fields := []string{mlir.Ptr}
-		for _, fv := range fn.FreeVars {
-			fields = append(fields, f.tm.memType(fv.Type()))
+		for i, fv := range fn.FreeVars {
+			fvt[i] = fv.Type()
+			if byv[i] {
+				fvt[i] = fv.Type().(*types.Pointer).Elem()
+				if f.fvValue == nil {
+					f.fvValue = map[ssa.Value]bool{}
+				}
+				f.fvValue[fv] = true
+			}
+			fields = append(fields, f.tm.memType(fvt[i]))
 		}
 		st := mlir.Struct(fields...)
 		for i, fv := range fn.FreeVars {
 			p := f.gep(f.ctx, st, 0, i+1)
-			f.vals[fv] = f.load(p, fv.Type())
+			f.vals[fv] = f.load(p, fvt[i])
 		}
 	}
 
@@ -739,6 +750,13 @@ func (f *funcGen) unsafeAttr(t types.Type) string {
 	return ""
 }
 
+// envPointer reports whether v is a free variable of an anonymous function:
+// the address of a captured variable, never nil.
+func (f *funcGen) envPointer(v ssa.Value) bool {
+	fv, ok := v.(*ssa.FreeVar)
+	return ok && f.fn != nil && f.fn.Synthetic == "" && f.fn.Parent() != nil && fv.Parent() == f.fn
+}
+
 // goOps reports whether to emit go dialect ops.
 func (f *funcGen) goOps() bool { return f.m.p.opts.GoDialect }
 
@@ -774,7 +792,10 @@ func (f *funcGen) unop(v *ssa.UnOp) string {
 		m1 := f.constInt(-1, vt)
 		return f.op("llvm.xor %s, %s : %s", x, m1, vt)
 	case token.MUL:
-		if needsNilCheck(v.X) {
+		if f.fvValue[v.X] {
+			return x // captured by value
+		}
+		if needsNilCheck(v.X) && !f.envPointer(v.X) {
 			f.nilCheck(x)
 		}
 		f.forceUnsafe = f.m.p.localPun[v.X]

@@ -146,9 +146,23 @@ func (m *moduleGen) funcValueSym(fn *ssa.Function) string {
 func (f *funcGen) makeClosure(v *ssa.MakeClosure) {
 	fn := v.Fn.(*ssa.Function)
 	sym := f.m.funcRef(fn)
-	fields := []*types.Var{types.NewField(token.NoPos, nil, "F", types.Typ[types.UnsafePointer], false)}
+	byv := f.m.p.byValueFreeVars(fn)
+	// Captured values: by value where the variable is settled (see
+	// byValueFreeVars), else the variable's address.
+	btypes := make([]types.Type, len(v.Bindings))
+	bvals := make([]string, len(v.Bindings))
 	for i, b := range v.Bindings {
-		fields = append(fields, types.NewField(token.NoPos, nil, fmt.Sprintf("X%d", i), b.Type(), false))
+		btypes[i] = b.Type()
+		if byv[i] {
+			btypes[i] = b.Type().(*types.Pointer).Elem()
+			bvals[i] = f.load(f.value(b), btypes[i])
+		} else {
+			bvals[i] = f.value(b)
+		}
+	}
+	fields := []*types.Var{types.NewField(token.NoPos, nil, "F", types.Typ[types.UnsafePointer], false)}
+	for i := range v.Bindings {
+		fields = append(fields, types.NewField(token.NoPos, nil, fmt.Sprintf("X%d", i), btypes[i], false))
 	}
 	st := types.NewStruct(fields, nil)
 	if f.stackOK[v] {
@@ -156,18 +170,22 @@ func (f *funcGen) makeClosure(v *ssa.MakeClosure) {
 		mt := f.tm.memType(st)
 		obj := f.alloca(mt, 8)
 		f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr", f.addressOf(sym), obj)
-		for i, b := range v.Bindings {
-			f.store(f.value(b), f.gep(obj, mt, 0, i+1), b.Type())
+		for i := range v.Bindings {
+			f.store(bvals[i], f.gep(obj, mt, 0, i+1), btypes[i])
 		}
 		f.vals[v] = obj
 		return
 	}
-	if f.goOps() && !f.anyBig(v.Bindings) {
+	anyBig := false
+	for _, t := range btypes {
+		anyBig = anyBig || f.tm.isBig(t)
+	}
+	if f.goOps() && !anyBig {
 		args := make([]string, len(v.Bindings))
 		tys := make([]string, len(v.Bindings))
-		for i, b := range v.Bindings {
-			args[i] = f.value(b)
-			tys[i] = f.tm.valType(b.Type())
+		for i := range v.Bindings {
+			args[i] = bvals[i]
+			tys[i] = f.tm.valType(btypes[i])
 		}
 		f.vals[v] = f.op("go.make_closure %s(%s), %s : (%s) -> !llvm.ptr", mlir.Symbol(sym),
 			strings.Join(args, ", "), mlir.Symbol(f.m.typeDescSym(st)), strings.Join(tys, ", "))
@@ -177,9 +195,9 @@ func (f *funcGen) makeClosure(v *ssa.MakeClosure) {
 	mt := f.tm.memType(st)
 	code := f.addressOf(sym)
 	f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr", code, obj)
-	for i, b := range v.Bindings {
+	for i := range v.Bindings {
 		p := f.gep(obj, mt, 0, i+1)
-		f.store(f.value(b), p, b.Type())
+		f.store(bvals[i], p, btypes[i])
 	}
 	f.vals[v] = obj
 }
