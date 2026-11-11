@@ -383,6 +383,14 @@ func mapassign(t *maptype, m *hmap, key unsafe.Pointer) unsafe.Pointer {
 	if m == nil {
 		panicnilmap()
 	}
+	switch m.keyKind {
+	case keyMem64:
+		return m.assign64(*(*uint64)(key))
+	case keyMem32:
+		return m.assign32(*(*uint32)(key))
+	case keyString:
+		return m.assignstr(*(*string)(key))
+	}
 	hash := m.hash(key)
 	for {
 		if m.groups == nil {
@@ -435,6 +443,142 @@ func mapassign(t *maptype, m *hmap, key unsafe.Pointer) unsafe.Pointer {
 		typedmemmove(m.key, m.slotKey(insGrp, insSlot), key)
 		m.count++
 		return m.slotElem(insGrp, insSlot)
+	}
+}
+
+// insertAt claims the empty or deleted slot s of grp for a new key with
+// hash h2 and returns the element slot, or nil if the table must grow
+// first.
+func (m *hmap) insertAt(grp unsafe.Pointer, s uintptr, h2 uintptr) unsafe.Pointer {
+	wasEmpty := *(*uint8)(unsafe.Add(grp, s)) == ctrlEmpty
+	if wasEmpty && m.growthLeft == 0 {
+		return nil
+	}
+	if wasEmpty {
+		m.growthLeft--
+	} else {
+		m.tombstones--
+	}
+	setCtrl(grp, s, uint8(h2))
+	m.count++
+	return unsafe.Add(grp, 8+s*m.slotSize)
+}
+
+// assign64 is mapassign for 8 byte plain memory keys.
+func (m *hmap) assign64(key uint64) unsafe.Pointer {
+	hash := fmix64(key ^ uint64(m.seed))
+	h2 := hash & 0x7f
+	for {
+		if m.groups == nil {
+			m.resize(1)
+		}
+		g := (hash >> 7) & m.mask
+		var insGrp unsafe.Pointer
+		var insSlot uintptr
+		for i := uintptr(1); ; i++ {
+			grp := unsafe.Add(m.groups, g*m.groupSize)
+			ctrl := *(*uint64)(grp)
+			for b := matchH2(ctrl, h2); b != 0; b &= b - 1 {
+				slot := unsafe.Add(grp, 8+firstSlot(b)*m.slotSize)
+				if *(*uint64)(slot) == key {
+					return unsafe.Add(slot, m.elemOff)
+				}
+			}
+			if insGrp == nil {
+				if b := matchEmptyOrDeleted(ctrl); b != 0 {
+					insGrp, insSlot = grp, firstSlot(b)
+				}
+			}
+			if matchEmpty(ctrl) != 0 {
+				break
+			}
+			g = (g + i) & m.mask
+		}
+		if slot := m.insertAt(insGrp, insSlot, h2); slot != nil {
+			*(*uint64)(slot) = key
+			return unsafe.Add(slot, m.elemOff)
+		}
+		m.grow()
+	}
+}
+
+// assign32 is mapassign for 4 byte plain memory keys.
+func (m *hmap) assign32(key uint32) unsafe.Pointer {
+	hash := fmix64(uint64(key) ^ uint64(m.seed))
+	h2 := hash & 0x7f
+	for {
+		if m.groups == nil {
+			m.resize(1)
+		}
+		g := (hash >> 7) & m.mask
+		var insGrp unsafe.Pointer
+		var insSlot uintptr
+		for i := uintptr(1); ; i++ {
+			grp := unsafe.Add(m.groups, g*m.groupSize)
+			ctrl := *(*uint64)(grp)
+			for b := matchH2(ctrl, h2); b != 0; b &= b - 1 {
+				slot := unsafe.Add(grp, 8+firstSlot(b)*m.slotSize)
+				if *(*uint32)(slot) == key {
+					return unsafe.Add(slot, m.elemOff)
+				}
+			}
+			if insGrp == nil {
+				if b := matchEmptyOrDeleted(ctrl); b != 0 {
+					insGrp, insSlot = grp, firstSlot(b)
+				}
+			}
+			if matchEmpty(ctrl) != 0 {
+				break
+			}
+			g = (g + i) & m.mask
+		}
+		if slot := m.insertAt(insGrp, insSlot, h2); slot != nil {
+			*(*uint32)(slot) = key
+			return unsafe.Add(slot, m.elemOff)
+		}
+		m.grow()
+	}
+}
+
+// assignstr is mapassign for string keys.
+func (m *hmap) assignstr(key string) unsafe.Pointer {
+	hash := memhash(unsafe.Pointer(unsafe.StringData(key)), m.seed, uintptr(len(key)))
+	h2 := hash & 0x7f
+	for {
+		if m.groups == nil {
+			m.resize(1)
+		}
+		g := (hash >> 7) & m.mask
+		var insGrp unsafe.Pointer
+		var insSlot uintptr
+		for i := uintptr(1); ; i++ {
+			grp := unsafe.Add(m.groups, g*m.groupSize)
+			ctrl := *(*uint64)(grp)
+			for b := matchH2(ctrl, h2); b != 0; b &= b - 1 {
+				slot := unsafe.Add(grp, 8+firstSlot(b)*m.slotSize)
+				if k := (*string)(slot); len(*k) == len(key) &&
+					(unsafe.StringData(*k) == unsafe.StringData(key) || *k == key) {
+					// Store the new key: equal strings may differ in
+					// backing memory, and gc keeps the latest.
+					*k = key
+					return unsafe.Add(slot, m.elemOff)
+				}
+			}
+			if insGrp == nil {
+				if b := matchEmptyOrDeleted(ctrl); b != 0 {
+					insGrp, insSlot = grp, firstSlot(b)
+				}
+			}
+			if matchEmpty(ctrl) != 0 {
+				break
+			}
+			g = (g + i) & m.mask
+		}
+		if slot := m.insertAt(insGrp, insSlot, h2); slot != nil {
+			*(*string)(slot) = key
+			return unsafe.Add(slot, m.elemOff)
+		}
+		m.grow()
 	}
 }
 
@@ -638,7 +782,10 @@ func mapaccess2_fast32(t *maptype, m *hmap, key uint32) (unsafe.Pointer, bool) {
 }
 
 func mapassign_fast32(t *maptype, m *hmap, key uint32) unsafe.Pointer {
-	return mapassign(t, m, unsafe.Pointer(&key))
+	if m == nil {
+		panicnilmap()
+	}
+	return m.assign32(key)
 }
 
 func mapdelete_fast32(t *maptype, m *hmap, key uint32) {
@@ -664,7 +811,10 @@ func mapaccess2_fast64(t *maptype, m *hmap, key uint64) (unsafe.Pointer, bool) {
 }
 
 func mapassign_fast64(t *maptype, m *hmap, key uint64) unsafe.Pointer {
-	return mapassign(t, m, unsafe.Pointer(&key))
+	if m == nil {
+		panicnilmap()
+	}
+	return m.assign64(key)
 }
 
 func mapdelete_fast64(t *maptype, m *hmap, key uint64) {
@@ -690,7 +840,10 @@ func mapaccess2_faststr(t *maptype, m *hmap, key string) (unsafe.Pointer, bool) 
 }
 
 func mapassign_faststr(t *maptype, m *hmap, key string) unsafe.Pointer {
-	return mapassign(t, m, unsafe.Pointer(&key))
+	if m == nil {
+		panicnilmap()
+	}
+	return m.assignstr(key)
 }
 
 func mapdelete_faststr(t *maptype, m *hmap, key string) {
