@@ -68,8 +68,8 @@ type sstate struct {
 	gen       int
 	mu, ws    int // owner of gc_mu, worldsema; -1 free
 	runq      []int
-	spinners  int // spinners with a P (their Ps have owner -2)
-	nmspin    int // nmspinning
+	spinners  int  // spinners with a P (their Ps have owner -2)
+	nmspin    int  // nmspinning
 	fixExit   bool // the fix: wakep after REQ_EXITSYSCALL queues the goroutine
 }
 
