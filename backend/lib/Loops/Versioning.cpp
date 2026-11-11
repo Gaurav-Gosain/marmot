@@ -89,6 +89,9 @@ private:
   std::vector<Cond> conds;
   std::vector<LoadBound> loads;
   std::vector<LoadCond> loadConds;
+  // Header phis that change only on a growth path (append's cap and ptr):
+  // when no growth happens they keep their start value.
+  ValueToSCEVMapTy frozen;
   // Assumptions (no-wrap of an induction) under which a loop's exit count is
   // exact; checked at run time like conds.
   SmallVector<const SCEVPredicate *, 4> preds;
@@ -304,6 +307,10 @@ bool Versioner::checkCondition(Loop *L, BranchInst *br, BasicBlock *exit) {
     return true;
   }
   const SCEV *sa = SE.getSCEV(a), *sb = SE.getSCEV(b);
+  if (!frozen.empty()) {
+    sa = SCEVParameterRewriter::rewrite(sa, SE, frozen);
+    sb = SCEVParameterRewriter::rewrite(sb, SE, frozen);
+  }
   // Normalize to a stay predicate of the form x < y or x <= y (or x != y).
   switch (stay) {
   case ICmpInst::ICMP_UGT:
@@ -397,8 +404,51 @@ bool Versioner::run(Loop *L, std::string &whyOut) {
       checks.push_back({br, s});
     }
   }
-  if (checks.empty())
+  // Growth branches (append): bb -> S -> M and bb -> M, S calls
+  // runtime.growslice. Removing them in the fast copy is like removing a
+  // check: the precondition proves the branch never goes to S.
+  SmallVector<std::pair<BranchInst *, BasicBlock *>, 4> grows;
+  for (BasicBlock *bb : L->blocks()) {
+    auto *br = dyn_cast<BranchInst>(bb->getTerminator());
+    if (!br || !br->isConditional() || bb == latch)
+      continue;
+    for (unsigned i = 0; i < 2; i++) {
+      BasicBlock *S = br->getSuccessor(i), *M = br->getSuccessor(1 - i);
+      if (!L->contains(S) || S->getSinglePredecessor() != bb || S->getSingleSuccessor() != M)
+        continue;
+      bool grows1 = false;
+      for (Instruction &I : *S)
+        if (auto *cb = dyn_cast<CallBase>(&I))
+          if (Function *f = cb->getCalledFunction())
+            grows1 |= f->getName() == "runtime.growslice";
+      if (grows1)
+        grows.push_back({br, S});
+    }
+  }
+  if (checks.empty() && grows.empty())
     return done(reject("no checks"));
+  // Frozen phis: the latch value is a phi of a merge block whose incoming
+  // values from outside the growth blocks are the header phi itself.
+  for (PHINode &h : L->getHeader()->phis()) {
+    auto *m = dyn_cast<PHINode>(h.getIncomingValueForBlock(latch));
+    if (!m || grows.empty())
+      continue;
+    bool ok = true, viaGrow = false;
+    for (unsigned i = 0; i < m->getNumIncomingValues(); i++) {
+      bool fromGrow = any_of(grows, [&](auto &g) { return g.second == m->getIncomingBlock(i); });
+      if (fromGrow)
+        viaGrow = true;
+      else if (m->getIncomingValue(i) != &h)
+        ok = false;
+    }
+    if (ok && viaGrow && SE.isSCEVable(h.getType()))
+      frozen[&h] = SE.getSCEV(h.getIncomingValueForBlock(L->getLoopPreheader()));
+  }
+  for (auto &g : grows)
+    if (!checkCondition(L, g.first, g.second)) {
+      why = "growth branch: " + why;
+      return done(false);
+    }
   for (auto &c : checks)
     if (!checkCondition(L, c.first, c.second)) {
       std::string s;
@@ -495,6 +545,29 @@ bool Versioner::run(Loop *L, std::string &whyOut) {
     nbr->eraseFromParent();
   }
 
+  // In the fast copy no growth happens: drop the growth blocks and fold the
+  // merge phis they fed (append's ptr and cap become loop invariant).
+  SmallVector<BasicBlock *, 4> deadGrow;
+  SmallPtrSet<BasicBlock *, 4> merges;
+  for (auto &g : grows) {
+    auto *nbr = cast<BranchInst>(vmap[g.first]);
+    auto *nS = cast<BasicBlock>(vmap[g.second]);
+    BasicBlock *stay = nbr->getSuccessor(0) == nS ? nbr->getSuccessor(1) : nbr->getSuccessor(0);
+    BranchInst::Create(stay, nbr->getIterator());
+    nbr->eraseFromParent();
+    deadGrow.push_back(nS);
+    merges.insert(stay);
+  }
+  DeleteDeadBlocks(deadGrow);
+  for (BasicBlock *m : merges)
+    FoldSingleEntryPHINodes(m);
+  if (!grows.empty())
+    for (PHINode &h : make_early_inc_range(fast->getHeader()->phis()))
+      if (Value *v = h.hasConstantValue()) {
+        h.replaceAllUsesWith(v);
+        h.eraseFromParent();
+      }
+
   // The guard: pre now ends in "br slowPre".
   Instruction *preBr = pre->getTerminator();
   if (loads.empty()) {
@@ -511,7 +584,8 @@ bool Versioner::run(Loop *L, std::string &whyOut) {
     eb.CreateCondBr(c2, fastPre, slowPre);
   }
   (void)fast;
-  whyOut = std::to_string(checks.size()) + " checks, " +
+  whyOut = std::to_string(checks.size()) + " checks, " + std::to_string(grows.size()) +
+           " growth branches, " +
            std::to_string(runtime.size() + preds.size() + loadConds.size()) +
            " run time conditions, " + std::to_string(loads.size()) + " check loops";
   return true;

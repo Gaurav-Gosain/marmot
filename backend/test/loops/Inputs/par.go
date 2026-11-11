@@ -410,6 +410,16 @@ func scanXor(dst, src []uint32, seed uint32) uint32 {
 	return r
 }
 
+// Append loops (Rule V growth branches): with enough capacity the fast copy
+// has no growslice; otherwise the original loop grows like Go.
+//go:noinline
+func appendN(s []int64, n int) []int64 {
+	for i := 0; i < n; i++ {
+		s = append(s, int64(i*3+1))
+	}
+	return s
+}
+
 func main() {
 	a := make([]int64, n)
 	fill(a, 42)
@@ -561,5 +571,11 @@ func main() {
 		xs[i] = uint32(i * 7)
 	}
 	println("scanxor", scanXor(xd, xs, 99), xd[0], xd[70000], xd[len(xd)-1])
+	ap := make([]int64, 10, 200000)
+	shared := ap[:cap(ap)]
+	ap = appendN(ap, 150000) // fits: writes the shared array
+	println("append-fit", len(ap), sum(ap), shared[10], shared[150009])
+	ap2 := appendN(ap, 100000) // grows: the first 50000 still go to shared
+	println("append-grow", len(ap2), sum(ap2), shared[150010], shared[199999], len(appendN(nil, 777)))
 	println("transpose-overlap", sum(tb), tb[5*900+7], tb[699*900+949])
 }

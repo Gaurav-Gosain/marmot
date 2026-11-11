@@ -416,6 +416,29 @@ bool Parallelizer::visit(Loop *L) {
       transform(P);
       return true;
     }
+    // Loops that append (a growslice call on a rare branch) are versioned
+    // without the probe: the fast copy is a plain store loop that LLVM
+    // vectorizes even when Rule P does not take it.
+    bool appends = false;
+    for (BasicBlock *bb : L->blocks())
+      for (Instruction &I : *bb)
+        if (auto *cb = dyn_cast<CallBase>(&I))
+          if (Function *f = cb->getCalledFunction())
+            appends |= f->getName() == "runtime.growslice";
+    if (appends && opts.versioning && L->getSubLoops().empty()) {
+      extraExits = false;
+      std::string vwhy;
+      if (versionBoundsChecks(F, L, LI, SE, DT, AA, vwhy)) {
+        remark(L, "append versioned (" + vwhy + "); fast copy next");
+        markDecided(L);
+        L->getLoopLatch()->getTerminator()->setMetadata("marmot.par.orig",
+                                                         MDNode::get(F.getContext(), {}));
+        return true;
+      }
+      remark(L, "not parallel: " + why + "; append not versioned: " + vwhy);
+      markDecided(L);
+      return false;
+    }
     if (extraExits && opts.versioning) {
       extraExits = false;
       std::string pwhy = why;
@@ -1780,6 +1803,62 @@ void Parallelizer::transform(Plan &P) {
   }
 }
 
+// Splits loop header phis of small struct type (a slice header passed in a
+// parameter: phi {ptr, i64, i64}) into one phi per field and redirects
+// `extractvalue phi, i` to the field phi, so ScalarEvolution sees the length
+// as an induction. The aggregate phi stays for its other users.
+static bool splitAggregatePhis(Function &F, LoopInfo &LI) {
+  bool changed = false;
+  for (Loop *L : LI.getLoopsInPreorder()) {
+    BasicBlock *h = L->getHeader();
+    SmallVector<PHINode *, 4> aggs;
+    for (PHINode &p : h->phis())
+      if (auto *st = dyn_cast<StructType>(p.getType()))
+        if (st->getNumElements() <= 4 &&
+            all_of(st->elements(), [](Type *t) { return t->isIntegerTy() || t->isPointerTy(); }))
+          aggs.push_back(&p);
+    for (PHINode *p : aggs) {
+      auto *st = cast<StructType>(p->getType());
+      SmallVector<ExtractValueInst *, 8> uses;
+      for (User *u : p->users())
+        if (auto *ev = dyn_cast<ExtractValueInst>(u); ev && ev->getNumIndices() == 1)
+          uses.push_back(ev);
+      if (uses.empty())
+        continue;
+      for (unsigned f = 0; f < st->getNumElements(); f++) {
+        PHINode *fp = PHINode::Create(st->getElementType(f), p->getNumIncomingValues(),
+                                      p->getName() + ".f" + Twine(f));
+        fp->insertBefore(p->getIterator());
+        for (unsigned i = 0; i < p->getNumIncomingValues(); i++) {
+          Value *in = p->getIncomingValue(i);
+          BasicBlock *bb = p->getIncomingBlock(i);
+          // Look through an insertvalue chain for field f.
+          Value *v = nullptr;
+          for (Value *cur = in; auto *iv = dyn_cast<InsertValueInst>(cur);
+               cur = iv->getAggregateOperand())
+            if (iv->getNumIndices() == 1 && iv->getIndices()[0] == f) {
+              v = iv->getInsertedValueOperand();
+              break;
+            }
+          if (!v) {
+            IRBuilder<> b(bb->getTerminator());
+            v = b.CreateExtractValue(in, f, p->getName() + ".in" + Twine(f));
+          }
+          fp->addIncoming(v, bb);
+        }
+        for (ExtractValueInst *ev : uses)
+          if (ev->getIndices()[0] == f)
+            ev->replaceAllUsesWith(fp);
+      }
+      for (ExtractValueInst *ev : uses)
+        if (ev->use_empty())
+          ev->eraseFromParent();
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 class ParallelizePass : public PassInfoMixin<ParallelizePass> {
 public:
   explicit ParallelizePass(Options o) : opts(o) {}
@@ -1792,6 +1871,8 @@ public:
         fns.push_back(&F);
     bool changed = false;
     for (Function *F : fns) {
+      if (splitAggregatePhis(*F, FAM.getResult<LoopAnalysis>(*F)))
+        FAM.invalidate(*F, PreservedAnalyses::none());
       for (int round = 0; round < 64; round++) {
         auto &LI = FAM.getResult<LoopAnalysis>(*F);
         auto &SE = FAM.getResult<ScalarEvolutionAnalysis>(*F);
