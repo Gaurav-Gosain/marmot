@@ -890,7 +890,7 @@ func writeTargets(f File, idx map[string]Result, progs []string) {
 			}
 		}
 		reason := readReason(l.prog)
-		short := reason
+		short := strings.Join(strings.Fields(strings.TrimLeft(reason, "# ")), " ")
 		if len(short) > 140 {
 			short = short[:140] + "..."
 		}
