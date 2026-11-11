@@ -201,3 +201,8 @@ func hashBytes(p unsafe.Pointer, n uintptr, seed uintptr) uintptr {
 }
 
 func procyield(n int32) { goruntime.Gosched() }
+
+// Tracebacks need marmot's frame records and pc table; the host prints
+// none.
+func getcallerfp() uintptr      { return 0 }
+func printTraceback(fp uintptr) {}

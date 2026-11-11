@@ -194,7 +194,11 @@ func (t *pclnTable) lookup(pc uintptr) (pcInfo, bool) {
 	r.entry = t.base + uintptr(t.funcStart(k))
 	r.namePrefix, r.name = t.funcName(k)
 	f, l := t.line(k, off)
-	r.filePrefix, r.file = t.fileName(f)
+	if l != 0 {
+		// Line 0: a function without line information (C code of the
+		// runtime core), listed by name only.
+		r.filePrefix, r.file = t.fileName(f)
+	}
 	r.line = int(l)
 	return r, true
 }

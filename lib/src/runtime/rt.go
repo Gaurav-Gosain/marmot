@@ -219,3 +219,6 @@ func libc_memcmp(a, b unsafe.Pointer, n uintptr) int32
 func funcPC(fv unsafe.Pointer) unsafe.Pointer {
 	return **(**unsafe.Pointer)(fv)
 }
+
+//go:linkname rt_pcln rt_pcln
+func rt_pcln(table *unsafe.Pointer, n *int, base *uintptr) int32

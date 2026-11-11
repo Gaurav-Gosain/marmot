@@ -108,20 +108,67 @@ func NumCgoCall() int64 { return 0 }
 func SetMutexProfileFraction(rate int) int { return 0 }
 func SetBlockProfileRate(rate int)         {}
 
-// Stack traces. marmot keeps no unwind tables, so callers are unknown.
+// Stack traces. Callers walks the frame record chain; the backend's pc
+// table (pcln.go) maps the pcs to functions, files and lines. Functions
+// that LLVM inlined do not appear as frames of their own.
+
+// The pc table of the binary, loaded on first use.
+var (
+	pclnTab   pclnTable
+	pclnState uint32 // 0: not loaded yet, 1: loaded, 2: the binary has none
+)
+
+func pclntab() *pclnTable {
+	switch atomicLoad32(&pclnState) {
+	case 1:
+		return &pclnTab
+	case 2:
+		return nil
+	}
+	var data unsafe.Pointer
+	var n int
+	var base uintptr
+	if rt_pcln(&data, &n, &base) != 0 {
+		// Racing loaders store the same values.
+		if pclnTab.init(data, uintptr(n), base) {
+			atomicStore32(&pclnState, 1)
+			return &pclnTab
+		}
+	}
+	atomicStore32(&pclnState, 2)
+	return nil
+}
+
+// pcLookup describes the function holding pc.
+func pcLookup(pc uintptr) (pcInfo, bool) {
+	t := pclntab()
+	if t == nil {
+		return pcInfo{}, false
+	}
+	return t.lookup(pc)
+}
 
 // Caller reports file and line number information about function
-// invocations on the calling goroutine's stack. marmot has no unwind
-// information and always reports ok == false.
+// invocations on the calling goroutine's stack. skip 0 is the caller of
+// Caller.
+//
+//go:noinline
 func Caller(skip int) (pc uintptr, file string, line int, ok bool) {
-	return 0, "", 0, false
+	var rpc [1]uintptr
+	if skip < 0 || callers(getcallerfp(), skip, rpc[:]) == 0 {
+		return 0, "", 0, false
+	}
+	info, found := pcLookup(rpc[0] - 1)
+	if !found {
+		return rpc[0], "", 0, false
+	}
+	return rpc[0], info.filePrefix + info.file, info.line, true
 }
 
 // Callers fills pc with the return program counters of function
 // invocations on the calling goroutine's stack, found by walking the
 // frame record chain. skip 0 and 1 both start at the caller of Callers
-// (marmot has no pc for Callers itself). The pcs carry no symbol
-// information yet: CallersFrames reports them without function names.
+// (marmot has no pc for Callers itself).
 //
 //go:noinline
 func Callers(skip int, pc []uintptr) int {
@@ -156,24 +203,46 @@ func callers(fp uintptr, skip int, pc []uintptr) int {
 	return n
 }
 
-
 // Func represents a function in the running binary.
 type Func struct {
 	opaque struct{}
+	entry  uintptr
+	name   string
 }
 
-// FuncForPC returns a *Func describing the function at pc, or nil. marmot
-// has no function table and returns nil.
-func FuncForPC(pc uintptr) *Func { return nil }
+// FuncForPC returns a *Func describing the function at pc, or nil.
+func FuncForPC(pc uintptr) *Func {
+	info, ok := pcLookup(pc)
+	if !ok {
+		return nil
+	}
+	return &Func{entry: info.entry, name: info.namePrefix + info.name}
+}
 
 // Name returns the name of the function.
-func (f *Func) Name() string { return "" }
+func (f *Func) Name() string {
+	if f == nil {
+		return ""
+	}
+	return f.name
+}
 
 // Entry returns the entry address of the function.
-func (f *Func) Entry() uintptr { return 0 }
+func (f *Func) Entry() uintptr {
+	if f == nil {
+		return 0
+	}
+	return f.entry
+}
 
 // FileLine returns the file name and line number of pc.
-func (f *Func) FileLine(pc uintptr) (file string, line int) { return "", 0 }
+func (f *Func) FileLine(pc uintptr) (file string, line int) {
+	info, ok := pcLookup(pc)
+	if !ok {
+		return "?", 0
+	}
+	return info.filePrefix + info.file, info.line
+}
 
 // Frame is the information returned by Frames for each call frame.
 type Frame struct {
@@ -204,14 +273,62 @@ func (ci *Frames) Next() (frame Frame, more bool) {
 	}
 	frame.PC = ci.callers[0]
 	ci.callers = ci.callers[1:]
+	if info, ok := pcLookup(frame.PC - 1); ok {
+		frame.Function = info.namePrefix + info.name
+		frame.File = info.filePrefix + info.file
+		frame.Line = info.line
+		frame.Entry = info.entry
+		frame.Func = &Func{entry: info.entry, name: frame.Function}
+	}
 	return frame, len(ci.callers) > 0
 }
 
 // Stack formats a stack trace of the calling goroutine into buf and
-// returns the number of bytes written. marmot writes only the header.
+// returns the number of bytes written. all is ignored: marmot prints only
+// the calling goroutine.
+//
+//go:noinline
 func Stack(buf []byte, all bool) int {
-	s := "goroutine " + itoa(getg().goid) + " [running]:\n"
-	return copy(buf, s)
+	n := copy(buf, "goroutine "+itoa(getg().goid)+" [running]:\n")
+	var pcs [64]uintptr
+	k := callers(getcallerfp(), 0, pcs[:])
+	for _, pc := range pcs[:k] {
+		info, ok := pcLookup(pc - 1)
+		if !ok || info.line == 0 {
+			continue
+		}
+		n += copy(buf[n:], info.namePrefix+info.name+"(...)\n\t"+info.filePrefix+info.file+":"+itoa(int64(info.line))+"\n")
+	}
+	return n
+}
+
+// printTraceback prints the frames above fp, as in a fatal panic, without
+// allocating. Leading runtime frames (the panic machinery) are skipped.
+func printTraceback(fp uintptr) {
+	var pcs [100]uintptr
+	k := callers(fp, 0, pcs[:])
+	leading := true
+	for _, pc := range pcs[:k] {
+		info, ok := pcLookup(pc - 1)
+		if !ok {
+			continue
+		}
+		if info.line == 0 || leading && info.namePrefix == "runtime." {
+			// C frames of the runtime core and the panic machinery.
+			continue
+		}
+		leading = false
+		printstring(info.namePrefix)
+		printstring(info.name)
+		printstring("(...)\n\t")
+		printstring(info.filePrefix)
+		printstring(info.file)
+		printstring(":")
+		printint(int64(info.line))
+		printstring(" +")
+		printhex(uint64(pc - info.entry))
+		printstring("\n")
+	}
 }
 
 // MemStats records statistics about the memory allocator.

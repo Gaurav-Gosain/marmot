@@ -259,6 +259,7 @@ func fatalpanic(p *_panic, goid int64) {
 	printstring("\ngoroutine ")
 	printint(goid)
 	printstring(" [running]:\n")
+	printTraceback(getcallerfp())
 	printunlock()
 	exit(2)
 }
