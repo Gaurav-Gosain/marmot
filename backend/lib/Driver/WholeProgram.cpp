@@ -29,6 +29,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/ModuleSlotTracker.h"
 #include "llvm/Linker/Linker.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -324,31 +325,40 @@ void descriptorEscapes(const GlobalValue &gv, std::set<std::string> &out) {
 // lines; "X\t<root>" for appending-global roots. Names hold no tabs or
 // newlines.
 // Hash of a function body that does not depend on the rest of the module:
-// the instruction text without metadata numbers, plus the contents of the
-// attached metadata (debug locations, TBAA, ranges) and the attributes.
-std::string bodyHash(Function &f) {
-  std::string text;
+// the instruction text without metadata numbers, the debug line and column
+// of each instruction, the shallow text of other attached metadata, and the
+// attributes. mst: one slot tracker for the module (printing without one
+// renumbers the whole module per instruction).
+std::string bodyHash(Function &f, ModuleSlotTracker &mst) {
+  std::string text, line;
   raw_string_ostream os(text);
   f.getAttributes().print(os);
   os << "\n" << typeString(f.getFunctionType()) << "\n";
+  mst.incorporateFunction(f);
   SmallVector<std::pair<unsigned, MDNode *>, 4> mds;
+  auto strip = [&](StringRef l) { // "!123" -> "!"
+    for (size_t c = 0; c < l.size(); ++c) {
+      os << l[c];
+      if (l[c] == '!')
+        while (c + 1 < l.size() && isdigit((unsigned char)l[c + 1]))
+          ++c;
+    }
+  };
   for (BasicBlock &bb : f)
     for (Instruction &inst : bb) {
-      std::string line;
+      line.clear();
       raw_string_ostream ls(line);
-      inst.print(ls);
-      for (size_t c = 0; c < line.size(); ++c) { // "!123" -> "!"
-        os << line[c];
-        if (line[c] == '!')
-          while (c + 1 < line.size() && isdigit((unsigned char)line[c + 1]))
-            ++c;
-      }
-      os << "\n";
-      inst.getAllMetadata(mds);
-      for (auto &[kind, md] : mds)
-        md->printTree(os, f.getParent());
+      inst.print(ls, mst);
+      strip(line);
       if (const DebugLoc &dl = inst.getDebugLoc())
         os << " @" << dl.getLine() << ":" << dl.getCol();
+      inst.getAllMetadataOtherThanDebugLoc(mds);
+      for (auto &[kind, md] : mds) {
+        line.clear();
+        md->print(ls, mst);
+        os << " " << kind << "=";
+        strip(line);
+      }
       os << "\n";
     }
   return hashHex(text);
@@ -357,6 +367,7 @@ std::string bodyHash(Function &f) {
 std::string summarize(Module &m, StringRef pkg) {
   std::string out;
   raw_string_ostream os(out);
+  ModuleSlotTracker mst(&m, /*ShouldInitializeAllMetadata=*/false);
   if (!pkg.empty())
     os << "P\t" << pkg << "\n";
   auto add = [&](GlobalValue &gv) {
@@ -384,7 +395,7 @@ std::string summarize(Module &m, StringRef pkg) {
        << (gv.hasLinkOnceLinkage() || gv.hasWeakLinkage() ? 'o' : '-') << "\t"
        << qualifyRaw(gv) << "\n";
     if (importable)
-      os << "H\t" << bodyHash(cast<Function>(gv)) << "\n";
+      os << "H\t" << bodyHash(cast<Function>(gv), mst) << "\n";
     for (const GlobalValue *r : refs)
       os << "R\t" << qualifyRaw(*r) << "\n";
     std::set<std::string> uses;
