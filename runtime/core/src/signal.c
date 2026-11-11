@@ -19,8 +19,108 @@ static void (*sigpanic_fn)(uintptr_t addr, int32_t kind);
 
 RT_API void rt_set_sigpanic(void (*fn)(uintptr_t addr, int32_t kind)) { sigpanic_fn = fn; }
 
+// ---- signals for the Go side (os/signal) ----
+
+static _Atomic uint64_t sig_pending;  // bit n: signal n arrived
+static _Atomic uint64_t sig_enabled;  // bit n: queue signal n for Go
+static uint64_t sig_ignored;          // bit n: ignored (inherited or rt_signal_ignore)
+static rt_spin sig_lock;
+static rt_g *sig_waiter;
+static _Atomic int32_t sig_nwaiting;
+
+static void sig_queue(int sig, siginfo_t *info, void *ctx) {
+  int saved = errno;
+  atomic_fetch_or(&sig_pending, 1ull << sig);
+  sysmon_kick();
+  errno = saved;
+}
+
+bool signal_waiting(void) { return atomic_load(&sig_nwaiting) > 0; }
+
+bool signal_deliver(void) {
+  if (!atomic_load(&sig_pending) || !atomic_load(&sig_nwaiting)) return false;
+  spin_lock(&sig_lock);
+  rt_g *g = sig_waiter;
+  sig_waiter = NULL;
+  spin_unlock(&sig_lock);
+  if (g) rt_ready(g);
+  return g != NULL;
+}
+
+static bool sig_runtime_owned(int sig) {
+  return sig == SIGURG || sig == SIGSEGV || sig == SIGBUS || sig == SIGPIPE;
+}
+
+static void install(int sig, void (*fn)(int, siginfo_t *, void *), int flags);
+static void sigurg(int sig, siginfo_t *info, void *ctx);
+
+RT_API int32_t rt_signal_enable(int32_t sig) {
+  if (sig <= 0 || sig >= 64 || sig == SIGKILL || sig == SIGSTOP) return -EINVAL;
+  sysmon_start();
+  atomic_fetch_or(&sig_enabled, 1ull << sig);
+  sig_ignored &= ~(1ull << sig);
+  if (sig == SIGURG || sig == SIGSEGV || sig == SIGBUS) return 0;  // runtime handler forwards
+  install(sig, sig_queue, SA_ONSTACK);
+  return 0;
+}
+
+static void sig_default(int sig) {
+  if (sig == SIGURG) return;
+  if (sig == SIGPIPE) {
+    signal(SIGPIPE, SIG_IGN);  // rt_write turns EPIPE on fd 1 and 2 into a real SIGPIPE
+    return;
+  }
+  if (sig == SIGSEGV || sig == SIGBUS) return;
+  signal(sig, SIG_DFL);
+}
+
+RT_API int32_t rt_signal_disable(int32_t sig) {
+  if (sig <= 0 || sig >= 64) return -EINVAL;
+  atomic_fetch_and(&sig_enabled, ~(1ull << sig));
+  sig_default(sig);
+  return 0;
+}
+
+RT_API int32_t rt_signal_ignore(int32_t sig) {
+  if (sig <= 0 || sig >= 64 || sig == SIGKILL || sig == SIGSTOP) return -EINVAL;
+  atomic_fetch_and(&sig_enabled, ~(1ull << sig));
+  sig_ignored |= 1ull << sig;
+  if (!sig_runtime_owned(sig) || sig == SIGPIPE) signal(sig, SIG_IGN);
+  return 0;
+}
+
+RT_API int32_t rt_signal_ignored(int32_t sig) {
+  if (sig <= 0 || sig >= 64) return 0;
+  return (sig_ignored >> sig) & 1;
+}
+
+static void sig_unlock(void *unused) { spin_unlock(&sig_lock); }
+
+RT_API int32_t rt_signal_recv(void) {
+  for (;;) {
+    uint64_t p = atomic_load(&sig_pending);
+    while (p) {
+      int b = __builtin_ctzll(p);
+      if (atomic_compare_exchange_weak(&sig_pending, &p, p & ~(1ull << b))) return b;
+    }
+    spin_lock(&sig_lock);
+    if (atomic_load(&sig_pending)) {
+      spin_unlock(&sig_lock);
+      continue;
+    }
+    sig_waiter = rt_current();
+    atomic_fetch_add(&sig_nwaiting, 1);
+    rt_park(sig_unlock, NULL);
+    atomic_fetch_sub(&sig_nwaiting, 1);
+  }
+}
+
 static void sigurg(int sig, siginfo_t *info, void *ctx) {
   int saved = errno;
+  if (atomic_load(&sig_enabled) & (1ull << SIGURG)) {
+    atomic_fetch_or(&sig_pending, 1ull << SIGURG);
+    sysmon_kick();
+  }
   rt_m *m = getm();
   if (m && atomic_load(&sched.gcwaiting) && m->locks == 0 && m->curg && m->p &&
       atomic_load(&m->p->status) == P_RUNNING && m->p->m == m) {
@@ -120,6 +220,11 @@ static void install(int sig, void (*fn)(int, siginfo_t *, void *), int flags) {
 }
 
 void signal_init(void) {
+  // Remember signals ignored at startup (nohup and friends).
+  for (int sig = 1; sig < 32; sig++) {
+    struct sigaction old;
+    if (sigaction(sig, NULL, &old) == 0 && old.sa_handler == SIG_IGN) sig_ignored |= 1ull << sig;
+  }
   install(SIGURG, sigurg, 0);
   install(SIGSEGV, sigfault, SA_ONSTACK);
   install(SIGBUS, sigfault, SA_ONSTACK);
@@ -145,6 +250,12 @@ void signal_init_thread(rt_m *m) {
 
 // Called by rt_write on EPIPE for stdout or stderr: die by SIGPIPE.
 void signal_raise_sigpipe(void) {
+  if (atomic_load(&sig_enabled) & (1ull << SIGPIPE)) {
+    atomic_fetch_or(&sig_pending, 1ull << SIGPIPE);
+    sysmon_kick();
+    return;
+  }
+  if (sig_ignored & (1ull << SIGPIPE)) return;
   signal(SIGPIPE, SIG_DFL);
   sigset_t set;
   sigemptyset(&set);

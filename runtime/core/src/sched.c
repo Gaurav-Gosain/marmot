@@ -36,7 +36,7 @@ static fixalloc g_alloc, m_alloc, p_alloc;
 static rt_mutex worldsema;
 
 static void schedule_loop(rt_m *m) NORETURN;
-static void sysmon_start(void);
+void sysmon_start(void);
 
 // ---- stacks and goroutine structures ----
 
@@ -404,6 +404,7 @@ static void checkdead(void) {
   if (run < 0) rt_throw("checkdead: inconsistent M counts");
   if (atomic_load(&timer_next_when) != INT64_MAX) return;
   if (sched.runqsize > 0) return;
+  if (signal_waiting()) return;  // a signal may still arrive
   if (sched.main_exited && atomic_load(&sched.ngoroutines) == 0)
     rt_throw("no goroutines (main called runtime.Goexit) - deadlock!");
   rt_throw("all goroutines are asleep - deadlock!");
@@ -1079,12 +1080,22 @@ static int retake(int64_t now) {
 
 static rt_m sysmon_m;
 
+// Signal handlers bump this to wake sysmon early.
+_Atomic uint32_t sysmon_wake;
+
+void sysmon_kick(void) {
+  atomic_fetch_add(&sysmon_wake, 1);
+  os_futex_wake(&sysmon_wake, false);
+}
+
 static void sysmon(void *arg) {
   setm(&sysmon_m);
   uint32_t delay = 20;
   int idle = 0;
   for (;;) {
-    os_usleep(delay);
+    uint32_t w = atomic_load(&sysmon_wake);
+    os_futex_wait(&sysmon_wake, w, (int64_t)delay * 1000);
+    if (signal_deliver()) idle = 0;
     if (idle > 50) {
       delay *= 2;
       if (delay > 10000) delay = 10000;
@@ -1104,7 +1115,7 @@ static void sysmon(void *arg) {
   }
 }
 
-static void sysmon_start(void) {
+void sysmon_start(void) {
   if (__atomic_load_n(&sysmon_started, __ATOMIC_ACQUIRE)) return;
   spin_lock(&sysmon_lock);
   if (!sysmon_started) {

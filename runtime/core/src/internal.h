@@ -314,6 +314,12 @@ void signal_init(void);
 void signal_init_thread(rt_m *m);
 void signal_preempt(rt_m *m);
 void signal_raise_sigpipe(void);
+// Ready the goroutine in rt_signal_recv if signals are pending (sysmon).
+bool signal_deliver(void);
+// A goroutine is parked in rt_signal_recv.
+bool signal_waiting(void);
+void sysmon_start(void);
+void sysmon_kick(void);
 
 // ---- Timers (timer.c) ----
 

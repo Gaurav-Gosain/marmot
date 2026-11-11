@@ -165,6 +165,23 @@ void rt_exitsyscall(void);
 int32_t rt_setjmp(void *buf) __attribute__((returns_twice));
 void rt_longjmp(void *buf, int32_t val) __attribute__((noreturn));
 
+// ---- Signals (os/signal) ----
+
+// Queue sig for rt_signal_recv instead of its default action. Returns 0 or
+// -errno. SIGURG, SIGSEGV, SIGBUS stay runtime handled and are forwarded
+// when enabled (faults in goroutine code still panic).
+int32_t rt_signal_enable(int32_t sig);
+// Restore the default action (SIGPIPE: the runtime's, see rt_write).
+int32_t rt_signal_disable(int32_t sig);
+// Ignore sig (SIG_IGN).
+int32_t rt_signal_ignore(int32_t sig);
+// 1 if sig is ignored: inherited as ignored at startup, or rt_signal_ignore.
+int32_t rt_signal_ignored(int32_t sig);
+// Park until an enabled signal arrives; returns its number. Signals that
+// arrive while nobody waits stay pending (one per signal number). While a
+// goroutine waits here the deadlock check stays quiet, as in gc.
+int32_t rt_signal_recv(void);
+
 // ---- Faults ----
 
 // Register the Go runtime's handler for memory faults in goroutine code. On
