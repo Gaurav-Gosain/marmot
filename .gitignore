@@ -1,0 +1,6 @@
+build/
+.work/
+*.o
+*.a
+*.bc
+.DS_Store
