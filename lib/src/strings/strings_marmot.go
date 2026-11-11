@@ -1107,6 +1107,16 @@ func Replace(s, old, new string, n int) string {
 		return s // avoid allocation
 	}
 
+	// marmot: replacing every instance with a string no longer than old
+	// fits in len(s) bytes, so one pass of the C core's SIMD replace does
+	// it without counting first. Small inputs count first, so that no
+	// match allocates nothing.
+	if n < 0 && len(old) > 0 && len(new) <= len(old) && len(s) >= 256 {
+		buf := bytealg.MakeNoZero(len(s))[:len(s)]
+		w := bytealg.MarmotReplaceInto(buf, s, old, new)
+		return unsafe.String(unsafe.SliceData(buf), w)
+	}
+
 	// Compute number of replacements.
 	m := Count(s, old)
 	if m == 0 {
