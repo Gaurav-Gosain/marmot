@@ -67,4 +67,9 @@ def GoStrings : Pass<"go-strings", "::mlir::ModuleOp"> {
   let dependentDialects = ["::mlir::LLVM::LLVMDialect"];
 }
 
+def GoBoolPack : Pass<"go-bool-pack", "::mlir::ModuleOp"> {
+  let summary = "Store local []bool slices as bit arrays";
+  let dependentDialects = ["::mlir::LLVM::LLVMDialect"];
+}
+
 #endif

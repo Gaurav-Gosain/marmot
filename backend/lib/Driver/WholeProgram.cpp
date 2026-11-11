@@ -54,7 +54,7 @@ namespace marmot {
 namespace {
 
 // Bump when the meaning of a cache entry changes.
-constexpr const char *kCacheVersion = "marmot-backend-cache-14";
+constexpr const char *kCacheVersion = "marmot-backend-cache-15";
 
 // Largest function, in LLVM instructions, imported into other modules.
 constexpr unsigned kImportLimit = 40;
@@ -297,7 +297,7 @@ std::string fingerprint(const CompileOptions &opts) {
   raw_string_ostream os(fp);
   os << kCacheVersion << "|O" << opts.optLevel << "|" << int(opts.emit) << "|"
      << opts.triple << "|" << opts.cpu << "|" << opts.features << "|"
-     << opts.strings << opts.devirt << opts.escape << opts.bce << opts.openDefers
+     << opts.strings << opts.devirt << opts.boolPack << opts.escape << opts.bce << opts.openDefers
      << opts.initOptNone << opts.wpoImport << opts.wpoClosedWorld << "|loops" << opts.loops.enable
      << opts.loops.parallel << opts.loops.fastFP << opts.loops.remarks
      << opts.loops.versioning << opts.loops.typeAlias << opts.loops.gpu << "|";

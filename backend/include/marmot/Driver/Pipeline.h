@@ -45,6 +45,7 @@ struct CompileOptions {
   bool devirt = true;          // go-devirt at -O1 and up
   bool strings = true;         // go-strings at -O1 and up
   bool escape = true;          // go-escape at -O1 and up
+  bool boolPack = true;        // go-bool-pack at -O1 and up
   bool bce = true;             // go-bce at -O1 and up
   bool openDefers = true;      // go-open-defers at -O1 and up
   // Prepared runtime bitcode (see RuntimeBitcode.h), shared by all jobs.

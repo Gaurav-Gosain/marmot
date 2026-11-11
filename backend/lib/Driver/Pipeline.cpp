@@ -352,6 +352,8 @@ std::unique_ptr<llvm::Module> lowerAndTranslate(ParsedModule &pm, const std::str
         mpm.addPass(go::createGoStrings());
       if (opts.devirt)
         mpm.addPass(go::createGoDevirt());
+      if (opts.boolPack)
+        mpm.addPass(go::createGoBoolPack());
       if (opts.escape)
         mpm.addPass(go::createGoEscape());
       if (opts.bce)

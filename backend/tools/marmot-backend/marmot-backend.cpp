@@ -69,6 +69,8 @@ static cl::opt<bool> noOpenDefers("no-open-defers",
                                   cl::desc("Disable the go-open-defers pass"), cl::cat(cat));
 static cl::opt<bool> noStrings("no-strings", cl::desc("Disable the go-strings pass"),
                                cl::cat(cat));
+static cl::opt<bool> noBoolPack("no-bool-pack", cl::desc("Disable the go-bool-pack pass"),
+                                cl::cat(cat));
 static cl::opt<bool> noBCE("no-bce", cl::desc("Disable the go-bce pass"), cl::cat(cat));
 static cl::opt<bool> wpo("wpo",
                          cl::desc("Batch mode: compile the jobs as one program (drop "
@@ -208,6 +210,7 @@ int main(int argc, char **argv) {
   opts.loops.typeAlias = typeAlias;
   opts.escape = !noEscape;
   opts.bce = !noBCE;
+  opts.boolPack = !noBoolPack;
   opts.devirt = !noDevirt;
   opts.strings = !noStrings;
   opts.openDefers = !noOpenDefers;
