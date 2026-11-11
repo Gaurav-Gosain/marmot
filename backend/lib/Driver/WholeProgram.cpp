@@ -51,7 +51,7 @@ namespace marmot {
 namespace {
 
 // Bump when the meaning of a cache entry changes.
-constexpr const char *kCacheVersion = "marmot-backend-cache-3";
+constexpr const char *kCacheVersion = "marmot-backend-cache-4";
 
 // Largest function, in LLVM instructions, imported into other modules.
 constexpr unsigned kImportLimit = 40;
@@ -121,6 +121,7 @@ private:
 struct Def {
   std::string qname; // global name, or "<module>:<name>" for local symbols
   bool isFunc = false, local = false, importable = false;
+  bool copyable = false; // linkonce or weak: any module may hold a copy
   std::vector<std::string> refs; // qualified names
 };
 
@@ -215,7 +216,9 @@ std::string summarize(Module &m) {
                    !f->getFunctionType()->isVarArg() &&
                    f->getInstructionCount() <= kImportLimit;
     os << "D\t" << (isa<Function>(gv) ? 'f' : 'v') << (gv.hasLocalLinkage() ? 'l' : 'g')
-       << (importable ? 'i' : '-') << "\t" << qualifyRaw(gv) << "\n";
+       << (importable ? 'i' : '-')
+       << (gv.hasLinkOnceLinkage() || gv.hasWeakLinkage() ? 'o' : '-') << "\t"
+       << qualifyRaw(gv) << "\n";
     for (const GlobalValue *r : refs)
       os << "R\t" << qualifyRaw(*r) << "\n";
   };
@@ -239,6 +242,7 @@ void loadSummary(StringRef text, unsigned idx, ModuleInfo &info) {
       d.isFunc = flags[0] == 'f';
       d.local = flags[1] == 'l';
       d.importable = flags[2] == 'i';
+      d.copyable = flags.size() > 3 && flags[3] == 'o';
       d.qname = localize(name, idx);
       info.defs.push_back(std::move(d));
     } else if (tag == "R" && !info.defs.empty()) {
@@ -644,12 +648,25 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       stats.functions += d.isFunc;
       stats.liveFunctions += d.isFunc && live.contains(d.qname);
     }
+  // A linkonce or weak definition (type descriptor, itab, generic instance,
+  // wrapper) may be copied into any module, and LLVM may fold its constant
+  // contents there (an itab slot becomes a direct call). What it references
+  // is therefore used everywhere.
+  StringSet<> shared;
+  for (ModuleInfo &m : mods)
+    for (const Def &d : m.defs)
+      if (d.copyable && live.contains(d.qname))
+        for (const std::string &r : d.refs)
+          shared.insert(r);
+
   // Functions each module internalizes: live, external, defined only there,
-  // used by no other module, not roots.
+  // used by no other module, not referenced by copyable definitions, not
+  // roots.
   std::vector<std::vector<std::string>> internal(mods.size());
   for (unsigned i = 0; i < mods.size(); ++i) {
     for (const Def &d : mods[i].defs) {
-      if (!d.isFunc || d.local || !live.contains(d.qname) || roots.contains(d.qname))
+      if (!d.isFunc || d.local || !live.contains(d.qname) || roots.contains(d.qname) ||
+          shared.contains(d.qname))
         continue;
       if (defsByName.lookup(d.qname).size() != 1)
         continue;
