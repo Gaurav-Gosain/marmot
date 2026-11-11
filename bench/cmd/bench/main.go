@@ -146,6 +146,7 @@ var (
 	timeoutSec = flag.Int("timeout", 120, "kill a program after this many seconds")
 	listOnly   = flag.Bool("list", false, "list programs and toolchains and exit")
 	notes      = flag.String("notes", "", "free text stored in the results file")
+	sizeOnly   = flag.Bool("size-only", false, "build once and record size and output check only, no timing")
 	noSnapshot = flag.Bool("no-snapshot", false, "use the live tree for marmot instead of a snapshot (do not use for long runs)")
 )
 
@@ -154,7 +155,7 @@ func main() {
 	var err error
 	root, err = findRoot()
 	check(err)
-	work = filepath.Join(root, ".work", "bench")
+	work = filepath.Join(root, ".work", "bench", *label)
 	check(os.MkdirAll(work, 0o755))
 
 	progs := discover()
@@ -271,6 +272,22 @@ func measure(p Program, t Toolchain) Result {
 	os.Remove(out)
 	env := append(os.Environ(), "GOCACHE="+filepath.Join(work, "gocache"))
 
+	if *sizeOnly {
+		c := exec.Command(t.Build(root, p.Pkg, out, false)[0], t.Build(root, p.Pkg, out, false)[1:]...)
+		c.Dir, c.Env = root, env
+		if o, err := runGroup(c, 10*time.Minute); err != nil {
+			r.Status, r.Error = "build_failed", trunc(fmt.Sprintf("%v: %s", err, o))
+			return r
+		}
+		fi, err := os.Stat(out)
+		if err != nil {
+			r.Status, r.Error = "build_failed", "no output binary"
+			return r
+		}
+		r.Size, r.SizeStripped = fi.Size(), strippedSize(out)
+		r.Status = "ok"
+		return r
+	}
 	// Cold build. Each sample cleans first, so the stdlib is rebuilt too.
 	if !*skipCold {
 		clean := t.Clean(root, work)
