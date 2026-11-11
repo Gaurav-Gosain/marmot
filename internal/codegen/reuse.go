@@ -19,11 +19,14 @@ import (
 // append, all in this function; (2) each of those values is used only by
 // len, cap, element reads and writes (whose addresses are only loaded or
 // stored through), phis of the chain, and appends of the chain; and (3)
-// no use of s other than this append can run after it without s being
-// redefined first.
+// for every value of the chain reaching s (s included), no use other than
+// this append can run after it without that value being redefined first
+// (older chain values may share the array the growth frees).
 
 func (f *funcGen) findReusableAppends() {
-	if os.Getenv("MARMOT_NO_REUSE") != "" {
+	// Off by default until verify signs the rule off (a use-after-free was
+	// found 2026-11-12); MARMOT_REUSE=1 turns it on.
+	if os.Getenv("MARMOT_REUSE") != "1" || os.Getenv("MARMOT_NO_REUSE") != "" {
 		return
 	}
 	for _, b := range f.fn.Blocks {
@@ -39,7 +42,7 @@ func (f *funcGen) findReusableAppends() {
 			if _, isSlice := c.Call.Args[0].Type().Underlying().(*types.Slice); !isSlice {
 				continue
 			}
-			if uniqueChain(c) && deadAfter(c.Call.Args[0], c) {
+			if uniqueChain(c) && chainDeadAfter(c) {
 				if f.reuseAppend == nil {
 					f.reuseAppend = map[ssa.Instruction]bool{}
 				}
@@ -262,4 +265,36 @@ func (f *funcGen) freeOldArray(p, c string, elem types.Type) {
 	f.emit("llvm.call @rt_free(%s, %s) : (!llvm.ptr, i64) -> ()", p, size)
 	f.emit("llvm.br %s", no)
 	f.b.WriteString("  " + no + ":\n")
+}
+
+// chainDeadAfter checks condition (3) for every value of the chain that
+// reaches the append's argument, not only the argument: an older value
+// (v in a1 := append(v, x); a2 := append(a1, y)) may share the array that
+// a2's growth frees. The append's own result is the new array and exempt.
+func chainDeadAfter(c *ssa.Call) bool {
+	seen := map[ssa.Value]bool{}
+	var walk func(v ssa.Value) bool
+	walk = func(v ssa.Value) bool {
+		if seen[v] || v == ssa.Value(c) {
+			return true
+		}
+		seen[v] = true
+		if !deadAfter(v, c) {
+			return false
+		}
+		switch x := v.(type) {
+		case *ssa.Phi:
+			for _, e := range x.Edges {
+				if !walk(e) {
+					return false
+				}
+			}
+		case *ssa.Call:
+			if len(x.Call.Args) > 0 {
+				return walk(x.Call.Args[0])
+			}
+		}
+		return true
+	}
+	return walk(c.Call.Args[0])
 }
