@@ -39,8 +39,8 @@ func MarmotAppendString(b []byte, s string) []byte {
 }
 
 const (
-	marmotLo7  = 0x0101010101010101
-	marmotHi   = 0x8080808080808080
+	marmotLo7 = 0x0101010101010101
+	marmotHi  = 0x8080808080808080
 )
 
 // marmotHasByte reports whether a byte of x equals c (SWAR).
