@@ -928,7 +928,7 @@ func writeTargets(f File, idx map[string]Result, progs []string) {
 		w("None written yet.\n")
 	}
 	check(os.WriteFile(filepath.Join(root, "bench", "TARGETS"+sfx+".md"), []byte(b.String()), 0o644))
-	fmt.Printf("scoreboard: geomean %.2fx, met %d/%d, 10x %d, slower %d, no result %d\n",
+	fmt.Printf("scoreboard"+sfx+": geomean %.2fx, met %d/%d, 10x %d, slower %d, no result %d\n",
 		func() float64 {
 			if n == 0 {
 				return 0
