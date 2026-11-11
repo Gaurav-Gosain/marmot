@@ -131,6 +131,7 @@ func runDefersForPanic(gp *g, p *_panic) {
 		fn := d.fn
 		d.fn = nil
 		p.wrapped = d.wrapped
+		p.wrapfp = 0 // a wrapper that panicked never ran recoverWrapExit
 		fn()
 		if p.recovered {
 			recovery(gp, p, d.frame)
