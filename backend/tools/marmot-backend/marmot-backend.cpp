@@ -52,6 +52,9 @@ static cl::opt<std::string> batchFile("batch",
 static cl::opt<unsigned> jobs("j", cl::desc("Parallel jobs in batch mode (0: all cores)"),
                               cl::init(0), cl::cat(cat));
 static cl::opt<bool> timePhases("time", cl::desc("Report time per phase"), cl::cat(cat));
+static cl::opt<bool> initOptNone(
+    "init-optnone", cl::init(true),
+    cl::desc("Do not optimize Go package init functions (they run once)"), cl::cat(cat));
 static cl::opt<bool> verifyEach("verify-each",
                                 cl::desc("Verify IR after every pass"), cl::cat(cat));
 
@@ -104,6 +107,7 @@ int main(int argc, char **argv) {
   opts.cpu = targetCPU;
   opts.features = targetAttrs;
   opts.verifyEach = verifyEach;
+  opts.initOptNone = initOptNone;
   opts.timePhases = timePhases;
 
   marmot::RuntimeLib rt;

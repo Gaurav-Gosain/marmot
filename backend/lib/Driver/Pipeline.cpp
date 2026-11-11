@@ -16,6 +16,7 @@
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Export.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
@@ -23,6 +24,7 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/StandardInstrumentations.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/ToolOutputFile.h"
@@ -129,6 +131,39 @@ void setTargetAttrs(llvm::Module &m, llvm::TargetMachine &tm) {
   }
 }
 
+// A Go package initializer: "<pkg>.init" or "<pkg>.init#N", no parameters,
+// no result. Methods named init always have a receiver parameter, and
+// closures inside init are named "<pkg>.init$N", so neither matches.
+bool isPackageInit(const llvm::Function &f) {
+  if (f.isDeclaration() || f.arg_size() != 0 || !f.getReturnType()->isVoidTy())
+    return false;
+  llvm::StringRef name = f.getName();
+  size_t hash = name.rfind('#');
+  if (hash != llvm::StringRef::npos) {
+    llvm::StringRef num = name.substr(hash + 1);
+    if (num.empty() || !llvm::all_of(num, llvm::isDigit))
+      return false;
+    name = name.take_front(hash);
+  }
+  return name.ends_with(".init") && name.size() > 5;
+}
+
+// Package initializers run once. Large ones (tables built by code) dominate
+// compile time at -O2 while their speed does not matter, so they are not
+// optimized.
+void markInitOptNone(llvm::Module &m) {
+  for (llvm::Function &f : m) {
+    if (!isPackageInit(f))
+      continue;
+    f.removeFnAttr(llvm::Attribute::AlwaysInline);
+    f.removeFnAttr(llvm::Attribute::MinSize);
+    f.removeFnAttr(llvm::Attribute::OptimizeForSize);
+    f.addFnAttr(llvm::Attribute::OptimizeNone);
+    f.addFnAttr(llvm::Attribute::NoInline);
+    f.addFnAttr(llvm::Attribute::Cold);
+  }
+}
+
 void runLLVMPipeline(llvm::Module &m, llvm::TargetMachine &tm, char level) {
   llvm::LoopAnalysisManager lam;
   llvm::FunctionAnalysisManager fam;
@@ -138,7 +173,11 @@ void runLLVMPipeline(llvm::Module &m, llvm::TargetMachine &tm, char level) {
   pto.LoopUnrolling = level != 's' && level != 'z';
   pto.LoopVectorization = level == '2' || level == '3';
   pto.SLPVectorization = level == '2' || level == '3';
-  llvm::PassBuilder pb(&tm, pto);
+  // Standard instrumentation makes -time-passes, -print-after and friends work.
+  llvm::PassInstrumentationCallbacks pic;
+  llvm::StandardInstrumentations si(m.getContext(), /*DebugLogging=*/false);
+  si.registerCallbacks(pic, &mam);
+  llvm::PassBuilder pb(&tm, pto, std::nullopt, &pic);
   pb.registerModuleAnalyses(mam);
   pb.registerCGSCCAnalyses(cgam);
   pb.registerFunctionAnalyses(fam);
@@ -250,6 +289,8 @@ bool compileFile(const std::string &input, const std::string &output,
       return fail(err);
   }
   setTargetAttrs(*lmod, *tm);
+  if (opts.initOptNone && opts.optLevel != '0')
+    markInitOptNone(*lmod);
   times.linkRt += timer.lap();
 
   if (opts.verifyEach && llvm::verifyModule(*lmod, &errs))

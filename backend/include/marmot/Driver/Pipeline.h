@@ -25,6 +25,7 @@ struct CompileOptions {
   bool verifyEach = false; // verify after every MLIR pass
   bool timePhases = false;
   bool singleThreaded = false; // disable MLIR context threading (batch mode)
+  bool initOptNone = true;     // compile package init functions with optnone
   // Prepared runtime bitcode (see RuntimeBitcode.h), shared by all jobs.
   const RuntimeLib *rtBitcode = nullptr;
 };
