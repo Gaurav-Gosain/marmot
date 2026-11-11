@@ -162,3 +162,64 @@ func MarmotIntPlain(p *pp, v int64) {
 	}
 	MarmotUintPlain(p, uint64(v))
 }
+
+// Per verb entry points: the arm of pp.fmtInteger, pp.fmtFloat,
+// pp.fmtString or pp.fmtBool that the verb selects, chosen at compile time,
+// so no badVerb (and no reflection) is reachable from specialized code.
+
+// MarmotFmtInteger is fmt.fmtInteger (verbs v, d, b, o, O, x, X).
+func MarmotFmtInteger(p *pp, u uint64, base int, isSigned bool, verb rune, upper bool) {
+	digits := ldigits
+	if upper {
+		digits = udigits
+	}
+	p.fmt.fmtInteger(u, base, isSigned, verb, digits)
+}
+
+// MarmotFmt0x64 is pp.fmt0x64 (%#v of unsigned integers).
+func MarmotFmt0x64(p *pp, u uint64) { p.fmt0x64(u, true) }
+
+// MarmotFmtC is %c of an integer.
+func MarmotFmtC(p *pp, u uint64) { p.fmt.fmtC(u) }
+
+// MarmotFmtQc is %q of an integer.
+func MarmotFmtQc(p *pp, u uint64) { p.fmt.fmtQc(u) }
+
+// MarmotFmtUnicode is %U of an integer.
+func MarmotFmtUnicode(p *pp, u uint64) { p.fmt.fmtUnicode(u) }
+
+// MarmotFmtFloat is fmt.fmtFloat with the verb and precision pp.fmtFloat
+// picks.
+func MarmotFmtFloat(p *pp, v float64, size int, verb rune, prec int) {
+	p.fmt.fmtFloat(v, size, verb, prec)
+}
+
+// MarmotFmtComplex is pp.fmtComplex for a verb it accepts, with the float
+// verb and precision already resolved.
+func MarmotFmtComplex(p *pp, v complex128, size int, verb rune, prec int) {
+	oldPlus := p.fmt.plus
+	p.buf.writeByte('(')
+	p.fmt.fmtFloat(real(v), size/2, verb, prec)
+	p.fmt.plus = true
+	p.fmt.fmtFloat(imag(v), size/2, verb, prec)
+	p.buf.writeString("i)")
+	p.fmt.plus = oldPlus
+}
+
+// MarmotFmtS is %s (and %v) of a string.
+func MarmotFmtS(p *pp, s string) { p.fmt.fmtS(s) }
+
+// MarmotFmtSx is %x or %X of a string.
+func MarmotFmtSx(p *pp, s string, upper bool) {
+	digits := ldigits
+	if upper {
+		digits = udigits
+	}
+	p.fmt.fmtSx(s, digits)
+}
+
+// MarmotFmtQ is %q (and %#v) of a string.
+func MarmotFmtQ(p *pp, s string) { p.fmt.fmtQ(s) }
+
+// MarmotFmtBoolean is %t and %v of a bool.
+func MarmotFmtBoolean(p *pp, b bool) { p.fmt.fmtBoolean(b) }

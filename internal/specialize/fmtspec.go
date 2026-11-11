@@ -306,40 +306,84 @@ func (g *gen) emitValue(t types.Type, v string, verb rune, bits uint, depth int)
 			return fmt.Sprintf("fmt.MarmotLit(p, string(%s))", v), true
 		}
 	}
+	sharpV := bits&fSharpV != 0
 	switch {
 	case b.Kind() == types.Bool:
 		if verb == 't' || verb == 'v' {
-			return fmt.Sprintf("fmt.MarmotBool(p, bool(%s), %d)", v, verb), true
+			return fmt.Sprintf("fmt.MarmotFmtBoolean(p, bool(%s))", v), true
 		}
 	case b.Info()&types.IsInteger != 0:
-		if !strings.ContainsRune("vdboOxXcqU", verb) {
-			break
+		signed := b.Info()&types.IsUnsigned == 0
+		u := fmt.Sprintf("uint64(%s)", v)
+		if signed {
+			u = fmt.Sprintf("uint64(int64(%s))", v)
 		}
-		if b.Info()&types.IsUnsigned != 0 {
-			return fmt.Sprintf("fmt.MarmotUint(p, uint64(%s), %d)", v, verb), true
+		// pp.fmtInteger.
+		switch verb {
+		case 'v':
+			if sharpV && !signed {
+				return fmt.Sprintf("fmt.MarmotFmt0x64(p, %s)", u), true
+			}
+			return fmt.Sprintf("fmt.MarmotFmtInteger(p, %s, 10, %v, %d, false)", u, signed, verb), true
+		case 'd':
+			return fmt.Sprintf("fmt.MarmotFmtInteger(p, %s, 10, %v, %d, false)", u, signed, verb), true
+		case 'b':
+			return fmt.Sprintf("fmt.MarmotFmtInteger(p, %s, 2, %v, %d, false)", u, signed, verb), true
+		case 'o', 'O':
+			return fmt.Sprintf("fmt.MarmotFmtInteger(p, %s, 8, %v, %d, false)", u, signed, verb), true
+		case 'x':
+			return fmt.Sprintf("fmt.MarmotFmtInteger(p, %s, 16, %v, %d, false)", u, signed, verb), true
+		case 'X':
+			return fmt.Sprintf("fmt.MarmotFmtInteger(p, %s, 16, %v, %d, true)", u, signed, verb), true
+		case 'c':
+			return fmt.Sprintf("fmt.MarmotFmtC(p, %s)", u), true
+		case 'q':
+			return fmt.Sprintf("fmt.MarmotFmtQc(p, %s)", u), true
+		case 'U':
+			return fmt.Sprintf("fmt.MarmotFmtUnicode(p, %s)", u), true
 		}
-		return fmt.Sprintf("fmt.MarmotInt(p, int64(%s), %d)", v, verb), true
-	case b.Info()&types.IsFloat != 0:
-		if !strings.ContainsRune("vbgGxXfFeE", verb) {
-			break
+	case b.Info()&types.IsFloat != 0, b.Info()&types.IsComplex != 0:
+		// pp.fmtFloat: the float verb and default precision.
+		fv, prec := verb, -1
+		switch verb {
+		case 'v':
+			fv = 'g'
+		case 'b', 'g', 'G', 'x', 'X':
+		case 'f', 'e', 'E':
+			prec = 6
+		case 'F':
+			fv, prec = 'f', 6
+		default:
+			return "", false
+		}
+		if b.Info()&types.IsComplex != 0 {
+			size := 128
+			if b.Kind() == types.Complex64 {
+				size = 64
+			}
+			return fmt.Sprintf("fmt.MarmotFmtComplex(p, complex128(%s), %d, %d, %d)", v, size, fv, prec), true
 		}
 		size := 64
 		if b.Kind() == types.Float32 {
 			size = 32
 		}
-		return fmt.Sprintf("fmt.MarmotFloat(p, float64(%s), %d, %d)", v, size, verb), true
-	case b.Info()&types.IsComplex != 0:
-		if !strings.ContainsRune("vbgGxXfFeE", verb) {
-			break
-		}
-		size := 128
-		if b.Kind() == types.Complex64 {
-			size = 64
-		}
-		return fmt.Sprintf("fmt.MarmotComplex(p, complex128(%s), %d, %d)", v, size, verb), true
+		return fmt.Sprintf("fmt.MarmotFmtFloat(p, float64(%s), %d, %d, %d)", v, size, fv, prec), true
 	case b.Info()&types.IsString != 0:
-		if strings.ContainsRune("vsxXq", verb) {
-			return fmt.Sprintf("fmt.MarmotString(p, string(%s), %d)", v, verb), true
+		// pp.fmtString.
+		switch verb {
+		case 'v':
+			if sharpV {
+				return fmt.Sprintf("fmt.MarmotFmtQ(p, string(%s))", v), true
+			}
+			return fmt.Sprintf("fmt.MarmotFmtS(p, string(%s))", v), true
+		case 's':
+			return fmt.Sprintf("fmt.MarmotFmtS(p, string(%s))", v), true
+		case 'x':
+			return fmt.Sprintf("fmt.MarmotFmtSx(p, string(%s), false)", v), true
+		case 'X':
+			return fmt.Sprintf("fmt.MarmotFmtSx(p, string(%s), true)", v), true
+		case 'q':
+			return fmt.Sprintf("fmt.MarmotFmtQ(p, string(%s))", v), true
 		}
 	}
 	return "", false
