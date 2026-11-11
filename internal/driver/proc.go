@@ -2,10 +2,10 @@ package driver
 
 import (
 	"os"
-	"strconv"
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"strconv"
 	"sync"
 	"syscall"
 )

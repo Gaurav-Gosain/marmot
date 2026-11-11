@@ -38,7 +38,7 @@ type Config struct {
 	GC       string
 	Target   string
 	Dialect  string
-	Release  bool // whole program optimization (-wpo) and all specializations
+	Release  bool   // whole program optimization (-wpo) and all specializations
 	Test     bool   // build the package's test binary (go list -test main)
 	PGOGen   bool   // instrument for profile generation
 	PGO      string // indexed profile to optimize with
@@ -74,12 +74,13 @@ func llvmTool(name string) string {
 }
 
 type build struct {
-	cfg    Config
-	work   string
-	start  time.Time
+	cfg     Config
+	work    string
+	start   time.Time
 	goos    string // target
 	goarch  string
-	testDir string // directory of the package under test
+	testDir string   // directory of the package under test
+	dylibs  []string // from //go:cgo_import_dynamic
 	out     string
 }
 
@@ -301,6 +302,7 @@ func (b *build) run1() (string, error) {
 			}
 		}
 	}
+	b.dylibs = cg.DynamicLibraries()
 	if err := b.link(objs, out); err != nil {
 		return "", err
 	}
@@ -442,6 +444,7 @@ func (b *build) link(objs []string, out string) error {
 	if b.cfg.PGOGen {
 		args = append(args, "-fprofile-generate")
 	}
+	args = append(args, linkLibraries(b.dylibs)...)
 	if mp := os.Getenv("MARMOT_LINKMAP"); mp != "" && runtime.GOOS == "darwin" {
 		args = append(args, "-Wl,-map,"+mp)
 	}
@@ -585,4 +588,42 @@ cd "$dir"
 ${CC:-clang} -o "$out" %s librtcore.a -lpthread -Wl,--gc-sections -s
 `, b.goos, b.goarch, exe, exe, strings.Join(names, " "))
 	return os.WriteFile(filepath.Join(out, "link.sh"), []byte(script), 0o755)
+}
+
+// linkLibraries turns //go:cgo_import_dynamic library paths into linker
+// arguments: -framework NAME for system frameworks, the path itself for
+// other dylibs; libSystem is linked anyway. Unused ones are dropped by
+// -dead_strip_dylibs.
+func linkLibraries(libs []string) []string {
+	var args []string
+	seen := map[string]bool{}
+	for _, l := range libs {
+		if strings.Contains(l, "libSystem") || strings.HasPrefix(l, "/usr/lib/libc.") {
+			continue
+		}
+		var a []string
+		if i := strings.Index(l, ".framework/"); i >= 0 && runtime.GOOS == "darwin" {
+			name := filepath.Base(l[:i])
+			a = []string{"-framework", name}
+		} else if runtime.GOOS == "darwin" && strings.HasPrefix(l, "/usr/lib/lib") {
+			// /usr/lib/libresolv.9.dylib -> -lresolv (the file is only in
+			// the dyld shared cache).
+			name := strings.TrimPrefix(filepath.Base(l), "lib")
+			if i := strings.IndexByte(name, '.'); i > 0 {
+				name = name[:i]
+			}
+			a = []string{"-l" + name}
+		} else {
+			continue // other platforms: libc only for now
+		}
+		k := strings.Join(a, " ")
+		if !seen[k] {
+			seen[k] = true
+			args = append(args, a...)
+		}
+	}
+	if len(args) > 0 && runtime.GOOS == "darwin" {
+		args = append(args, "-Wl,-dead_strip_dylibs")
+	}
+	return args
 }

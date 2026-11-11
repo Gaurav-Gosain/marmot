@@ -92,6 +92,7 @@ type Program struct {
 	mainPath      string                  // import path of the main package
 	globalRead    map[*ssa.Global]bool    // globals read anywhere in the program
 	varLinkname   map[string]bool         // pkgpath.name of variables named in //go:linkname
+	dylibs        map[string]bool         // libraries named by //go:cgo_import_dynamic
 }
 
 type pragma uint32
@@ -122,6 +123,7 @@ func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package
 		linkname:    map[*ssa.Function]string{},
 		dynamic:     map[string]string{},
 		varLinkname: map[string]bool{},
+		dylibs:      map[string]bool{},
 		pragmas:     map[*ssa.Function]pragma{},
 		syms:        map[*ssa.Function]string{},
 	}
@@ -195,6 +197,9 @@ func (p *Program) collect(pkg *ssa.Package) {
 					fs := strings.Fields(c.Text)
 					if len(fs) >= 3 {
 						p.dynamic[pkg.Pkg.Path()+"."+fs[1]] = fs[2]
+					}
+					if len(fs) >= 4 {
+						p.dylibs[strings.Trim(fs[3], `"`)] = true
 					}
 					continue
 				}
@@ -335,4 +340,15 @@ func (p *Program) gDeferOffset() (int64, bool) {
 		}
 	}
 	return 0, false
+}
+
+// DynamicLibraries returns the libraries named by //go:cgo_import_dynamic
+// directives (framework or dylib paths), sorted.
+func (p *Program) DynamicLibraries() []string {
+	var out []string
+	for l := range p.dylibs {
+		out = append(out, l)
+	}
+	sort.Strings(out)
+	return out
 }
