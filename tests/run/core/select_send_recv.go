@@ -8,10 +8,12 @@ func main() {
 		}
 		close(in)
 	}()
+	finished := make(chan bool)
 	go func() {
 		for v := range out {
 			println("out", v)
 		}
+		finished <- true
 	}()
 	pending := []int{}
 	open := true
@@ -35,5 +37,6 @@ func main() {
 		}
 	}
 	close(out)
+	<-finished
 	println("end")
 }
