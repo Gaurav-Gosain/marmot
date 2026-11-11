@@ -6,6 +6,7 @@ include "mlir/Dialect/LLVMIR/LLVMTypes.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
+include "mlir/Interfaces/ControlFlowInterfaces.td"
 
 //===----------------------------------------------------------------------===//
 // Allocation family
@@ -134,6 +135,47 @@ def Go_TypeAssertOp : Go_Op<"type_assert", [InferTypeOpAdaptor]> {
     (`to_any` $to_any^)? (`commaok` $commaok^)? attr-dict
   }];
   let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Control family
+//===----------------------------------------------------------------------===//
+
+def Go_DeferFrameOp : Go_Op<"defer_frame", [Terminator,
+    DeclareOpInterfaceMethods<BranchOpInterface>]> {
+  let summary = "set up the defer frame of a function; second entry after recover";
+  let successors = (successor AnySuccessor:$normal, AnySuccessor:$recover);
+  let assemblyFormat = "$normal `,` $recover attr-dict";
+  let hasVerifier = 1;
+}
+
+def Go_DeferOp : Go_Op<"defer"> {
+  let summary = "push a deferred call of a func() value";
+  let arguments = (ins LLVM_DefaultPointer:$fn, UnitAttr:$wrapped);
+  let assemblyFormat = "$fn (`wrapped` $wrapped^)? attr-dict";
+}
+
+def Go_RunDefersOp : Go_Op<"run_defers"> {
+  let summary = "run and pop the deferred calls of this frame";
+  let assemblyFormat = "attr-dict";
+}
+
+def Go_GoOp : Go_Op<"go"> {
+  let summary = "start a goroutine running a func() value";
+  let arguments = (ins LLVM_DefaultPointer:$fn);
+  let assemblyFormat = "$fn attr-dict";
+}
+
+def Go_PanicOp : Go_Op<"panic", [Terminator]> {
+  let summary = "panic(v)";
+  let arguments = (ins Go_IfaceType:$value);
+  let assemblyFormat = "$value attr-dict";
+}
+
+def Go_RecoverOp : Go_Op<"recover"> {
+  let summary = "recover()";
+  let results = (outs Go_IfaceType:$result);
+  let assemblyFormat = "attr-dict";
 }
 
 #endif

@@ -17,6 +17,10 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/RegionGraphTraits.h"
+#include "mlir/Interfaces/DataLayoutInterfaces.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #include <map>
@@ -46,6 +50,9 @@ public:
       if (op->getDialect() == goDialect)
         ops.push_back(op);
     });
+    // Defer frames first: go.defer and go.run_defers need the frame.
+    std::stable_partition(ops.begin(), ops.end(),
+                          [](Operation *op) { return isa<DeferFrameOp>(op); });
     for (Operation *op : ops) {
       b.setInsertionPoint(op);
       LogicalResult res = TypeSwitch<Operation *, LogicalResult>(op)
@@ -60,6 +67,12 @@ public:
                               .Case([&](MakeIfaceOp o) { return lower(o); })
                               .Case([&](IfaceCallOp o) { return lower(o); })
                               .Case([&](TypeAssertOp o) { return lower(o); })
+                              .Case([&](DeferFrameOp o) { return lower(o); })
+                              .Case([&](DeferOp o) { return lower(o); })
+                              .Case([&](RunDefersOp o) { return lower(o); })
+                              .Case([&](GoOp o) { return lower(o); })
+                              .Case([&](PanicOp o) { return lower(o); })
+                              .Case([&](RecoverOp o) { return lower(o); })
                               .Default([&](Operation *o) {
                                 return o->emitOpError("no lowering to llvm");
                               });
@@ -74,7 +87,12 @@ private:
   // declaring it if the module does not have it.
   FailureOr<LLVM::LLVMFuncOp> runtimeFunc(Operation *at, StringRef name,
                                           Type result, ArrayRef<Type> params) {
-    std::string sym = ("runtime." + name).str();
+    return declareFunc(at, ("runtime." + name).str(), result, params);
+  }
+
+  // Returns function sym with the given LLVM type, declaring it if needed.
+  FailureOr<LLVM::LLVMFuncOp> declareFunc(Operation *at, const std::string &sym,
+                                          Type result, ArrayRef<Type> params) {
     auto fnTy = LLVM::LLVMFunctionType::get(
         result ? result : LLVM::LLVMVoidType::get(module.getContext()), params);
     if (Operation *existing = symbols.lookup(sym)) {
@@ -184,6 +202,19 @@ private:
     op.replaceAllUsesWith(*p);
     op.erase();
     return success();
+  }
+
+  // Adds a passthrough attribute (like "noreturn") to fn if missing.
+  void addPassthrough(LLVM::LLVMFuncOp fn, StringRef attr) {
+    SmallVector<Attribute> attrs;
+    if (ArrayAttr old = fn.getPassthroughAttr()) {
+      for (Attribute a : old)
+        if (auto sa = dyn_cast<StringAttr>(a); sa && sa.getValue() == attr)
+          return;
+      attrs.append(old.begin(), old.end());
+    }
+    attrs.push_back(b.getStringAttr(attr));
+    fn.setPassthroughAttr(b.getArrayAttr(attrs));
   }
 
   // Declares a noreturn, cold runtime panic function.
@@ -448,6 +479,199 @@ private:
     op.erase();
     return success();
   }
+
+  //===--------------------------------------------------------------------===//
+  // Control family
+  //===--------------------------------------------------------------------===//
+
+  static constexpr unsigned kJmpbufWords = 32; // RT_JMPBUF_WORDS in rt.h
+
+  Type i64() { return b.getI64Type(); }
+  Type i32() { return b.getI32Type(); }
+
+  // The _defer record: {link *_defer, fn func(), frame *_deferframe, wrapped bool}.
+  LLVM::LLVMStructType deferRecordType() {
+    return LLVM::LLVMStructType::getLiteral(
+        b.getContext(), {ptrTy, ptrTy, ptrTy, b.getI8Type()});
+  }
+
+  // Creates `alloca 1 x t` at the start of the entry block of fn.
+  Value entryAlloca(LLVM::LLVMFuncOp fn, Type t) {
+    OpBuilder::InsertionGuard g(b);
+    b.setInsertionPointToStart(&fn.getBody().front());
+    Value one = LLVM::ConstantOp::create(b, fn.getLoc(), i64(), 1);
+    return LLVM::AllocaOp::create(b, fn.getLoc(), ptrTy, t, one);
+  }
+
+  // True if block blk of fn is on a CFG cycle.
+  bool inCycle(LLVM::LLVMFuncOp fn, Block *blk) {
+    Region *r = &fn.getBody();
+    auto it = cyclic.find(r);
+    if (it == cyclic.end()) {
+      llvm::DenseSet<Block *> set;
+      for (auto scc = llvm::scc_begin(r); !scc.isAtEnd(); ++scc) {
+        if (scc->size() > 1 || scc.hasCycle())
+          for (Block *bb : *scc)
+            set.insert(bb);
+      }
+      it = cyclic.try_emplace(r, std::move(set)).first;
+    }
+    return it->second.contains(blk);
+  }
+
+  // Marks the loads in blk from allocas, and every store to those allocas,
+  // volatile. After rt_setjmp returns a second time, values in registers are
+  // stale; volatile keeps the named results in memory so the Recover block
+  // sees the values stored before the panic.
+  void pinRecoverLoads(Block *blk) {
+    llvm::SmallPtrSet<Operation *, 8> allocas;
+    for (Operation &op : *blk)
+      if (auto ld = dyn_cast<LLVM::LoadOp>(op))
+        if (auto a = ld.getAddr().getDefiningOp<LLVM::AllocaOp>())
+          allocas.insert(a);
+    for (Operation *a : allocas) {
+      SmallVector<Value> work{a->getResult(0)};
+      while (!work.empty()) {
+        Value v = work.pop_back_val();
+        for (Operation *user : v.getUsers()) {
+          if (auto ld = dyn_cast<LLVM::LoadOp>(user))
+            ld.setVolatile_(true);
+          else if (auto st = dyn_cast<LLVM::StoreOp>(user); st && st.getAddr() == v)
+            st.setVolatile_(true);
+          else if (auto gep = dyn_cast<LLVM::GEPOp>(user))
+            work.push_back(gep.getResult());
+        }
+      }
+    }
+  }
+
+  LogicalResult lower(DeferFrameOp op) {
+    Location loc = op.getLoc();
+    auto fn = op->getParentOfType<LLVM::LLVMFuncOp>();
+    if (frames.count(&fn.getBody()))
+      return op.emitOpError("more than one go.defer_frame in a function");
+    auto frameTy = LLVM::LLVMArrayType::get(i64(), kJmpbufWords);
+    Value fr = entryAlloca(fn, frameTy);
+    frames[&fn.getBody()] = fr;
+    auto setjmp = declareFunc(op, "rt_setjmp", i32(), {ptrTy});
+    auto deferreturn = runtimeFunc(op, "deferreturn", Type(), {ptrTy});
+    if (failed(setjmp) || failed(deferreturn))
+      return failure();
+    addPassthrough(*setjmp, "returns_twice");
+    Block *normal = op.getNormal(), *recover = op.getRecover();
+    pinRecoverLoads(recover);
+    Value r = call(loc, *setjmp, {fr});
+    Value zero = LLVM::ConstantOp::create(b, loc, i32(), 0);
+    Value recovered = icmp(loc, LLVM::ICmpPredicate::ne, r, zero);
+    // A recovered panic runs the rest of this frame's defers, then goes to
+    // the Recover block.
+    Block *pad = new Block();
+    fn.getBody().getBlocks().insert(std::next(op->getBlock()->getIterator()), pad);
+    LLVM::CondBrOp::create(b, loc, recovered, pad, ValueRange(), normal,
+                           ValueRange(), std::make_pair(uint32_t(1), uint32_t(1) << 20));
+    b.setInsertionPointToEnd(pad);
+    call(loc, *deferreturn, {fr});
+    LLVM::BrOp::create(b, loc, ValueRange(), recover);
+    op.erase();
+    return success();
+  }
+
+  FailureOr<Value> frameOf(Operation *op) {
+    auto fn = op->getParentOfType<LLVM::LLVMFuncOp>();
+    auto it = frames.find(&fn.getBody());
+    if (it == frames.end()) {
+      op->emitOpError("needs a go.defer_frame in the function");
+      return failure();
+    }
+    return it->second;
+  }
+
+  LogicalResult lower(DeferOp op) {
+    Location loc = op.getLoc();
+    auto fr = frameOf(op);
+    auto push = runtimeFunc(op, "deferpush", Type(), {ptrTy});
+    if (failed(fr) || failed(push))
+      return failure();
+    auto fn = op->getParentOfType<LLVM::LLVMFuncOp>();
+    LLVM::LLVMStructType recTy = deferRecordType();
+    Value rec;
+    if (inCycle(fn, op->getBlock())) {
+      // One record per iteration, kept until the function returns.
+      auto alloc = runtimeFunc(op, "mallocConservative", ptrTy, {i64()});
+      if (failed(alloc))
+        return failure();
+      uint64_t size = DataLayout::closest(op).getTypeSize(recTy);
+      Value n = LLVM::ConstantOp::create(b, loc, i64(), size);
+      rec = call(loc, *alloc, {n});
+    } else {
+      rec = entryAlloca(fn, recTy);
+    }
+    auto field = [&](int32_t i) {
+      return LLVM::GEPOp::create(b, loc, ptrTy, recTy, rec, ArrayRef<LLVM::GEPArg>{0, i});
+    };
+    LLVM::StoreOp::create(b, loc, op.getFn(), field(1));
+    LLVM::StoreOp::create(b, loc, *fr, field(2));
+    Value wrapped = LLVM::ConstantOp::create(b, loc, b.getI8Type(), op.getWrapped() ? 1 : 0);
+    LLVM::StoreOp::create(b, loc, wrapped, field(3));
+    call(loc, *push, {rec});
+    op.erase();
+    return success();
+  }
+
+  LogicalResult lower(RunDefersOp op) {
+    auto fr = frameOf(op);
+    auto fn = runtimeFunc(op, "deferreturn", Type(), {ptrTy});
+    if (failed(fr) || failed(fn))
+      return failure();
+    call(op.getLoc(), *fn, {*fr});
+    op.erase();
+    return success();
+  }
+
+  LogicalResult lower(GoOp op) {
+    auto fn = runtimeFunc(op, "newproc", Type(), {ptrTy});
+    if (failed(fn))
+      return failure();
+    call(op.getLoc(), *fn, {op.getFn()});
+    op.erase();
+    return success();
+  }
+
+  LogicalResult lower(PanicOp op) {
+    Type ity = ifaceType(b.getContext());
+    bool existed = symbols.lookup("runtime.gopanic") != nullptr;
+    auto fn = runtimeFunc(op, "gopanic", Type(), {ity});
+    if (failed(fn))
+      return failure();
+    if (!existed)
+      addPassthrough(*fn, "noreturn");
+    call(op.getLoc(), *fn, {op.getValue()});
+    LLVM::UnreachableOp::create(b, op.getLoc());
+    op.erase();
+    return success();
+  }
+
+  LogicalResult lower(RecoverOp op) {
+    Location loc = op.getLoc();
+    auto fn = runtimeFunc(op, "gorecover", ifaceType(b.getContext()), {i64()});
+    if (failed(fn))
+      return failure();
+    Value zero = LLVM::ConstantOp::create(b, loc, i32(), 0);
+    Value fp = LLVM::CallIntrinsicOp::create(b, loc, ptrTy,
+                                             b.getStringAttr("llvm.frameaddress.p0"),
+                                             ValueRange{zero})
+                   .getResult(0);
+    Value fpInt = LLVM::PtrToIntOp::create(b, loc, i64(), fp);
+    Value r = call(loc, *fn, {fpInt});
+    // gorecover checks the caller's frame, so this frame must stay a frame.
+    op->getParentOfType<LLVM::LLVMFuncOp>().setNoInline(true);
+    op.replaceAllUsesWith(r);
+    op.erase();
+    return success();
+  }
+
+  llvm::DenseMap<Region *, Value> frames;
+  llvm::DenseMap<Region *, llvm::DenseSet<Block *>> cyclic;
 
   ModuleOp module;
   SymbolTable symbols;

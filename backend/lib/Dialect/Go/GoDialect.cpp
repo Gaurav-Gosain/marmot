@@ -128,5 +128,23 @@ LogicalResult TypeAssertOp::verify() {
   return success();
 }
 
+//===----------------------------------------------------------------------===//
+// Control family
+//===----------------------------------------------------------------------===//
+
+SuccessorOperands DeferFrameOp::getSuccessorOperands(unsigned) {
+  return SuccessorOperands(MutableOperandRange(getOperation(), 0, 0));
+}
+
+LogicalResult DeferFrameOp::verify() {
+  auto fn = (*this)->getParentOfType<LLVM::LLVMFuncOp>();
+  if (!fn || (*this)->getBlock() != &fn.getBody().front())
+    return emitOpError("must terminate the entry block of an llvm.func");
+  for (Block *succ : (*this)->getSuccessors())
+    if (succ->getNumArguments() != 0)
+      return emitOpError("successors must not take arguments");
+  return success();
+}
+
 #define GET_OP_CLASSES
 #include "marmot/Dialect/Go/GoOps.cpp.inc"
