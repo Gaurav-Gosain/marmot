@@ -70,6 +70,10 @@ def GoOpenDefers : Pass<"go-open-defers", "::mlir::ModuleOp"> {
 def GoStrings : Pass<"go-strings", "::mlir::ModuleOp"> {
   let summary = "String concat folding and no-copy []byte to string conversions";
   let dependentDialects = ["::mlir::LLVM::LLVMDialect"];
+  let options = [
+    Option<"noCopy", "no-copy", "bool", /*default=*/"false",
+           "Rule S3: no-copy string(b) for transient uses (off until re-checked)">
+  ];
 }
 
 def GoBoolPack : Pass<"go-bool-pack", "::mlir::ModuleOp"> {

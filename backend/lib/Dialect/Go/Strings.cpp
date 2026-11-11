@@ -86,6 +86,7 @@ bool isTransientUse(OpOperand &use) {
 }
 
 struct GoStringsPass : marmot::go::impl::GoStringsBase<GoStringsPass> {
+  using GoStringsBase::GoStringsBase;
   void runOnOperation() override {
     ModuleOp m = getOperation();
     SymbolTable symbols(m);
@@ -124,28 +125,6 @@ struct GoStringsPass : marmot::go::impl::GoStringsBase<GoStringsPass> {
         convs.push_back(c);
     });
 
-    // S3 first, so a converted operand is seen by S1/S2 unchanged.
-    for (BytesToStrOp conv : convs) {
-      if (conv.getNocopy() || conv->use_empty())
-        continue;
-      Operation *last = nullptr;
-      bool ok = true;
-      for (OpOperand &use : conv->getUses()) {
-        Operation *u = use.getOwner();
-        if (u->getBlock() != conv->getBlock() || !isTransientUse(use)) {
-          ok = false;
-          break;
-        }
-        if (!last || last->isBeforeInBlock(u))
-          last = u;
-      }
-      for (Operation *op = conv->getNextNode(); ok && op != last; op = op->getNextNode())
-        if (mayWrite(op) && !isa<MapLookupOp, StrConcatOp>(op))
-          ok = false;
-      if (ok)
-        conv.setNocopy(true);
-    }
-
     // Inner concats come first in walk order unless block order differs from
     // dominance order; erased ops are remembered and skipped.
     llvm::DenseSet<Operation *> erased;
@@ -157,7 +136,14 @@ struct GoStringsPass : marmot::go::impl::GoStringsBase<GoStringsPass> {
       SmallVector<Operation *> dead;
       std::function<void(Value)> add = [&](Value v) {
         auto inner = v.getDefiningOp<StrConcatOp>();
-        if (inner && inner->hasOneUse()) {
+        // An inner concat with a no-copy operand (set by the frontend) stays:
+        // moving that read into the outer concat could pass a write to the
+        // bytes.
+        bool pinned = inner && llvm::any_of(inner.getParts(), [](Value p) {
+                        auto bs = p.getDefiningOp<BytesToStrOp>();
+                        return bs && bs.getNocopy();
+                      });
+        if (inner && inner->hasOneUse() && !pinned) {
           for (Value p : inner.getParts())
             add(p);
           dead.push_back(inner);
@@ -213,6 +199,33 @@ struct GoStringsPass : marmot::go::impl::GoStringsBase<GoStringsPass> {
           erased.insert(d);
           d->erase();
         }
+    }
+
+    // S3, after S1/S2: a conversion's uses are then its final consumers (a
+    // flattened inner concat no longer hides the outer one that reads the
+    // bytes later), so the no-write window reaches the last real read.
+    // Off by default until re-checked (tests/run/audit/str_concat_flatten).
+    if (!noCopy)
+      return;
+    for (BytesToStrOp conv : convs) {
+      if (conv.getNocopy() || conv->use_empty())
+        continue;
+      Operation *last = nullptr;
+      bool ok = true;
+      for (OpOperand &use : conv->getUses()) {
+        Operation *u = use.getOwner();
+        if (u->getBlock() != conv->getBlock() || !isTransientUse(use)) {
+          ok = false;
+          break;
+        }
+        if (!last || last->isBeforeInBlock(u))
+          last = u;
+      }
+      for (Operation *op = conv->getNextNode(); ok && op != last; op = op->getNextNode())
+        if (mayWrite(op) && !isa<MapLookupOp, StrConcatOp>(op))
+          ok = false;
+      if (ok)
+        conv.setNocopy(true);
     }
   }
 };

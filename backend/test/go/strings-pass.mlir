@@ -1,4 +1,5 @@
-// RUN: %marmot-opt --go-strings %s | %FileCheck %s
+// RUN: %marmot-opt --go-strings %s | %FileCheck %s --check-prefixes=CHECK,OFF
+// RUN: %marmot-opt --go-strings='no-copy=1' %s | %FileCheck %s --check-prefixes=CHECK,NC
 !str = !llvm.struct<(ptr, i64)>
 !slice = !llvm.struct<(ptr, i64, i64)>
 module {
@@ -47,10 +48,12 @@ module {
     llvm.return %o : !str
   }
 
-  // m[string(b)] and string(b) == s: no copy. Stored or passed on: copy.
+  // m[string(b)] and string(b) == s: no copy (S3, only with no-copy=1).
+  // Stored or passed on: copy.
   // CHECK-LABEL: llvm.func @nocopy
-  // CHECK: go.bytes_to_str %arg1 nocopy
-  // CHECK: go.bytes_to_str %arg1 nocopy
+  // NC: go.bytes_to_str %arg1 nocopy
+  // NC: go.bytes_to_str %arg1 nocopy
+  // OFF-NOT: nocopy
   // CHECK: go.bytes_to_str %arg1{{$}}
   llvm.func @nocopy(%m: !llvm.ptr, %b: !slice, %s: !str) -> i64 {
     %k = go.bytes_to_str %b
@@ -71,5 +74,34 @@ module {
     llvm.store %c, %p : i8, !llvm.ptr
     %v = go.map_lookup %m[%k], @"type:map" : !str -> i64
     llvm.return %v : i64
+  }
+
+  // tests/run/audit/str_concat_flatten: string(b) used by an inner concat
+  // that S1 flattens into an outer concat after a write to b. The window of
+  // S3 reaches the outer concat, so the conversion copies.
+  // CHECK-LABEL: llvm.func @flatten
+  // CHECK: go.bytes_to_str %arg0{{$}}
+  // CHECK: llvm.store
+  // CHECK: go.str_concat
+  llvm.func @flatten(%b: !slice, %x: !str, %y: !str, %p: !llvm.ptr) -> !str {
+    %s = go.bytes_to_str %b
+    %in = go.str_concat %s, %x
+    %c = llvm.mlir.constant(122 : i8) : i8
+    llvm.store %c, %p : i8, !llvm.ptr
+    %out = go.str_concat %in, %y
+    llvm.return %out : !str
+  }
+
+  // A no-copy operand from the frontend pins its inner concat: S1 does not
+  // move it into the outer concat.
+  // CHECK-LABEL: llvm.func @pinned
+  // CHECK: %[[S:.*]] = go.bytes_to_str %arg0 nocopy
+  // CHECK: %[[IN:.*]] = go.str_concat %[[S]], %arg1
+  // CHECK: go.str_concat %[[IN]], %arg2
+  llvm.func @pinned(%b: !slice, %x: !str, %y: !str) -> !str {
+    %s = go.bytes_to_str %b nocopy
+    %in = go.str_concat %s, %x
+    %out = go.str_concat %in, %y
+    llvm.return %out : !str
   }
 }
