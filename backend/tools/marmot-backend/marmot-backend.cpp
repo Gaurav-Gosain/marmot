@@ -5,6 +5,7 @@
 //   marmot-backend -batch jobs.txt -j N      (one "in out" pair per line)
 #include "marmot/Driver/Pipeline.h"
 #include "marmot/Driver/RuntimeBitcode.h"
+#include "marmot/Driver/Watchdog.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/CommandLine.h"
@@ -15,7 +16,10 @@
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <atomic>
+#include <cstdlib>
+#include <thread>
 #include <chrono>
 #include <mutex>
 
@@ -49,12 +53,15 @@ static cl::opt<std::string> targetAttrs("mattr", cl::desc("Target features"),
 static cl::opt<std::string> batchFile("batch",
                                       cl::desc("File with one \"in out\" pair per line"),
                                       cl::value_desc("path"), cl::cat(cat));
-static cl::opt<unsigned> jobs("j", cl::desc("Parallel jobs in batch mode (0: all cores)"),
+static cl::opt<unsigned> jobs("j", cl::desc("Parallel jobs in batch mode (0: all cores, "
+                                             "capped by MARMOT_MAX_JOBS, default 4)"),
                               cl::init(0), cl::cat(cat));
 static cl::opt<bool> timePhases("time", cl::desc("Report time per phase"), cl::cat(cat));
 static cl::opt<bool> initOptNone(
     "init-optnone", cl::init(true),
     cl::desc("Do not optimize Go package init functions (they run once)"), cl::cat(cat));
+static cl::opt<bool> noEscape("no-escape", cl::desc("Disable the go-escape pass"),
+                              cl::cat(cat));
 static cl::opt<bool> verifyEach("verify-each",
                                 cl::desc("Verify IR after every pass"), cl::cat(cat));
 
@@ -93,6 +100,7 @@ bool readJobs(const std::string &path, std::vector<Job> &out, std::string &err) 
 
 int main(int argc, char **argv) {
   InitLLVM init(argc, argv);
+  marmot::startWatchdog();
   cl::HideUnrelatedOptions(cat);
   cl::ParseCommandLineOptions(argc, argv, "marmot MLIR backend\n");
   auto start = std::chrono::steady_clock::now();
@@ -108,6 +116,7 @@ int main(int argc, char **argv) {
   opts.features = targetAttrs;
   opts.verifyEach = verifyEach;
   opts.initOptNone = initOptNone;
+  opts.escape = !noEscape;
   opts.timePhases = timePhases;
 
   marmot::RuntimeLib rt;
@@ -150,7 +159,9 @@ int main(int argc, char **argv) {
     std::string msgs;
     raw_string_ostream es(msgs);
     marmot::PhaseTimes t;
+    marmot::watchdogBegin(job.in);
     bool good = marmot::compileFile(job.in, job.out, o, t, es);
+    marmot::watchdogEnd(job.in);
     std::lock_guard<std::mutex> lock(mu);
     if (!good)
       ok = false;
@@ -163,7 +174,14 @@ int main(int argc, char **argv) {
   if (work.size() == 1) {
     runJob(work[0], false);
   } else {
-    DefaultThreadPool pool(hardware_concurrency(jobs));
+    // SPEC rule 10: at most MARMOT_MAX_JOBS (default 4) threads, whatever -j says.
+    unsigned cap = 4;
+    if (const char *e = std::getenv("MARMOT_MAX_JOBS"))
+      if (unsigned v = std::strtoul(e, nullptr, 10))
+        cap = v;
+    unsigned n = jobs ? unsigned(jobs) : std::thread::hardware_concurrency();
+    n = std::max(1u, std::min({n, cap, unsigned(work.size())}));
+    DefaultThreadPool pool(hardware_concurrency(n));
     for (const Job &job : work)
       pool.async([&, job] { runJob(job, true); });
     pool.wait();

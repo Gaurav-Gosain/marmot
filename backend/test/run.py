@@ -12,12 +12,14 @@ backslash continues a RUN line). Substitutions:
 A test passes when every RUN line exits with status 0. `// UNSUPPORTED: <arch>`
 skips a test on that host machine (uname -m).
 """
-import os, platform, re, subprocess, sys, concurrent.futures
+import os, platform, re, signal, subprocess, sys, concurrent.futures
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 LLVM = os.environ.get("LLVM_PREFIX", "/opt/homebrew/opt/llvm@22")
 BIN = os.path.join(LLVM, "bin")
 WORK = os.path.join(ROOT, ".work", "backend-test")
+TIMEOUT = 120  # seconds per RUN line (SPEC rule 10)
+JOBS = 4
 
 SUBST = [
     ("%backend", os.path.join(ROOT, "build", "bin", "marmot-backend")),
@@ -65,8 +67,17 @@ def run_test(path):
         for k, v in SUBST:
             cmd = cmd.replace(k, v)
         cmd = cmd.replace("%s", path).replace("%S", os.path.dirname(path)).replace("%t", tmp)
-        p = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=ROOT)
-        log.append("$ " + cmd + "\n" + p.stdout + p.stderr)
+        # Own process group, killed as a whole on timeout.
+        p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True, cwd=ROOT, start_new_session=True)
+        try:
+            out, err = p.communicate(timeout=TIMEOUT)
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL)
+            p.communicate()
+            log.append("$ " + cmd + f"\nTIMEOUT after {TIMEOUT}s")
+            return path, "FAIL", "\n".join(log)
+        log.append("$ " + cmd + "\n" + out + err)
         if p.returncode != 0:
             return path, "FAIL", "\n".join(log)
     return path, "PASS", ""
@@ -86,7 +97,7 @@ def main():
             tests += [os.path.join(d, f) for f in files if f.endswith((".mlir", ".ll"))]
     tests.sort()
     fails = 0
-    with concurrent.futures.ThreadPoolExecutor() as ex:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=JOBS) as ex:
         for path, status, log in ex.map(run_test, tests):
             rel = os.path.relpath(path, ROOT)
             if status == "FAIL":

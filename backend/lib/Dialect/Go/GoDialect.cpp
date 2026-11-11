@@ -3,6 +3,7 @@
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "mlir/IR/Matchers.h"
 
 using namespace mlir;
 using namespace marmot::go;
@@ -53,6 +54,13 @@ LogicalResult MakeSliceOp::verify() {
   if (!isMemoryType(getElemType()))
     return emitOpError("element type must be an LLVM memory type, got ")
            << getElemType();
+  if (getStack()) {
+    APInt len, cap;
+    if (!matchPattern(getLen(), m_ConstantInt(&len)) ||
+        !matchPattern(getCap(), m_ConstantInt(&cap)) || len.isNegative() ||
+        cap.slt(len))
+      return emitOpError("stack form needs constant 0 <= len <= cap");
+  }
   return success();
 }
 

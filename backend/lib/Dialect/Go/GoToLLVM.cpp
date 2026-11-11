@@ -15,6 +15,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/RegionGraphTraits.h"
@@ -42,6 +43,16 @@ public:
         ptrTy(LLVM::LLVMPointerType::get(module.getContext())) {}
 
   LogicalResult run() {
+    // Escape summaries become LLVM no-capture attributes (the summary rules
+    // are strict enough for that promise; see Escape.cpp).
+    module.walk([&](LLVM::LLVMFuncOp fn) {
+      for (unsigned i = 0; i < fn.getNumArguments(); ++i)
+        if (fn.getArgAttr(i, "go.noescape")) {
+          fn.removeArgAttr(i, "go.noescape");
+          fn.setArgAttr(i, LLVM::LLVMDialect::getNoCaptureAttrName(),
+                        UnitAttr::get(fn.getContext()));
+        }
+    });
     SmallVector<Operation *> ops;
     Dialect *goDialect = module.getContext()->getLoadedDialect<GoDialect>();
     if (!goDialect)
@@ -154,7 +165,21 @@ private:
     LLVM::StoreOp::create(b, loc, v, addr);
   }
 
+  // A stack slot for a non-escaping allocation: an entry block alloca, zeroed
+  // where the original op ran (so each execution starts from zero).
+  Value stackSlot(Operation *at, Type t) {
+    Value p = entryAlloca(at->getParentOfType<LLVM::LLVMFuncOp>(), t);
+    Value zero = LLVM::ZeroOp::create(b, at->getLoc(), t);
+    LLVM::StoreOp::create(b, at->getLoc(), zero, p);
+    return p;
+  }
+
   LogicalResult lower(NewOp op) {
+    if (op.getStack()) {
+      op.replaceAllUsesWith(stackSlot(op, op.getElemType()));
+      op.erase();
+      return success();
+    }
     auto p = newObject(op, op.getDescAttr());
     if (failed(p))
       return failure();
@@ -165,14 +190,21 @@ private:
 
   LogicalResult lower(MakeSliceOp op) {
     Location loc = op.getLoc();
-    auto t = addressOf(op, op.getDescAttr());
-    if (failed(t))
-      return failure();
     Type intTy = op.getLen().getType();
-    auto fn = runtimeFunc(op, "makeslice", ptrTy, {ptrTy, intTy, intTy});
-    if (failed(fn))
-      return failure();
-    Value p = call(loc, *fn, {*t, op.getLen(), op.getCap()});
+    Value p;
+    if (op.getStack()) {
+      APInt cap;
+      (void)matchPattern(op.getCap(), m_ConstantInt(&cap));
+      p = stackSlot(op, LLVM::LLVMArrayType::get(op.getElemType(), cap.getZExtValue()));
+    } else {
+      auto t = addressOf(op, op.getDescAttr());
+      if (failed(t))
+        return failure();
+      auto fn = runtimeFunc(op, "makeslice", ptrTy, {ptrTy, intTy, intTy});
+      if (failed(fn))
+        return failure();
+      p = call(loc, *fn, {*t, op.getLen(), op.getCap()});
+    }
     Type sliceTy = op.getType();
     Value s = LLVM::PoisonOp::create(b, loc, sliceTy);
     s = LLVM::InsertValueOp::create(b, loc, s, p, ArrayRef<int64_t>{0});
@@ -185,7 +217,8 @@ private:
 
   LogicalResult lower(MakeClosureOp op) {
     Location loc = op.getLoc();
-    auto p = newObject(op, op.getDescAttr());
+    FailureOr<Value> p = op.getStack() ? FailureOr<Value>(stackSlot(op, op.getEnvType()))
+                                       : newObject(op, op.getDescAttr());
     if (failed(p))
       return failure();
     auto code = addressOf(op, op.getFnAttr());
@@ -205,7 +238,11 @@ private:
   }
 
   LogicalResult lower(BoxOp op) {
-    auto p = newObject(op, op.getDescAttr());
+    FailureOr<Value> p =
+        op.getStack()
+            ? FailureOr<Value>(entryAlloca(op->getParentOfType<LLVM::LLVMFuncOp>(),
+                                           memoryType(op.getValue().getType())))
+            : newObject(op, op.getDescAttr());
     if (failed(p))
       return failure();
     storeMem(op.getLoc(), op.getValue(), *p);

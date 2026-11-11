@@ -250,7 +250,13 @@ bool compileFile(const std::string &input, const std::string &output,
   {
     mlir::PassManager pm(&mctx, mlir::ModuleOp::getOperationName());
     pm.enableVerifier(opts.verifyEach || opts.optLevel == '0');
+    if (opts.optLevel != '0') {
+      if (opts.escape)
+        pm.addPass(go::createGoEscape());
+    }
     pm.addPass(go::createGoToLLVM());
+    // Always: large aggregate values would hang code generation.
+    pm.addPass(go::createAggregateCopies());
     if (mlir::failed(pm.run(*module)))
       return fail("MLIR pass pipeline failed");
   }
