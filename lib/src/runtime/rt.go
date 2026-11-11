@@ -86,6 +86,12 @@ func rt_gosched()
 //go:linkname rt_yield rt_yield
 func rt_yield()
 
+//go:linkname rt_can_spin rt_can_spin
+func rt_can_spin(iter int32) int32
+
+//go:linkname rt_procyield rt_procyield
+func rt_procyield(n int32)
+
 //go:linkname rt_park rt_park
 func rt_park(unlock unsafe.Pointer, lock unsafe.Pointer)
 

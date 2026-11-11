@@ -46,11 +46,14 @@ func internal_sync_runtime_Semrelease(addr *uint32, handoff bool, skipframes int
 	}
 }
 
+// sync.Mutex spins briefly before parking when the C core says spinning
+// can pay off (several threads, others running), as gc does.
+//
 //go:linkname internal_sync_runtime_canSpin internal/sync.runtime_canSpin
-func internal_sync_runtime_canSpin(i int) bool { return false }
+func internal_sync_runtime_canSpin(i int) bool { return rt_can_spin(int32(i)) != 0 }
 
 //go:linkname internal_sync_runtime_doSpin internal/sync.runtime_doSpin
-func internal_sync_runtime_doSpin() {}
+func internal_sync_runtime_doSpin() { rt_procyield(30) }
 
 //go:linkname internal_sync_runtime_nanotime internal/sync.runtime_nanotime
 func internal_sync_runtime_nanotime() int64 { return rt_nanotime() }
