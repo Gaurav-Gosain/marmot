@@ -54,7 +54,7 @@ namespace marmot {
 namespace {
 
 // Bump when the meaning of a cache entry changes.
-constexpr const char *kCacheVersion = "marmot-backend-cache-11";
+constexpr const char *kCacheVersion = "marmot-backend-cache-12";
 
 // Largest function, in LLVM instructions, imported into other modules.
 constexpr unsigned kImportLimit = 40;
@@ -707,10 +707,24 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           shared.insert(r);
 
   // Indirect call candidates: address-taken functions by LLVM type.
+  // A dead function cannot be the target of a live call. A linkonce or weak
+  // candidate may be dropped by its defining module, so another module must
+  // not start referencing it; such a candidate counts (keeping the call
+  // indirect elsewhere) but is promoted only where it is defined.
   std::map<std::string, std::set<std::string>> byType;
+  StringSet<> copyableCand;
   for (ModuleInfo &m : mods)
-    for (auto &[name, type] : m.addrTaken)
+    for (auto &[name, type] : m.addrTaken) {
+      auto d = defsByName.find(name);
+      if (d != defsByName.end()) {
+        if (!live.contains(name))
+          continue;
+        for (auto [mi, di] : d->second)
+          if (mods[mi].defs[di].copyable)
+            copyableCand.insert(name);
+      }
       byType[type].insert(name);
+    }
   std::string byTypeKey;
   for (auto &[type, names] : byType) {
     byTypeKey += type + ":";
@@ -903,6 +917,8 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
             name = local;
           }
           Function *f = m->getFunction(name);
+          if (copyableCand.contains(q) && (!f || f->isDeclaration()))
+            break; // not defined here: may not exist at link time
           if (!f)
             f = Function::Create(cb->getFunctionType(), GlobalValue::ExternalLinkage, name,
                                  m.get());
