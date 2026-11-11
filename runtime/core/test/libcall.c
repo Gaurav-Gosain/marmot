@@ -10,7 +10,18 @@ static long sum9(long a, long b, long c, long d, long e, long f, long g, long h,
   return a + 2 * b + 3 * c + 4 * d + 5 * e + 6 * f + 7 * g + 8 * h + 9 * i;
 }
 
+static long mixf(long a, long b, long c, long d, long e, double f) {
+  return a + 2 * b + 3 * c + 4 * d + 5 * e + (long)(f * 100);
+}
+static long two_and_f(long a, long b, double f) { return a * b + (long)f; }
+
 void marmot_main(void) {
+  {
+    int32_t e2;
+    uintptr_t fa[5] = {1, 2, 3, 4, 5};
+    CHECK(rt_libcall_f64((void *)mixf, fa, 1.5, &e2) == 1 + 4 + 9 + 16 + 25 + 150);
+    CHECK(rt_libcall_f64((void *)two_and_f, fa, 7.9, &e2) == 2 + 7);
+  }
   int32_t err = -1;
   uintptr_t a9[9] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
   CHECK(rt_libcall((void *)sum9, a9, 9, 9, &err) == 285);

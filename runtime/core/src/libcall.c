@@ -102,3 +102,19 @@ RT_API intptr_t rt_libcall(void *fn, const uintptr_t *args, int32_t nargs, int32
   if (err) *err = e;
   return r;
 }
+
+// Call fn(a[0..4], f0): five word arguments and one double (darwin x509's
+// CoreFoundation calls such as CFDateCreate). Integer and floating point
+// arguments go in separate registers on arm64 and amd64 SysV, so a callee
+// taking fewer word arguments is fine.
+RT_API intptr_t rt_libcall_f64(void *fn, const uintptr_t *args, double f0, int32_t *err) {
+  W a[5];
+  for (int i = 0; i < 5; i++) a[i] = args[i];
+  rt_entersyscall();
+  errno = 0;
+  intptr_t r = ((intptr_t(*)(W, W, W, W, W, double))fn)(a[0], a[1], a[2], a[3], a[4], f0);
+  int e = errno;
+  rt_exitsyscall();
+  if (err) *err = e;
+  return r;
+}

@@ -284,6 +284,9 @@ intptr_t rt_libcall(void *fn, const uintptr_t *args, int32_t nargs, int32_t nfix
                     int32_t *err);
 intptr_t rt_libcall_raw(void *fn, const uintptr_t *args, int32_t nargs, int32_t nfixed,
                         int32_t *err);
+// fn(args[0..4], f0): five word arguments plus one double (CFDateCreate and
+// friends); errno and syscall handling as rt_libcall.
+intptr_t rt_libcall_f64(void *fn, const uintptr_t *args, double f0, int32_t *err);
 // Mark the current goroutine as entering/leaving a blocking system call.
 void rt_entersyscall(void);
 void rt_exitsyscall(void);
