@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -50,7 +51,7 @@ type outcome struct {
 var (
 	flRun     = flag.String("run", "", "regexp: only run tests whose path matches")
 	flDir     = flag.String("dir", "", "only run tests under this directory (relative to tests/, e.g. run/core)")
-	flJ       = flag.Int("j", runtime.NumCPU(), "parallel jobs")
+	flJ       = flag.Int("j", 4, "parallel jobs (capped at 4 by SPEC rule 10)")
 	flUpdate  = flag.Bool("update", false, "regenerate goldens with the stock Go toolchain")
 	flV       = flag.Bool("v", false, "print every test, with diff detail for failures")
 	flJSON    = flag.String("json", "", "write JSON results to this file (default tests/results.json)")
@@ -93,7 +94,7 @@ func main() {
 
 	results := make([]result, len(tests))
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, max(*flJ, 1))
+	sem := make(chan struct{}, min(max(*flJ, 1), 4))
 	for i, t := range tests {
 		wg.Add(1)
 		sem <- struct{}{}
@@ -224,6 +225,7 @@ func execute(timeout time.Duration, dir string, env []string, name string, args 
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
 	cmd.WaitDelay = time.Second
+	killGroupOnCancel(cmd)
 	var so, se bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &so, &se
 	err := cmd.Run()
@@ -333,7 +335,7 @@ func runOne(root, testsDir, work, marmot, name string) result {
 // update regenerates goldens with the stock toolchain.
 func update(root, testsDir, work string, tests []string) {
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, max(*flJ, 1))
+	sem := make(chan struct{}, min(max(*flJ, 1), 4))
 	var mu sync.Mutex
 	failed := 0
 	for _, name := range tests {
@@ -516,4 +518,11 @@ func writeJSON(path string, results []result) {
 	data, err := json.MarshalIndent(results, "", "  ")
 	check(err)
 	check(os.WriteFile(path, append(data, '\n'), 0o644))
+}
+
+// killGroupOnCancel runs cmd in its own process group and kills the whole group when the
+// context ends, so children of a hung compile or test never outlive it.
+func killGroupOnCancel(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 }

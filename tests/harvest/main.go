@@ -28,6 +28,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -46,7 +47,7 @@ var allowedImports = map[string]bool{
 var (
 	flSrc  = flag.String("src", "", "Go test directory (default $(go env GOROOT)/test)")
 	flOut  = flag.String("out", "", "output directory (default tests/goroot)")
-	flJ    = flag.Int("j", runtime.NumCPU(), "parallel jobs")
+	flJ    = flag.Int("j", 4, "parallel jobs (capped at 4)")
 	flMax  = flag.Duration("max", 3*time.Second, "reject programs that run longer than this")
 	flKeep = flag.Bool("list", false, "only list what would be kept")
 	// Programs that touch these are not useful for a compiler that does not implement them.
@@ -98,7 +99,7 @@ func main() {
 	var kept []string
 	reasons := map[string]int{}
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, *flJ)
+	sem := make(chan struct{}, min(max(*flJ, 1), 4))
 	for _, name := range cands {
 		wg.Add(1)
 		sem <- struct{}{}
@@ -213,6 +214,7 @@ func run(timeout time.Duration, dir, name string, args ...string) (res, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.WaitDelay = time.Second
+	killGroupOnCancel(cmd)
 	var so, se bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &so, &se
 	err := cmd.Run()
@@ -260,4 +262,11 @@ func verify(path, dir string) string {
 		return "huge output"
 	}
 	return ""
+}
+
+// killGroupOnCancel runs cmd in its own process group and kills the whole group when the
+// context ends, so children of a hung compile or test never outlive it.
+func killGroupOnCancel(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 }

@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -240,6 +241,7 @@ func sh(timeout time.Duration, dir string, env []string, name string, args ...st
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
 	cmd.WaitDelay = time.Second
+	killGroupOnCancel(cmd)
 	var so, se bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &so, &se
 	err := cmd.Run()
@@ -368,7 +370,7 @@ func main() {
 	}
 	rn := &runner{root: root, work: work, marmot: marmot}
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, *flJ)
+	sem := make(chan struct{}, min(max(*flJ, 1), 4))
 	var mu sync.Mutex
 	fails := 0
 	for i := 0; i < *flN; i++ {
@@ -402,4 +404,11 @@ func main() {
 	if fails > 0 {
 		os.Exit(1)
 	}
+}
+
+// killGroupOnCancel runs cmd in its own process group and kills the whole group when the
+// context ends, so children of a hung compile or test never outlive it.
+func killGroupOnCancel(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 }
