@@ -243,6 +243,11 @@ int32_t rt_mem_equal(const void *a, const void *b, intptr_t n);     // 1 if equa
 int32_t rt_compare(const void *a, intptr_t an, const void *b, intptr_t bn);  // bytealg.Compare: -1, 0, 1
 // First index of sep[0:m] in p[0:n], -1 if absent, 0 if m == 0 [bytealg.Index, strings.Index].
 intptr_t rt_index(const void *p, intptr_t n, const void *sep, intptr_t m);
+// Last index of sep[0:m] in p[0:n], -1 if absent, n if m == 0 [strings.LastIndex].
+intptr_t rt_last_index(const void *p, intptr_t n, const void *sep, intptr_t m);
+// Non-overlapping occurrences of sep[0:m], m >= 1 (0 if m <= 0) [strings.Count
+// for a non-empty sep].
+intptr_t rt_count_substr(const void *p, intptr_t n, const void *sep, intptr_t m);
 intptr_t rt_ascii_prefix(const void *p, intptr_t n);  // length of the leading ASCII bytes
 int32_t rt_utf8_valid(const void *p, intptr_t n);     // utf8.Valid
 intptr_t rt_utf8_count(const void *p, intptr_t n);    // utf8.RuneCount

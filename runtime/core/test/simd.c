@@ -70,6 +70,13 @@ void marmot_main(void) {
       memcpy(sep, p + at, (size_t)m);
       if (iter % 2) sep[m ? m - 1 : 0] ^= 1;
       CHECK(rt_index(p, n, sep, m) == n_index(p, n, sep, m));
+      {
+        intptr_t want_last = m == 0 ? n : -1, cnt = 0;
+        if (m) for (intptr_t k = n - m; k >= 0; k--) if (memcmp(p + k, sep, (size_t)m) == 0) { want_last = k; break; }
+        CHECK(rt_last_index(p, n, sep, m) == want_last);
+        if (m) for (intptr_t k = 0; k + m <= n;) { if (memcmp(p + k, sep, (size_t)m) == 0) { cnt++; k += m; } else k++; }
+        CHECK(rt_count_substr(p, n, sep, m) == (m ? cnt : 0));
+      }
       uint8_t *q = map + ps - 2 * n - 1 > map ? map : map;  // copy for equality
       (void)q;
       uint8_t cp[256];
@@ -121,6 +128,19 @@ void marmot_main(void) {
       intptr_t t = (intptr_t)(rnd() % (uint64_t)n);
       CHECK(rt_utf8_valid(b, t) == n_valid(b, t));
     }
+  }
+  // Long needles (> 16 bytes) over a small alphabet.
+  for (int iter = 0; iter < 3000; iter++) {
+    uint8_t t[600], nd[64];
+    intptr_t n = 100 + (intptr_t)(rnd() % 500), m = 17 + (intptr_t)(rnd() % 40);
+    for (intptr_t i = 0; i < n; i++) t[i] = (uint8_t)('a' + rnd() % 2);
+    intptr_t at = (intptr_t)(rnd() % (uint64_t)(n - m));
+    memcpy(nd, t + at, (size_t)m);
+    if (iter % 3 == 0) nd[rnd() % (uint64_t)m] = 'c';
+    intptr_t wf = -1, wl = -1, wc = 0;
+    for (intptr_t k = 0; k + m <= n; k++) if (memcmp(t + k, nd, (size_t)m) == 0) { if (wf < 0) wf = k; wl = k; }
+    for (intptr_t k = 0; k + m <= n;) { if (memcmp(t + k, nd, (size_t)m) == 0) { wc++; k += m; } else k++; }
+    CHECK(rt_index(t, n, nd, m) == wf && rt_last_index(t, n, nd, m) == wl && rt_count_substr(t, n, nd, m) == wc);
   }
   // Digits and hex.
   for (int iter = 0; iter < 20000; iter++) {

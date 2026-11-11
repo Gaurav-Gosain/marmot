@@ -160,27 +160,72 @@ RT_API int32_t rt_compare(const void *a, intptr_t an, const void *b, intptr_t bn
 
 // ---- Index (substring) ----
 
-// First and last byte filter (Mula), then compare the middle.
-RT_API intptr_t rt_index(const void *s, intptr_t n, const void *sep, intptr_t m) {
-  bp p = s, q = sep;
-  if (m == 0) return 0;
-  if (m > n) return -1;
-  if (m == 1) return rt_index_byte(p, n, q[0]);
-  intptr_t last = n - m;  // last valid start
-  intptr_t i = 0;
-#if RT_NEON || RT_SSE2
+// Substring search: filter candidate positions by the needle's first, middle
+// and last bytes in one vector pass (after Mula), then verify. Needles of up
+// to 16 bytes are verified with one vector compare against a zero-padded
+// copy (the needle itself is never read past its end).
+typedef struct {
 #if RT_NEON
-  uint8x16_t f = vdupq_n_u8(q[0]), l = vdupq_n_u8(q[m - 1]);
-#else
-  __m128i f = _mm_set1_epi8((char)q[0]), l = _mm_set1_epi8((char)q[m - 1]);
+  uint8x16_t f, md, l, qv;
+#elif RT_SSE2
+  __m128i f, md, l, qv;
 #endif
-  for (; i + 16 <= last + 1; i += 16) {
-    uint64_t mk = eq_mask16(p + i, f) & eq_mask16(p + i + m - 1, l);
-    while (mk) {
-      intptr_t j = i + (intptr_t)(__builtin_ctzll(mk) >> MASK_SHIFT);
-      if (rt_mem_equal(p + j + 1, q + 1, m - 2)) return j;
+  intptr_t m, mo;
+  uint64_t vmask;  // eq_mask16 bits covering the first m bytes (m <= 16)
+} needle;
+
+INLINE void needle_init(needle *nd, bp q, intptr_t m) {
+  nd->m = m;
+  nd->mo = m / 2;
+#if RT_NEON || RT_SSE2
+  uint8_t pad[16] = {0};
+  if (m <= 16) __builtin_memcpy(pad, q, (size_t)m);
 #if RT_NEON
-      mk &= ~(0xfull << ((__builtin_ctzll(mk) >> 2) << 2));
+  nd->f = vdupq_n_u8(q[0]);
+  nd->md = vdupq_n_u8(q[m / 2]);
+  nd->l = vdupq_n_u8(q[m - 1]);
+  nd->qv = vld1q_u8(pad);
+  nd->vmask = m >= 16 ? ~0ull : (1ull << (4 * m)) - 1;
+#else
+  nd->f = _mm_set1_epi8((char)q[0]);
+  nd->md = _mm_set1_epi8((char)q[m / 2]);
+  nd->l = _mm_set1_epi8((char)q[m - 1]);
+  nd->qv = _mm_loadu_si128((const __m128i *)pad);
+  nd->vmask = m >= 16 ? 0xFFFF : (1ull << m) - 1;
+#endif
+#endif
+}
+
+INLINE bool needle_at(const needle *nd, bp p, intptr_t n, bp q, intptr_t j) {
+#if RT_NEON
+  if (nd->m <= 16 && j + 16 <= n) {
+    uint64_t e = vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(
+                     vreinterpretq_u16_u8(vceqq_u8(vld1q_u8(p + j), nd->qv)), 4)), 0);
+    return (e & nd->vmask) == nd->vmask;
+  }
+#elif RT_SSE2
+  if (nd->m <= 16 && j + 16 <= n) {
+    uint64_t e = (uint64_t)_mm_movemask_epi8(
+        _mm_cmpeq_epi8(_mm_loadu_si128((const __m128i *)(p + j)), nd->qv));
+    return (e & nd->vmask) == nd->vmask;
+  }
+#endif
+  return rt_mem_equal(p + j, q, nd->m);
+}
+
+// First match at or after i, or -1. m >= 2.
+INLINE intptr_t index_core(const needle *nd, bp p, intptr_t n, bp q, intptr_t i) {
+  intptr_t m = nd->m, mo = nd->mo, last = n - m;
+#if RT_NEON || RT_SSE2
+  for (; i + 16 <= last + 1; i += 16) {
+    uint64_t mk = eq_mask16(p + i, nd->f) & eq_mask16(p + i + m - 1, nd->l) &
+                  eq_mask16(p + i + mo, nd->md);
+    while (mk) {
+      uint32_t b = (uint32_t)__builtin_ctzll(mk) >> MASK_SHIFT;
+      intptr_t j = i + (intptr_t)b;
+      if (needle_at(nd, p, n, q, j)) return j;
+#if RT_NEON
+      mk &= ~(0xfull << (b << 2));
 #else
       mk &= mk - 1;
 #endif
@@ -188,7 +233,89 @@ RT_API intptr_t rt_index(const void *s, intptr_t n, const void *sep, intptr_t m)
   }
 #endif
   for (; i <= last; i++)
-    if (p[i] == q[0] && p[i + m - 1] == q[m - 1] && rt_mem_equal(p + i + 1, q + 1, m - 2)) return i;
+    if (p[i] == q[0] && p[i + m - 1] == q[m - 1] && rt_mem_equal(p + i, q, m)) return i;
+  return -1;
+}
+
+RT_API intptr_t rt_index(const void *s, intptr_t n, const void *sep, intptr_t m) {
+  bp p = s, q = sep;
+  if (m == 0) return 0;
+  if (m > n) return -1;
+  if (m == 1) return rt_index_byte(p, n, q[0]);
+  needle nd;
+  needle_init(&nd, q, m);
+  return index_core(&nd, p, n, q, 0);
+}
+
+// Number of non-overlapping occurrences of sep[0:m] in p[0:n], m >= 1
+// [strings.Count, bytes.Count; the caller handles m == 0].
+RT_API intptr_t rt_count_substr(const void *s, intptr_t n, const void *sep, intptr_t m) {
+  bp p = s, q = sep;
+  if (m <= 0 || m > n) return 0;
+  if (m == 1) return rt_count_byte(p, n, q[0]);
+  needle nd;
+  needle_init(&nd, q, m);
+  // One pass over the candidates of each block in increasing order; a match
+  // counts if it starts at or after the end of the previous one, which is
+  // what repeated leftmost searches give.
+  intptr_t count = 0, next_ok = 0, i = 0, mo = nd.mo, last = n - m;
+#if RT_NEON || RT_SSE2
+  for (; i + 16 <= last + 1; i += 16) {
+    uint64_t mk = eq_mask16(p + i, nd.f) & eq_mask16(p + i + m - 1, nd.l) &
+                  eq_mask16(p + i + mo, nd.md);
+    while (mk) {
+      uint32_t b = (uint32_t)__builtin_ctzll(mk) >> MASK_SHIFT;
+      intptr_t j = i + (intptr_t)b;
+#if RT_NEON
+      mk &= ~(0xfull << (b << 2));
+#else
+      mk &= mk - 1;
+#endif
+      if (j >= next_ok && needle_at(&nd, p, n, q, j)) {
+        count++;
+        next_ok = j + m;
+      }
+    }
+  }
+#endif
+  for (; i <= last; i++)
+    if (i >= next_ok && p[i] == q[0] && p[i + m - 1] == q[m - 1] && rt_mem_equal(p + i, q, m)) {
+      count++;
+      next_ok = i + m;
+    }
+  return count;
+}
+
+// Last index of sep[0:m] in p[0:n], -1 if absent, n if m == 0
+// [strings.LastIndex, bytes.LastIndex].
+RT_API intptr_t rt_last_index(const void *s, intptr_t n, const void *sep, intptr_t m) {
+  bp p = s, q = sep;
+  if (m == 0) return n;
+  if (m > n) return -1;
+  if (m == 1) return rt_last_index_byte(p, n, q[0]);
+  needle nd;
+  needle_init(&nd, q, m);
+  intptr_t mo = nd.mo, hi = n - m;  // highest start
+#if RT_NEON || RT_SSE2
+  // Blocks of 16 start positions from the top: [b, b+16) with b+15 <= hi.
+  for (; hi - 15 >= 0; hi -= 16) {
+    intptr_t b = hi - 15;
+    uint64_t mk = eq_mask16(p + b, nd.f) & eq_mask16(p + b + m - 1, nd.l) &
+                  eq_mask16(p + b + mo, nd.md);
+    while (mk) {
+      uint32_t top = (uint32_t)(63 - __builtin_clzll(mk)) >> MASK_SHIFT;
+      intptr_t j = b + (intptr_t)top;
+      if (needle_at(&nd, p, n, q, j)) return j;
+#if RT_NEON
+      mk &= ~(0xfull << (top << 2));
+#else
+      mk &= ~(1ull << top);
+#endif
+    }
+  }
+#endif
+  for (intptr_t j = hi; j >= 0; j--)
+    if (p[j] == q[0] && p[j + m - 1] == q[m - 1] && rt_mem_equal(p + j, q, m)) return j;
   return -1;
 }
 
