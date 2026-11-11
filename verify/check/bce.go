@@ -268,7 +268,7 @@ func Justify(f *Func, d *Dom, c *Check, kept []*Check) (string, string) {
 
 type Result struct {
 	Func, Rule, Why string
-	Check          *Check
+	Check           *Check
 }
 
 func (r Result) String() string {
