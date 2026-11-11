@@ -1,0 +1,2 @@
+ asn1: structure error: struct contains unexported fields
+0 asn1: syntax error: sequence truncated 0  [] false 0 

@@ -1,0 +1,8 @@
+<nil>
+"x+y\n" "err\n" exit status 4 4
+true
+true true
+3
+-1 false signal: killed
+<nil>
+/bin/echo a b

@@ -1,0 +1,11 @@
+/                200 "text/html; charset=utf-8"   13
+/a.txt           200 "text/plain; charset=utf-8"  11
+/data.json       200 "application/json"           7
+/sub/x.txt       200 "text/plain; charset=utf-8"  6
+/sub/            200 "text/html; charset=utf-8"   107
+/nope            404 "text/plain; charset=utf-8"  19
+/../etc/passwd   404 "text/plain; charset=utf-8"  19
+/a.txt/          200 "text/plain; charset=utf-8"  11
+206 bytes 2-5/11 pha
+
+304

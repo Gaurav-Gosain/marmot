@@ -1,0 +1,7 @@
+"re:ping" <nil>
+"re:" <nil>
+"re:a longer datagram with spaces" <nil>
+udp 127.0.0.1
+127.0.0.1:9999 <nil>
+[::1]:80 <nil> true
+true

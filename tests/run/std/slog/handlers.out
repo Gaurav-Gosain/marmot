@@ -1,0 +1,12 @@
+{"level":"DEBUG","msg":"debug msg","k":1}
+{"level":"INFO","msg":"hi","n":3,"f":1.5,"b":true,"err":"boom","g":{"k":"v","i":2}}
+{"level":"WARN","msg":"w","req":"r1","grp":{"a":[1,2],"m":{"x":1}}}
+{"level":"ERROR","msg":"e","s":"quote\"d\n","nil":null}
+level=INFO msg="text msg" k="v with space" n=3 e="x y" q="a=b"
+level=INFO msg=grouped a=1 g.b=2
+level=WARN msg=kept
+level=DEBUG-2 msg="custom level"
+INFO ERROR+1 DEBUG+2 false
+<nil> WARN+2
+k Any s=v d=1.5s
+level=INFO msg="default logger" x=yyy

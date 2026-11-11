@@ -1,0 +1,17 @@
+"hello from embed\n" 17
+assets: . true
+assets: assets true
+assets: assets/a.txt false
+assets: assets/data.json false
+assets: assets/sub true
+assets: assets/sub/b.txt false
+all: assets/.dot
+all: assets/a.txt
+all: assets/data.json
+all: assets/sub/b.txt
+alpha <nil>
+true
+[a.txt]
+b.txt 6 true
+a.txt data.json sub 
+200 application/json {"k": 1}

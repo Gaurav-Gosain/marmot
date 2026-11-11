@@ -1,0 +1,18 @@
+<person id="7">
+ <name>Ann &lt;&amp;&gt;</name>
+ <contact>
+  <email>a@x</email>
+  <email>b@y</email>
+ </contact>
+ <addr city="Paris">75001</addr>
+ <!-- hi -->
+</person> <nil>
+<nil> 7 Ann <&> [a@x b@y] {Paris 75001} person
+"<a><b></a>" expected element type <person> but have <a>
+"<a" XML syntax error on line 1: unexpected EOF
+"" EOF
+"<person id='x'/>" strconv.ParseInt: parsing "x": invalid syntax
+start:r1 start:c0 chars:"text" end:c comment:" k " start:d0 end:d end:r 
+<nil> true
+<nil> 3 gob [1.5 2.5] map[a:1] 9 map[k:v]
+true

@@ -1,0 +1,6 @@
+unix
+"one"
+"two two"
+""
+true
+through net.Pipe

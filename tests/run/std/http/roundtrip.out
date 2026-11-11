@@ -1,0 +1,11 @@
+200 "hello marmot" ct="text/plain; charset=utf-8" x="yes" len=12 proto=HTTP/1.1
+201 "SHOUT" ct="text/plain" x="" len=5 proto=HTTP/1.1
+201 "A=1&B=X+Y" ct="application/x-www-form-urlencoded" x="" len=9 proto=HTTP/1.1
+200 "item 42 GET" ct="text/plain; charset=utf-8" x="" len=11 proto=HTTP/1.1
+200 "hello redirected" ct="text/plain; charset=utf-8" x="yes" len=16 proto=HTTP/1.1
+418 "nope\n" ct="text/plain; charset=utf-8" x="" len=5 proto=HTTP/1.1
+404 "404 page not found\n" ct="text/plain; charset=utf-8" x="" len=19 proto=HTTP/1.1
+200 "" ct="text/plain; charset=utf-8" x="yes" len=6 proto=HTTP/1.1
+200 "item 7 DELETE" ct="text/plain; charset=utf-8" x="" len=13 proto=HTTP/1.1
+405 "Method Not Allowed\n" ct="text/plain; charset=utf-8" x="" len=19 proto=HTTP/1.1
+302 /hello?name=redirected <nil>

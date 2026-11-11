@@ -1,0 +1,9 @@
+/app/me 401 no session
+
+/login 200 logged in
+/app/me 200 sid=abc123 pref=dark n=2
+/other 200 cookies=1
+jar: sid abc123
+401 Basic realm="r"
+200 welcome ann
+
