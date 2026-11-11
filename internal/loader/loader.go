@@ -218,6 +218,19 @@ func buildSSA(pkgs []*packages.Package) (prog *ssa.Program, ssaPkgs []*ssa.Packa
 		}
 	}()
 	prog, ssaPkgs = ssautil.AllPackages(pkgs, ssa.InstantiateGenerics)
+	// Debug references (expression -> value) for packages outside GOROOT:
+	// codegen needs them to order variable reads after calls like gc does.
+	user := map[string]bool{}
+	packages.Visit(pkgs, nil, func(p *packages.Package) {
+		if p.Module != nil || p.PkgPath == "command-line-arguments" || !isStd(p.PkgPath) {
+			user[p.PkgPath] = true
+		}
+	})
+	for _, p := range prog.AllPackages() {
+		if user[p.Pkg.Path()] {
+			p.SetDebugMode(true)
+		}
+	}
 	prog.Build()
 	return prog, ssaPkgs, nil
 }
@@ -289,4 +302,14 @@ func InputFiles(cfg Config) ([]string, string, error) {
 		}
 	}
 	return files, goroot, nil
+}
+
+// isStd reports whether path looks like a standard library import path
+// (no dot in the first element).
+func isStd(path string) bool {
+	first := path
+	if i := strings.IndexByte(path, '/'); i >= 0 {
+		first = path[:i]
+	}
+	return !strings.Contains(first, ".") && path != "command-line-arguments"
 }

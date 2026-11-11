@@ -458,6 +458,16 @@ func (b *build) link(objs []string, out string) error {
 	} else {
 		args = append(args, "-Wl,--gc-sections", "-s")
 	}
+	if os.Getenv("MARMOT_LINK_VIA_CLANG") == "" {
+		if ld, ok := b.ldCommand(args, objs, out); ok {
+			if err := b.run(ld[0], ld[1:]...); err == nil {
+				return nil
+			}
+			// A stale template (SDK or toolchain update): drop it and let
+			// clang link, which also reports the real error if any.
+			b.dropLdCache()
+		}
+	}
 	return b.run(llvmTool("clang"), args...)
 }
 
