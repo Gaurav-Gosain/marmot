@@ -254,7 +254,7 @@ func (m *moduleGen) thunk(parent *funcGen, c *ssa.CallCommon, caps []ssa.Value, 
 	t.call(c, nil)
 	t.emit("llvm.return")
 	var out strings.Builder
-	fmt.Fprintf(&out, "  llvm.func internal %s(%%ctx: !llvm.ptr) attributes {no_unwind, no_inline, passthrough = [[\"disable-tail-calls\", \"true\"], [\"frame-pointer\", \"all\"]]} {\n", mlir.Symbol(sym))
+	fmt.Fprintf(&out, "  llvm.func internal %s(%%ctx: !llvm.ptr) attributes {no_unwind, no_inline, passthrough = [[\"disable-tail-calls\", \"true\"], [\"frame-pointer\", \"all\"], \"nooutline\"]} {\n", mlir.Symbol(sym))
 	out.WriteString(t.pro.String())
 	out.WriteString(t.body.String())
 	out.WriteString(t.cold.String())

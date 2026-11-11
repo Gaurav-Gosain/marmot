@@ -23,7 +23,7 @@ func MergedGOROOT(realRoot, libSrc, cacheDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dst := filepath.Join(cacheDir, "goroot-"+key)
+	dst := filepath.Join(cacheDir, "_goroot-"+key) // "_": go ./... patterns skip it
 	if _, err := os.Stat(filepath.Join(dst, ".complete")); err == nil {
 		return dst, nil
 	}

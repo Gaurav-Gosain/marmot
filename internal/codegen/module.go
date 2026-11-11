@@ -252,9 +252,10 @@ func (m *moduleGen) funcAttrs(fn *ssa.Function, sym string) string {
 		pass = append(pass, `"returns_twice"`)
 	}
 	if len(fn.Blocks) > 0 {
-		if callsRecover(fn) {
-			// gorecover walks frame records: keep this frame and its record.
-			pass = append(pass, `["disable-tail-calls", "true"]`, `["frame-pointer", "all"]`)
+		if callsRecover(fn) || callsGetcallerfp(fn) {
+			// gorecover walks frame records: keep this frame and its record,
+			// and keep the machine outliner (on at -Os/-Oz) away from it.
+			pass = append(pass, `["disable-tail-calls", "true"]`, `["frame-pointer", "all"]`, `"nooutline"`)
 		} else {
 			// Frame records are required by the Darwin ABI and by recover.
 			pass = append(pass, `["frame-pointer", "non-leaf"]`)
@@ -370,6 +371,22 @@ func (m *moduleGen) storedAtRunTime(g *ssa.Global) bool {
 			}
 			if root, _, _ := addrPath(st.Addr); root == ssa.Value(g) {
 				return true
+			}
+		}
+	}
+	return false
+}
+
+// callsGetcallerfp reports whether fn uses the getcallerfp intrinsic (the
+// runtime's panic loop, whose frame address recover compares against).
+func callsGetcallerfp(fn *ssa.Function) bool {
+	for _, b := range fn.Blocks {
+		for _, instr := range b.Instrs {
+			if c, ok := instr.(ssa.CallInstruction); ok {
+				if callee := c.Common().StaticCallee(); callee != nil && callee.Name() == "getcallerfp" &&
+					callee.Pkg != nil && callee.Pkg.Pkg.Path() == "runtime" {
+					return true
+				}
 			}
 		}
 	}

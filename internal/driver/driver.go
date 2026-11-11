@@ -39,6 +39,7 @@ type Config struct {
 	GC       string
 	Target   string
 	Dialect  string
+	Release  bool // whole program optimization (-wpo) and all specializations
 	Tags     []string
 	Patterns []string
 	Stderr   io.Writer
@@ -458,13 +459,17 @@ func (b *build) link(objs []string, out string) error {
 }
 
 // wpo reports whether the backend compiles all modules as one program
-// (cross-package inlining, dead code removal). Objects then depend on
-// every module, so the object cache key covers all of them.
+// (cross-package inlining, dead code removal): release builds only (SPEC 3a
+// "Two build modes"). Objects then depend on every module, so the object
+// cache key covers all of them.
 func (b *build) wpo() bool {
-	if os.Getenv("MARMOT_WPO") == "0" {
+	switch os.Getenv("MARMOT_WPO") {
+	case "0":
 		return false
+	case "1":
+		return b.cfg.Emit == "exe"
 	}
-	return b.cfg.Emit == "exe" && b.cfg.OptLevel != "0"
+	return b.cfg.Release && b.cfg.Emit == "exe"
 }
 
 // toolTimeout bounds every external tool run.

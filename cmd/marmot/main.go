@@ -74,7 +74,8 @@ func cmdBuild(args []string, run bool) int {
 	}
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	out := fs.String("o", "", "output file")
-	opt := fs.String("O", "2", "optimization level: 0, 1, 2, 3, s, z")
+	opt := fs.String("O", "", "optimization level: 0, 1, 2, 3, s, z (default 2, 3 with -release)")
+	release := fs.Bool("release", false, "release build: whole program optimization, -O3, all specializations")
 	emit := fs.String("emit", "exe", "output kind: mlir, llvm, obj, exe")
 	work := fs.Bool("work", false, "print and keep the temporary work directory")
 	verbose := fs.Bool("v", false, "print progress and timing")
@@ -90,6 +91,12 @@ func cmdBuild(args []string, run bool) int {
 	dialect := fs.String("dialect", defDialect, "MLIR dialect level: llvm or go (default from $MARMOT_DIALECT)")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if *opt == "" {
+		*opt = "2"
+		if *release {
+			*opt = "3"
+		}
 	}
 	switch *opt {
 	case "0", "1", "2", "3", "s", "z":
@@ -140,7 +147,7 @@ func cmdBuild(args []string, run bool) int {
 	cfg := driver.Config{
 		Root: root, Dir: wd, Output: *out, OptLevel: *opt, Emit: *emit, Work: *work,
 		Verbose: *verbose, PrintCmd: *printCmd, NoCache: *nocache, GC: *gc, Target: *target,
-		Dialect: *dialect, Patterns: patterns, Stderr: os.Stderr,
+		Dialect: *dialect, Patterns: patterns, Stderr: os.Stderr, Release: *release,
 	}
 	if *tags != "" {
 		cfg.Tags = strings.Split(*tags, ",")
