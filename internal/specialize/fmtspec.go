@@ -289,6 +289,23 @@ func (g *gen) emitValue(t types.Type, v string, verb rune, bits uint, depth int)
 	if !ok {
 		return "", false
 	}
+	if bits == 0 {
+		// No flags, width or precision: write what fmt writes directly.
+		switch {
+		case b.Kind() == types.Bool && (verb == 't' || verb == 'v'):
+			return fmt.Sprintf("if %s {\n\t\tfmt.MarmotLit(p, \"true\")\n\t} else {\n\t\tfmt.MarmotLit(p, \"false\")\n\t}", v), true
+		case b.Info()&types.IsInteger != 0 && (verb == 'd' || verb == 'v'):
+			if b.Info()&types.IsUnsigned != 0 {
+				if verb == 'v' {
+					break // %#v differs only with sharpV, which sets bits; plain %v is decimal
+				}
+				return fmt.Sprintf("fmt.MarmotUintPlain(p, uint64(%s))", v), true
+			}
+			return fmt.Sprintf("fmt.MarmotIntPlain(p, int64(%s))", v), true
+		case b.Info()&types.IsString != 0 && (verb == 's' || verb == 'v'):
+			return fmt.Sprintf("fmt.MarmotLit(p, string(%s))", v), true
+		}
+	}
 	switch {
 	case b.Kind() == types.Bool:
 		if verb == 't' || verb == 'v' {
@@ -423,12 +440,18 @@ func (g *gen) fmtCall(call *ast.CallExpr, name string) {
 		if !ok {
 			return
 		}
+		// The flag state persists between verbs (every step restores what
+		// it changes), so it is stored only when it differs from the last.
+		cur := fmtOp{} // newPrinter clears the flags
 		for _, op := range fops {
 			if op.verb == 0 {
 				w("fmt.MarmotLit(p, %s)", strconv.Quote(op.lit))
 				continue
 			}
-			w("fmt.MarmotFlags(p, %d, %d, %d)", op.bits, op.wid, op.prec)
+			if op.bits != cur.bits || op.wid != cur.wid || op.prec != cur.prec {
+				w("fmt.MarmotFlags(p, %d, %d, %d)", op.bits, op.wid, op.prec)
+				cur = op
+			}
 			w("%s", g.emitOperand(ops[op.arg], fmt.Sprintf("a%d", op.arg), op.verb, op.bits))
 		}
 	case strings.HasSuffix(name, "ln"):

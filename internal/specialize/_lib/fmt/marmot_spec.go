@@ -116,3 +116,49 @@ func MarmotErrorf(p *pp) error {
 	p.free()
 	return errors.New(s)
 }
+
+const marmotDigits = "00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899"
+
+// MarmotUintPlain writes u in decimal: what fmtInteger writes for %d with
+// no flags, width or precision.
+func MarmotUintPlain(p *pp, u uint64) {
+	n := 1
+	for x := u; x >= 10; x /= 10 {
+		n++
+	}
+	b := []byte(p.buf)
+	l := len(b)
+	if cap(b)-l < n {
+		b = append(b, make([]byte, n)...)
+	} else {
+		b = b[:l+n]
+	}
+	i := l + n
+	for u >= 100 {
+		q := u / 100
+		r := (u - q*100) * 2
+		i -= 2
+		b[i] = marmotDigits[r]
+		b[i+1] = marmotDigits[r+1]
+		u = q
+	}
+	if u >= 10 {
+		i -= 2
+		b[i] = marmotDigits[u*2]
+		b[i+1] = marmotDigits[u*2+1]
+	} else {
+		i--
+		b[i] = byte('0' + u)
+	}
+	p.buf = buffer(b)
+}
+
+// MarmotIntPlain is MarmotUintPlain for signed values.
+func MarmotIntPlain(p *pp, v int64) {
+	if v < 0 {
+		p.buf.writeByte('-')
+		MarmotUintPlain(p, uint64(-v))
+		return
+	}
+	MarmotUintPlain(p, uint64(v))
+}
