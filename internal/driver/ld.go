@@ -60,6 +60,7 @@ func (b *build) ldCommand(args, objs []string, out string) ([]string, bool) {
 	cacheFile := filepath.Join(dir, "ld-"+hex.EncodeToString(h.Sum(nil))[:24]+".json")
 	var tmpl []string
 	if data, err := os.ReadFile(cacheFile); err == nil && json.Unmarshal(data, &tmpl) == nil && len(tmpl) > 0 {
+		touch(cacheFile)
 		return expandLd(tmpl, sentinel, objs, out, b.work), true
 	}
 	if !fileExists(sentinel) {
@@ -109,7 +110,6 @@ func expandLd(tmpl []string, sentinel string, objs []string, out, work string) [
 
 // workSentinel stands for the build's work directory in ld templates.
 const workSentinel = "/marmot-work-sentinel"
-
 
 // parseQuoted splits a clang -### command line (each argument in double
 // quotes, backslash escapes).

@@ -74,6 +74,7 @@ func (b *build) upToDate(stamp, out string) bool {
 	if !fileExists(cached) {
 		return false
 	}
+	touch(cached)
 	return copyExe(cached, out) == nil
 }
 
@@ -167,7 +168,11 @@ func (b *build) packageKeys(lp *loader.Program, cg *codegen.Program, pkgs []*ssa
 // cachedModule returns the cached MLIR file of the package with key k.
 func (b *build) cachedModule(k string) (string, bool) {
 	p := filepath.Join(b.cfg.Root, "build", "cache", "mlir", k+".mlir")
-	return p, fileExists(p)
+	if !fileExists(p) {
+		return p, false
+	}
+	touch(p)
+	return p, true
 }
 
 // saveModule stores the MLIR text of the package with key k and returns

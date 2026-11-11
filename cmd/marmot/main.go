@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -30,6 +31,8 @@ Commands:
   run      compile and run a Go program
   test     compile and run package tests (like go test)
   version  print the marmot version
+  cache    show the build cache size; 'cache trim' trims it to MARMOT_CACHE_MAX_MB
+           (default 4096), 'cache clean' removes it
 
 Run 'marmot build -h' for build flags.
 `)
@@ -56,6 +59,8 @@ func realMain() int {
 		return cmdTest(os.Args[2:])
 	case "version":
 		fmt.Println(version)
+	case "cache":
+		return cmdCache(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -338,4 +343,41 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 	}
 	fmt.Printf("ok  \t%s\t%.3fs\n", pkg, elapsed)
 	return 0
+}
+
+func cmdCache(args []string) int {
+	root, err := driver.FindRoot()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "marmot:", err)
+		return 1
+	}
+	mb := func(n int64) string { return fmt.Sprintf("%.1f MB", float64(n)/(1<<20)) }
+	switch {
+	case len(args) == 0:
+		size, n := driver.CacheSize(root)
+		fmt.Printf("%s/build/cache: %s in %d files (cap %d MB)\n", root, mb(size), n, capMB())
+	case args[0] == "trim":
+		before, after, err := driver.TrimCache(root, true)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "marmot:", err)
+			return 1
+		}
+		fmt.Printf("cache: %s -> %s\n", mb(before), mb(after))
+	case args[0] == "clean":
+		if err := driver.CleanCache(root); err != nil {
+			fmt.Fprintln(os.Stderr, "marmot:", err)
+			return 1
+		}
+	default:
+		fmt.Fprintln(os.Stderr, "usage: marmot cache [trim|clean]")
+		return 2
+	}
+	return 0
+}
+
+func capMB() int64 {
+	if v, err := strconv.ParseInt(os.Getenv("MARMOT_CACHE_MAX_MB"), 10, 64); err == nil && v >= 0 {
+		return v
+	}
+	return driver.DefaultCacheMB
 }

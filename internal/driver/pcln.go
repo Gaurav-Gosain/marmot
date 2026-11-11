@@ -10,7 +10,8 @@ import (
 
 // The pc table (docs/pcln.md): after the link, build the table from the
 // DWARF line tables the backend emitted for the frontend's locations and
-// put it in the binary. -s (Config.Strip) or MARMOT_STRIP=1 skips it.
+// put it in the binary (Mach-O: the end of __TEXT, so a small table
+// fits in the segment's free tail). -s (Config.Strip) or MARMOT_STRIP=1 skips it.
 
 func (b *build) wantPcln() bool {
 	if b.cfg.Strip || os.Getenv("MARMOT_STRIP") != "" || os.Getenv("MARMOT_NO_LOCS") != "" || b.cfg.Emit != "exe" || b.cross() {
@@ -48,7 +49,7 @@ func (b *build) linkWithPcln(link func(extra []string, out string) error, out st
 	if err := os.WriteFile(ph, []byte{0}, 0o644); err != nil {
 		return err
 	}
-	if err := link([]string{"-Wl,-sectcreate,__MARMOT,__pcln," + ph}, tmp); err != nil {
+	if err := link([]string{"-Wl,-sectcreate,__TEXT,__marmot_pcln," + ph}, tmp); err != nil {
 		return err
 	}
 	dsym := filepath.Join(b.work, "nopcln.dSYM")
@@ -62,7 +63,7 @@ func (b *build) linkWithPcln(link func(extra []string, out string) error, out st
 		b.logf("pcln: %v (no table)", err)
 		return os.Rename(tmp, out)
 	}
-	if err := link([]string{"-Wl,-sectcreate,__MARMOT,__pcln," + tbl, "-Wl,-S"}, out); err != nil {
+	if err := link([]string{"-Wl,-sectcreate,__TEXT,__marmot_pcln," + tbl, "-Wl,-S"}, out); err != nil {
 		return err
 	}
 	if same, err := sameText(tmp, out); err != nil || !same {
@@ -73,7 +74,8 @@ func (b *build) linkWithPcln(link func(extra []string, out string) error, out st
 	return nil
 }
 
-// sameText reports whether two Mach-O files have the same __TEXT layout.
+// sameText reports whether two Mach-O files have their code at the same
+// addresses (the table describes the first file's __text).
 func sameText(a, b string) (bool, error) {
 	fa, err := macho.Open(a)
 	if err != nil {
@@ -85,21 +87,9 @@ func sameText(a, b string) (bool, error) {
 		return false, err
 	}
 	defer fb.Close()
-	sa, sb := fa.Segment("__TEXT"), fb.Segment("__TEXT")
+	sa, sb := fa.Section("__text"), fb.Section("__text")
 	if sa == nil || sb == nil {
-		return false, fmt.Errorf("no __TEXT")
+		return false, fmt.Errorf("no __text")
 	}
-	if sa.Addr != sb.Addr || sa.Memsz != sb.Memsz {
-		return false, nil
-	}
-	for _, s := range fa.Sections {
-		if s.Seg != "__TEXT" {
-			continue
-		}
-		t := fb.Section(s.Name)
-		if t == nil || t.Addr != s.Addr || t.Size != s.Size {
-			return false, nil
-		}
-	}
-	return true, nil
+	return sa.Addr == sb.Addr && sa.Size == sb.Size, nil
 }

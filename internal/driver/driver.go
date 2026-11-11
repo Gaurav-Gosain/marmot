@@ -135,6 +135,13 @@ func (b *build) run1() (string, error) {
 		return "", err
 	}
 	b.work = work
+	markWorkDir(work, cfg.Work)
+	sweepWorkDirs(b.logf)
+	defer func() {
+		if before, after, err := TrimCache(cfg.Root, false); err == nil && before != after {
+			b.logf("cache trimmed: %s -> %s", fmtMB(before), fmtMB(after))
+		}
+	}()
 	if cfg.Work {
 		fmt.Fprintf(cfg.Stderr, "WORK=%s\n", work)
 	} else {
