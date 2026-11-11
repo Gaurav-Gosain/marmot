@@ -205,7 +205,8 @@ struct GoStringsPass : marmot::go::impl::GoStringsBase<GoStringsPass> {
     // S3, after S1/S2: a conversion's uses are then its final consumers (a
     // flattened inner concat no longer hides the outer one that reads the
     // bytes later), so the no-write window reaches the last real read.
-    // Re-checked by verify after tests/run/audit/str_concat_flatten (a38a481).
+    // Off by default: verify re-checked it (a38a481); re-enabling also needs
+    // the conformance matrix and a fuzz round with it on (SPEC rule 11).
     if (!noCopy)
       return;
     for (BytesToStrOp conv : convs) {
