@@ -171,6 +171,23 @@ func rt_longjmp(buf unsafe.Pointer, val int32)
 //go:linkname rt_set_sigpanic rt_set_sigpanic
 func rt_set_sigpanic(fn unsafe.Pointer)
 
+// Signals for os/signal.
+
+//go:linkname rt_signal_enable rt_signal_enable
+func rt_signal_enable(sig int32) int32
+
+//go:linkname rt_signal_disable rt_signal_disable
+func rt_signal_disable(sig int32) int32
+
+//go:linkname rt_signal_ignore rt_signal_ignore
+func rt_signal_ignore(sig int32) int32
+
+//go:linkname rt_signal_ignored rt_signal_ignored
+func rt_signal_ignored(sig int32) int32
+
+//go:linkname rt_signal_recv rt_signal_recv
+func rt_signal_recv() int32
+
 // C library functions. LLVM knows these by name and expands small constant
 // sized calls inline.
 

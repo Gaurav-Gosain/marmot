@@ -361,27 +361,22 @@ func debug_SetTraceback(level string) {}
 // setCrashFD is pulled by runtime/debug.
 func setCrashFD(fd uintptr) uintptr { return ^uintptr(0) }
 
-// os/signal. Until the C core delivers signals to Go, Notify registers
-// nothing: signals keep their default action and signal_recv never
-// returns.
+// os/signal, on the C core's signal queue.
 
 //go:linkname signal_enable os/signal.signal_enable
-func signal_enable(sig uint32) {}
+func signal_enable(sig uint32) { rt_signal_enable(int32(sig)) }
 
 //go:linkname signal_disable os/signal.signal_disable
-func signal_disable(sig uint32) {}
+func signal_disable(sig uint32) { rt_signal_disable(int32(sig)) }
 
 //go:linkname signal_ignore os/signal.signal_ignore
-func signal_ignore(sig uint32) {}
+func signal_ignore(sig uint32) { rt_signal_ignore(int32(sig)) }
 
 //go:linkname signal_ignored os/signal.signal_ignored
-func signal_ignored(sig uint32) bool { return false }
+func signal_ignored(sig uint32) bool { return rt_signal_ignored(int32(sig)) != 0 }
 
 //go:linkname signal_recv os/signal.signal_recv
-func signal_recv() uint32 {
-	gopark(nil, nil)
-	return 0
-}
+func signal_recv() uint32 { return uint32(rt_signal_recv()) }
 
 //go:linkname signalWaitUntilIdle os/signal.signalWaitUntilIdle
 func signalWaitUntilIdle() {}
