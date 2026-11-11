@@ -119,16 +119,29 @@ func writeErr(p unsafe.Pointer, n uintptr) {
 	}
 }
 
+// getg returns the Go runtime state of the running goroutine. The C core
+// may keep a goroutine's slot when it reuses the goroutine structure, so a
+// g whose handle is not the running goroutine belongs to a goroutine that
+// has ended: it is reset and reused (keeping its sudog cache and select
+// buffer).
 func getg() *g {
 	slot := rt_gslot()
-	if *slot != nil {
-		return (*g)(*slot)
+	cur := rt_current()
+	gp := (*g)(*slot)
+	if gp != nil && gp.handle == cur {
+		return gp
 	}
-	gp := (*g)(mallocConservative(unsafe.Sizeof(g{})))
-	gp.handle = rt_current()
+	if gp == nil {
+		gp = (*g)(mallocConservative(unsafe.Sizeof(g{})))
+		*slot = unsafe.Pointer(gp)
+	} else {
+		sc, so := gp.sudogcache, gp.selorder
+		*gp = g{}
+		gp.sudogcache, gp.selorder = sc, so
+	}
+	gp.handle = cur
 	gp.goid = rt_goid()
 	gp.rand = uint64(rt_nanotime()) ^ uint64(uintptr(unsafe.Pointer(gp)))
-	*slot = unsafe.Pointer(gp)
 	return gp
 }
 
