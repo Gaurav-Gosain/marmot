@@ -205,7 +205,8 @@ func (m *hmap) hash(k unsafe.Pointer) uintptr {
 	case keyMem64:
 		return fmix64(*(*uint64)(k) ^ uint64(m.seed))
 	case keyString:
-		return strhash(k, m.seed)
+		ss := (*stringStruct)(k)
+		return hashBytes(ss.str, uintptr(ss.len), m.seed)
 	}
 	return typehash(m.key, k, m.seed)
 }
@@ -290,7 +291,7 @@ func (m *hmap) find32(key uint32) unsafe.Pointer {
 
 // findstr is find for string keys.
 func (m *hmap) findstr(key string) unsafe.Pointer {
-	hash := memhash(unsafe.Pointer(unsafe.StringData(key)), m.seed, uintptr(len(key)))
+	hash := hashBytes(unsafe.Pointer(unsafe.StringData(key)), uintptr(len(key)), m.seed)
 	h2 := hash & 0x7f
 	g := (hash >> 7) & m.mask
 	for i := uintptr(1); ; i++ {
@@ -542,7 +543,7 @@ func (m *hmap) assign32(key uint32) unsafe.Pointer {
 
 // assignstr is mapassign for string keys.
 func (m *hmap) assignstr(key string) unsafe.Pointer {
-	hash := memhash(unsafe.Pointer(unsafe.StringData(key)), m.seed, uintptr(len(key)))
+	hash := hashBytes(unsafe.Pointer(unsafe.StringData(key)), uintptr(len(key)), m.seed)
 	h2 := hash & 0x7f
 	for {
 		if m.groups == nil {

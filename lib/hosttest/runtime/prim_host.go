@@ -182,3 +182,7 @@ func atomicXadd64(p *uint64, d int64) uint64      { return atomic.AddUint64(p, u
 
 // _defer is defined in panic.go, which is marmot only.
 type _defer struct{}
+
+func hashBytes(p unsafe.Pointer, n uintptr, seed uintptr) uintptr {
+	return memhash(p, seed, n)
+}

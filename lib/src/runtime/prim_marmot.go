@@ -23,6 +23,7 @@
 //	exit(code int32)
 //	nanotime() int64
 //	atomicLoad32, atomicStore32, atomicCas32, atomicXadd32, atomicXadd64
+//	hashBytes(p unsafe.Pointer, n uintptr, seed uintptr) uintptr
 //
 // Compiled only by marmot.
 
@@ -147,3 +148,11 @@ func atomicStore32(p *uint32, v uint32)           { atomic.Store(p, v) }
 func atomicCas32(p *uint32, old, new uint32) bool { return atomic.Cas(p, old, new) }
 func atomicXadd32(p *uint32, d int32) uint32      { return atomic.Xadd(p, d) }
 func atomicXadd64(p *uint64, d int64) uint64      { return atomic.Xadd64(p, d) }
+
+//go:linkname rt_hash_bytes rt_hash_bytes
+func rt_hash_bytes(p unsafe.Pointer, n int, seed uint64) uint64
+
+// hashBytes hashes n bytes at p with the C core's SIMD wyhash.
+func hashBytes(p unsafe.Pointer, n uintptr, seed uintptr) uintptr {
+	return uintptr(rt_hash_bytes(p, int(n), uint64(seed^hashkey)))
+}
