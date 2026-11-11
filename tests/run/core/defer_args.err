@@ -1,0 +1,8 @@
+inner 7
+end of main
+f1
+nested 7
+ptr 5
+val 1
+closure sees 2
+arg eval 1

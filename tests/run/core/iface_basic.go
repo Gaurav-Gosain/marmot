@@ -8,9 +8,9 @@ type Shape interface {
 type Rect struct{ w, h int }
 type Square struct{ s int }
 
-func (r Rect) Area() int      { return r.w * r.h }
-func (r Rect) Name() string   { return "rect" }
-func (s *Square) Area() int   { return s.s * s.s }
+func (r Rect) Area() int       { return r.w * r.h }
+func (r Rect) Name() string    { return "rect" }
+func (s *Square) Area() int    { return s.s * s.s }
 func (s *Square) Name() string { return "square" }
 
 func show(s Shape) { println(s.Name(), s.Area()) }

@@ -5,7 +5,7 @@ type Base struct {
 	Name string
 }
 
-func (b Base) Describe() string { return b.Name }
+func (b Base) Describe() string  { return b.Name }
 func (b *Base) SetName(n string) { b.Name = n }
 
 type Mid struct {

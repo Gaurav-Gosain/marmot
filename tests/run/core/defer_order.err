@@ -1,0 +1,6 @@
+body
+closure
+defer 3
+defer 2
+defer 1
+defer 0

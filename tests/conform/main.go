@@ -366,7 +366,7 @@ func updateOne(testsDir, work, name string) error {
 	}
 	defer os.RemoveAll(tdir)
 	exe := filepath.Join(tdir, "ref")
-	bo, err := execute(*flBuildTO, testsDir, []string{"GOFLAGS=-mod=mod", "GO111MODULE=off"}, "go", "build", "-o", exe, src)
+	bo, err := execute(*flBuildTO, testsDir, nil, "go", "build", "-o", exe, src)
 	if err != nil {
 		return err
 	}

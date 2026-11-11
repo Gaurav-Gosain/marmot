@@ -2,8 +2,8 @@ package main
 
 type Counter struct{ n int }
 
-func (c *Counter) Inc()     { c.n++ }
-func (c Counter) Get() int  { return c.n }
+func (c *Counter) Inc()              { c.n++ }
+func (c Counter) Get() int           { return c.n }
 func (c Counter) Plus(k int) Counter { c.n += k; return c }
 
 func main() {

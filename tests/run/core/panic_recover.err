@@ -1,0 +1,9 @@
+no panic
+string: boom
+int
+error: myerr
+other
+error: runtime error: index out of range [5] with length 0
+error: runtime error: invalid memory address or nil pointer dereference
+error: runtime error: integer divide by zero
+true
