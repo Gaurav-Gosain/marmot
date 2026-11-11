@@ -23,8 +23,6 @@
 //	exit(code int32)
 //	nanotime() int64
 //	atomicLoad32, atomicStore32, atomicCas32, atomicXadd32, atomicXadd64
-//	appendFloat(dst []byte, v float64, bitSize int) []byte
-//	appendComplex(dst []byte, c complex128, bitSize int) []byte
 //
 // Compiled only by marmot.
 
@@ -32,7 +30,6 @@ package runtime
 
 import (
 	"internal/runtime/atomic"
-	"internal/strconv"
 	"unsafe"
 )
 
@@ -150,11 +147,3 @@ func atomicStore32(p *uint32, v uint32)           { atomic.Store(p, v) }
 func atomicCas32(p *uint32, old, new uint32) bool { return atomic.Cas(p, old, new) }
 func atomicXadd32(p *uint32, d int32) uint32      { return atomic.Xadd(p, d) }
 func atomicXadd64(p *uint64, d int64) uint64      { return atomic.Xadd64(p, d) }
-
-func appendFloat(dst []byte, v float64, bitSize int) []byte {
-	return strconv.AppendFloat(dst, v, 'g', -1, bitSize)
-}
-
-func appendComplex(dst []byte, c complex128, bitSize int) []byte {
-	return strconv.AppendComplex(dst, c, 'g', -1, bitSize)
-}

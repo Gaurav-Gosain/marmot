@@ -8,7 +8,6 @@ package runtime
 import (
 	"bytes"
 	goruntime "runtime"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -183,11 +182,3 @@ func atomicXadd64(p *uint64, d int64) uint64      { return atomic.AddUint64(p, u
 
 // _defer is defined in panic.go, which is marmot only.
 type _defer struct{}
-
-func appendFloat(dst []byte, v float64, bitSize int) []byte {
-	return strconv.AppendFloat(dst, v, 'g', -1, bitSize)
-}
-
-func appendComplex(dst []byte, c complex128, bitSize int) []byte {
-	return append(dst, strconv.FormatComplex(c, 'g', -1, bitSize)...)
-}

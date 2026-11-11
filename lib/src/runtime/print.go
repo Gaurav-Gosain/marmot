@@ -9,9 +9,8 @@
 // lines from different goroutines do not interleave. The formats match the gc
 // toolchain exactly.
 //
-// Pure file: depends only on the primitives (see prim_marmot.go), plus
-// appendFloat and appendComplex (internal/strconv under marmot, strconv on
-// the host).
+// Pure file: depends only on the primitives (see prim_marmot.go). Floats
+// are formatted by ftoa.go.
 
 package runtime
 

@@ -2,9 +2,11 @@ package runtime
 
 import (
 	"math"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -153,5 +155,43 @@ func TestPrintIndented(t *testing.T) {
 	printindented("a\nb\nc")
 	if got := takeOutput(); got != "a\n\tb\n\tc" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestAppendFloatMatchesStrconv(t *testing.T) {
+	rng := rand.New(rand.NewSource(7))
+	check := func(v float64, bits int) {
+		got := string(appendFloat(nil, v, bits))
+		want := strconv.FormatFloat(v, 'g', -1, bits)
+		if got != want {
+			t.Fatalf("appendFloat(%b, %d) = %q, want %q", math.Float64bits(v), bits, got, want)
+		}
+	}
+	special := []float64{0, math.Copysign(0, -1), 1, -1, 0.1, 1e21, 1e20, 123456, 1234567, 1e-4, 1e-5,
+		math.MaxFloat64, math.SmallestNonzeroFloat64, math.MaxFloat32, math.SmallestNonzeroFloat32,
+		math.Inf(1), math.Inf(-1), math.NaN(), 5e-324, 2.2250738585072014e-308, 9007199254740993, 0.3}
+	for _, v := range special {
+		check(v, 64)
+		check(float64(float32(v)), 32)
+	}
+	n := 300000
+	if testing.Short() {
+		n = 20000
+	}
+	for i := 0; i < n; i++ {
+		check(math.Float64frombits(rng.Uint64()), 64)
+		check(float64(math.Float32frombits(rng.Uint32())), 32)
+		// Values with few significant digits and moderate exponents.
+		check(float64(rng.Intn(1000000))/math.Pow10(rng.Intn(12)), 64)
+	}
+	for i := 0; i < 2000; i++ {
+		c := complex(math.Float64frombits(rng.Uint64()), math.Float64frombits(rng.Uint64()))
+		if got, want := string(appendComplex(nil, c, 128)), strconv.FormatComplex(c, 'g', -1, 128); got != want {
+			t.Fatalf("appendComplex(%v) = %q want %q", c, got, want)
+		}
+		c64 := complex64(c)
+		if got, want := string(appendComplex(nil, complex128(c64), 64)), strconv.FormatComplex(complex128(c64), 'g', -1, 64); got != want {
+			t.Fatalf("appendComplex64(%v) = %q want %q", c64, got, want)
+		}
 	}
 }
