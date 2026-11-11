@@ -20,12 +20,19 @@ func (b *build) wantPcln() bool {
 	return fileExists(b.pclnTool())
 }
 
-// pclnArgs are the table builder's arguments before the inputs:
-// MARMOT_PCLN_VERSION selects the table version (the tool's default
-// otherwise; v3 adds inlined frames once the runtime reads it).
-func pclnArgs(tbl string) []string {
+// pclnV3 turns on version 3 tables (inlined frames) for dev builds and
+// -release -trace=full, once the runtime reads them (rtgo).
+const pclnV3 = false
+
+// pclnArgs are the table builder's arguments before the inputs.
+// MARMOT_PCLN_VERSION overrides the version.
+func (b *build) pclnArgs(tbl string) []string {
 	a := []string{"-o", tbl}
-	if v := os.Getenv("MARMOT_PCLN_VERSION"); v != "" {
+	v := os.Getenv("MARMOT_PCLN_VERSION")
+	if v == "" && pclnV3 && (!b.cfg.Release || b.cfg.Trace == "full") {
+		v = "3"
+	}
+	if v != "" {
 		a = append(a, "-table-version="+v)
 	}
 	return a
@@ -45,7 +52,7 @@ func (b *build) linkWithPcln(link func(extra []string, out string) error, out st
 			return err
 		}
 		tbl := filepath.Join(b.work, "pcln.bin")
-		if err := b.run(b.pclnTool(), append(pclnArgs(tbl), tmp)...); err != nil {
+		if err := b.run(b.pclnTool(), append(b.pclnArgs(tbl), tmp)...); err != nil {
 			b.logf("pcln: %v (no table)", err)
 			return b.run(llvmTool("llvm-objcopy"), "--strip-all", tmp, out)
 		}
@@ -74,7 +81,7 @@ func (b *build) linkWithPcln(link func(extra []string, out string) error, out st
 		return os.Rename(tmp, out)
 	}
 	dwarf := filepath.Join(dsym, "Contents", "Resources", "DWARF", filepath.Base(tmp))
-	if err := b.run(b.pclnTool(), append(pclnArgs(tbl), "-base-from", tmp, dwarf)...); err != nil {
+	if err := b.run(b.pclnTool(), append(b.pclnArgs(tbl), "-base-from", tmp, dwarf)...); err != nil {
 		b.logf("pcln: %v (no table)", err)
 		return os.Rename(tmp, out)
 	}

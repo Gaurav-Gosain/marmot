@@ -79,6 +79,7 @@ func cmdBuild(args []string, run bool) int {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	out := fs.String("o", "", "output file")
 	opt := fs.String("O", "", "optimization level: 0, 1, 2, 3, s, z (default 2, 3 with -release)")
+	trace := fs.String("trace", "", "full: inlined frames in tracebacks of -release builds (dev builds always have them)")
 	strip := fs.Bool("s", false, "omit the pc table (tracebacks without file:line)")
 	pgoGen := fs.Bool("pgo-gen", false, "build an instrumented binary that writes marmot-<id>.profraw next to itself")
 	pgo := fs.String("pgo", "", "profile guided optimization with this indexed profile (llvm-profdata merge -o FILE *.profraw)")
@@ -156,7 +157,7 @@ func cmdBuild(args []string, run bool) int {
 	cfg := driver.Config{
 		Root: root, Dir: wd, Output: *out, OptLevel: *opt, Emit: *emit, Work: *work,
 		Verbose: *verbose, PrintCmd: *printCmd, NoCache: *nocache, GC: *gc, Target: *target,
-		Dialect: *dialect, Patterns: patterns, Stderr: os.Stderr, Release: *release, PGOGen: *pgoGen, PGO: *pgo, Strip: *strip,
+		Dialect: *dialect, Patterns: patterns, Stderr: os.Stderr, Release: *release, PGOGen: *pgoGen, PGO: *pgo, Strip: *strip, Trace: *trace,
 	}
 	if *tags != "" {
 		cfg.Tags = strings.Split(*tags, ",")
