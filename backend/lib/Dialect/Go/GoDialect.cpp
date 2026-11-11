@@ -81,13 +81,14 @@ LogicalResult SliceOp::verify() {
   auto st = cast<LLVM::LLVMStructType>(getType());
   auto body = st.getBody();
   Type intTy = getCap().getType();
-  unsigned want = getMax() ? 3 : 2;
-  bool ok = body.size() == want && isa<LLVM::LLVMPointerType>(body[0]);
+  bool ok = (body.size() == 2 || body.size() == 3) && isa<LLVM::LLVMPointerType>(body[0]);
   for (unsigned i = 1; ok && i < body.size(); ++i)
     ok = body[i] == intTy;
   if (!ok)
-    return emitOpError("result must be !llvm.struct<(ptr, iN, iN)> with max and "
-                       "!llvm.struct<(ptr, iN)> without, where iN is the type of cap");
+    return emitOpError("result must be !llvm.struct<(ptr, iN, iN)> (slice) or "
+                       "!llvm.struct<(ptr, iN)> (string), where iN is the type of cap");
+  if (body.size() == 2 && getMax())
+    return emitOpError("a string result does not take max");
   return success();
 }
 
@@ -143,6 +144,28 @@ LogicalResult DeferFrameOp::verify() {
   for (Block *succ : (*this)->getSuccessors())
     if (succ->getNumArguments() != 0)
       return emitOpError("successors must not take arguments");
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// Strings family
+//===----------------------------------------------------------------------===//
+
+LLVM::LLVMStructType marmot::go::stringType(MLIRContext *ctx) {
+  return LLVM::LLVMStructType::getLiteral(
+      ctx, {LLVM::LLVMPointerType::get(ctx), IntegerType::get(ctx, 64)});
+}
+bool marmot::go::isStringType(Type t) { return t == stringType(t.getContext()); }
+
+LLVM::LLVMStructType marmot::go::sliceType(MLIRContext *ctx) {
+  Type i64 = IntegerType::get(ctx, 64);
+  return LLVM::LLVMStructType::getLiteral(ctx, {LLVM::LLVMPointerType::get(ctx), i64, i64});
+}
+bool marmot::go::isSliceType(Type t) { return t == sliceType(t.getContext()); }
+
+LogicalResult StrConcatOp::verify() {
+  if (getParts().size() < 2)
+    return emitOpError("needs at least two operands");
   return success();
 }
 

@@ -61,8 +61,9 @@ def Go_BoxOp : Go_Op<"box", [MemoryEffects<[MemAlloc<DefaultResource>]>,
 
 def Go_BoundsCheckOp : Go_Op<"bounds_check", [AllTypesMatch<["index", "len"]>]> {
   let summary = "panic unless 0 <= index < len";
-  let arguments = (ins AnySignlessInteger:$index, AnySignlessInteger:$len);
-  let assemblyFormat = "$index `,` $len attr-dict `:` type($index)";
+  let arguments = (ins AnySignlessInteger:$index, AnySignlessInteger:$len,
+                       UnitAttr:$unsigned_index);
+  let assemblyFormat = "$index `,` $len (`unsigned` $unsigned_index^)? attr-dict `:` type($index)";
 }
 
 def Go_NilCheckOp : Go_Op<"nil_check"> {
@@ -75,10 +76,11 @@ def Go_IndexOp : Go_Op<"index", [AllTypesMatch<["index", "len"]>,
                                  DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let summary = "bounds checked element address &base[index]";
   let arguments = (ins LLVM_DefaultPointer:$base, AnySignlessInteger:$index,
-                       AnySignlessInteger:$len, TypeAttr:$elem_type);
+                       AnySignlessInteger:$len, TypeAttr:$elem_type, UnitAttr:$unsigned_index);
   let results = (outs LLVM_DefaultPointer:$result);
   let assemblyFormat = [{
-    $base `[` $index `]` `len` $len `,` $elem_type attr-dict `:` type($index)
+    $base `[` $index `]` `len` $len `,` $elem_type (`unsigned` $unsigned_index^)? attr-dict
+    `:` type($index)
   }];
   let hasVerifier = 1;
 }
@@ -88,10 +90,12 @@ def Go_SliceOp : Go_Op<"slice", [AllTypesMatch<["lo", "hi", "cap"]>,
   let summary = "bounds checked slice expression base[lo:hi] or base[lo:hi:max]";
   let arguments = (ins LLVM_DefaultPointer:$base, AnySignlessInteger:$lo,
                        AnySignlessInteger:$hi, Optional<AnySignlessInteger>:$max,
-                       AnySignlessInteger:$cap, TypeAttr:$elem_type);
+                       AnySignlessInteger:$cap, TypeAttr:$elem_type,
+                       UnitAttr:$len_bound, UnitAttr:$unsigned_index);
   let results = (outs LLVM_AnyStruct:$result);
   let assemblyFormat = [{
-    $base `[` $lo `:` $hi (`:` $max^)? `]` `cap` $cap `,` $elem_type attr-dict
+    $base `[` $lo `:` $hi (`:` $max^)? `]` `cap` $cap `,` $elem_type
+    (`len_bound` $len_bound^)? (`unsigned` $unsigned_index^)? attr-dict
     `:` type($lo) `->` type($result)
   }];
   let hasVerifier = 1;
@@ -176,6 +180,40 @@ def Go_RecoverOp : Go_Op<"recover"> {
   let summary = "recover()";
   let results = (outs Go_IfaceType:$result);
   let assemblyFormat = "attr-dict";
+}
+
+//===----------------------------------------------------------------------===//
+// Strings family
+//===----------------------------------------------------------------------===//
+
+def Go_StringType : Type<CPred<"::marmot::go::isStringType($_self)">,
+    "Go string !llvm.struct<(ptr, i64)>", "::mlir::LLVM::LLVMStructType">,
+    BuildableType<"::marmot::go::stringType($_builder.getContext())">;
+
+def Go_SliceType : Type<CPred<"::marmot::go::isSliceType($_self)">,
+    "Go slice !llvm.struct<(ptr, i64, i64)>", "::mlir::LLVM::LLVMStructType">,
+    BuildableType<"::marmot::go::sliceType($_builder.getContext())">;
+
+def Go_StrConcatOp : Go_Op<"str_concat"> {
+  let summary = "concatenate two or more strings";
+  let arguments = (ins Variadic<Go_StringType>:$parts);
+  let results = (outs Go_StringType:$result);
+  let assemblyFormat = "$parts attr-dict";
+  let hasVerifier = 1;
+}
+
+def Go_StrToBytesOp : Go_Op<"str_to_bytes"> {
+  let summary = "[]byte(s), a fresh copy";
+  let arguments = (ins Go_StringType:$str);
+  let results = (outs Go_SliceType:$result);
+  let assemblyFormat = "$str attr-dict";
+}
+
+def Go_BytesToStrOp : Go_Op<"bytes_to_str"> {
+  let summary = "string(b), a copy unless `nocopy`";
+  let arguments = (ins Go_SliceType:$bytes, UnitAttr:$nocopy);
+  let results = (outs Go_StringType:$result);
+  let assemblyFormat = "$bytes (`nocopy` $nocopy^)? attr-dict";
 }
 
 #endif

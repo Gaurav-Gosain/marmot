@@ -11,9 +11,9 @@
 // RUN: %t.0.exe 2 | %FileCheck %s --check-prefix=OK
 // RUN: %not %t.0.exe 7 | %FileCheck %s --check-prefix=IDX
 // OK: result 30
-// IDX: panic: index out of range [7] with length 5
-// NEG: panic: index out of range [-1] with length 5
-// SLICE: panic: slice bounds out of range [1:6] with capacity 5
+// IDX: panic: runtime error: index out of range [7] with length 5
+// NEG: panic: runtime error: index out of range [-1] with length 5
+// SLICE: panic: runtime error: slice bounds out of range [:6] with capacity 5
 module {
   llvm.mlir.global linkonce_odr constant @"type:int"(dense<0> : tensor<56xi8>) : !llvm.array<56 x i8>
   // test_main(i): s := make([]int, 5); s[k] = 10*k for k < 5; t := s[1:i]
@@ -41,7 +41,7 @@ module {
     %is6 = llvm.icmp "eq" %i, %c6 : i64
     llvm.cond_br %is6, ^slice, ^read
   ^slice:
-    %t = go.slice %p[%c1 : %i : %n] cap %n, i64 : i64 -> !llvm.struct<(ptr, i64, i64)>
+    %t = go.slice %p[%c1 : %i] cap %n, i64 : i64 -> !llvm.struct<(ptr, i64, i64)>
     llvm.br ^read
   ^read:
     %ai = go.index %p[%i] len %n, i64 : i64

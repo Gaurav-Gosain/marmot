@@ -73,6 +73,9 @@ public:
                               .Case([&](GoOp o) { return lower(o); })
                               .Case([&](PanicOp o) { return lower(o); })
                               .Case([&](RecoverOp o) { return lower(o); })
+                              .Case([&](StrConcatOp o) { return lower(o); })
+                              .Case([&](StrToBytesOp o) { return lower(o); })
+                              .Case([&](BytesToStrOp o) { return lower(o); })
                               .Default([&](Operation *o) {
                                 return o->emitOpError("no lowering to llvm");
                               });
@@ -279,9 +282,43 @@ private:
     return LLVM::ICmpOp::create(b, loc, p, x, y);
   }
 
+  // Codes of runtime.panicBounds (lib/src/runtime/error.go).
+  enum BoundsCode : int64_t {
+    boundsIndex = 0,
+    boundsSliceAlen = 1,
+    boundsSliceAcap = 2,
+    boundsSliceB = 3,
+    boundsSlice3Alen = 4,
+    boundsSlice3Acap = 5,
+    boundsSlice3B = 6,
+    boundsSlice3C = 7,
+  };
+
+  // Emits: if !(x <= y) (or x < y when strict) panicBounds(code, x, signed, y).
+  // x and y are extended or truncated to i64 for the call.
+  LogicalResult boundsCheck(Operation *at, Value x, Value y, bool strict,
+                            BoundsCode code, bool isUnsigned) {
+    Location loc = at->getLoc();
+    Value ok = icmp(loc, strict ? LLVM::ICmpPredicate::ult : LLVM::ICmpPredicate::ule,
+                    x, y);
+    auto toI64 = [&](Value v, bool sext) -> Value {
+      unsigned w = cast<IntegerType>(v.getType()).getWidth();
+      if (w == 64)
+        return v;
+      if (w > 64)
+        return LLVM::TruncOp::create(b, loc, i64(), v);
+      return sext ? LLVM::SExtOp::create(b, loc, i64(), v).getResult()
+                  : LLVM::ZExtOp::create(b, loc, i64(), v).getResult();
+    };
+    Value cx = toI64(x, !isUnsigned), cy = toI64(y, true);
+    Value c = LLVM::ConstantOp::create(b, loc, i64(), code);
+    Value sg = LLVM::ConstantOp::create(b, loc, b.getI1Type(), isUnsigned ? 0 : 1);
+    return emitCheck(at, ok, "panicBounds", {c, cx, sg, cy});
+  }
+
   LogicalResult lower(BoundsCheckOp op) {
-    Value ok = icmp(op.getLoc(), LLVM::ICmpPredicate::ult, op.getIndex(), op.getLen());
-    if (failed(emitCheck(op, ok, "panicindex", {op.getIndex(), op.getLen()})))
+    if (failed(boundsCheck(op, op.getIndex(), op.getLen(), true, boundsIndex,
+                           op.getUnsignedIndex())))
       return failure();
     op.erase();
     return success();
@@ -299,8 +336,8 @@ private:
 
   LogicalResult lower(IndexOp op) {
     Location loc = op.getLoc();
-    Value ok = icmp(loc, LLVM::ICmpPredicate::ult, op.getIndex(), op.getLen());
-    if (failed(emitCheck(op, ok, "panicindex", {op.getIndex(), op.getLen()})))
+    if (failed(boundsCheck(op, op.getIndex(), op.getLen(), true, boundsIndex,
+                           op.getUnsignedIndex())))
       return failure();
     Value addr = LLVM::GEPOp::create(b, loc, ptrTy, op.getElemType(), op.getBase(),
                                      ValueRange{op.getIndex()});
@@ -309,33 +346,39 @@ private:
     return success();
   }
 
+  // Checks in gc order (lib/src/runtime/error.go), first failure reported.
   LogicalResult lower(SliceOp op) {
     Location loc = op.getLoc();
-    using P = LLVM::ICmpPredicate;
-    Value lo = op.getLo(), hi = op.getHi(), cap = op.getCap();
-    Value max = op.getMax();
-    // lo <= hi <= max <= cap, all unsigned (a negative index is huge).
-    Value ok = icmp(loc, P::ule, lo, hi);
-    Value top = max ? max : cap;
-    ok = LLVM::AndOp::create(b, loc, ok, icmp(loc, P::ule, hi, top));
-    if (max)
-      ok = LLVM::AndOp::create(b, loc, ok, icmp(loc, P::ule, max, cap));
-    if (failed(emitCheck(op, ok, "panicslice", {lo, hi, cap})))
-      return failure();
+    Value lo = op.getLo(), hi = op.getHi(), cap = op.getCap(), max = op.getMax();
+    bool uns = op.getUnsignedIndex();
+    bool isString = cast<LLVM::LLVMStructType>(op.getType()).getBody().size() == 2;
+    bool lenBound = isString || op.getLenBound();
+    if (max) {
+      if (failed(boundsCheck(op, max, cap, false,
+                             lenBound ? boundsSlice3Alen : boundsSlice3Acap, uns)) ||
+          failed(boundsCheck(op, hi, max, false, boundsSlice3B, uns)) ||
+          failed(boundsCheck(op, lo, hi, false, boundsSlice3C, uns)))
+        return failure();
+    } else {
+      if (failed(boundsCheck(op, hi, cap, false,
+                             lenBound ? boundsSliceAlen : boundsSliceAcap, uns)) ||
+          failed(boundsCheck(op, lo, hi, false, boundsSliceB, uns)))
+        return failure();
+    }
     Value len = LLVM::SubOp::create(b, loc, hi, lo);
-    Value newCap = max ? LLVM::SubOp::create(b, loc, max, lo).getResult() : len;
+    Value newCap = isString ? len : LLVM::SubOp::create(b, loc, max ? max : cap, lo).getResult();
     // Do not form a pointer past the end of the object: an empty result keeps
     // the base pointer (as gc does).
     Value moved = LLVM::GEPOp::create(b, loc, ptrTy, op.getElemType(), op.getBase(),
                                       ValueRange{lo});
     Value zero = LLVM::ConstantOp::create(b, loc, lo.getType(), 0);
-    Value empty = icmp(loc, P::eq, newCap, zero);
+    Value empty = icmp(loc, LLVM::ICmpPredicate::eq, newCap, zero);
     Value ptr = LLVM::SelectOp::create(b, loc, empty, op.getBase(), moved);
     Type resTy = op.getType();
     Value s = LLVM::PoisonOp::create(b, loc, resTy);
     s = LLVM::InsertValueOp::create(b, loc, s, ptr, ArrayRef<int64_t>{0});
     s = LLVM::InsertValueOp::create(b, loc, s, len, ArrayRef<int64_t>{1});
-    if (max)
+    if (!isString)
       s = LLVM::InsertValueOp::create(b, loc, s, newCap, ArrayRef<int64_t>{2});
     op.replaceAllUsesWith(s);
     op.erase();
@@ -665,6 +708,82 @@ private:
     Value r = call(loc, *fn, {fpInt});
     // gorecover checks the caller's frame, so this frame must stay a frame.
     op->getParentOfType<LLVM::LLVMFuncOp>().setNoInline(true);
+    op.replaceAllUsesWith(r);
+    op.erase();
+    return success();
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Strings family
+  //===--------------------------------------------------------------------===//
+
+  LogicalResult lower(StrConcatOp op) {
+    Location loc = op.getLoc();
+    Type strTy = stringType(b.getContext());
+    auto parts = op.getParts();
+    Value r;
+    if (parts.size() <= 3) {
+      SmallVector<Type> params(parts.size(), strTy);
+      auto fn = runtimeFunc(op, parts.size() == 2 ? "concatstring2" : "concatstring3",
+                            strTy, params);
+      if (failed(fn))
+        return failure();
+      r = call(loc, *fn, parts);
+    } else {
+      // concatstrings([]string): the operands go to a stack array.
+      auto fn = runtimeFunc(op, "concatstrings", strTy, {sliceType(b.getContext())});
+      if (failed(fn))
+        return failure();
+      auto arrTy = LLVM::LLVMArrayType::get(strTy, parts.size());
+      Value arr = entryAlloca(op->getParentOfType<LLVM::LLVMFuncOp>(), arrTy);
+      LLVM::LifetimeStartOp::create(b, loc, arr);
+      for (auto [i, v] : llvm::enumerate(parts)) {
+        Value slot = LLVM::GEPOp::create(
+            b, loc, ptrTy, arrTy, arr,
+            ArrayRef<LLVM::GEPArg>{0, static_cast<int32_t>(i)});
+        LLVM::StoreOp::create(b, loc, v, slot);
+      }
+      Value n = LLVM::ConstantOp::create(b, loc, i64(), parts.size());
+      Value sl = LLVM::PoisonOp::create(b, loc, sliceType(b.getContext()));
+      sl = LLVM::InsertValueOp::create(b, loc, sl, arr, ArrayRef<int64_t>{0});
+      sl = LLVM::InsertValueOp::create(b, loc, sl, n, ArrayRef<int64_t>{1});
+      sl = LLVM::InsertValueOp::create(b, loc, sl, n, ArrayRef<int64_t>{2});
+      r = call(loc, *fn, {sl});
+      // The array is live only around the call, so the slot can be reused.
+      LLVM::LifetimeEndOp::create(b, loc, arr);
+    }
+    op.replaceAllUsesWith(r);
+    op.erase();
+    return success();
+  }
+
+  LogicalResult lower(StrToBytesOp op) {
+    auto fn = runtimeFunc(op, "stringtoslicebyte", sliceType(b.getContext()),
+                          {stringType(b.getContext())});
+    if (failed(fn))
+      return failure();
+    op.replaceAllUsesWith(call(op.getLoc(), *fn, {op.getStr()}));
+    op.erase();
+    return success();
+  }
+
+  LogicalResult lower(BytesToStrOp op) {
+    Location loc = op.getLoc();
+    Type strTy = stringType(b.getContext());
+    Value r;
+    if (op.getNocopy()) {
+      // The string aliases the bytes: just drop the capacity.
+      Value p = LLVM::ExtractValueOp::create(b, loc, op.getBytes(), ArrayRef<int64_t>{0});
+      Value n = LLVM::ExtractValueOp::create(b, loc, op.getBytes(), ArrayRef<int64_t>{1});
+      r = LLVM::PoisonOp::create(b, loc, strTy);
+      r = LLVM::InsertValueOp::create(b, loc, r, p, ArrayRef<int64_t>{0});
+      r = LLVM::InsertValueOp::create(b, loc, r, n, ArrayRef<int64_t>{1});
+    } else {
+      auto fn = runtimeFunc(op, "slicebytetostring", strTy, {sliceType(b.getContext())});
+      if (failed(fn))
+        return failure();
+      r = call(loc, *fn, {op.getBytes()});
+    }
     op.replaceAllUsesWith(r);
     op.erase();
     return success();

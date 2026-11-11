@@ -17,6 +17,12 @@ namespace marmot::go {
 /// !llvm.struct<(ptr, ptr)>, the type of every interface value.
 mlir::LLVM::LLVMStructType ifaceType(mlir::MLIRContext *ctx);
 bool isIfaceType(mlir::Type t);
+/// !llvm.struct<(ptr, i64)>, a string.
+mlir::LLVM::LLVMStructType stringType(mlir::MLIRContext *ctx);
+bool isStringType(mlir::Type t);
+/// !llvm.struct<(ptr, i64, i64)>, a slice.
+mlir::LLVM::LLVMStructType sliceType(mlir::MLIRContext *ctx);
+bool isSliceType(mlir::Type t);
 } // namespace marmot::go
 
 #define GET_OP_CLASSES

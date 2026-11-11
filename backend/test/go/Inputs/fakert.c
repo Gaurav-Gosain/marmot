@@ -29,6 +29,25 @@ void rt_panicslice(long lo, long hi, long cap) {
   printf("panic: slice bounds out of range [%ld:%ld] with capacity %ld\n", lo, hi, cap);
   exit(2);
 }
+// Messages as in lib/src/runtime/error.go (signed x only).
+void rt_panicBounds(long code, long x, _Bool sgn, long y) SYM("panicBounds");
+void rt_panicBounds(long code, long x, _Bool sgn, long y) {
+  static const char *fmt[] = {
+      "index out of range [%ld] with length %ld",
+      "slice bounds out of range [:%ld] with length %ld",
+      "slice bounds out of range [:%ld] with capacity %ld",
+      "slice bounds out of range [%ld:%ld]",
+      "slice bounds out of range [::%ld] with length %ld",
+      "slice bounds out of range [::%ld] with capacity %ld",
+      "slice bounds out of range [:%ld:%ld]",
+      "slice bounds out of range [%ld:%ld:]",
+  };
+  printf("panic: runtime error: ");
+  if (!sgn) printf("(unsigned) ");
+  printf(fmt[code], x, y);
+  printf("\n");
+  exit(2);
+}
 void rt_panicnil(void) SYM("panicnil");
 void rt_panicnil(void) {
   printf("panic: nil pointer dereference\n");
