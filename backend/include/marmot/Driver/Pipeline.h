@@ -33,6 +33,10 @@ struct CompileOptions {
   bool singleThreaded = false; // disable MLIR context threading (batch mode)
   bool initOptNone = true;     // compile package init functions with optnone
   bool wpoImport = true;       // -wpo: import small functions across modules
+  // Dev batch: split a module above this many instructions into groups
+  // compiled in parallel (0: never). See docs/passes.md "Large modules".
+  unsigned splitInstrs = 0;
+  bool stringsNoCopy = false; // go-strings rule S3 (off until re-checked)
   bool wpoPruneTypes = true;   // -wpo: drop reflection tables nobody can read
   bool wpoClosedWorld = true;  // -wpo: devirtualized indirect calls lose their fallback
   loops::Options loops;        // loop optimizer (owner: loops), -O2 and -O3

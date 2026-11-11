@@ -41,6 +41,7 @@
 #include "llvm/Support/xxhash.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/Utils/CallPromotionUtils.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/MDBuilder.h"
 
@@ -58,7 +59,7 @@ namespace marmot {
 namespace {
 
 // Bump when the meaning of a cache entry changes.
-constexpr const char *kCacheVersion = "marmot-backend-cache-19";
+constexpr const char *kCacheVersion = "marmot-backend-cache-20";
 
 // Largest function, in LLVM instructions, imported into other modules.
 constexpr unsigned kImportLimit = 40;
@@ -471,7 +472,7 @@ std::string fingerprint(const CompileOptions &opts) {
   std::string fp;
   raw_string_ostream os(fp);
   os << kCacheVersion << "|O" << opts.optLevel << "|" << int(opts.emit) << "|"
-     << opts.triple << "|" << opts.cpu
+     << "|split" << opts.splitInstrs << "|snc" << opts.stringsNoCopy << "|" << opts.triple << "|" << opts.cpu
      << (opts.cpu == "native" ? "=" + sys::getHostCPUName().str() : std::string()) << "|"
      << opts.features << "|"
      << opts.strings << opts.devirt << opts.boolPack << opts.escape << opts.bce << opts.openDefers
@@ -607,6 +608,93 @@ bool importBodies(Module &m, const std::map<unsigned, std::set<std::string>> &im
         f->setLinkage(GlobalValue::AvailableExternallyLinkage);
   }
   return true;
+}
+
+// Large modules (dev batch, -split-large N): a module above N instructions
+// is split into K function groups that are optimized and emitted in
+// parallel and cached one by one. Local symbols become hidden external
+// symbols with a suffix that is stable for the module (so other groups can
+// reference them and two modules never clash); every definition goes to the
+// group given by a hash of its name, so an edit changes few groups; small
+// callees from other groups are copied in available_externally, so inlining
+// across groups stays. linkonce/weak definitions go to every group that may
+// use them (the linker keeps one). Appending globals (constructors, used)
+// stay in group 0. Returns the groups as bitcode.
+std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback) {
+  // Stable suffix: the smallest strong external definition of the module
+  // (a symbol only this module defines).
+  std::string anchor;
+  for (GlobalValue &gv : m.global_values())
+    if (!gv.isDeclaration() && gv.hasExternalLinkage() && gv.hasName() &&
+        (anchor.empty() || gv.getName() < anchor))
+      anchor = gv.getName().str();
+  if (anchor.empty())
+    anchor = fallback.str();
+  std::string suffix = ".g" + hashHex(anchor).substr(0, 8);
+  for (GlobalValue &gv : m.global_values()) {
+    if (gv.isDeclaration() || !gv.hasLocalLinkage())
+      continue;
+    if (auto *v = dyn_cast<GlobalVariable>(&gv); v && v->hasAppendingLinkage())
+      continue;
+    gv.setName((gv.hasName() ? gv.getName().str() : std::string("anon")) + suffix);
+    gv.setLinkage(GlobalValue::ExternalLinkage);
+    gv.setVisibility(GlobalValue::HiddenVisibility);
+    gv.setDSOLocal(true);
+  }
+  auto groupOf = [&](const GlobalValue &gv) {
+    return unsigned(xxh3_64bits(gv.getName()) % k);
+  };
+  auto copyable = [](const GlobalValue &gv) {
+    return gv.hasLinkOnceLinkage() || gv.hasWeakLinkage() ||
+           gv.hasAvailableExternallyLinkage();
+  };
+  auto small = [](const Function &f) {
+    return !f.isDeclaration() && f.getInstructionCount() <= kImportLimit &&
+           !f.hasFnAttribute(Attribute::NoInline) &&
+           !f.hasFnAttribute(Attribute::OptimizeNone) && !f.getFunctionType()->isVarArg();
+  };
+  // Small callees of each group's functions, two levels deep.
+  std::vector<DenseSet<const GlobalValue *>> imports(k);
+  for (Function &f : m) {
+    if (f.isDeclaration() || copyable(f))
+      continue;
+    unsigned g = groupOf(f);
+    SmallVector<const Function *, 16> work{&f};
+    for (unsigned depth = 0; depth < 2 && !work.empty(); ++depth) {
+      SmallVector<const Function *, 16> next;
+      for (const Function *w : work)
+        for (const BasicBlock &bb : *w)
+          for (const Instruction &inst : bb)
+            if (auto *cb = dyn_cast<CallBase>(&inst))
+              if (auto *c = cb->getCalledFunction();
+                  c && small(*c) && !copyable(*c) && groupOf(*c) != g &&
+                  imports[g].insert(c).second)
+                next.push_back(c);
+      work = std::move(next);
+    }
+  }
+  std::vector<std::string> out(k);
+  for (unsigned g = 0; g < k; ++g) {
+    ValueToValueMapTy vmap;
+    std::unique_ptr<Module> part = CloneModule(m, vmap, [&](const GlobalValue *gv) {
+      return copyable(*gv) || groupOf(*gv) == g || imports[g].contains(gv);
+    });
+    for (const GlobalValue *gv : imports[g])
+      if (auto *f = dyn_cast<Function>(vmap[gv]); f && !f->isDeclaration()) {
+        f->setLinkage(GlobalValue::AvailableExternallyLinkage);
+        f->setVisibility(GlobalValue::DefaultVisibility);
+      }
+    if (g != 0)
+      for (GlobalVariable &v : make_early_inc_range(part->globals()))
+        if (v.hasAppendingLinkage())
+          v.eraseFromParent();
+    // The key of a group is its bitcode: no temporary paths in it.
+    part->setModuleIdentifier("");
+    part->setSourceFileName("");
+    raw_string_ostream os(out[g]);
+    WriteBitcodeToFile(*part, os);
+  }
+  return out;
 }
 
 bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &opts,
@@ -870,14 +958,49 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           importKey[i] += n + "=" + h + "\n";
       }
     }
+    // Groups of split modules still to compile: (job, group, bitcode, key).
+    struct Group {
+      unsigned job, index;
+      std::string bitcode, key;
+    };
+    std::vector<Group> groups;
+    auto partPath = [&](unsigned i, unsigned g) {
+      return g == 0 ? jobs[i].out : jobs[i].out + "." + std::to_string(g) + ".o";
+    };
+    // OUT.parts lists the objects of a split job (docs/passes.md).
+    auto writeParts = [&](unsigned i, unsigned k, raw_ostream &es) {
+      std::string list;
+      for (unsigned g = 0; g < k; ++g)
+        list += partPath(i, g) + "\n";
+      if (!opts.prepareOnly && !writeFile(jobs[i].out + ".parts", list))
+        es << jobs[i].out << ".parts: cannot write\n";
+    };
     parallel([&](unsigned i, raw_ostream &es, PhaseTimes &t) {
       ModuleInfo &m = mods[i];
       std::string key = hashHex(m.keyB + "|obj|" + importKey[i]);
+      if (!opts.prepareOnly)
+        sys::fs::remove(m.job.out + ".parts");
       if (cacheObjects) {
         if (auto obj = cache.get(key, "o")) {
           if (!opts.prepareOnly && !writeFile(m.job.out, *obj))
             es << m.job.out << ": cannot write\n";
           return;
+        }
+        // A split module: the list of its group keys.
+        if (auto list = cache.get(key, "parts")) {
+          SmallVector<StringRef, 16> keys;
+          StringRef(*list).split(keys, '\n', -1, false);
+          std::vector<std::string> objs;
+          for (StringRef gk : keys)
+            if (auto obj = cache.get(gk.str(), "o"))
+              objs.push_back(std::move(*obj));
+          if (objs.size() == keys.size()) {
+            for (unsigned g = 0; g < objs.size() && !opts.prepareOnly; ++g)
+              if (!writeFile(partPath(i, g), objs[g]))
+                es << partPath(i, g) << ": cannot write\n";
+            writeParts(i, objs.size(), es);
+            return;
+          }
         }
       }
       std::string err;
@@ -890,6 +1013,30 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       }
       if (!imports[i].empty() && !importBodies(**mOr, imports[i], mods, ctx, es, m.job.in))
         return;
+      // Large module: split into groups, compiled below in parallel.
+      if (opts.splitInstrs && opts.emit == Emit::Obj && opts.optLevel != '0') {
+        unsigned n = 0;
+        for (Function &f : **mOr)
+          n += f.getInstructionCount();
+        if (n > opts.splitInstrs) {
+          auto t0 = std::chrono::steady_clock::now();
+          unsigned k = std::min(16u, (n + opts.splitInstrs / 2 - 1) / (opts.splitInstrs / 2));
+          std::vector<std::string> bcs = splitModule(**mOr, k, m.keyB);
+          std::string list;
+          std::lock_guard<std::mutex> lock(mu);
+          for (unsigned g = 0; g < k; ++g) {
+            std::string gk = hashHex(fp + "|group|" + bcs[g]);
+            list += gk + "\n";
+            groups.push_back({i, g, std::move(bcs[g]), gk});
+          }
+          ++stats.splitModules;
+          stats.groups += k;
+          if (cacheObjects)
+            cache.put(key, "parts", list);
+          t.link += msSince(t0);
+          return;
+        }
+      }
       std::string out = m.job.out;
       if (opts.prepareOnly) // the object goes to the cache only
         out = m.job.out + ".prepare.tmp";
@@ -902,6 +1049,60 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       if (opts.prepareOnly)
         sys::fs::remove(out);
     });
+    // The groups, largest first, all threads.
+    if (!groups.empty()) {
+      llvm::stable_sort(groups, [](const Group &a, const Group &b) {
+        return a.bitcode.size() > b.bitcode.size();
+      });
+      std::vector<unsigned> nparts(jobs.size(), 0);
+      for (const Group &g : groups)
+        nparts[g.job] = std::max(nparts[g.job], g.index + 1);
+      DefaultThreadPool pool(hardware_concurrency(threads));
+      for (Group &g : groups)
+        pool.async([&, gp = &g] {
+          std::string name = jobs[gp->job].in + "#" + std::to_string(gp->index);
+          watchdogBegin(name);
+          std::string msgs;
+          raw_string_ostream es(msgs);
+          PhaseTimes t;
+          std::string out = partPath(gp->job, gp->index);
+          if (opts.prepareOnly)
+            out += ".prepare.tmp";
+          bool done = false;
+          if (cacheObjects)
+            if (auto obj = cache.get(gp->key, "o")) {
+              if (!opts.prepareOnly && !writeFile(out, *obj))
+                es << out << ": cannot write\n";
+              done = true;
+            }
+          if (!done) {
+            std::string err;
+            auto tm = createTargetMachine(opts, err);
+            LLVMContext ctx;
+            auto mOr = parseBitcodeFile(MemoryBufferRef(gp->bitcode, name), ctx);
+            if (!tm || !mOr) {
+              es << name << ": " << (tm ? toString(mOr.takeError()) : err) << "\n";
+            } else if (optimizeAndEmit(**mOr, *tm, name, out, opts, t, es)) {
+              ++stats.compiled;
+              if (cacheObjects)
+                if (auto obj = MemoryBuffer::getFile(out, false, false))
+                  cache.put(gp->key, "o", (*obj)->getBuffer());
+            }
+            if (opts.prepareOnly)
+              sys::fs::remove(out);
+          }
+          watchdogEnd(name);
+          report(gp->job, msgs, t);
+        });
+      pool.wait();
+      for (unsigned i = 0; i < jobs.size(); ++i)
+        if (nparts[i]) {
+          std::string msgs;
+          raw_string_ostream es(msgs);
+          writeParts(i, nparts[i], es);
+          report(i, msgs, PhaseTimes());
+        }
+    }
     stats.cacheHits = cache.hits;
     stats.cacheMisses = cache.misses;
     if (opts.timePhases)

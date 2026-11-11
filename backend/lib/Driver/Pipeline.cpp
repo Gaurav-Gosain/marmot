@@ -353,7 +353,7 @@ std::unique_ptr<llvm::Module> lowerAndTranslate(ParsedModule &pm, const std::str
     mpm.enableVerifier(opts.verifyEach || opts.optLevel == '0');
     if (opts.optLevel != '0') {
       if (opts.strings)
-        mpm.addPass(go::createGoStrings());
+        mpm.addPass(go::createGoStrings(go::GoStringsOptions{opts.stringsNoCopy}));
       if (opts.devirt)
         mpm.addPass(go::createGoDevirt());
       if (opts.boolPack)

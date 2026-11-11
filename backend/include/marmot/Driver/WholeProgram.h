@@ -24,6 +24,7 @@ struct WpoStats {
   unsigned cacheHits = 0, cacheMisses = 0, prunedTypes = 0;
   std::atomic<unsigned> devirtualized{0};
   std::atomic<unsigned> compiled{0}; // objects optimized and emitted (not from the cache)
+  unsigned splitModules = 0, groups = 0; // -split-large
 };
 
 // Compiles a batch: escape summaries are propagated across modules, then

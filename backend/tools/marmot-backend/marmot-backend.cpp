@@ -85,6 +85,13 @@ static cl::opt<bool> noClosedWorld(
 static cl::opt<bool> noPruneTypes(
     "no-prune-types", cl::desc("-wpo: keep every type's fields and methods tables"),
     cl::cat(cat));
+static cl::opt<unsigned> splitLarge(
+    "split-large",
+    cl::desc("Batch without -wpo: split modules above N instructions into function groups "
+             "compiled in parallel; writes OUT.parts (0: off)"),
+    cl::init(0));
+static cl::opt<bool> stringsNoCopy(
+    "strings-nocopy", cl::desc("go-strings rule S3: no-copy string(b) for transient uses"));
 static cl::opt<bool> noImport("no-import", cl::desc("-wpo without cross-module imports"),
                               cl::cat(cat));
 static cl::opt<bool> noLoops("no-loops", cl::desc("Disable the loop optimizer"), cl::cat(cat));
@@ -188,6 +195,8 @@ int main(int argc, char **argv) {
   opts.verifyEach = verifyEach;
   opts.initOptNone = initOptNone;
   opts.wpoImport = !noImport;
+  opts.splitInstrs = splitLarge;
+  opts.stringsNoCopy = stringsNoCopy;
   opts.wpoClosedWorld = !noClosedWorld;
   opts.wpoPruneTypes = !noPruneTypes;
   opts.pgoUse = pgoUse;
@@ -299,11 +308,13 @@ int main(int argc, char **argv) {
       errs() << format("batch: %u functions, %u live, %u internalized, %u imported, "
                        "%u no-escape params after %u escape rounds, %u calls devirtualized, "
                        "%u types without reflection tables, "
-                       "cache %u hits %u misses, compiled %u of %zu objects\n",
+                       "cache %u hits %u misses, compiled %u of %zu objects, "
+                       "%u modules split into %u groups\n",
                        st.functions, st.liveFunctions, st.internalized, st.imported,
                        st.noEscapeParams, st.escapeRounds, st.devirtualized.load(),
                        st.prunedTypes,
-                       st.cacheHits, st.cacheMisses, st.compiled.load(), wjobs.size());
+                       st.cacheHits, st.cacheMisses, st.compiled.load(), wjobs.size(),
+                       st.splitModules, st.groups);
   } else if (work.size() == 1) {
     runJob(work[0], false);
   } else {
