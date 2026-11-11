@@ -60,6 +60,11 @@ namespace {
 // when tripCount * costPerIteration reaches MinParallelWork, and each chunk
 // gets at least GrainWork units.
 constexpr uint64_t MinParallelWork = 200000;
+// Innermost loops are vectorized and run several units per nanosecond: a
+// 16K element saxpy (cost 17/iteration, 278k units) takes about 4 us, less
+// than starting the helpers is worth (rtcore: under ~10 us stays serial).
+constexpr uint64_t MinParallelWorkInner = 2000000;
+constexpr uint64_t GrainWorkInner = 200000;
 } // namespace
 // Testing aid: run every accepted loop in parallel, however small, so test
 // suites with small loops exercise the parallel path (chunks of 1 iteration).
@@ -1339,7 +1344,9 @@ void Parallelizer::transform(Plan &P) {
   Value *btc = exp.expandCodeFor(SE.getBackedgeTakenCount(L), nullptr, at);
   IRBuilder<> b(at);
   Value *tc = b.CreateAdd(b.CreateZExtOrTrunc(btc, i64), ConstantInt::get(i64, 1), "par.tc");
-  uint64_t minIters = std::max<uint64_t>(2, (MinParallelWork + P.costPerIter - 1) / P.costPerIter);
+  bool innermost = L->getSubLoops().empty();
+  uint64_t minWork = innermost ? MinParallelWorkInner : MinParallelWork;
+  uint64_t minIters = std::max<uint64_t>(2, (minWork + P.costPerIter - 1) / P.costPerIter);
   if (ForcePar)
     minIters = 1;
   Value *cond = b.CreateICmpUGE(tc, ConstantInt::get(i64, minIters), "par.big");
@@ -1375,7 +1382,8 @@ void Parallelizer::transform(Plan &P) {
     cond = b.CreateAnd(cond, rows, "par.rows");
   }
   b.SetInsertPoint(at);
-  uint64_t grainIters = std::max<uint64_t>(1, (GrainWork + P.costPerIter - 1) / P.costPerIter);
+  uint64_t grainWork = innermost ? GrainWorkInner : GrainWork;
+  uint64_t grainIters = std::max<uint64_t>(1, (grainWork + P.costPerIter - 1) / P.costPerIter);
   if (ForcePar)
     grainIters = 1;
   Value *grain = ForcePar ? static_cast<Value *>(ConstantInt::get(i64, 1))
