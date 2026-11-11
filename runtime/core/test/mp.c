@@ -59,8 +59,9 @@ static void ringer(void *arg) {
   intptr_t i = (intptr_t)arg;
   for (;;) {
     long v = take(&ring[i]);
-    if (v < 0) {
-      give(&ring[(i + 1) % RING], v);
+    if (v < 0 || (i == 0 && v >= 200 * RING)) {
+      // Stop: pass the stop value on; the last ringer leaves it in slot 0.
+      give(&ring[(i + 1) % RING], -1);
       break;
     }
     give(&ring[(i + 1) % RING], v + 1);
@@ -80,18 +81,6 @@ void marmot_main(void) {
   wg_add(&ringwg, RING);
   for (intptr_t i = 0; i < RING; i++) rt_go(ringer, (void *)i);
   give(&ring[0], 0);
-  // The token goes around; wait until it has made 200 laps.
-  long v;
-  for (;;) {
-    rt_sleep(1000000);
-    rt_lock(&ring[0].mu);
-    v = ring[0].has ? ring[0].val : 0;
-    rt_unlock(&ring[0].mu);
-    if (v >= 200 * RING) break;
-  }
-  // Inject the stop value: wait for the token to land in slot 0 first.
-  v = take(&ring[0]);
-  give(&ring[1], -1);
   wg_wait(&ringwg);
   // Goroutines that called wg_done may not have exited yet.
   for (int i = 0; i < 1000 && rt_numgoroutine() != 1; i++) rt_sleep(1000000);
