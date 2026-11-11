@@ -568,9 +568,15 @@ private:
       }
     } else if (op.getToAny()) {
       ok = icmp(loc, P::ne, have, null);
-      if (!op.getCommaok() &&
-          failed(emitCheck(op, ok, "panicTypeAssert", {have, *want, *src})))
-        return failure();
+      if (!op.getCommaok()) {
+        // A nil source panics inside runtime.assertE2I(@E, nil), which gives
+        // gc's message ("interface conversion: interface is nil, not ...").
+        auto fn = runtimeFunc(op, "assertE2I", ptrTy, {ptrTy, ptrTy});
+        if (failed(fn))
+          return failure();
+        Value isNil = icmp(loc, P::eq, have, null);
+        condValue(op, isNil, [&] { return call(loc, *fn, {*want, null}); }, null);
+      }
       result = makeIface(loc, have, data);
     } else {
       Value nonNil = icmp(loc, P::ne, have, null);
@@ -584,8 +590,8 @@ private:
         ok = icmp(loc, P::ne, tab, null);
         result = makeIface(loc, tab, LLVM::SelectOp::create(b, loc, ok, data, null));
       } else {
-        if (failed(emitCheck(op, nonNil, "panicTypeAssert", {have, *want, *src})))
-          return failure();
+        // assertE2I panics with gc's message for a nil source too.
+        (void)nonNil;
         auto fn = runtimeFunc(op, "assertE2I", ptrTy, {ptrTy, ptrTy});
         if (failed(fn))
           return failure();

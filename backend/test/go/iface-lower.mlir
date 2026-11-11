@@ -69,11 +69,23 @@ module {
 
   // ROUND-LABEL: llvm.func @to_iface
   // ROUND: go.type_assert %arg0, @"type:any" -> @"type:main.I" to_iface{{$}}
+  // assertE2I also produces gc's message for a nil source: no branch first.
   // CHECK-LABEL: llvm.func @to_iface
-  // CHECK: llvm.cond_br
+  // CHECK-NOT: llvm.cond_br
   // CHECK: llvm.call @runtime.assertE2I(
   llvm.func @to_iface(%e: !llvm.struct<(ptr, ptr)>) -> !llvm.struct<(ptr, ptr)> {
     %i = go.type_assert %e, @"type:any" -> @"type:main.I" to_iface
+    llvm.return %i : !llvm.struct<(ptr, ptr)>
+  }
+
+  // A nil source of x.(any) panics through assertE2I(@any, nil).
+  // CHECK-LABEL: llvm.func @to_any_panics
+  // CHECK: %[[Z:.*]] = llvm.mlir.zero
+  // CHECK: llvm.icmp "eq"
+  // CHECK: llvm.cond_br
+  // CHECK: llvm.call @runtime.assertE2I(%{{.*}}, %[[Z]])
+  llvm.func @to_any_panics(%e: !llvm.struct<(ptr, ptr)>) -> !llvm.struct<(ptr, ptr)> {
+    %i = go.type_assert %e, @"type:any" -> @"type:any" to_any
     llvm.return %i : !llvm.struct<(ptr, ptr)>
   }
 
