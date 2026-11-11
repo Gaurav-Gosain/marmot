@@ -11,11 +11,6 @@ goroot/reflectmethod6
 goroot/reflectmethod7
 goroot/shift3
 run/std/reflect/kinds_names
-run/std/template/basic
-run/std/template/control_flow
-run/std/template/errors
-run/std/template/nested_named
-run/std/template/pipelines_funcs
 run/opt/fma_fusion_gc  # gc fuses x*y+z on arm64, marmot does not (spec allows both)
 run/opt/panic_in_loop@Oz  # recovered panic then nil deref panic is not recoverable at -Oz
 run/opt/fma_cases  # NaN sign bit differs for z-x*y and -(x*y)+z (marmot negates the NaN operand before fusing)
