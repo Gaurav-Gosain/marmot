@@ -31,52 +31,80 @@ func panicValueString(v any) (string, bool) {
 	return "", false
 }
 
-// printpanicval prints a panic value the way the gc runtime does.
+// printpanicval prints a panic value the way the gc runtime does: values
+// of predeclared basic types plainly, strings with indented newlines, and
+// everything else through printanycustomtype. It dispatches on the
+// descriptor instead of a type switch, so that it does not force the
+// descriptors of all basic types into every binary.
 func printpanicval(v any) {
-	switch x := v.(type) {
-	case nil:
+	e := efaceOf(&v)
+	t := e.typ
+	if t == nil {
 		printstring("nil")
-	case bool:
-		printbool(x)
-	case int:
-		printint(int64(x))
-	case int8:
-		printint(int64(x))
-	case int16:
-		printint(int64(x))
-	case int32:
-		printint(int64(x))
-	case int64:
-		printint(x)
-	case uint:
-		printuint(uint64(x))
-	case uint8:
-		printuint(uint64(x))
-	case uint16:
-		printuint(uint64(x))
-	case uint32:
-		printuint(uint64(x))
-	case uint64:
-		printuint(x)
-	case uintptr:
-		printuint(uint64(x))
-	case float32:
-		printfloat32(x)
-	case float64:
-		printfloat64(x)
-	case complex64:
-		printcomplex64(x)
-	case complex128:
-		printcomplex128(x)
-	case string:
-		printindented(x)
+		return
+	}
+	if t.kind == kindString && t.str == "string" {
+		printindented(*(*string)(e.data))
+		return
+	}
+	if isPredeclaredBasic(t) {
+		printbasic(t, e.data)
+		return
+	}
+	printanycustomtype(v)
+}
+
+// basicNames are the type strings of the predeclared basic types, indexed
+// by kind.
+var basicNames = [...]string{
+	kindBool:       "bool",
+	kindInt:        "int",
+	kindInt8:       "int8",
+	kindInt16:      "int16",
+	kindInt32:      "int32",
+	kindInt64:      "int64",
+	kindUint:       "uint",
+	kindUint8:      "uint8",
+	kindUint16:     "uint16",
+	kindUint32:     "uint32",
+	kindUint64:     "uint64",
+	kindUintptr:    "uintptr",
+	kindFloat32:    "float32",
+	kindFloat64:    "float64",
+	kindComplex64:  "complex64",
+	kindComplex128: "complex128",
+}
+
+// isPredeclaredBasic reports whether t is one of the predeclared boolean
+// or numeric types (not a defined type based on one).
+func isPredeclaredBasic(t *_type) bool {
+	return t.kind >= kindBool && t.kind <= kindComplex128 && t.str == basicNames[t.kind]
+}
+
+// printbasic prints the boolean or numeric value of type t at p.
+func printbasic(t *_type, p unsafe.Pointer) {
+	k := t.kind
+	switch {
+	case k == kindBool:
+		printbool(*(*bool)(p))
+	case k <= kindInt64:
+		printint(loadInt(p, t.size))
+	case k <= kindUintptr:
+		printuint(loadUint(p, t.size))
+	case k == kindFloat32:
+		printfloat32(*(*float32)(p))
+	case k == kindFloat64:
+		printfloat64(*(*float64)(p))
+	case k == kindComplex64:
+		printcomplex64(*(*complex64)(p))
 	default:
-		printanycustomtype(v)
+		printcomplex128(*(*complex128)(p))
 	}
 }
 
 // printanycustomtype prints values of defined types with a basic underlying
-// type as T(v), and anything else as (T) address.
+// type as T(v) (complex values as T(re+imi)), and anything else as
+// (T) address.
 func printanycustomtype(v any) {
 	e := efaceOf(&v)
 	ts := e.typ.str
@@ -88,27 +116,13 @@ func printanycustomtype(v any) {
 		printstring(`("`)
 		printindented(*(*string)(p))
 		printstring(`")`)
-	case k == kindComplex64:
+	case k == kindComplex64 || k == kindComplex128:
 		printstring(ts)
-		printcomplex64(*(*complex64)(p))
-	case k == kindComplex128:
-		printstring(ts)
-		printcomplex128(*(*complex128)(p))
-	case k == kindBool || k >= kindInt && k <= kindFloat64:
+		printbasic(e.typ, p)
+	case k >= kindBool && k <= kindFloat64:
 		printstring(ts)
 		printstring("(")
-		switch {
-		case k == kindBool:
-			printbool(*(*bool)(p))
-		case k <= kindInt64:
-			printint(loadInt(p, e.typ.size))
-		case k <= kindUintptr:
-			printuint(loadUint(p, e.typ.size))
-		case k == kindFloat32:
-			printfloat32(*(*float32)(p))
-		default:
-			printfloat64(*(*float64)(p))
-		}
+		printbasic(e.typ, p)
 		printstring(")")
 	default:
 		printstring("(")
@@ -177,6 +191,10 @@ type _panic struct {
 	// repanicked marks a panic whose value was recovered and panicked
 	// again unchanged.
 	repanicked bool
+	// msg is the result of the Error or String method of arg, set by
+	// preprintpanics when hasMsg is true.
+	msg    string
+	hasMsg bool
 }
 
 // printpanics prints the chain of active panics, oldest first. Values
@@ -195,7 +213,11 @@ func printpanics(p *_panic) {
 		return
 	}
 	printstring("panic: ")
-	printpanicval(p.arg)
+	if p.hasMsg {
+		printindented(p.msg)
+	} else {
+		printpanicval(p.arg)
+	}
 	if p.recovered && p.repanicked {
 		printstring(" [recovered, repanicked]")
 	} else if p.recovered {
@@ -216,7 +238,8 @@ func preprintpanics(p *_panic) {
 			continue
 		}
 		if s, ok := panicValueString(p.arg); ok {
-			p.arg = s
+			p.msg = s
+			p.hasMsg = true
 		}
 		p = p.link
 	}

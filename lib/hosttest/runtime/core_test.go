@@ -381,18 +381,32 @@ func TestPanicValuePrinting(t *testing.T) {
 	}
 	n := 42
 	s := "a\nb"
+	boom := "boom"
+	xy := "x\ny"
+	f := 1.5
+	f32 := float32(0.1)
+	c := complex(1, 2)
+	u8 := uint8(7)
+	tr := true
+	tF32 := basicType(4, kindFloat32, false, tflagComparable|tflagNamed)
+	tF32.str = "float32"
+	tC128 := basicType(16, kindComplex128, false, tflagComparable|tflagNamed)
+	tC128.str = "complex128"
+	tBool := basicType(1, kindBool, false, tflagComparable|tflagRegularMemory|tflagNamed)
+	tBool.str = "bool"
 	cases := []struct {
 		v    any
 		want string
 	}{
 		{nil, "nil"},
-		{"boom", "boom"},
-		{"x\ny", "x\n\ty"},
-		{1.5, "1.5"},
-		{float32(0.1), "0.1"},
-		{complex(1, 2), "(1+2i)"},
-		{uint8(7), "7"},
-		{true, "true"},
+		{box(tString, unsafe.Pointer(&boom)), "boom"},
+		{box(tString, unsafe.Pointer(&xy)), "x\n\ty"},
+		{box(tFloat, unsafe.Pointer(&f)), "1.5"},
+		{box(tF32, unsafe.Pointer(&f32)), "0.1"},
+		{box(tC128, unsafe.Pointer(&c)), "(1+2i)"},
+		{box(tByte, unsafe.Pointer(&u8)), "7"},
+		{box(tBool, unsafe.Pointer(&tr)), "true"},
+		{box(tInt, unsafe.Pointer(&n)), "42"},
 		{box(tMyInt, unsafe.Pointer(&n)), "main.myInt(42)"},
 		{box(tMyStr, unsafe.Pointer(&s)), "main.S(\"a\n\tb\")"},
 	}
@@ -400,7 +414,7 @@ func TestPanicValuePrinting(t *testing.T) {
 		takeOutput()
 		printpanicval(c.v)
 		if got := takeOutput(); got != c.want {
-			t.Errorf("printpanicval(%v) = %q want %q", c.v, got, c.want)
+			t.Errorf("printpanicval = %q want %q", got, c.want)
 		}
 	}
 	takeOutput()
@@ -412,7 +426,8 @@ func TestPanicValuePrinting(t *testing.T) {
 
 func TestPanicChainPrinting(t *testing.T) {
 	err := errorString("integer divide by zero")
-	p1 := &_panic{arg: "first"}
+	first := "first"
+	p1 := &_panic{arg: boxString(&first)}
 	p2 := &_panic{arg: any(err), link: p1}
 	preprintpanics(p2)
 	takeOutput()
@@ -422,7 +437,8 @@ func TestPanicChainPrinting(t *testing.T) {
 		t.Errorf("got %q want %q", got, want)
 	}
 
-	v := any("again")
+	again := "again"
+	v := boxString(&again)
 	q1 := &_panic{arg: v, recovered: true}
 	q2 := &_panic{arg: v, link: q1}
 	preprintpanics(q2)
@@ -461,8 +477,8 @@ func main() {
 	// Only the panic lines are compared.
 	want = want[:strings.Index(want, "\n\ngoroutine")+1]
 	takeOutput()
-	p1 := &_panic{arg: "custom error", recovered: true}
-	p2 := &_panic{arg: "custom error", link: p1}
+	p1 := &_panic{recovered: true}
+	p2 := &_panic{link: p1}
 	// The real chain holds the same interface value twice.
 	var ev any = errorString("x")
 	p1.arg, p2.arg = ev, ev
@@ -525,4 +541,13 @@ func TestGetitab(t *testing.T) {
 	if got != "interface conversion: interface is nil, not main.I" {
 		t.Errorf("got %q", got)
 	}
+}
+
+// boxString makes an interface{} holding *p with the marmot-layout string
+// descriptor, as compiled code would.
+func boxString(p *string) any {
+	var v any
+	e := efaceOf(&v)
+	e.typ, e.data = tString, unsafe.Pointer(p)
+	return v
 }
