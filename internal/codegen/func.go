@@ -47,8 +47,10 @@ type funcGen struct {
 	skipInstr         map[ssa.Instruction]bool   // instructions folded into others
 	forceUnsafe       bool                       // the access goes through a locally punned pointer
 	implicitRunDefers bool
-	curArgs           []ssa.Value        // SSA arguments of a call being expanded as an intrinsic
-	volatile          map[ssa.Value]bool // stack slots that live across setjmp
+	curArgs           []ssa.Value                           // SSA arguments of a call being expanded as an intrinsic
+	volatile          map[ssa.Value]bool                    // stack slots that live across setjmp
+	sunk              map[ssa.Instruction]bool              // loads moved after calls (evalorder.go)
+	sinkBefore        map[ssa.Instruction][]ssa.Instruction // emit these sunk loads before the instruction
 }
 
 // function emits fn. shared functions get linkonce_odr linkage.
@@ -176,6 +178,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 		f.setupFrame()
 		f.implicitRunDefers = !hasRunDefers(fn)
 	}
+	f.computeSinks()
 	// Phis are block arguments; name them all first because branches
 	// may pass them before their block is emitted.
 	for _, b := range fn.Blocks {
@@ -205,8 +208,13 @@ func (f *funcGen) gen(sym string, shared bool) {
 			f.rtcall("deferreturn", f.frame)
 		}
 		for _, instr := range b.Instrs {
-			if f.m.static != nil && f.m.static.skip[instr] || f.skipInstr[instr] {
+			if f.m.static != nil && f.m.static.skip[instr] || f.skipInstr[instr] || f.sunk[instr] {
 				continue
+			}
+			for _, s := range f.sinkBefore[instr] {
+				f.curPos = s.Pos()
+				f.curBlock = b
+				f.instr(s)
 			}
 			f.curPos = instr.Pos()
 			f.curBlock = b
