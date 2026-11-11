@@ -403,7 +403,11 @@ func runOne(root, testsDir, work, marmot, name string, cfg config) result {
 		args = append(args, "-O", cfg.o)
 	}
 	args = append(args, src)
-	bo, err := execute(*flBuildTO, buildDir(root, srcDir, name), append([]string{"MARMOT_ROOT=" + root}, cfg.env...), marmot, args...)
+	bto := *flBuildTO
+	if strings.HasPrefix(name, "world/") {
+		bto *= 5 // real modules can take minutes to compile on a cold object cache
+	}
+	bo, err := execute(bto, buildDir(root, srcDir, name), append([]string{"MARMOT_ROOT=" + root}, cfg.env...), marmot, args...)
 	if err != nil {
 		r.Reason, r.Detail = "compile error", err.Error()
 		return r
