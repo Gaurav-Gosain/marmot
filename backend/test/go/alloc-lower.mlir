@@ -56,7 +56,7 @@ module {
     %p = go.box @"type:int", %x : i64
     llvm.return %p : !llvm.ptr
   }
-  // CHECK: llvm.func @runtime.newobject(!llvm.ptr) -> !llvm.ptr
-  // CHECK: llvm.func @runtime.makeslice(!llvm.ptr, i64, i64) -> !llvm.ptr
-  // IR: declare ptr @runtime.newobject(ptr)
+  // CHECK: llvm.func @runtime.newobject(!llvm.ptr) -> (!llvm.ptr {llvm.noalias})
+  // CHECK: llvm.func @runtime.makeslice(!llvm.ptr, i64, i64) -> (!llvm.ptr {llvm.noalias})
+  // IR: declare noalias ptr @runtime.newobject(ptr)
 }

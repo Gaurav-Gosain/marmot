@@ -20,15 +20,18 @@ struct WpoJob {
 struct WpoStats {
   unsigned functions = 0, liveFunctions = 0, internalized = 0, imported = 0;
   unsigned escapeRounds = 0, noEscapeParams = 0;
+  unsigned cacheHits = 0, cacheMisses = 0;
 };
 
-// Compiles all jobs as one program: one object per job, but functions that
-// no root reaches are dropped, symbols used by one module only become
-// internal, and small functions are imported across modules for inlining.
-// Returns false if any job failed.
+// Compiles a batch: escape summaries are propagated across modules, then
+// each job gets its object. With wpo the jobs are one program: functions no
+// root reaches are dropped, symbols used by one module only become internal,
+// and small functions are imported across modules for inlining. A non-empty
+// cacheDir caches every step (see docs/passes.md). Returns false if any job
+// failed.
 bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &opts,
-                         unsigned threads, PhaseTimes &total, WpoStats &stats,
-                         llvm::raw_ostream &errs);
+                         unsigned threads, bool wpo, const std::string &cacheDir,
+                         PhaseTimes &total, WpoStats &stats, llvm::raw_ostream &errs);
 
 } // namespace marmot
 

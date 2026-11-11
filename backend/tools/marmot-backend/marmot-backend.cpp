@@ -74,6 +74,9 @@ static cl::opt<bool> wpo("wpo",
                          cl::desc("Batch mode: compile the jobs as one program (drop "
                                   "unreachable code, internalize, import across modules)"),
                          cl::cat(cat));
+static cl::opt<std::string> cacheDir(
+    "cache-dir", cl::desc("Batch mode: cache directory for summaries, bitcode and objects"),
+    cl::value_desc("dir"), cl::cat(cat));
 static cl::opt<bool> noImport("no-import", cl::desc("-wpo without cross-module imports"),
                               cl::cat(cat));
 static cl::opt<bool> verifyEach("verify-each",
@@ -201,10 +204,11 @@ int main(int argc, char **argv) {
   unsigned n = jobs ? unsigned(jobs) : std::thread::hardware_concurrency();
   n = std::max(1u, std::min({n, cap, unsigned(work.size())}));
 
-  if (wpo) {
-    if (emitKind != marmot::Emit::Obj && emitKind != marmot::Emit::Asm &&
-        emitKind != marmot::Emit::LLVM && emitKind != marmot::Emit::BC) {
-      errs() << "marmot-backend: -wpo needs -emit=obj, asm, llvm or bc\n";
+  // Batch with more than one job (or -wpo or a cache): summaries cross
+  // modules. Same objects as compiling each job alone, plus escape facts.
+  if (wpo || (!batchFile.empty() && (work.size() > 1 || !cacheDir.empty()))) {
+    if (emitKind == marmot::Emit::MLIR) {
+      errs() << "marmot-backend: batch mode needs -emit=obj, asm, llvm or bc\n";
       return 1;
     }
     std::vector<marmot::WpoJob> wjobs;
@@ -213,12 +217,12 @@ int main(int argc, char **argv) {
     marmot::CompileOptions o = opts;
     o.singleThreaded = true;
     marmot::WpoStats st;
-    ok = marmot::compileWholeProgram(wjobs, o, n, total, st, errs());
+    ok = marmot::compileWholeProgram(wjobs, o, n, wpo, cacheDir, total, st, errs());
     if (opts.timePhases)
-      errs() << format("wpo: %u functions, %u live, %u internalized, %u imported, "
-                       "%u no-escape params after %u escape rounds\n",
+      errs() << format("batch: %u functions, %u live, %u internalized, %u imported, "
+                       "%u no-escape params after %u escape rounds, cache %u hits %u misses\n",
                        st.functions, st.liveFunctions, st.internalized, st.imported,
-                       st.noEscapeParams, st.escapeRounds);
+                       st.noEscapeParams, st.escapeRounds, st.cacheHits, st.cacheMisses);
   } else if (work.size() == 1) {
     runJob(work[0], false);
   } else {

@@ -53,6 +53,13 @@ public:
                         UnitAttr::get(fn.getContext()));
         }
     });
+    // Runtime allocation functions return fresh memory: noalias results let
+    // alias analysis tell allocations apart.
+    for (StringRef n : {"runtime.newobject", "runtime.makeslice", "runtime.mallocgc",
+                        "runtime.mallocConservative", "runtime.makemap", "runtime.makechan",
+                        "rt_alloc"})
+      if (auto fn = symbols.lookup<LLVM::LLVMFuncOp>(n))
+        markNoAliasResult(fn);
     SmallVector<Operation *> ops;
     Dialect *goDialect = module.getContext()->getLoadedDialect<GoDialect>();
     if (!goDialect)
@@ -111,6 +118,12 @@ private:
     return declareFunc(at, ("runtime." + name).str(), result, params);
   }
 
+  void markNoAliasResult(LLVM::LLVMFuncOp fn) {
+    if (fn.getNumResults() == 1 && isa<LLVM::LLVMPointerType>(fn.getResultTypes()[0]))
+      fn.setResultAttr(0, LLVM::LLVMDialect::getNoAliasAttrName(),
+                       UnitAttr::get(fn.getContext()));
+  }
+
   // Returns function sym with the given LLVM type, declaring it if needed.
   FailureOr<LLVM::LLVMFuncOp> declareFunc(Operation *at, const std::string &sym,
                                           Type result, ArrayRef<Type> params) {
@@ -129,6 +142,10 @@ private:
     b.setInsertionPointToEnd(module.getBody());
     auto fn = LLVM::LLVMFuncOp::create(b, module.getLoc(), sym, fnTy);
     symbols.insert(fn);
+    if (sym == "runtime.newobject" || sym == "runtime.makeslice" ||
+        sym == "runtime.mallocConservative" || sym == "runtime.makemap" ||
+        sym == "runtime.makechan")
+      markNoAliasResult(fn);
     return fn;
   }
 

@@ -9,7 +9,7 @@
 // Without imports b.Small stays a call.
 // RUN: %backend -O2 -batch %t.jobs -wpo -no-import
 // RUN: %llvm-nm %t.a.o | %FileCheck %s --check-prefix=NOIMP
-// STATS: wpo: {{[0-9]+}} functions, {{[0-9]+}} live, {{[1-9][0-9]*}} internalized, 1 imported
+// STATS: batch: {{[0-9]+}} functions, {{[0-9]+}} live, {{[1-9][0-9]*}} internalized, 1 imported
 // B-NOT: b.Unused
 // B-NOT: T {{_?}}b.helper
 // B: T {{_?}}b.Count

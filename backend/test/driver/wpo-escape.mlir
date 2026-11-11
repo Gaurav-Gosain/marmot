@@ -1,13 +1,16 @@
-// Escape summaries cross modules in -wpo: the allocation passed to b.Read
+// Escape summaries cross modules in batch mode: the allocation passed to b.Read
 // moves to the stack; the one passed to b.Pass (which hands it to c.Keep,
 // which stores it) stays on the heap.
 // RUN: printf '%s %t.a.ll\n%S/Inputs/wpo-esc-b.mlir %t.b.ll\n%S/Inputs/wpo-esc-c.mlir %t.c.ll\n' > %t.jobs
 // RUN: %backend -O2 -emit=llvm -batch %t.jobs -wpo -time 2> %t.time
 // RUN: %FileCheck %s < %t.a.ll
 // RUN: %FileCheck %s --check-prefix=STATS < %t.time
-// Without -wpo nothing is known about b.Read: both stay on the heap.
+// Dev mode batches share summaries too.
 // RUN: %backend -O2 -emit=llvm -batch %t.jobs
-// RUN: %FileCheck %s --check-prefix=SEP < %t.a.ll
+// RUN: %FileCheck %s < %t.a.ll
+// Compiled alone, nothing is known about b.Read: both stay on the heap.
+// RUN: %backend -O2 -emit=llvm -o %t.alone.ll %s
+// RUN: %FileCheck %s --check-prefix=SEP < %t.alone.ll
 // CHECK-LABEL: define {{.*}}@main(
 // CHECK-COUNT-1: call {{.*}}@runtime.newobject
 // CHECK-NOT: call {{.*}}@runtime.newobject
