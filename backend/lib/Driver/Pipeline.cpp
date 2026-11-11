@@ -251,6 +251,8 @@ bool compileFile(const std::string &input, const std::string &output,
     mlir::PassManager pm(&mctx, mlir::ModuleOp::getOperationName());
     pm.enableVerifier(opts.verifyEach || opts.optLevel == '0');
     if (opts.optLevel != '0') {
+      if (opts.strings)
+        pm.addPass(go::createGoStrings());
       if (opts.devirt)
         pm.addPass(go::createGoDevirt());
       if (opts.escape)

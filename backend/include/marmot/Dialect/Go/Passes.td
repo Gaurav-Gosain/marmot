@@ -62,4 +62,9 @@ def GoOpenDefers : Pass<"go-open-defers", "::mlir::ModuleOp"> {
   let summary = "Drop the setjmp of defer frames whose deferred calls cannot recover";
 }
 
+def GoStrings : Pass<"go-strings", "::mlir::ModuleOp"> {
+  let summary = "String concat folding and no-copy []byte to string conversions";
+  let dependentDialects = ["::mlir::LLVM::LLVMDialect"];
+}
+
 #endif

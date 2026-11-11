@@ -66,6 +66,8 @@ static cl::opt<bool> noDevirt("no-devirt", cl::desc("Disable the go-devirt pass"
                               cl::cat(cat));
 static cl::opt<bool> noOpenDefers("no-open-defers",
                                   cl::desc("Disable the go-open-defers pass"), cl::cat(cat));
+static cl::opt<bool> noStrings("no-strings", cl::desc("Disable the go-strings pass"),
+                               cl::cat(cat));
 static cl::opt<bool> noBCE("no-bce", cl::desc("Disable the go-bce pass"), cl::cat(cat));
 static cl::opt<bool> verifyEach("verify-each",
                                 cl::desc("Verify IR after every pass"), cl::cat(cat));
@@ -124,6 +126,7 @@ int main(int argc, char **argv) {
   opts.escape = !noEscape;
   opts.bce = !noBCE;
   opts.devirt = !noDevirt;
+  opts.strings = !noStrings;
   opts.openDefers = !noOpenDefers;
   opts.timePhases = timePhases;
 
