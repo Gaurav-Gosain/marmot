@@ -1,0 +1,13 @@
+<nil> Ann 30 [a@x b@y] {Main 12345} {P 0} map[other:[1] unknown:1] emb 7
+3 error(s) decoding:
+
+* 'Age' expected type 'int', got unconvertible type 'string', value: 'notint'
+* 'Emails': source data must be an array or slice, got string
+* 'Name' expected type 'string', got unconvertible type 'int', value: '5'
+<nil>
+Bob 5 [q] map[Street:S zip_code:1]
+<nil> {1}
+1 error(s) decoding:
+
+* '' has invalid keys: B
+<nil> [1 2 3]

@@ -1,0 +1,28 @@
+name.last                                String   exists=true "Anderson"
+age                                      Number   exists=true "37"
+children                                 JSON     exists=true "[\"Sara\", \"Alex\", \"Jack\"]"
+children.#                               Number   exists=true "3"
+children.1                               String   exists=true "Alex"
+friends.#.first                          JSON     exists=true "[\"Dale\",\"Roger\",\"Jane\"]"
+friends.#(last=="Murphy").first          String   exists=true "Dale"
+friends.#(last=="Murphy")#.first         JSON     exists=true "[\"Dale\",\"Jane\"]"
+friends.#(age>45)#.last                  JSON     exists=true "[\"Craig\",\"Murphy\"]"
+friends.0.nets.#                         Number   exists=true "3"
+fav\.movie                               String   exists=true "Deer Hunter"
+n                                        Number   exists=true "1500"
+t                                        True     exists=true "true"
+z                                        Null     exists=true ""
+esc                                      String   exists=true "a\"b\\cé"
+missing                                  Null     exists=false ""
+name.@reverse                            JSON     exists=true "{\"last\":\"Anderson\",\"first\":\"Tom\"}"
+children.@reverse                        JSON     exists=true "[\"Jack\",\"Alex\",\"Sara\"]"
+friends.#.nets|@flatten                  JSON     exists=true "[\"ig\", \"fb\", \"tw\",\"fb\", \"tw\",\"ig\", \"tw\"]"
+@this.age                                Number   exists=true "37"
+friends.#(nets.#(=="ig"))#.first         JSON     exists=true "[\"Dale\",\"Jane\"]"
+age|@pretty:{"sortKeys":true}            Number   exists=true "37"
+159 true 3 Tom
+true false 3
+37 Tom true 1500 37
+1 2 
+true 9
+2000 v1999 v1234 [1991,1992,1993,1994,1995,1996,1997,1998,1999]

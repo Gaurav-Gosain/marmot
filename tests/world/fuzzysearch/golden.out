@@ -1,0 +1,12 @@
+car [cartwheel] [cartwheel Cartwheel] true true
+whl [cartwheel wheel Cartwheel] [cartwheel wheel Cartwheel] true true
+ba [foobar baz] [foobar baz] false false
+hello [] [] false false
+テキ [日本語テキスト] [日本語テキスト] false false
+ [cartwheel foobar wheel baz Cartwheel héllo wörld 日本語テキスト a_very_long_identifier_name] [cartwheel foobar wheel baz Cartwheel héllo wörld 日本語テキスト a_very_long_identifier_name] true true
+zzz [] [] false false
+vlin [a_very_long_identifier_name] [a_very_long_identifier_name] false false
+CAR [] [cartwheel Cartwheel] false true
+[{whl wheel 2 2} {whl cartwheel 6 0} {whl Cartwheel 6 4}]
+-1 -1 3 0
+false [über uber]

@@ -1,0 +1,36 @@
+1 + 2 * 3                    7 (float64) err=<nil>
+(1 + 2) * 3                  9 (float64) err=<nil>
+x * y                        35 (float64) err=<nil>
+x / 4                        2.5 (float64) err=<nil>
+x % 3                        1 (float64) err=<nil>
+2 ** 10                      1024 (float64) err=<nil>
+-x + 5                       -5 (float64) err=<nil>
+x > 5 && y < 4               true (bool) err=<nil>
+x > 5 || false               true (bool) err=<nil>
+!flag                        false (bool) err=<nil>
+flag ? 1 : 2                 1 (float64) err=<nil>
+name + ' rocks'              marmot rocks (string) err=<nil>
+name == 'marmot'             true (bool) err=<nil>
+'a' < 'b'                    true (bool) err=<nil>
+x in (1, 5, 10)              true (bool) err=<nil>
+x in (1, 2)                  false (bool) err=<nil>
+0x10 + 1                     parse error: Cannot transition token types from NUMERIC [0] to VARIABLE [x10]
+1.5e2                        parse error: Cannot transition token types from NUMERIC [1.5] to VARIABLE [e2]
+x & 3                        2 (float64) err=<nil>
+x | 5                        15 (float64) err=<nil>
+x ^ 3                        9 (float64) err=<nil>
+~x                           -11 (float64) err=<nil>
+x << 2                       40 (float64) err=<nil>
+x >> 1                       5 (float64) err=<nil>
+(x > 5) ? 'big' : 'small'    big (string) err=<nil>
+x ?? 7                       10 (float64) err=<nil>
+'abc' =~ 'a.c'               true (bool) err=<nil>
+'abc' !~ 'x.*'               true (bool) err=<nil>
+1 / 0                        +Inf (float64) err=<nil>
+1 +                          parse error: Unexpected end of expression
+foo(1)                       parse error: Undefined function foo
+x +* y                       parse error: Invalid token: '+*'
+unknownvar + 1               <nil> (<nil>) err=No parameter 'unknownvar' found.
+true && 1                    <nil> (<nil>) err=Value '1' cannot be used with the logical operator '&&', it is not a bool
+26 <nil> [x name]
+42 [start] + 1

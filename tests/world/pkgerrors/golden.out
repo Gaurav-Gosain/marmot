@@ -1,0 +1,11 @@
+outer 42: mid: inner failed
+outer 42: mid: inner failed|outer 42: mid: inner failed|"outer 42: mid: inner failed"
+inner failed
+outer 42: mid: inner failed
+true true
+true 7
+true true
+read file: EOF true
+unexpected EOF
+true true
+true with trace

@@ -1,0 +1,52 @@
+true
+  main.Outer{
+- 	Name: "x",
++ 	Name: "y",
+  	In: &main.Inner{
+- 		A: 1,
++ 		A: 9,
+  		B: {"p", "q"},
+  		... // 1 ignored field
+  	},
+  	List: []main.Inner{
+  		{A: 1},
+  		{
+- 			A: 2,
++ 			A: 7,
+  			B: nil,
+  			... // 1 ignored field
+  		},
+  	},
+  	Dict: map[string]float64{
+- 		"k": 1.5,
++ 		"k": 1.75,
+  		"z": 2,
+  	},
+- 	Iface: int(3),
++ 	Iface: string("three"),
+  	... // 1 ignored field
+  }
+
+  []int{
+  	1,
+- 	2,
+  	3,
+  	4,
++ 	5,
+  }
+
+  map[string]int{
+  	"a": 1,
++ 	"b": 2,
+  }
+
+false true false true
+false true
+true
+false true
+  string(
+- 	"hello world",
++ 	"hello there",
+  )
+
+panic: true

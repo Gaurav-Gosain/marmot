@@ -1,0 +1,102 @@
+== [echo hello world] err=<nil>
+hello world
+== [-v echo -t 2 x] err=<nil>
+[v] x
+[v] x
+== [echo] err=requires at least 1 arg(s), only received 0
+Error: requires at least 1 arg(s), only received 0
+Usage:
+  app echo [words] [flags]
+
+Flags:
+  -h, --help        help for echo
+  -t, --times int   repeat (default 1)
+
+Global Flags:
+  -v, --verbose   verbose
+
+== [fail] err=boom
+Error: boom
+Usage:
+  app fail [flags]
+
+Flags:
+  -h, --help   help for fail
+
+Global Flags:
+  -v, --verbose   verbose
+
+== [nope] err=unknown command "nope" for "app"
+Error: unknown command "nope" for "app"
+Run 'app --help' for usage.
+== [echo --bad] err=unknown flag: --bad
+Error: unknown flag: --bad
+Usage:
+  app echo [words] [flags]
+
+Flags:
+  -h, --help        help for echo
+  -t, --times int   repeat (default 1)
+
+Global Flags:
+  -v, --verbose   verbose
+
+== [--help] err=<nil>
+A demo application.
+
+Usage:
+  app [command]
+
+Available Commands:
+  completion  Generate the autocompletion script for the specified shell
+  echo        echo words
+  fail        
+  help        Help about any command
+
+Flags:
+  -h, --help      help for app
+  -v, --verbose   verbose
+
+Use "app [command] --help" for more information about a command.
+== [echo --help] err=<nil>
+echo words
+
+Usage:
+  app echo [words] [flags]
+
+Flags:
+  -h, --help        help for echo
+  -t, --times int   repeat (default 1)
+
+Global Flags:
+  -v, --verbose   verbose
+== [help echo] err=<nil>
+echo words
+
+Usage:
+  app echo [words] [flags]
+
+Flags:
+  -h, --help        help for echo
+  -t, --times int   repeat (default 1)
+
+Global Flags:
+  -v, --verbose   verbose
+== [] err=<nil>
+A demo application.
+
+Usage:
+  app [command]
+
+Available Commands:
+  completion  Generate the autocompletion script for the specified shell
+  echo        echo words
+  fail        
+  help        Help about any command
+
+Flags:
+  -h, --help      help for app
+  -v, --verbose   verbose
+
+Use "app [command] --help" for more information about a command.
+true 5 app echo true

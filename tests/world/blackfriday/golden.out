@@ -1,0 +1,45 @@
+<h1>Title</h1>
+
+<p>Some <em>emphasis</em>, <strong>strong</strong>, <code>code</code>, and a <a href="http://x.org">link</a>.</p>
+
+<ul>
+<li>one</li>
+<li>two</li>
+</ul>
+
+<ol>
+<li>a</li>
+<li>b</li>
+</ol>
+
+<blockquote>
+<p>quote</p>
+</blockquote>
+
+<pre><code>fmt.Println(1)
+</code></pre>
+
+<table>
+<thead>
+<tr>
+<th>h1</th>
+<th>h2</th>
+</tr>
+</thead>
+
+<tbody>
+<tr>
+<td>a</td>
+<td>b</td>
+</tr>
+</tbody>
+</table>
+<p>line<br />
+break</p>
+
+<hr />
+
+<p><a href="http://auto.link">http://auto.link</a> <b>raw</b></p>
+402
+<p>&ldquo;quoted&rdquo; -- text&hellip; <a href="http://a" target="_blank">l</a></p>
+10
