@@ -177,10 +177,7 @@ int main(int argc, char **argv) {
   if (gpuArch.getNumOccurrences())
     opts.gpuArch = gpuArch.empty() ? "sm_86" : std::string(gpuArch);
   opts.loops.gpu = !opts.gpuArch.empty();
-  // GPU loops come from the parallel-loop analysis (their CPU fallback is
-  // rt_parallel_for), so -gpu turns it on.
-  if (opts.loops.gpu && !noPar)
-    opts.loops.parallel = true;
+
   if (pgoGen.getNumOccurrences())
     opts.pgoGen = pgoGen.empty() ? "default_%m.profraw" : std::string(pgoGen);
   if (!opts.pgoUse.empty() && !opts.pgoGen.empty()) {
@@ -188,7 +185,9 @@ int main(int argc, char **argv) {
     return 1;
   }
   opts.loops.enable = !noLoops;
-  opts.loops.parallel = par && !noPar;
+  // GPU loops come from the parallel-loop analysis (their CPU fallback is
+  // rt_parallel_for), so -gpu turns it on too.
+  opts.loops.parallel = (par || gpuArch.getNumOccurrences()) && !noPar;
   opts.loops.fastFP = fastFP;
   opts.loops.remarks = loopsRemarks;
   opts.loops.versioning = !noBCV;
