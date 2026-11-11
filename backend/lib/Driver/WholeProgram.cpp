@@ -346,9 +346,13 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
               gv->setVisibility(GlobalValue::DefaultVisibility);
             }
           }
-          // Internalize what only this module uses.
+          // Internalize functions only this module uses. Never variables: a
+          // Go package variable is a GC root even if nothing reads it (its
+          // object's finalizer must not run), and LLVM deletes internal
+          // globals that are only stored to.
           for (GlobalValue &gv : m->global_values()) {
-            if (gv.isDeclaration() || !gv.hasExternalLinkage() || !gv.hasName())
+            if (gv.isDeclaration() || !gv.hasExternalLinkage() || !gv.hasName() ||
+                !isa<Function>(gv))
               continue;
             StringRef n = gv.getName();
             if (roots.contains(n))
