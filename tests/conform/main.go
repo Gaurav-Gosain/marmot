@@ -66,8 +66,16 @@ func main() {
 	root, err := repoRoot()
 	check(err)
 	testsDir := filepath.Join(root, "tests")
-	work := filepath.Join(root, ".work", "conform")
-	check(os.MkdirAll(work, 0o755))
+	check(os.MkdirAll(filepath.Join(root, ".work"), 0o755))
+	// Each run gets its own directory so concurrent runs do not collide.
+	work, err := os.MkdirTemp(filepath.Join(root, ".work"), "conform-")
+	check(err)
+	cleanup := func() {
+		if !*flKeep {
+			os.RemoveAll(work)
+		}
+	}
+	defer cleanup()
 
 	var filter *regexp.Regexp
 	if *flRun != "" {
@@ -144,6 +152,7 @@ func main() {
 		writeJSON(*flJSON, results)
 	}
 	if unexpected > 0 {
+		cleanup()
 		os.Exit(1)
 	}
 }
@@ -354,6 +363,7 @@ func update(root, testsDir, work string, tests []string) {
 	wg.Wait()
 	fmt.Printf("updated %d goldens, %d failed\n", len(tests)-failed, failed)
 	if failed > 0 {
+		os.RemoveAll(work)
 		os.Exit(1)
 	}
 }

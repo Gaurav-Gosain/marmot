@@ -1,0 +1,9 @@
+S<1> S<2> [S<3> S<4>] map[k:S<5>]
+S<1> S<1> {1} S<1>
+{1} PS!
+{1} G!
+F(v) F(d) F(s)
+an error as error plain
+an error an error "an error"
+true
+S<9>   S<1>|S<2>  |

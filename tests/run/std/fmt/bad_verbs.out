@@ -1,0 +1,17 @@
+%!d(string=str)
+%!s(int=5)
+%!d(MISSING)
+1 %!d(MISSING)
+1%!(EXTRA int=2)
+%!z(int=1)
+%!!(int=1)
+%!(NOVERB)%!(EXTRA int=1)
+005
+2 1
+%!d(BADINDEX)
+%!t(int=1)
+0x1.8p+00
+%!c(string=s)
+%!s(<nil>)
+%!d(<nil>)
+{<nil>}

@@ -1,0 +1,12 @@
+{1 2 s <nil> [1 2] map[a:1 b:2]}
+{X:1 Y:2 S:s In:<nil> L:[1 2] M:map[a:1 b:2]}
+main.P{X:1, Y:2, S:"s", In:(*main.P)(nil), L:[]int{1, 2}, M:map[string]int{"a":1, "b":2}}
+{} {} main.E{}
+{1 {true}} {A:2 B:{C:false}}
+[1 2 3] [] [[a ] [b c]]
+[] []string(nil) map[]
+1 "s" 1.5 []interface {}{1, "a", interface {}(nil)}
+map[1:a 2:b 3:c] map[a:[] z:[1]]
+true &{}
+{1 x} [<nil> 1.5 120]
+main.P *main.P []int map[string]int func(string, ...interface {}) (int, error)

@@ -1,0 +1,10 @@
+héllo	世
+|"héllo\t世\n"|68c3a96c6c6f09e4b8960a|68C3A96C6C6F09E4B8960A|68 c3 a9 6c 6c 6f 09 e4 b8 96 0a|"h\u00e9llo\t\u4e16\n"|`plain`
+       abc|abc       |abc|        ab|toolongstring|
+[a b] bytes
+["a b" "c"] 'x'
+[104 105] str [104 105]
+true false  true|false  |
+H世😀 U+1F600 U+0078 'x'
+%!s(<nil>) <nil>
+01abff 

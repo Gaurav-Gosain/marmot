@@ -1,0 +1,6 @@
+read failed: EOF true true
+code 5: bad true
+multi: EOF, io: read/write on closed pipe true
+bad wrap: %!w(string=not an error)
+nil wrap: %!w(<nil>)
+[1]|  3.14|"s"
