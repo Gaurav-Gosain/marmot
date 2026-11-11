@@ -27,6 +27,11 @@ type Config struct {
 	GOARCH   string
 	Patterns []string
 	Log      func(format string, args ...any) // optional progress log
+	// BeforeSSA runs after type checking on every package, dependencies
+	// first; it may replace Syntax, Types and TypesInfo (the spec component).
+	BeforeSSA func(all []*packages.Package) error
+	// AfterSSA runs after SSA is built, before code generation.
+	AfterSSA func(prog *ssa.Program, pkgs []*ssa.Package) error
 }
 
 // Program is the loaded and SSA built program.
@@ -122,10 +127,20 @@ func Load(cfg Config) (*Program, error) {
 	if len(pkgs) == 0 {
 		return nil, fmt.Errorf("no packages matched %v", cfg.Patterns)
 	}
+	if cfg.BeforeSSA != nil {
+		if err := cfg.BeforeSSA(all); err != nil {
+			return nil, err
+		}
+	}
 	t1 := time.Now()
 	prog, ssaPkgs, err := buildSSA(pkgs)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.AfterSSA != nil {
+		if err := cfg.AfterSSA(prog, prog.AllPackages()); err != nil {
+			return nil, err
+		}
 	}
 	if cfg.Log != nil {
 		cfg.Log("ssa: %v", time.Since(t1).Round(time.Millisecond))

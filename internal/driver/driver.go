@@ -19,6 +19,7 @@ import (
 
 	"github.com/Gaurav-Gosain/marmot/internal/codegen"
 	"github.com/Gaurav-Gosain/marmot/internal/loader"
+	"github.com/Gaurav-Gosain/marmot/internal/specialize"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 )
@@ -119,6 +120,12 @@ func Build(cfg Config) (string, error) {
 	lp, err := loader.Load(loader.Config{
 		Dir: cfg.Dir, Root: cfg.Root, Tags: cfg.Tags, GOOS: goos, GOARCH: goarch, Patterns: cfg.Patterns,
 		Log: b.logf,
+		BeforeSSA: func(all []*packages.Package) error {
+			return specialize.BeforeSSA(&specialize.Input{Packages: all, Release: cfg.Release, GOOS: goos, GOARCH: goarch, Log: b.logf})
+		},
+		AfterSSA: func(prog *ssa.Program, pkgs []*ssa.Package) error {
+			return specialize.AfterSSA(&specialize.Input{Prog: prog, Pkgs: pkgs, Release: cfg.Release, GOOS: goos, GOARCH: goarch, Log: b.logf})
+		},
 	})
 	if err != nil {
 		return "", err

@@ -46,7 +46,7 @@ func (b *build) buildStamp(goos, goarch string) string {
 	fileSig(h, filepath.Join(b.cfg.Root, "build", "bin", "marmot-backend"))
 	fileSig(h, filepath.Join(b.cfg.Root, "build", "lib", "librtcore.a"))
 	fileSig(h, filepath.Join(b.cfg.Root, "build", "lib", "rtcore.bc"))
-	for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_NO_BACKEND", "MARMOT_DIALECT", "MARMOT_KEEP_SYMBOLS", "MARMOT_LINKMAP", "MARMOT_WPO"} {
+	for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_NO_BACKEND", "MARMOT_DIALECT", "MARMOT_KEEP_SYMBOLS", "MARMOT_LINKMAP", "MARMOT_WPO", "MARMOT_SPEC"} {
 		fmt.Fprintf(h, "%s=%s\n", k, os.Getenv(k))
 	}
 	for _, f := range files {
@@ -108,7 +108,7 @@ func (b *build) packageKeys(lp *loader.Program, cg *codegen.Program, pkgs []*ssa
 		fileSig(exeSig, exe)
 	}
 	fmt.Fprintf(exeSig, "%s %s %s %s %v\n", b.cfg.OptLevel, b.cfg.Emit, b.cfg.Dialect, b.cfg.GC, b.cfg.Release)
-	for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_DIALECT"} {
+	for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_DIALECT", "MARMOT_SPEC"} {
 		fmt.Fprintf(exeSig, "%s=%s\n", k, os.Getenv(k))
 	}
 	base := hex.EncodeToString(exeSig.Sum(nil))
