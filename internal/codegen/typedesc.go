@@ -410,7 +410,7 @@ func (m *moduleGen) uncommon(sym string, t types.Type) string {
 				xcount++
 			}
 			ifn := cNull()
-			if m.p.methodLive(fn) {
+			if m.p.methodLive(fn, t) {
 				if s := m.ifaceFunc(t, sel); s != "" {
 					ifn = cAddr(s)
 				}
@@ -523,7 +523,7 @@ func (m *moduleGen) itabSym(t, iface types.Type) string {
 		if sel == nil {
 			panic(fmt.Sprintf("itab: %v does not implement %v (missing %s)", t, iface, im.Name()))
 		}
-		if m.p.methodLive(im) {
+		if m.p.methodLive(im, nil) {
 			funs[i] = cAddr(m.ifaceFunc(t, sel))
 		} else {
 			funs[i] = cNull() // never called through an interface

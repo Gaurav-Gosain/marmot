@@ -22,10 +22,14 @@ func (p *Program) methodKey(fn *types.Func) string {
 	return methodName(fn) + p.canonical(stripRecv(fn.Type().(*types.Signature)))
 }
 
-// computeUsedMethods scans the program for interface method calls.
+// computeUsedMethods finds, by reachability from the program's roots, the
+// interface method calls (name and signature) and the types whose values
+// can be held in interfaces. Method code is kept for the pairs of both.
 func (p *Program) computeUsedMethods() {
 	p.globalRead = map[*ssa.Global]bool{}
 	used := map[string]bool{}
+	ifaceTypes := map[string]bool{}
+	var ifaceList []types.Type
 	seen := map[*ssa.Function]bool{}
 	var queue []*ssa.Function
 	push := func(fn *ssa.Function) {
@@ -34,26 +38,30 @@ func (p *Program) computeUsedMethods() {
 			queue = append(queue, fn)
 		}
 	}
+	// Roots: main, package initializers, the runtime (called by generated
+	// code and the C core), and functions named by //go:linkname.
+	remote := map[string]bool{}
+	for _, v := range p.linkname {
+		remote[v] = true
+	}
 	for _, pkg := range p.pkgs {
+		path := pkg.Pkg.Path()
+		rootPkg := path == "runtime" || strings.HasPrefix(path, "internal/runtime/")
 		for _, fn := range p.byPkg[pkg] {
-			push(fn)
+			_, pushed := p.linkname[fn]
+			if rootPkg || pushed || remote[p.symbol(fn)] || fn.Name() == "main" && path == p.mainPath ||
+				fn.Synthetic == "package initializer" || strings.HasPrefix(fn.Name(), "init#") {
+				push(fn)
+			}
 		}
 	}
-	addMethods := func(t types.Type) {
-		for _, t := range []types.Type{t, types.NewPointer(t)} {
-			if _, ok := t.Underlying().(*types.Interface); ok {
-				continue
-			}
-			mset := p.prog.MethodSets.MethodSet(t)
-			for i := 0; i < mset.Len(); i++ {
-				push(p.prog.MethodValue(mset.At(i)))
-			}
+	addIface := func(t types.Type) {
+		for _, x := range p.typeClosure(t, ifaceTypes) {
+			ifaceList = append(ifaceList, x)
 		}
 	}
 	var ops []*ssa.Value
-	for len(queue) > 0 {
-		fn := queue[len(queue)-1]
-		queue = queue[:len(queue)-1]
+	scan := func(fn *ssa.Function) {
 		for _, a := range fn.AnonFuncs {
 			push(a)
 		}
@@ -69,7 +77,7 @@ func (p *Program) computeUsedMethods() {
 					}
 				}
 				if mi, ok := instr.(*ssa.MakeInterface); ok {
-					addMethods(mi.X.Type())
+					addIface(mi.X.Type())
 				}
 				ops = instr.Operands(ops[:0])
 				for _, o := range ops {
@@ -88,7 +96,50 @@ func (p *Program) computeUsedMethods() {
 			}
 		}
 	}
+	// Fixpoint: reachable code adds used methods and interface types, whose
+	// live methods are reachable code.
+	done := 0
+	for {
+		for len(queue) > 0 {
+			fn := queue[len(queue)-1]
+			queue = queue[:len(queue)-1]
+			scan(fn)
+		}
+		for ; done < len(ifaceList); done++ {
+			t := ifaceList[done]
+			if _, ok := t.Underlying().(*types.Interface); ok {
+				continue
+			}
+			mset := p.prog.MethodSets.MethodSet(t)
+			for i := 0; i < mset.Len(); i++ {
+				m := mset.At(i).Obj().(*types.Func)
+				if used[p.methodKey(m)] || p.keepExported && m.Exported() {
+					push(p.prog.MethodValue(mset.At(i)))
+				}
+			}
+		}
+		if len(queue) == 0 {
+			// New used names may enable methods of types already processed.
+			before := len(seen)
+			for _, t := range ifaceList {
+				if _, ok := t.Underlying().(*types.Interface); ok {
+					continue
+				}
+				mset := p.prog.MethodSets.MethodSet(t)
+				for i := 0; i < mset.Len(); i++ {
+					m := mset.At(i).Obj().(*types.Func)
+					if used[p.methodKey(m)] || p.keepExported && m.Exported() {
+						push(p.prog.MethodValue(mset.At(i)))
+					}
+				}
+			}
+			if len(seen) == before {
+				break
+			}
+		}
+	}
 	p.usedMethods = used
+	p.ifaceTypes = ifaceTypes
 	keys := make([]string, 0, len(used))
 	for k := range used {
 		keys = append(keys, k)
@@ -101,6 +152,15 @@ func (p *Program) computeUsedMethods() {
 	}
 	if p.keepExported {
 		h.Write([]byte("keepExported"))
+	}
+	tkeys := make([]string, 0, len(ifaceTypes))
+	for k := range ifaceTypes {
+		tkeys = append(tkeys, k)
+	}
+	sort.Strings(tkeys)
+	for _, k := range tkeys {
+		h.Write([]byte(k))
+		h.Write([]byte{1})
 	}
 	p.usedMethodsHash = hex.EncodeToString(h.Sum(nil))[:16]
 }
@@ -118,10 +178,70 @@ func (p *Program) isReflectMethodLookup(fn *ssa.Function) bool {
 	return false
 }
 
-// methodLive reports whether the code of method fn of a type must be kept.
-func (p *Program) methodLive(fn *types.Func) bool {
+// typeClosure adds t and every type reflect can reach from it (elements,
+// fields, pointers, signatures) to set, returning the newly added types.
+// Like gc's UsedInIface marking, only these types need method code.
+func (p *Program) typeClosure(root types.Type, set map[string]bool) []types.Type {
+	var added, stack []types.Type
+	add := func(t types.Type) {
+		t = types.Unalias(t)
+		k := p.canonical(t)
+		if !set[k] {
+			set[k] = true
+			stack = append(stack, t)
+			added = append(added, t)
+		}
+	}
+	add(root)
+	for len(stack) > 0 {
+		t := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if _, ok := t.(*types.Named); ok {
+			if _, isPtr := t.Underlying().(*types.Pointer); !isPtr {
+				add(types.NewPointer(t)) // ptrToThis: reflect.New, Addr
+			}
+		}
+		switch u := t.Underlying().(type) {
+		case *types.Pointer:
+			add(u.Elem())
+		case *types.Slice:
+			add(u.Elem())
+		case *types.Array:
+			add(u.Elem())
+		case *types.Chan:
+			add(u.Elem())
+		case *types.Map:
+			add(u.Key())
+			add(u.Elem())
+		case *types.Struct:
+			for i := 0; i < u.NumFields(); i++ {
+				add(u.Field(i).Type())
+			}
+		case *types.Signature:
+			for i := 0; i < u.Params().Len(); i++ {
+				add(u.Params().At(i).Type())
+			}
+			for i := 0; i < u.Results().Len(); i++ {
+				add(u.Results().At(i).Type())
+			}
+		}
+		if p.keepExported {
+			mset := p.prog.MethodSets.MethodSet(t)
+			for i := 0; i < mset.Len(); i++ {
+				add(stripRecv(mset.At(i).Obj().Type().(*types.Signature)))
+			}
+		}
+	}
+	return added
+}
+
+// methodLive reports whether the code of method fn of type t must be kept.
+func (p *Program) methodLive(fn *types.Func, t types.Type) bool {
 	if p.usedMethods == nil {
 		return true
+	}
+	if t != nil && !p.ifaceTypes[p.canonical(types.Unalias(t))] {
+		return false // values of t never reach an interface
 	}
 	if p.keepExported && fn.Exported() {
 		return true

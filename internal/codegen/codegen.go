@@ -68,6 +68,8 @@ type Program struct {
 	usedMethodsHash string
 	keepExported    bool // reflect method lookups: keep all exported methods
 
+	ifaceTypes  map[string]bool      // canonical names of types that can be in interfaces
+	mainPath    string               // import path of the main package
 	globalRead  map[*ssa.Global]bool // globals read anywhere in the program
 	varLinkname map[string]bool      // pkgpath.name of variables named in //go:linkname
 }
@@ -83,8 +85,15 @@ const (
 
 // NewProgram prepares code generation for all packages of prog.
 func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package][]*ast.File, opts Options) (*Program, error) {
+	mainPath := ""
+	for _, pkg := range pkgs {
+		if pkg.Pkg.Name() == "main" {
+			mainPath = pkg.Pkg.Path()
+		}
+	}
 	p := &Program{
 		files:       files,
+		mainPath:    mainPath,
 		opts:        opts,
 		prog:        prog,
 		fset:        prog.Fset,

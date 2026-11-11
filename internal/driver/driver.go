@@ -344,7 +344,9 @@ func (b *build) link(objs []string, out string) error {
 		args = append(args, "-Wl,-map,"+mp)
 	}
 	if runtime.GOOS == "darwin" {
-		args = append(args, "-Wl,-dead_strip", "-Wl,-x")
+		// Only main is exported: every other symbol becomes local and -x
+		// drops it from the symbol table (Go symbol names are long).
+		args = append(args, "-Wl,-dead_strip", "-Wl,-x", "-Wl,-exported_symbol,_main")
 	} else {
 		args = append(args, "-Wl,--gc-sections", "-s")
 	}
