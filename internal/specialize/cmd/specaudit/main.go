@@ -7,6 +7,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/types"
@@ -26,8 +27,10 @@ var reflective = map[string]bool{
 }
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: specaudit ./pkg")
+	lib := flag.String("lib", "internal/specialize/_lib", "directory with the entry point overlays")
+	flag.Parse()
+	if flag.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "usage: specaudit [-lib dir] ./pkg")
 		os.Exit(2)
 	}
 	gr, err := exec.Command("go", "env", "GOROOT").Output()
@@ -37,12 +40,11 @@ func main() {
 	}
 	goroot := strings.TrimSpace(string(gr))
 	ov := map[string][]byte{}
-	lib := "internal/specialize/_lib"
-	filepath.WalkDir(lib, func(path string, d os.DirEntry, err error) error {
+	filepath.WalkDir(*lib, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
 			return err
 		}
-		rel, _ := filepath.Rel(lib, path)
+		rel, _ := filepath.Rel(*lib, path)
 		src, err := os.ReadFile(path)
 		if err == nil {
 			ov[filepath.Join(goroot, "src", rel)] = src
@@ -52,7 +54,7 @@ func main() {
 	cfg := &packages.Config{Overlay: ov, Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
 		packages.NeedImports | packages.NeedDeps | packages.NeedSyntax | packages.NeedTypes |
 		packages.NeedTypesInfo | packages.NeedTypesSizes | packages.NeedModule}
-	pkgs, err := packages.Load(cfg, os.Args[1])
+	pkgs, err := packages.Load(cfg, flag.Arg(0))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -65,6 +67,12 @@ func main() {
 		os.Exit(1)
 	}
 	counts := map[string]int{}
+	for k, n := range res.Kinds {
+		counts["fired "+k] += n
+	}
+	for k, n := range res.Skips {
+		counts["skip "+k] += n
+	}
 	for _, p := range all {
 		if p.Module == nil && p.Name != "main" {
 			continue

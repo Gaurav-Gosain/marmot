@@ -61,6 +61,33 @@ type Nums struct {
 	C int64
 }
 
+type Panicky int
+
+func (p Panicky) String() string {
+	if p < 0 {
+		panic(fmt.Sprint("negative ", int(p)))
+	}
+	return fmt.Sprint("P", int(p))
+}
+
+type Node struct{ name string }
+
+func (n *Node) String() string { return "node:" + n.name }
+
+type Both struct{}
+
+func (Both) Error() string  { return "both-error" }
+func (Both) String() string { return "both-string" }
+
+type Fmtd int
+
+func (f Fmtd) String() string                  { return "fmtd" }
+func (f Fmtd) Format(s fmt.State, verb rune)    { fmt.Fprint(s, "F", int(f), string(verb)) }
+
+type MapStr map[string]int
+
+func (m MapStr) String() string { return fmt.Sprint(m["a"]) }
+
 type errT struct{ msg string }
 
 func (e *errT) Error() string { return "errT:" + e.msg }
@@ -128,7 +155,21 @@ func out(s string) { sb.WriteString(s); sb.WriteByte('\n') }
 		{"*Pt", `nil`, gen("vd", false, true, false)},
 		{"any", `nil, 1, "s", 2.5, Pt{3, 4, "t"}, Stringy(9), []int{1, 2}, map[string]int{"a": 1, "b": 2}`, gen("vsdT", true, true, false)},
 		{"error", `nil, errors.New("boom"), &errT{"x"}`, gen("vsqw", true, true, false)},
-		{"[]int", `nil, []int{1, -2, 3}`, gen("vdx", true, true, false)},
+		{"*errT", `nil, &errT{"x"}, &errT{"<y>"}`, gen("vsqxXd", true, true, true)},
+		{"Panicky", `0, 7, -1`, gen("vsqxd", true, true, false)},
+		{"*Node", `nil, &Node{"n1"}`, gen("vsq", true, true, false)},
+		{"Both", `Both{}`, gen("vsx", true, true, false)},
+		{"Fmtd", `Fmtd(1), Fmtd(2)`, gen("vsd", true, true, false)},
+		{"MapStr", `nil, MapStr{"a": 1}`, gen("vsq", true, false, false)},
+		{"[]int", `nil, []int{1, -2, 3}`, gen("vdxT", true, true, false)},
+		{"[][]string", `nil, {}, {{"a", "b"}, nil, {"c"}}`, gen("vsqT", true, true, false)},
+		{"[3]float64", `{}, {1.5, -0.0, 3}`, gen("vfgT", true, true, true)},
+		{"[]Stringy", `nil, {1, 2}`, gen("vsdT", true, false, false)},
+		{"[]Pt", `nil, {{1, 2, "a"}, {}}`, gen("vdT", true, false, false)},
+		{"*Inner", `nil, &Inner{7, 1.5, "x"}`, gen("vdsT", true, true, false)},
+		{"*Outer", `nil, &Outer{}`, gen("vT", true, false, false)},
+		{"*Stringy", `nil`, gen("vT", false, false, false)},
+		{"map[string]int", `nil, {"b": 2, "a": 1}`, gen("vT", true, false, false)},
 		{"rune", `'a', 'é', -1, 0x10FFFF + 1`, gen("cqUvd", true, true, false)},
 	}
 	sites := 0

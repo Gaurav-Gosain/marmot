@@ -194,7 +194,15 @@ func rewriteFmt(g *gen, f *ast.File) {
 			return true
 		}
 		fn := calleeFunc(g.info, call)
-		if fn == nil || fn.Pkg().Path() != "fmt" || !fmtFuncs[fn.Name()] || call.Ellipsis.IsValid() {
+		if fn == nil || fn.Pkg().Path() != "fmt" {
+			return true
+		}
+		if !fmtFuncs[fn.Name()] {
+			g.skip("fmt call: " + fn.Name() + " not handled")
+			return true
+		}
+		if call.Ellipsis.IsValid() {
+			g.skip("fmt call: args... spread")
 			return true
 		}
 		g.fmtCall(call, fn.Name())
@@ -243,6 +251,91 @@ func (g *gen) operand(e ast.Expr) operand {
 	return op
 }
 
+// reflectTypeString is reflect.Type.String for the types whose form is
+// unambiguous: named non-generic types, basic types, and pointers, slices,
+// arrays and maps of those.
+func reflectTypeString(t types.Type) (string, bool) {
+	switch t := types.Unalias(t).(type) {
+	case *types.Named:
+		if t.TypeArgs() != nil || t.Obj().Pkg() == nil {
+			return "", false
+		}
+		return t.Obj().Pkg().Name() + "." + t.Obj().Name(), true
+	case *types.Basic:
+		names := map[types.BasicKind]string{types.Bool: "bool", types.Int: "int", types.Int8: "int8", types.Int16: "int16",
+			types.Int32: "int32", types.Int64: "int64", types.Uint: "uint", types.Uint8: "uint8", types.Uint16: "uint16",
+			types.Uint32: "uint32", types.Uint64: "uint64", types.Uintptr: "uintptr", types.Float32: "float32",
+			types.Float64: "float64", types.Complex64: "complex64", types.Complex128: "complex128", types.String: "string"}
+		n, ok := names[t.Kind()]
+		return n, ok
+	case *types.Pointer:
+		e, ok := reflectTypeString(t.Elem())
+		return "*" + e, ok
+	case *types.Slice:
+		e, ok := reflectTypeString(t.Elem())
+		return "[]" + e, ok
+	case *types.Array:
+		e, ok := reflectTypeString(t.Elem())
+		return fmt.Sprintf("[%d]%s", t.Len(), e), ok
+	case *types.Map:
+		k, ok1 := reflectTypeString(t.Key())
+		e, ok2 := reflectTypeString(t.Elem())
+		return "map[" + k + "]" + e, ok1 && ok2
+	}
+	return "", false
+}
+
+// hasMethod reports whether values of t have a method name.
+func hasMethod(t types.Type, name string) bool {
+	return types.NewMethodSet(t).Lookup(nil, name) != nil
+}
+
+// hasStringMethod reports whether values of t have method name() string.
+func hasStringMethod(t types.Type, name string) bool {
+	sel := types.NewMethodSet(t).Lookup(nil, name)
+	if sel == nil {
+		return false
+	}
+	sig := sel.Obj().Type().(*types.Signature)
+	return sig.Params().Len() == 0 && sig.Results().Len() == 1 &&
+		types.Identical(sig.Results().At(0).Type(), types.Typ[types.String])
+}
+
+// operandReason classifies an operand that goes to printArg.
+func operandReason(op operand, verb rune) string {
+	switch {
+	case verb == 'T' || verb == 'p' || verb == 'w':
+		return "%" + string(verb)
+	case op.typ == nil:
+		return "untyped nil"
+	case !op.static:
+		if types.Identical(op.typ, types.Universe.Lookup("error").Type()) {
+			return "error interface"
+		}
+		if it, ok := op.typ.Underlying().(*types.Interface); ok && it.Empty() {
+			return "any"
+		}
+		return "other interface or type parameter"
+	case op.tsrc == "any":
+		return "type not nameable here"
+	case fmtMethods(op.typ):
+		return "String/Error/Format method"
+	}
+	switch u := op.typ.Underlying().(type) {
+	case *types.Pointer:
+		return "pointer"
+	case *types.Slice, *types.Array:
+		return "slice or array"
+	case *types.Map:
+		return "map"
+	case *types.Struct:
+		return "struct with unsupported field"
+	case *types.Basic:
+		return "verb not valid for " + u.Name()
+	}
+	return "other kind"
+}
+
 // fmtMethods reports whether values of type t, stored in an interface, have
 // any method fmt looks for.
 func fmtMethods(t types.Type) bool {
@@ -259,12 +352,20 @@ func fmtMethods(t types.Type) bool {
 // v) with verb under flag bits, mirroring printArg.
 func (g *gen) emitOperand(op operand, v string, verb rune, bits uint) string {
 	general := fmt.Sprintf("fmt.MarmotArg(p, %s, %d)", v, verb)
+	if verb == 'T' && op.static && op.typ != nil {
+		// printArg's %T: fmtS of the dynamic type's name, known here.
+		if name, ok := reflectTypeString(op.typ); ok {
+			return fmt.Sprintf("fmt.MarmotFmtS(p, %s)", strconv.Quote(name))
+		}
+	}
 	if !op.static || op.typ == nil || op.tsrc == "any" || verb == 'T' || verb == 'p' || verb == 'w' {
+		g.skip("fmt operand: " + operandReason(op, verb))
 		return general
 	}
 	if code, ok := g.emitValue(op.typ, v, verb, bits, 0); ok {
 		return code
 	}
+	g.skip("fmt operand: " + operandReason(op, verb))
 	return general
 }
 
@@ -274,13 +375,65 @@ func (g *gen) emitOperand(op operand, v string, verb rune, bits uint) string {
 // names the dynamic type), or kinds without a typed path.
 func (g *gen) emitValue(t types.Type, v string, verb rune, bits uint, depth int) (string, bool) {
 	if fmtMethods(t) {
+		// handleMethods at depth 0: Formatter first, then error, then
+		// Stringer, for the string verbs and without #.
+		if depth > 0 || bits&fSharpV != 0 || !strings.ContainsRune("vsxXq", verb) || hasMethod(t, "Format") {
+			return "", false
+		}
+		isNil := "false"
+		if _, ptr := t.Underlying().(*types.Pointer); ptr {
+			isNil = v + " == nil"
+		}
+		switch {
+		case hasStringMethod(t, "Error"):
+			return fmt.Sprintf("fmt.MarmotErrorMethod(p, %s, %s, %d)", v, isNil, verb), true
+		case hasStringMethod(t, "String"):
+			return fmt.Sprintf("fmt.MarmotStringMethod(p, %s, %s, %d)", v, isNil, verb), true
+		}
 		return "", false
 	}
 	if s, ok := types.Unalias(t).(*types.Slice); ok && depth == 0 {
 		if b, ok := s.Elem().(*types.Basic); ok && b.Kind() == types.Uint8 && strings.ContainsRune("vdsxXq", verb) {
 			return fmt.Sprintf("fmt.MarmotBytes(p, %s, %d)", v, verb), true
 		}
-		return "", false
+	}
+	// printValue's slice and array case (without #): [e1 e2 ...], each
+	// element printed at depth+1. Byte elements take another path for
+	// s, q, x, X there, so they are left alone.
+	var elem types.Type
+	switch u := t.Underlying().(type) {
+	case *types.Slice:
+		elem = u.Elem()
+	case *types.Array:
+		elem = u.Elem()
+	}
+	if elem != nil {
+		if bits&fSharpV != 0 || depth > 2 {
+			return "", false
+		}
+		if b, ok := elem.Underlying().(*types.Basic); ok && b.Kind() == types.Uint8 {
+			return "", false
+		}
+		g.n++
+		e := fmt.Sprintf("e%d", g.n)
+		code, ok := g.emitValue(elem, e, verb, bits, depth+1)
+		if !ok {
+			return "", false
+		}
+		return fmt.Sprintf("fmt.MarmotByte(p, '[')\n\tfor i%[1]s, %[1]s := range %[2]s {\n\t\tif i%[1]s > 0 {\n\t\t\tfmt.MarmotByte(p, ' ')\n\t\t}\n\t\t%[3]s\n\t}\n\tfmt.MarmotByte(p, ']')", e, v, code), true
+	}
+	// printValue's pointer case at depth 0 for %v: &{...} for a pointer to
+	// a struct, <nil> for a nil pointer.
+	if pt, ok := t.Underlying().(*types.Pointer); ok && depth == 0 && verb == 'v' && bits&(fSharpV|fPlusV|fSharp) == 0 {
+		st, ok := pt.Elem().Underlying().(*types.Struct)
+		if !ok || fmtMethods(pt.Elem()) {
+			return "", false // printValue calls the struct's own methods at depth 1
+		}
+		code, ok := g.emitStruct(pt.Elem(), st, "(*"+v+")", verb, bits, 1)
+		if !ok {
+			return "", false
+		}
+		return fmt.Sprintf("if %s == nil {\n\t\tfmt.MarmotNilAngle(p)\n\t} else {\n\t\tfmt.MarmotByte(p, '&')\n\t\t%s\n\t}", v, code), true
 	}
 	if st, ok := t.Underlying().(*types.Struct); ok {
 		return g.emitStruct(t, st, v, verb, bits, depth)
@@ -455,6 +608,7 @@ func (g *gen) fmtCall(call *ast.CallExpr, name string) {
 		}
 		tv := g.info.Types[args[0]]
 		if tv.Value == nil || tv.Value.Kind() != constant.String {
+			g.skip("fmt call: format not constant")
 			return
 		}
 		format = constant.StringVal(tv.Value)
@@ -465,7 +619,8 @@ func (g *gen) fmtCall(call *ast.CallExpr, name string) {
 	}
 	for _, a := range call.Args {
 		if _, multi := g.info.Types[a].Type.(*types.Tuple); multi {
-			return // f(g()) with a multi-value g
+			g.skip("fmt call: f(g()) with multi-value g")
+			return
 		}
 	}
 	ops := make([]operand, len(args))
@@ -487,6 +642,11 @@ func (g *gen) fmtCall(call *ast.CallExpr, name string) {
 	case printf:
 		fops, ok := parseFormat(format, len(args), name == "Errorf")
 		if !ok {
+			if name == "Errorf" && strings.Contains(format, "%w") {
+				g.skip("fmt call: Errorf with %w")
+			} else {
+				g.skip("fmt call: format with [n], *, missing or extra operands")
+			}
 			return
 		}
 		// The flag state persists between verbs (every step restores what
@@ -515,7 +675,8 @@ func (g *gen) fmtCall(call *ast.CallExpr, name string) {
 		prevString := false
 		for i, op := range ops {
 			if !op.static && op.typ != nil {
-				return // string-ness of an interface operand is only known at run time
+				g.skip("fmt call: Print/Sprint with an interface operand")
+				return
 			}
 			if i > 0 && !op.isStr && !prevString {
 				w("fmt.MarmotByte(p, ' ')")

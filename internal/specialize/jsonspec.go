@@ -446,6 +446,7 @@ func (g *gen) jsonMarshal(call *ast.CallExpr) {
 	}
 	enc, ok := g.json.encoder(t)
 	if !ok {
+		g.skip("json.Marshal: type not supported (" + jsonWhy(t) + ")")
 		return
 	}
 	name := g.newName("json")
@@ -835,6 +836,7 @@ func (g *gen) jsonUnmarshal(call *ast.CallExpr) {
 	}
 	dec, ok := g.jdec.decoder(pt.Elem())
 	if !ok {
+		g.skip("json.Unmarshal: type not supported (" + jsonWhy(pt.Elem()) + ")")
 		return
 	}
 	name := g.newName("json")
@@ -976,4 +978,62 @@ func hasPointers(t types.Type) bool {
 		return false
 	}
 	return true
+}
+
+// jsonWhy names a feature of t the generated code does not handle.
+func jsonWhy(t types.Type) string {
+	seen := map[types.Type]bool{}
+	var why func(t types.Type) string
+	why = func(t types.Type) string {
+		if seen[t] {
+			return ""
+		}
+		seen[t] = true
+		if hasJSONMethods(t) {
+			return "marshal methods"
+		}
+		switch u := t.Underlying().(type) {
+		case *types.Interface:
+			return "interface value"
+		case *types.Pointer:
+			return why(u.Elem())
+		case *types.Slice:
+			if b, ok := u.Elem().Underlying().(*types.Basic); ok && b.Kind() == types.Uint8 {
+				return "[]byte"
+			}
+			return why(u.Elem())
+		case *types.Array:
+			return why(u.Elem())
+		case *types.Map:
+			if b, ok := u.Key().Underlying().(*types.Basic); !ok || b.Info()&types.IsString == 0 {
+				return "non-string map key"
+			}
+			return why(u.Elem())
+		case *types.Struct:
+			for i := 0; i < u.NumFields(); i++ {
+				f := u.Field(i)
+				if f.Embedded() {
+					return "embedded field"
+				}
+				tag, _ := reflect.StructTag(u.Tag(i)).Lookup("json")
+				if _, opts, _ := strings.Cut(tag, ","); opts != "" && opts != "omitempty" {
+					return "tag option " + opts
+				}
+				if w := why(f.Type()); w != "" {
+					return w
+				}
+			}
+		case *types.Basic:
+			if u.Info()&types.IsComplex != 0 {
+				return "complex"
+			}
+		case *types.Signature, *types.Chan:
+			return "func or chan"
+		}
+		return ""
+	}
+	if w := why(t); w != "" {
+		return w
+	}
+	return "other"
 }

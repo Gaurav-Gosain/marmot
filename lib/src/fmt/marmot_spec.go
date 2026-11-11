@@ -519,3 +519,58 @@ func (f *fmt) marmotFmtFloatASCII(v float64, size int, verb rune, prec int) {
 	// No sign to show and the number is positive; just print the unsigned number.
 	f.marmotPadASCII(num[1:])
 }
+
+// Method operands: handleMethods' error and Stringer cases for an operand
+// whose concrete type is known at compile time (no Format method, verb one
+// of v s x X q, no #). isNilPtr is what catchPanic computes with reflect:
+// the operand is a nil pointer. Same output, panics included.
+
+// MarmotErrorMethod prints v.Error() as handleMethods does.
+func MarmotErrorMethod[T interface{ Error() string }](p *pp, v T, isNilPtr bool, verb rune) {
+	defer p.marmotCatchPanic(isNilPtr, verb, "Error")
+	p.fmtString(nil, reflect.Value{}, v.Error(), verb)
+}
+
+// MarmotStringMethod prints v.String() as handleMethods does.
+func MarmotStringMethod[T interface{ String() string }](p *pp, v T, isNilPtr bool, verb rune) {
+	defer p.marmotCatchPanic(isNilPtr, verb, "String")
+	p.fmtString(nil, reflect.Value{}, v.String(), verb)
+}
+
+// marmotCatchPanic is catchPanic with the nil pointer test done by the caller.
+func (p *pp) marmotCatchPanic(isNilPtr bool, verb rune, method string) {
+	if err := recover(); err != nil {
+		// If it's a nil pointer, just say "<nil>". The likeliest causes are a
+		// Stringer that fails to guard against nil or a nil pointer for a
+		// value receiver, and in either case, "<nil>" is a nice result.
+		if isNilPtr {
+			p.buf.writeString(nilAngleString)
+			return
+		}
+		// Otherwise print a concise panic message. Most of the time the panic
+		// value will print itself nicely.
+		if p.panicking {
+			// Nested panics; the recursion in printArg cannot succeed.
+			panic(err)
+		}
+
+		oldFlags := p.fmt.fmtFlags
+		// For this output we want default behavior.
+		p.fmt.clearflags()
+
+		p.buf.writeString(percentBangString)
+		p.buf.writeRune(verb)
+		p.buf.writeString(panicString)
+		p.buf.writeString(method)
+		p.buf.writeString(" method: ")
+		p.panicking = true
+		p.printArg(err, 'v')
+		p.panicking = false
+		p.buf.writeByte(')')
+
+		p.fmt.fmtFlags = oldFlags
+	}
+}
+
+// MarmotNilAngle is fmtPointer's %v of a nil pointer: padded "<nil>".
+func MarmotNilAngle(p *pp) { p.fmt.padString(nilAngleString) }

@@ -92,6 +92,9 @@ func BeforeSSA(in *Input) error {
 	if err != nil {
 		return err
 	}
+	if in.Log != nil && len(res.Dropped) > 0 {
+		in.Log("specialize: rewrite dropped in %s (MARMOT_SPEC_DEBUG=1 shows why)", strings.Join(res.Dropped, ", "))
+	}
 	if in.Log != nil && res.Sites > 0 {
 		var ks []string
 		for k, n := range res.Kinds {
@@ -113,6 +116,8 @@ func AfterSSA(in *Input) error { return nil }
 
 // Result describes what Rewrite changed.
 type Result struct {
+	Dropped []string       // packages whose rewrite failed to type check (left as written)
+	Skips   map[string]int // sites left alone, by reason
 	Kinds   map[string]int // sites per feature
 	Sites   int
 	Changed []*packages.Package
@@ -193,6 +198,14 @@ func RewriteWith(pkgs []*packages.Package, on map[string]bool) (*Result, error) 
 				g.blankUnusedImports(f)
 			}
 		}
+		if len(g.skips) > 0 {
+			if res.Skips == nil {
+				res.Skips = map[string]int{}
+			}
+			for k, n := range g.skips {
+				res.Skips[k] += n
+			}
+		}
 		depChanged := false
 		for path := range p.Imports {
 			if rechecked[path] {
@@ -218,6 +231,7 @@ func RewriteWith(pkgs []*packages.Package, on map[string]bool) (*Result, error) 
 			} else if depChanged {
 				return nil, fmt.Errorf("specialize: %s: %v", p.PkgPath, err)
 			}
+			res.Dropped = append(res.Dropped, p.PkgPath)
 			if os.Getenv("MARMOT_SPEC_DEBUG") != "" {
 				fmt.Fprintf(os.Stderr, "specialize: %s: rewrite dropped: %v\n%s\n", p.PkgPath, err, src)
 			}
@@ -336,6 +350,7 @@ type gen struct {
 	wrappers     map[string]string
 	feature      string         // rewriter running now
 	kinds        map[string]int // sites per feature
+	skips        map[string]int // sites left alone, by reason
 }
 
 func newGen(p *packages.Package) *gen {
@@ -722,4 +737,12 @@ func (g *gen) count() {
 		g.kinds = map[string]int{}
 	}
 	g.kinds[g.feature]++
+}
+
+// skip records why a site was left alone (reported by specaudit).
+func (g *gen) skip(reason string) {
+	if g.skips == nil {
+		g.skips = map[string]int{}
+	}
+	g.skips[reason]++
 }

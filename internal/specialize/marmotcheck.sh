@@ -7,6 +7,10 @@ set -u
 cd "$(dirname "$0")/../.."
 R=$PWD; O=${2:--release}; [ "${1:-}" = -O ] && O="-O $2"
 D=$R/.work/spec/progs; rm -rf "$D"; mkdir -p "$D"
+# The overlay sources of truth (_lib) must equal what marmot compiles (lib/src).
+for f in $(cd internal/specialize/_lib && find . -name '*.go'); do
+	cmp -s "internal/specialize/_lib/$f" "lib/src/$f" || { echo "lib/src/$f differs from internal/specialize/_lib/$f"; exit 1; }
+done
 SPEC_TEST_PROGRAMS=$D go test ./internal/specialize/ >/dev/null || { echo "go test failed"; exit 1; }
 go build -o "$D/marmot" ./cmd/marmot || exit 1
 st=0
@@ -19,7 +23,7 @@ for d in "$D"/*/; do
 	fi
 	(cd "$d" && timeout 120 ../$n.exe > ../$n.mm.out 2>&1; echo "exit $?" >> ../$n.mm.out)
 	if cmp -s "$D/$n.go.out" "$D/$n.mm.out"; then r=SAME; else r=DIFF; st=1; fi
-	echo "$n $r $(grep -o 'specialize: .*' "$D/$n.log")"
+	echo "$n $r $(grep -o "specialize: .*" "$D/$n.log" | tr "\n" " ")"
 	rm -f "$D/$n.exe"
 done
 exit $st
