@@ -59,6 +59,8 @@ var (
 	flTimeout = flag.Duration("timeout", 20*time.Second, "run timeout per test")
 	flBuildTO = flag.Duration("build-timeout", 120*time.Second, "compile timeout per test")
 	flNoWrite = flag.Bool("nowrite", false, "do not write results.json and RESULTS.md")
+	flMatrix  = flag.Bool("matrix", false, "run every program at -O0, -O2 and -Oz (plus any -bflags variations); results are named NAME@CONFIG")
+	flBFlags  = flag.String("bflags", "", "with -matrix: extra configs as label=FLAGS pairs separated by ';', run at -O2 with MARMOT_BACKEND_FLAGS=FLAGS")
 	flLive    = flag.Bool("live", false, "run against the live tree instead of a snapshot (other workers may be mid-edit)")
 )
 
@@ -111,17 +113,28 @@ func main() {
 	}
 	known := loadKnown(filepath.Join(testsDir, "known_failures.txt"))
 
-	results := make([]result, len(tests))
+	configs := buildConfigs()
+	type job struct {
+		test string
+		cfg  config
+	}
+	var jobs []job
+	for _, t := range tests {
+		for _, c := range configs {
+			jobs = append(jobs, job{t, c})
+		}
+	}
+	results := make([]result, len(jobs))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, min(max(*flJ, 1), 4))
-	for i, t := range tests {
+	for i, j := range jobs {
 		wg.Add(1)
 		sem <- struct{}{}
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[i] = runOne(snapRoot, testsDir, work, marmot, t)
-			results[i].Known = known[t]
+			results[i] = runOne(snapRoot, testsDir, work, marmot, j.test, j.cfg)
+			results[i].Known = known[j.test] || (j.cfg.label != "" && known[j.test+"@"+j.cfg.label])
 		}()
 	}
 	wg.Wait()
@@ -281,9 +294,32 @@ func normStderr(s string) string {
 	return b.String()
 }
 
-func runOne(root, testsDir, work, marmot, name string) result {
+type config struct {
+	label string
+	o     string
+	env   []string
+}
+
+func buildConfigs() []config {
+	if !*flMatrix {
+		return []config{{o: *flO}}
+	}
+	cs := []config{{"O0", "0", nil}, {"O2", "2", nil}, {"Oz", "z", nil}}
+	for _, kv := range strings.Split(*flBFlags, ";") {
+		if label, flags, ok := strings.Cut(kv, "="); ok && label != "" {
+			cs = append(cs, config{label, "2", []string{"MARMOT_BACKEND_FLAGS=" + flags}})
+		}
+	}
+	return cs
+}
+
+func runOne(root, testsDir, work, marmot, name string, cfg config) result {
 	start := time.Now()
-	r := result{Name: name, Dir: filepath.ToSlash(filepath.Dir(name)), Status: "fail"}
+	display := name
+	if cfg.label != "" {
+		display = name + "@" + cfg.label
+	}
+	r := result{Name: display, Dir: filepath.ToSlash(filepath.Dir(name)), Status: "fail"}
 	defer func() { r.Seconds = time.Since(start).Seconds() }()
 
 	src := filepath.Join(testsDir, name+".go")
@@ -298,7 +334,7 @@ func runOne(root, testsDir, work, marmot, name string) result {
 		fmt.Sscanf(strings.TrimSpace(string(b)), "%d", &wantExit)
 	}
 
-	tdir := filepath.Join(work, strings.ReplaceAll(name, "/", "_"))
+	tdir := filepath.Join(work, strings.ReplaceAll(display, "/", "_"))
 	os.RemoveAll(tdir)
 	check(os.MkdirAll(tdir, 0o755))
 	if !*flKeep {
@@ -306,11 +342,11 @@ func runOne(root, testsDir, work, marmot, name string) result {
 	}
 	exe := filepath.Join(tdir, "prog")
 	args := []string{"build", "-o", exe}
-	if *flO != "" {
-		args = append(args, "-O", *flO)
+	if cfg.o != "" {
+		args = append(args, "-O", cfg.o)
 	}
 	args = append(args, src)
-	bo, err := execute(*flBuildTO, root, []string{"MARMOT_ROOT=" + root}, marmot, args...)
+	bo, err := execute(*flBuildTO, root, append([]string{"MARMOT_ROOT=" + root}, cfg.env...), marmot, args...)
 	if err != nil {
 		r.Reason, r.Detail = "compile error", err.Error()
 		return r
