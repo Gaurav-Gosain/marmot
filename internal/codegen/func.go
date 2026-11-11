@@ -51,6 +51,7 @@ type funcGen struct {
 	volatile          map[ssa.Value]bool                    // stack slots that live across setjmp
 	sunk              map[ssa.Instruction]bool              // loads moved after calls (evalorder.go)
 	sinkBefore        map[ssa.Instruction][]ssa.Instruction // emit these sunk loads before the instruction
+	sunkDone          map[ssa.Instruction]bool
 }
 
 // function emits fn. shared functions get linkonce_odr linkage.
@@ -211,13 +212,9 @@ func (f *funcGen) gen(sym string, shared bool) {
 			if f.m.static != nil && f.m.static.skip[instr] || f.skipInstr[instr] || f.sunk[instr] {
 				continue
 			}
-			for _, s := range f.sinkBefore[instr] {
-				f.curPos = s.Pos()
-				f.curBlock = b
-				f.instr(s)
-			}
-			f.curPos = instr.Pos()
 			f.curBlock = b
+			f.emitSunk(instr)
+			f.curPos = instr.Pos()
 			f.instr(instr)
 			for _, pl := range f.regionFree[instr] {
 				f.emit("llvm.call @rt_region_free(%s) : (!llvm.ptr) -> ()", pl.r)

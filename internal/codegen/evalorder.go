@@ -56,6 +56,21 @@ func stmtRanges(body ast.Node) [][2]token.Pos {
 	return out
 }
 
+// complitRanges returns the source ranges of the composite literals in body.
+func complitRanges(body ast.Node) [][2]token.Pos {
+	var out [][2]token.Pos
+	ast.Inspect(body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.CompositeLit:
+			out = append(out, [2]token.Pos{x.Pos(), x.End()})
+		case *ast.FuncLit:
+			return false
+		}
+		return true
+	})
+	return out
+}
+
 func innermost(ranges [][2]token.Pos, p token.Pos) (token.Pos, token.Pos, bool) {
 	var lo, hi token.Pos
 	found := false
@@ -72,18 +87,20 @@ func (f *funcGen) computeSinks() {
 	if os.Getenv("MARMOT_NO_EVALORDER") != "" || f.fn.Syntax() == nil {
 		return
 	}
-	var ranges [][2]token.Pos
+	var body ast.Node
 	switch s := f.fn.Syntax().(type) {
 	case *ast.FuncDecl:
 		if s.Body == nil {
 			return
 		}
-		ranges = stmtRanges(s.Body)
+		body = s.Body
 	case *ast.FuncLit:
-		ranges = stmtRanges(s.Body)
+		body = s.Body
 	default:
 		return
 	}
+	ranges := stmtRanges(body)
+	lits := complitRanges(body)
 	for _, b := range f.fn.Blocks {
 		exprOf := map[ssa.Value]ast.Expr{}
 		pos := map[ssa.Instruction]int{}
@@ -158,9 +175,14 @@ func (f *funcGen) computeSinks() {
 				if !ok || stored || !complitElem(st.Addr, b, pos) {
 					continue
 				}
+				// Only calls of later elements of the same literal.
+				llo, lhi, ok := innermost(lits, e.Pos())
+				if !ok {
+					continue
+				}
 				last := -1
 				for k := use + 1; k < len(b.Instrs); k++ {
-					if c, ok := b.Instrs[k].(*ssa.Call); ok && c.Pos() >= lo && c.Pos() < hi {
+					if c, ok := b.Instrs[k].(*ssa.Call); ok && c.Pos() >= llo && c.Pos() < lhi {
 						last = k
 					}
 				}
@@ -242,6 +264,9 @@ func (f *funcGen) sinkGroup(l *ssa.UnOp, i int, b *ssa.BasicBlock, pos map[ssa.I
 		group = append(group, xi)
 		x = next
 	}
+	if os.Getenv("MARMOT_DEBUG_EVALORDER") != "" {
+		println("sink", f.fn.String(), f.m.p.fset.Position(l.Pos()).String(), l.String(), "before", target.String())
+	}
 	if f.sunk == nil {
 		f.sunk = map[ssa.Instruction]bool{}
 		f.sinkBefore = map[ssa.Instruction][]ssa.Instruction{}
@@ -253,5 +278,22 @@ func (f *funcGen) sinkGroup(l *ssa.UnOp, i int, b *ssa.BasicBlock, pos map[ssa.I
 	for _, e := range extra {
 		f.sunk[e] = true
 		f.sinkBefore[target] = append(f.sinkBefore[target], e)
+	}
+}
+
+// emitSunk emits the loads sunk to just before instr (and, recursively, the
+// ones sunk before those), each once.
+func (f *funcGen) emitSunk(instr ssa.Instruction) {
+	for _, s := range f.sinkBefore[instr] {
+		if f.sunkDone[s] {
+			continue
+		}
+		if f.sunkDone == nil {
+			f.sunkDone = map[ssa.Instruction]bool{}
+		}
+		f.sunkDone[s] = true
+		f.emitSunk(s)
+		f.curPos = s.Pos()
+		f.instr(s)
 	}
 }

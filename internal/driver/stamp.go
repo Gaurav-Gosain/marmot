@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -49,6 +50,7 @@ func (b *build) buildStamp(goos, goarch string) string {
 	for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_NO_BACKEND", "MARMOT_DIALECT", "MARMOT_KEEP_SYMBOLS", "MARMOT_LINKMAP", "MARMOT_WPO", "MARMOT_SPEC", "MARMOT_BACKEND_FLAGS"} {
 		fmt.Fprintf(h, "%s=%s\n", k, os.Getenv(k))
 	}
+	writeNoFlags(h)
 	for _, f := range files {
 		fileSig(h, f)
 	}
@@ -115,6 +117,7 @@ func (b *build) packageKeys(lp *loader.Program, cg *codegen.Program, pkgs []*ssa
 	for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_DIALECT", "MARMOT_SPEC"} {
 		fmt.Fprintf(exeSig, "%s=%s\n", k, os.Getenv(k))
 	}
+	writeNoFlags(exeSig)
 	base := hex.EncodeToString(exeSig.Sum(nil))
 	byPath := map[string]*packages.Package{}
 	for _, p := range lp.All {
@@ -177,4 +180,18 @@ func (b *build) saveModule(k, text string) string {
 		return p
 	}
 	return ""
+}
+
+// writeNoFlags hashes the MARMOT_NO_* switches that turn codegen passes off.
+func writeNoFlags(w io.Writer) {
+	var kv []string
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "MARMOT_NO_") {
+			kv = append(kv, e)
+		}
+	}
+	sort.Strings(kv)
+	for _, e := range kv {
+		fmt.Fprintln(w, e)
+	}
 }
