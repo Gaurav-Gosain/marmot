@@ -70,7 +70,11 @@ type sstate struct {
 	runq      []int
 	spinners  int  // spinners with a P (their Ps have owner -2)
 	nmspin    int  // nmspinning
-	fixExit   bool // the fix: wakep after REQ_EXITSYSCALL queues the goroutine
+	fix       bool // rtcore 5a287c8: REQ_EXITSYSCALL takes an idle P or queues in one sched.lock
+	// hold; an M that stops spinning rechecks the global queue
+	spinPh int // 0 no spinner; 1 holds a P (findrunnable); 2 released its P, still spinning;
+	// 3 stopped spinning (5a287c8: rechecks the global queue)
+	parked []bool // goroutines parked by 'x', waiting for rt_ready from an M without a P
 }
 
 func (s *sstate) clone() *sstate {
@@ -80,12 +84,13 @@ func (s *sstate) clone() *sstate {
 	t.gs = make([]sg, len(s.gs))
 	copy(t.gs, s.gs)
 	t.runq = append([]int(nil), s.runq...)
+	t.parked = append([]bool(nil), s.parked...)
 	return &t
 }
 
 func (s *sstate) key() string {
 	var b strings.Builder
-	fmt.Fprint(&b, s.ps, s.owner, s.gcwaiting, s.stopwait, s.mu, s.ws, s.runq, s.spinners, s.nmspin, "|")
+	fmt.Fprint(&b, s.ps, s.owner, s.gcwaiting, s.stopwait, s.mu, s.ws, s.runq, s.spinners, s.nmspin, s.spinPh, s.parked, "|")
 	for _, g := range s.gs {
 		st := 0
 		if g.stop > 0 {
@@ -144,6 +149,7 @@ func (s *sstate) wakep() {
 	s.ps[p] = pRun
 	s.owner[p] = -2
 	s.spinners++
+	s.spinPh = 1
 }
 
 // unlock a lock: wake one sleeping waiter (os_futex_wake of a contended word)
@@ -223,6 +229,25 @@ func (s *sstate) moves() []move {
 				tg.pc = gLockMu
 				tg.stats = false
 				add(fmt.Sprintf("g%d gc_collect", i), t)
+			} else if a == 'x' { // park; the M runs findrunnable with the P
+				p := g.p
+				tg.p = -1
+				tg.pc = gQueued // not runnable until readied
+				t.parked[i] = true
+				if len(t.runq) > 0 {
+					j := t.runq[0]
+					t.runq = t.runq[1:]
+					t.owner[p] = j
+					t.gs[j].p = p
+					t.gs[j].pc = gRun
+				} else if t.gcwaiting {
+					t.ps[p], t.owner[p] = pStop, -1
+					t.stopwait--
+				} else {
+					t.ps[p], t.owner[p] = pIdle, -1
+				}
+				add(fmt.Sprintf("g%d parks", i), t)
+				continue
 			} else if a == 'r' { // rt_gc_stats: stop_the_world without gc_mu
 				tg.pc = gLockWS
 				tg.stats = true
@@ -376,11 +401,17 @@ func (s *sstate) moves() []move {
 			add(fmt.Sprintf("g%d exitsyscall: no P (gcwaiting %v)", i, t.gcwaiting), t)
 		case gQueuing:
 			t := s.clone()
+			if s.fix { // 5a287c8: under one sched.lock hold, an idle P or the global queue
+				if p := t.idleP(); p >= 0 && !t.gcwaiting {
+					t.ps[p], t.owner[p] = pRun, i
+					t.gs[i].p = p
+					t.gs[i].pc = gRun
+					add(fmt.Sprintf("g%d REQ_EXITSYSCALL takes idle P%d", i, p), t)
+					continue
+				}
+			}
 			t.gs[i].pc = gQueued
 			t.runq = append(t.runq, i)
-			if s.fixExit { // the fixed variant: wake a thread after queueing
-				t.wakep()
-			}
 			add(fmt.Sprintf("g%d REQ_EXITSYSCALL: on the global run queue", i), t)
 		}
 	}
@@ -396,13 +427,15 @@ func (s *sstate) moves() []move {
 			t.gs[o].p = -1
 		}
 		switch {
-		case len(t.runq) > 0:
+		case len(t.runq) > 0 && t.spinPh == 0:
 			t.ps[p], t.owner[p] = pRun, -2
 			t.spinners++
-		case t.nmspin+t.npidle() == 0:
+			t.spinPh = 1
+		case t.nmspin+t.npidle() == 0 && t.spinPh == 0:
 			t.nmspin = 1
 			t.ps[p], t.owner[p] = pRun, -2
 			t.spinners++
+			t.spinPh = 1
 		case t.gcwaiting:
 			t.ps[p] = pStop
 			t.stopwait--
@@ -411,35 +444,72 @@ func (s *sstate) moves() []move {
 		}
 		add(fmt.Sprintf("sysmon retakes P%d", p), t)
 	}
-	// spinners: findrunnable with a P
-	for p := range s.ps {
-		if s.owner[p] != -2 {
+	// rt_ready from an M without a P (netpoll, timers): global queue; wakep unless an M spins
+	for i := range s.gs {
+		if !s.parked[i] {
 			continue
 		}
 		t := s.clone()
+		t.parked[i] = false
+		t.runq = append(t.runq, i)
+		if t.nmspin == 0 {
+			t.wakep()
+		}
+		add(fmt.Sprintf("rt_ready(g%d) from an M without a P", i), t)
+	}
+	// the spinning M (findrunnable)
+	sp := -1
+	for p := range s.ps {
+		if s.owner[p] == -2 {
+			sp = p
+		}
+	}
+	switch s.spinPh {
+	case 1:
+		t := s.clone()
 		switch {
-		case t.gcwaiting && t.ps[p] == pRun:
-			t.ps[p] = pStop
-			t.owner[p] = -1
+		case t.gcwaiting && t.ps[sp] == pRun:
+			t.ps[sp], t.owner[sp] = pStop, -1
 			t.stopwait--
 			t.spinners--
-			t.nmspin = 0
-			add(fmt.Sprintf("spinner on P%d stops for GC", p), t)
+			t.spinPh = 2
+			add(fmt.Sprintf("spinner on P%d stops for GC", sp), t)
 		case len(t.runq) > 0:
 			j := t.runq[0]
 			t.runq = t.runq[1:]
-			t.owner[p] = j
-			t.gs[j].p = p
+			t.owner[sp] = j
+			t.gs[j].p = sp
 			t.gs[j].pc = gRun
 			t.spinners--
 			t.nmspin = 0
-			add(fmt.Sprintf("spinner on P%d runs g%d", p, j), t)
-		default:
-			t.ps[p], t.owner[p] = pIdle, -1
+			t.spinPh = 0
+			add(fmt.Sprintf("spinner on P%d runs g%d", sp, j), t)
+		default: // finds nothing: releases the P (pidleput), still counted spinning
+			t.ps[sp], t.owner[sp] = pIdle, -1
 			t.spinners--
-			t.nmspin = 0
-			add(fmt.Sprintf("spinner on P%d finds nothing", p), t)
+			t.spinPh = 2
+			add(fmt.Sprintf("spinner releases P%d", sp), t)
 		}
+	case 2: // drop nmspinning
+		t := s.clone()
+		t.nmspin = 0
+		t.spinPh = 3
+		add("spinner stops spinning", t)
+	case 3:
+		t := s.clone()
+		t.spinPh = 0
+		if s.fix && len(t.runq) > 0 && !t.gcwaiting { // 5a287c8: recheck the global queue
+			if p := t.idleP(); p >= 0 {
+				j := t.runq[0]
+				t.runq = t.runq[1:]
+				t.ps[p], t.owner[p] = pRun, j
+				t.gs[j].p = p
+				t.gs[j].pc = gRun
+				add(fmt.Sprintf("idle M rechecks the global queue: runs g%d on P%d", j, p), t)
+				break
+			}
+		}
+		add("idle M sleeps", t)
 	}
 	return out
 }
@@ -531,7 +601,7 @@ func stwCheck(s0 *sstate) ([]string, int) {
 }
 
 func newSTW(scripts ...string) *sstate {
-	s := &sstate{mu: -1, ws: -1}
+	s := &sstate{mu: -1, ws: -1, parked: make([]bool, len(scripts))}
 	for i, sc := range scripts {
 		s.ps = append(s.ps, pRun)
 		s.owner = append(s.owner, i)
@@ -542,10 +612,10 @@ func newSTW(scripts ...string) *sstate {
 
 var stwScripts = [][]string{{"g", "g"}, {"g", "s"}, {"gg", "g"}, {"g", "g", "s"}, {"gs", "sg"}, {"s", "s", "g"}, {"g", "r"}, {"r", "r", "g"}, {"gr", "rg"}}
 
-// At HEAD (rtcore 5966c50) a goroutine that leaves a syscall while the world is stopped can
+// Before rtcore 5a287c8 (at 93701ad) a goroutine that leaves a syscall while the world is stopped can
 // be queued after start_the_world looked for work, and nobody runs it. This test records
 // the finding: it passes while the model finds that trace.
-func TestSTWExitSyscallLostWakeAtHead(t *testing.T) {
+func TestSTWExitSyscallLostWakeBefore5a287c8(t *testing.T) {
 	trace, _ := stwCheck(newSTW("g", "s"))
 	if trace == nil {
 		t.Fatal("the lost wake-up on syscall exit is no longer found: update the model to the runtime")
@@ -553,11 +623,21 @@ func TestSTWExitSyscallLostWakeAtHead(t *testing.T) {
 	t.Logf("lost wake-up:\n  %s", strings.Join(trace, "\n  "))
 }
 
-// With a wake after REQ_EXITSYSCALL queues the goroutine, no state is stuck.
+// The second window 5a287c8 closes: rt_ready from an M without a P while the only M left
+// is between releasing its P and dropping nmspinning skips wakep.
+func TestSTWSpinWindowBefore5a287c8(t *testing.T) {
+	trace, _ := stwCheck(newSTW("x", "x"))
+	if trace == nil {
+		t.Fatal("the spinning window is no longer found")
+	}
+	t.Logf("lost wake-up:\n  %s", strings.Join(trace, "\n  "))
+}
+
+// With 5a287c8, no state is stuck.
 func TestSTWFixed(t *testing.T) {
-	for _, sc := range stwScripts {
+	for _, sc := range append(stwScripts, []string{"x", "x"}, []string{"x", "s"}, []string{"xs", "g"}, []string{"x", "x", "g"}) {
 		s := newSTW(sc...)
-		s.fixExit = true
+		s.fix = true
 		trace, n := stwCheck(s)
 		t.Logf("%v: %d states", sc, n)
 		if trace != nil {
