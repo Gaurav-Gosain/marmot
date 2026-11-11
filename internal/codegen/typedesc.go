@@ -216,8 +216,13 @@ func (m *moduleGen) emitTypeDesc(sym string, t types.Type) {
 	if len(words) > 0 {
 		last := words[len(words)-1]
 		ptrdata = (last + 1) * 8
-		if last < maxBitmapWords {
-			bm := make([]byte, (last+8)/8)
+		// The bitmap covers all size/8 words (rt_alloc precise mode).
+		nwords := size / 8
+		if nwords < last+1 {
+			nwords = last + 1
+		}
+		if nwords <= maxBitmapWords {
+			bm := make([]byte, (nwords+7)/8)
 			for _, w := range words {
 				bm[w/8] |= 1 << (w % 8)
 			}
@@ -411,9 +416,16 @@ func (m *moduleGen) uncommon(sym string, t types.Type) string {
 		m.constGlobal(msym, "linkonce_odr", true, cArray(mlir.Struct(tString, mlir.Ptr, mlir.Ptr), es...))
 		methods = cAddr(msym)
 	}
+	// ptrToThis: *T for a defined non-pointer type T.
+	ptrToThis := cNull()
+	if named {
+		if _, isPtr := t.Underlying().(*types.Pointer); !isPtr {
+			ptrToThis = cAddr(m.typeDescSym(types.NewPointer(t)))
+		}
+	}
 	usym := sym + ".uncommon"
 	m.constGlobal(usym, "linkonce_odr", true, cStruct(m.cString(pkgPathOf(t)), methods,
-		cInt(int64(len(ms)), mlir.I32), cInt(xcount, mlir.I32)))
+		cInt(int64(len(ms)), mlir.I32), cInt(xcount, mlir.I32), ptrToThis))
 	return usym
 }
 
