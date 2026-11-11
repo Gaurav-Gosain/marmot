@@ -32,6 +32,7 @@ var (
 	flKeep = flag.Bool("keep", false, "keep all generated programs under .work/fuzz")
 	flShr  = flag.Bool("shrink", true, "shrink failing programs")
 	flGen  = flag.Int64("print", 0, "print the program for this seed and exit")
+	flExt  = flag.Bool("ext", true, "also generate maps, strings, floats and goroutines")
 )
 
 type ivar struct {
@@ -151,7 +152,56 @@ func (g *gen) cond() string {
 	return c
 }
 
+// extStmt emits a statement over the map m, string s, float f or a goroutine fan-out.
+func (g *gen) extStmt() {
+	v := g.vars[g.r.Intn(len(g.vars))]
+	switch g.r.Intn(9) {
+	case 0:
+		g.emit("m[int(%s)%%8] += int(%s)", g.expr(v, 2), g.anyVar())
+	case 1:
+		g.emit("delete(m, int(%s)%%8)", g.anyVar())
+	case 2:
+		g.emit("s += string(rune('a' + uint(%s)%%26))", g.expr(v, 2))
+	case 3:
+		g.emit("if len(s) > 3 {")
+		g.emit("\ts = s[len(s)/3:]")
+		g.emit("}")
+	case 4:
+		g.emit("f = float64(f*1.25) + float64(%s)", g.expr(v, 2))
+	case 5:
+		g.emit("f = float64(f/3) - float64(%s)", g.anyVar())
+	case 6:
+		g.emit("%s += %s(len(s)) + %s(len(m))", v.name, v.typ, v.typ)
+	case 7:
+		g.emit("for k := 0; k < 8; k++ {")
+		g.emit("\t%s ^= %s(m[k]) + %s(k)", v.name, v.typ, v.typ)
+		g.emit("}")
+	default:
+		k := 2 + g.r.Intn(4)
+		g.emit("{")
+		g.emit("\tres := make([]%s, %d)", v.typ, k)
+		g.emit("\tdone := make(chan bool)")
+		g.emit("\tfor w := 0; w < %d; w++ {", k)
+		g.emit("\t\tgo func() {")
+		g.emit("\t\t\tres[w] = %s + %s(w)", g.expr(v, 2), v.typ)
+		g.emit("\t\t\tdone <- true")
+		g.emit("\t\t}()")
+		g.emit("\t}")
+		g.emit("\tfor w := 0; w < %d; w++ {", k)
+		g.emit("\t\t<-done")
+		g.emit("\t}")
+		g.emit("\tfor w := range res {")
+		g.emit("\t\t%s += res[w]", v.name)
+		g.emit("\t}")
+		g.emit("}")
+	}
+}
+
 func (g *gen) stmt() {
+	if *flExt && g.r.Intn(4) == 0 {
+		g.extStmt()
+		return
+	}
 	switch k := g.r.Intn(10); {
 	case k < 5 || g.depth >= 3:
 		v := g.vars[g.r.Intn(len(g.vars))]
@@ -213,6 +263,14 @@ func program(seed int64) string {
 		g.emit("_ = %s", t.name)
 		g.vars = append(g.vars, t)
 	}
+	if *flExt {
+		g.emit("m := map[int]int{}")
+		g.emit("_ = m")
+		g.emit(`s := ""`)
+		g.emit("_ = s")
+		g.emit("f := 1.0")
+		g.emit("_ = f")
+	}
 	n := 8 + g.r.Intn(12)
 	for i := 0; i < n; i++ {
 		g.stmt()
@@ -222,6 +280,12 @@ func program(seed int64) string {
 	}
 	for _, v := range g.vars {
 		g.emit("println(%s)", v.name)
+	}
+	if *flExt {
+		g.emit("for k := 0; k < 8; k++ {")
+		g.emit("\tprintln(k, m[k])")
+		g.emit("}")
+		g.emit("println(len(m), s, len(s), f)")
 	}
 	g.ind = 0
 	g.emit("}")

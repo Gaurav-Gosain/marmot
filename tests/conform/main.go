@@ -572,7 +572,11 @@ func snapshot(root, sha string) (string, error) {
 	}
 	olds, _ := filepath.Glob(filepath.Join(base, "tree-*"))
 	for _, o := range olds {
-		os.RemoveAll(o)
+		// Only remove stale snapshots: another run (maybe another worker's) may be using a
+		// recent one.
+		if fi, err := os.Stat(o); err == nil && time.Since(fi.ModTime()) > 2*time.Hour {
+			os.RemoveAll(o)
+		}
 	}
 	snap := filepath.Join(base, fmt.Sprintf("tree-%s-%d", sha, os.Getpid()))
 	for _, d := range []string{"build/bin", "build/lib", "lib"} {
