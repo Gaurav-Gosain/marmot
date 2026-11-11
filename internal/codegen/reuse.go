@@ -91,7 +91,11 @@ func uniqueChain(s ssa.Value) bool {
 		if _, isConst := v.(*ssa.Const); isConst {
 			continue
 		}
-		for _, r := range *v.Referrers() {
+		refs := v.Referrers()
+		if refs == nil {
+			continue
+		}
+		for _, r := range *refs {
 			if chainUse(r, v, chain) {
 				continue
 			}
@@ -206,7 +210,11 @@ func deadAfter(s ssa.Value, call *ssa.Call) bool {
 		reach[b] = true
 		stack = append(stack, b.Succs...)
 	}
-	for _, r := range *s.Referrers() {
+	refs := s.Referrers()
+	if refs == nil {
+		return true // a constant (the nil slice): nothing else holds it
+	}
+	for _, r := range *refs {
 		if r == ssa.Instruction(call) {
 			continue
 		}
