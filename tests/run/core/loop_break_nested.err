@@ -1,0 +1,11 @@
+slice/for 3
+slice/range-string 3
+string/range-int 1370
+int/range-slice 410
+map/for 9
+for/for 65
+range/switch/range 103
+triple 1296
+chan/for 9
+func/func 6
+labeled 3
