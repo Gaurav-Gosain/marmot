@@ -143,6 +143,7 @@ var (
 	timeoutSec = flag.Int("timeout", 120, "kill a program after this many seconds")
 	listOnly   = flag.Bool("list", false, "list programs and toolchains and exit")
 	notes      = flag.String("notes", "", "free text stored in the results file")
+	noSnapshot = flag.Bool("no-snapshot", false, "use the live tree for marmot instead of a snapshot (do not use for long runs)")
 )
 
 func main() {
@@ -178,6 +179,15 @@ func main() {
 		return
 	}
 
+	usesMarmot := false
+	for _, t := range tcl {
+		if strings.HasPrefix(t.Name, "marmot") {
+			usesMarmot = true
+		}
+	}
+	if usesMarmot && !*noSnapshot {
+		makeSnapshot()
+	}
 	meta := collectMeta(tcl)
 	file := File{Meta: meta}
 	dir := *outDir
@@ -462,6 +472,9 @@ func collectMeta(tcl []Toolchain) Meta {
 	m.OS = sh("sw_vers", "-productName") + " " + sh("sw_vers", "-productVersion")
 	m.LoadAvg = sh("sysctl", "-n", "vm.loadavg")
 	m.GitRev = sh("git", "-C", root, "rev-parse", "--short", "HEAD")
+	if snapDir != "" {
+		m.GitRev += " (snapshot " + filepath.Base(snapDir) + ")"
+	}
 	m.Hyperfine = sh("hyperfine", "--version")
 	m.Versions["go"] = sh("go", "version")
 	m.Versions["tinygo"] = sh("tinygo", "version")
@@ -552,4 +565,44 @@ func runGroup(c *exec.Cmd, timeout time.Duration) ([]byte, error) {
 	}
 	syscall.Kill(-c.Process.Pid, syscall.SIGKILL) // reap stragglers
 	return buf.Bytes(), err
+}
+
+var snapDir string
+
+// makeSnapshot copies everything marmot needs (build/bin, build/lib, lib) into
+// .work/bench/snap-<sha> and points MARMOT_ROOT at it, so other workers editing the live tree
+// cannot break a long run. Older snapshots are deleted. A hello world smoke test must pass.
+func makeSnapshot() {
+	sha := sh("git", "-C", root, "rev-parse", "--short", "HEAD")
+	if sh("git", "-C", root, "status", "--porcelain", "--", "lib", "cmd", "internal", "backend", "runtime") != "" {
+		sha += "-dirty"
+	}
+	old, _ := filepath.Glob(filepath.Join(work, "snap-*"))
+	for _, o := range old {
+		os.RemoveAll(o)
+	}
+	snapDir = filepath.Join(work, "snap-"+sha)
+	for _, d := range [][2]string{{"build/bin", "build/bin"}, {"build/lib", "build/lib"}, {"lib", "lib"}} {
+		dst := filepath.Join(snapDir, d[1])
+		check(os.MkdirAll(filepath.Dir(dst), 0o755))
+		if out, err := exec.Command("cp", "-R", filepath.Join(root, d[0]), dst).CombinedOutput(); err != nil {
+			check(fmt.Errorf("snapshot copy %s: %v %s", d[0], err, out))
+		}
+	}
+	os.Setenv("MARMOT_ROOT", snapDir)
+	fmt.Fprintln(os.Stderr, "snapshot", snapDir)
+
+	// Smoke test: build and run hello against the snapshot.
+	out := filepath.Join(work, "smoke-hello")
+	c := exec.Command(marmotBin(root), "build", "-o", out, "./bench/programs/hello")
+	c.Dir, c.Env = root, os.Environ()
+	if o, err := runGroup(c, 5*time.Minute); err != nil {
+		check(fmt.Errorf("snapshot smoke build failed: %v\n%s", err, o))
+	}
+	got, err := runOnce(out)
+	want, _ := os.ReadFile(filepath.Join(root, "bench", "expected", "hello.txt"))
+	if err != nil || got != string(want) {
+		check(fmt.Errorf("snapshot smoke run failed: %v got %q", err, got))
+	}
+	os.Remove(out)
 }

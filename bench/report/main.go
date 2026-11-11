@@ -85,19 +85,47 @@ var (
 func main() {
 	flag.Parse()
 	root = findRoot()
-	path := *in
-	if path == "" {
+	var paths []string
+	if *in != "" {
+		paths = strings.Split(*in, ",")
+	} else {
 		m, _ := filepath.Glob(filepath.Join(root, "bench", "results", "*.json"))
 		sort.Strings(m)
 		if len(m) == 0 {
 			fatal("no results files")
 		}
-		path = m[len(m)-1]
+		paths = m[len(m)-1:]
 	}
-	data, err := os.ReadFile(path)
-	check(err)
+	// Several files are merged. A later file replaces earlier rows for the same program and
+	// toolchain. Metadata comes from the first file; notes list every file.
 	var f File
-	check(json.Unmarshal(data, &f))
+	pos := map[string]int{}
+	for i, p := range paths {
+		data, err := os.ReadFile(p)
+		check(err)
+		var g File
+		check(json.Unmarshal(data, &g))
+		if i == 0 {
+			f.Meta = g.Meta
+		} else {
+			if g.Meta.Versions["marmot"] != "" {
+				f.Meta.Versions["marmot"] = g.Meta.Versions["marmot"]
+			}
+			for k, v := range g.Meta.Flags {
+				f.Meta.Flags[k] = v
+			}
+			f.Meta.GitRev = g.Meta.GitRev
+		}
+		for _, r := range g.Results {
+			k := r.Program + "|" + r.Toolchain
+			if j, ok := pos[k]; ok {
+				f.Results[j] = r
+			} else {
+				pos[k] = len(f.Results)
+				f.Results = append(f.Results, r)
+			}
+		}
+	}
 
 	idx := map[string]Result{}
 	var progs []string
@@ -189,7 +217,7 @@ func main() {
 	w := func(format string, a ...any) { fmt.Fprintf(&md, format, a...) }
 
 	w("# marmot benchmark report\n\n")
-	w("Generated from `%s`. Do not edit by hand: run `make bench` and `go run ./bench/report`.\n\n", rel(path))
+	w("Generated from `%s`. Do not edit by hand: run `make bench` and `go run ./bench/report`.\n\n", relAll(paths))
 	w("## Setup\n\n")
 	w("- Date: %s, label `%s`, git `%s`\n", f.Meta.Date, f.Meta.Label, f.Meta.GitRev)
 	w("- Machine: %s, %d cores, %d GB RAM, %s\n", f.Meta.CPU, f.Meta.NCPU, f.Meta.MemBytes>>30, f.Meta.OS)
@@ -585,4 +613,12 @@ func check(err error) {
 func fatal(s string) {
 	fmt.Fprintln(os.Stderr, "report:", s)
 	os.Exit(1)
+}
+
+func relAll(ps []string) string {
+	var o []string
+	for _, p := range ps {
+		o = append(o, rel(p))
+	}
+	return strings.Join(o, "`, `")
 }
