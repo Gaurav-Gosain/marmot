@@ -1,0 +1,6 @@
+-std=c11
+-I../include
+-I.
+-I../include
+-I.
+-D_DARWIN_C_SOURCE

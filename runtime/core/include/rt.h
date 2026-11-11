@@ -24,7 +24,8 @@ extern "C" {
 extern void marmot_main(void);
 
 void rt_exit(int32_t code) __attribute__((noreturn));
-// Print msg to stderr and abort with exit status 2. For fatal runtime errors.
+// Write "fatal error: " msg "\n" to stderr and exit with status 2, like the gc
+// runtime's throw. No deferred calls run. For fatal runtime errors.
 void rt_fatal(const char *msg, uintptr_t len) __attribute__((noreturn));
 // Program arguments and environment, as C arrays owned by the runtime.
 int32_t rt_argc(void);
@@ -42,7 +43,10 @@ char **rt_envp(void);
 // For RT_ALLOC_PRECISE, ptrmap points to a static bitmap with one bit per
 // pointer-sized word of one element (bit i set means word i holds a
 // pointer), and elemsize is the size of one element in bytes; the object is
-// size/elemsize elements. For other kinds ptrmap is NULL and elemsize is 0.
+// size/elemsize elements. Bit i is (ptrmap[i/8] >> (i%8)) & 1. For other kinds
+// ptrmap is NULL and elemsize is 0. size 0 returns a fixed non-NULL address.
+// Any pointer into an object keeps it alive, but a pointer just past its end
+// does not: never form a past-the-end pointer to a heap object.
 void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintptr_t elemsize);
 
 void rt_gc_collect(void);
@@ -114,12 +118,16 @@ int32_t rt_timer_stop(void *timer);
 // ---- Raw I/O ----
 
 // Thin wrappers that return -errno on failure. A blocking call must not
-// stall other goroutines (hand off the thread or use the poller).
+// stall other goroutines (hand off the thread or use the poller). EINTR is
+// retried internally. rt_open takes a NUL-terminated path and the host's
+// native O_* flag values; O_CLOEXEC is always added.
 intptr_t rt_write(int32_t fd, const void *buf, uintptr_t n);
 intptr_t rt_read(int32_t fd, void *buf, uintptr_t n);
 intptr_t rt_open(const char *path, int32_t flags, uint32_t mode);
 intptr_t rt_close(int32_t fd);
-// Generic escape hatch for the syscall package.
+// Generic escape hatch for the syscall package. num is the host's system call
+// number (on darwin this goes through libc syscall(); prefer the dedicated
+// wrappers). Returns -errno on failure.
 intptr_t rt_syscall(uintptr_t num, uintptr_t a1, uintptr_t a2, uintptr_t a3,
                     uintptr_t a4, uintptr_t a5, uintptr_t a6);
 // Mark the current goroutine as entering/leaving a blocking system call.
