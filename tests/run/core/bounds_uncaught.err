@@ -1,0 +1,2 @@
+before
+panic: runtime error: index out of range [10] with length 3

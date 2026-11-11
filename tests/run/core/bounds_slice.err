@@ -1,0 +1,11 @@
+runtime error: slice bounds out of range [:6] with capacity 5
+runtime error: slice bounds out of range [2:1]
+runtime error: slice bounds out of range [4:3]
+runtime error: slice bounds out of range [::7] with capacity 5
+runtime error: slice bounds out of range [6:3]
+runtime error: slice bounds out of range [:6] with length 3
+runtime error: index out of range [6] with length 3
+runtime error: index out of range [-1]
+runtime error: index out of range [5] with length 4
+runtime error: makeslice: len out of range
+runtime error: makeslice: cap out of range

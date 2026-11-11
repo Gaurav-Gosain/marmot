@@ -1,0 +1,6 @@
+NaN +Inf -Inf
+false true false false false false
+true true true NaN
++Inf NaN +Inf
+-0 true -Inf
+NaN +Inf
