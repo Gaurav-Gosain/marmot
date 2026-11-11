@@ -18,16 +18,30 @@ AR      := $(LLVM)/bin/llvm-ar
 LINK    := $(LLVM)/bin/llvm-link
 
 ROOT    := $(abspath ../..)
-OUT     := $(ROOT)/build/lib
-OBJ     := $(ROOT)/build/rtcore
-TARGET  ?=
+
+# Cross builds: make GOOS=linux GOARCH=arm64 [SYSROOT_DIR=...] puts the
+# library in build/lib/linux-arm64. Without GOOS/GOARCH the host build goes
+# to build/lib (what the driver uses by default).
+GOOS    ?=
+GOARCH  ?=
+ifneq ($(GOOS)$(GOARCH),)
+SUFFIX  := /$(GOOS)-$(GOARCH)
+TRIPLE_linux_amd64  := x86_64-linux-gnu
+TRIPLE_linux_arm64  := aarch64-linux-gnu
+TRIPLE_darwin_arm64 := arm64-apple-macosx11.0
+TRIPLE_darwin_amd64 := x86_64-apple-macosx11.0
+TRIPLE  := $(TRIPLE_$(GOOS)_$(GOARCH))
+TARGET_FLAGS := --target=$(TRIPLE) $(if $(SYSROOT_DIR),--sysroot=$(SYSROOT_DIR),)
+endif
+OUT     := $(ROOT)/build/lib$(SUFFIX)
+OBJ     := $(ROOT)/build/rtcore$(SUFFIX)
 
 ifeq ($(UNAME_S),Darwin)
 SDK     := $(shell xcrun --show-sdk-path 2>/dev/null)
 SYSROOT := $(if $(SDK),-isysroot $(SDK),)
 endif
 
-CFLAGS_COMMON := -std=c11 -Wall -Wextra -Wno-unused-parameter -Iinclude -Isrc $(SYSROOT) \
+CFLAGS_COMMON := $(TARGET_FLAGS) -std=c11 -Wall -Wextra -Wno-unused-parameter -Iinclude -Isrc $(SYSROOT) \
 	-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables \
 	-ffunction-sections -fdata-sections -fno-stack-protector -fno-common \
 	-fvisibility=hidden -D_DARWIN_C_SOURCE -D_GNU_SOURCE
@@ -53,7 +67,7 @@ $(OBJ)/%.o: src/%.c $(HDRS) | $(OBJ)
 	$(CC) $(ALL_CFLAGS) $(if $(filter $@,$(COLD_OBJS)),-Oz) -c $< -o $@
 
 $(OBJ)/%.o: src/%.S | $(OBJ)
-	$(CC) $(SYSROOT) -c $< -o $@
+	$(CC) $(TARGET_FLAGS) $(SYSROOT) -c $< -o $@
 
 $(OBJ)/%.bc: src/%.c $(HDRS) | $(OBJ)
 	$(CC) $(ALL_CFLAGS) $(if $(filter $@,$(COLD_BCS)),-Oz) -emit-llvm -c $< -o $@
