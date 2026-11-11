@@ -122,6 +122,30 @@ void marmot_main(void) {
       CHECK(rt_utf8_valid(b, t) == n_valid(b, t));
     }
   }
+  // Digits and hex.
+  for (int iter = 0; iter < 20000; iter++) {
+    uint8_t d[40];
+    intptr_t n = (intptr_t)(rnd() % 30);
+    for (intptr_t i = 0; i < n; i++) d[i] = (uint8_t)('0' + rnd() % 10);
+    intptr_t stop = n ? (intptr_t)(rnd() % (uint64_t)(n + 1)) : 0;
+    if (stop < n && iter % 3) d[stop] = (uint8_t)"x.-/:e "[rnd() % 7];
+    uint64_t want = 0;
+    intptr_t k = 0;
+    while (k < n && k < 19 && d[k] >= '0' && d[k] <= '9') want = want * 10 + (uint64_t)(d[k++] - '0');
+    uint64_t got = 12345;
+    CHECK(rt_parse_digits(d, n, &got) == k && got == want);
+    uint8_t raw[40], hx[80], back[40];
+    for (intptr_t i = 0; i < n; i++) raw[i] = (uint8_t)rnd();
+    rt_hex_encode(hx, raw, n);
+    for (intptr_t i = 0; i < n; i++) CHECK(hx[2 * i] == "0123456789abcdef"[raw[i] >> 4] && hx[2 * i + 1] == "0123456789abcdef"[raw[i] & 15]);
+    if (iter % 2) for (intptr_t i = 0; i < 2 * n; i++) if (hx[i] >= 'a' && rnd() % 2) hx[i] -= 32;  // uppercase ok
+    CHECK(rt_hex_decode(back, hx, n) == n && memcmp(back, raw, (size_t)n) == 0);
+    if (n) {
+      intptr_t bad = (intptr_t)(rnd() % (uint64_t)(2 * n));
+      hx[bad] = 'g';
+      CHECK(rt_hex_decode(back, hx, n) == -(bad + 1));
+    }
+  }
   // Valid multibyte text.
   const char *txt = "h\xc3\xa9llo w\xc3\xb6rld \xe4\xb8\x96\xe7\x95\x8c \xf0\x9f\x98\x80 end";
   intptr_t tn = (intptr_t)strlen(txt);

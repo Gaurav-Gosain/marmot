@@ -466,3 +466,109 @@ RT_API uint64_t rt_hash_bytes(const void *key, intptr_t len, uint64_t seed) {
 RT_API uint64_t rt_hash_u64(uint64_t x, uint64_t seed) {
   return wymix(x ^ WYP0 ^ seed, (x >> 32 | x << 32) ^ WYP1);
 }
+
+// ---- decimal digits and hex ----
+
+// Value of 8 ASCII digits at p (SWAR, Lemire).
+INLINE uint64_t digits8(uint64_t v) {
+  v -= 0x3030303030303030ull;
+  v = (v * 10) + (v >> 8);
+  v = (((v & 0x000000FF000000FFull) * (100 + (1000000ull << 32))) +
+       (((v >> 16) & 0x000000FF000000FFull) * (1 + (10000ull << 32)))) >> 32;
+  return v;
+}
+
+// Mask with 0x80 in every byte of v that is not an ASCII digit.
+INLINE uint64_t nondigit_mask(uint64_t v) {
+  return ((v + 0x4646464646464646ull) | (v - 0x3030303030303030ull)) & 0x8080808080808080ull;
+}
+
+// Parse the run of ASCII decimal digits at p[0..n), at most 19 digits (so
+// no overflow). Returns the number of digits consumed (0 if p[0] is not a
+// digit) and stores their value in *out.
+RT_API intptr_t rt_parse_digits(const void *s, intptr_t n, uint64_t *out) {
+  bp p = s;
+  if (n > 19) n = 19;
+  uint64_t v = 0;
+  intptr_t i = 0;
+  while (i + 8 <= n) {
+    uint64_t w = load64(p + i);
+    uint64_t m = nondigit_mask(w);
+    if (m) {
+      intptr_t k = (intptr_t)(__builtin_ctzll(m) >> 3);  // digits before the first non-digit
+      for (intptr_t j = 0; j < k; j++) v = v * 10 + (uint64_t)(p[i + j] - '0');
+      *out = v;
+      return i + k;
+    }
+    v = v * 100000000ull + digits8(w);
+    i += 8;
+  }
+  for (; i < n; i++) {
+    unsigned d = (unsigned)p[i] - '0';
+    if (d > 9) break;
+    v = v * 10 + d;
+  }
+  *out = v;
+  return i;
+}
+
+// Lowercase hex of src[0..n) into dst[0..2n).
+RT_API void rt_hex_encode(uint8_t *dst, const void *src, intptr_t n) {
+  bp s = src;
+  intptr_t i = 0;
+#if RT_NEON
+  const uint8x16_t tab = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+  for (; i + 16 <= n; i += 16) {
+    uint8x16_t v = vld1q_u8(s + i);
+    uint8x16_t hi = vqtbl1q_u8(tab, vshrq_n_u8(v, 4)), lo = vqtbl1q_u8(tab, vandq_u8(v, vdupq_n_u8(15)));
+    vst1q_u8(dst + 2 * i, vzip1q_u8(hi, lo));
+    vst1q_u8(dst + 2 * i + 16, vzip2q_u8(hi, lo));
+  }
+#endif
+  // No string literal: it would be a static global and block inlining
+  // from rtcore.bc.
+  for (; i < n; i++) {
+    uint8_t h = s[i] >> 4, l = s[i] & 15;
+    dst[2 * i] = (uint8_t)(h < 10 ? '0' + h : 'a' - 10 + h);
+    dst[2 * i + 1] = (uint8_t)(l < 10 ? '0' + l : 'a' - 10 + l);
+  }
+}
+
+INLINE int hexval(uint8_t c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  c |= 0x20;
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  return -1;
+}
+
+// Decode hex src[0..2n) into dst[0..n). Returns n, or -(i+1) where i is the
+// index in src of the first invalid character (encoding/hex reports it).
+RT_API intptr_t rt_hex_decode(uint8_t *dst, const void *src, intptr_t n) {
+  bp s = src;
+  intptr_t i = 0;
+#if RT_NEON
+  for (; i + 16 <= n; i += 16) {
+    uint8x16x2_t in = vld2q_u8(s + 2 * i);  // even (high) and odd (low) characters
+    uint8x16_t vals[2];
+    bool bad = false;
+    for (int k = 0; k < 2; k++) {
+      uint8x16_t c = in.val[k];
+      uint8x16_t d = vsubq_u8(c, vdupq_n_u8('0'));
+      uint8x16_t isd = vcltq_u8(d, vdupq_n_u8(10));
+      uint8x16_t l = vsubq_u8(vorrq_u8(c, vdupq_n_u8(0x20)), vdupq_n_u8('a'));
+      uint8x16_t isl = vcltq_u8(l, vdupq_n_u8(6));
+      if (vminvq_u8(vorrq_u8(isd, isl)) == 0) bad = true;
+      vals[k] = vbslq_u8(isd, d, vaddq_u8(l, vdupq_n_u8(10)));
+    }
+    if (bad) break;  // the scalar loop finds the exact position
+    vst1q_u8(dst + i, vorrq_u8(vshlq_n_u8(vals[0], 4), vals[1]));
+  }
+#endif
+  for (; i < n; i++) {
+    int a = hexval(s[2 * i]), b = hexval(s[2 * i + 1]);
+    if (a < 0) return -(2 * i + 1);
+    if (b < 0) return -(2 * i + 2);
+    dst[i] = (uint8_t)(a << 4 | b);
+  }
+  return n;
+}

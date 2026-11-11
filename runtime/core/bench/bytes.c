@@ -32,6 +32,13 @@ void marmot_main(void) {
   BENCH("hash 16B", 16, 50000000, rt_hash_bytes(buf + (sink & 7), 16, 1));
   BENCH("Equal 1MiB", n, 2000, rt_mem_equal(buf, buf + 0, n));
   BENCH("Index 64B in short string", 64, 20000000, rt_index(buf + (sink & 1), 64, "uvw", 3));
+  const char *num = "1234567890123456789";
+  uint64_t pv;
+  BENCH("parse 19 digits", 19, 50000000, (rt_parse_digits(num + (sink & 0), 19, &pv), pv));
+  BENCH("parse 6 digits", 6, 50000000, (rt_parse_digits(num + 13 + (sink & 0), 6, &pv), pv));
+  uint8_t *hx = rt_alloc((uintptr_t)n * 2, RT_ALLOC_NOSCAN, 0, 0);
+  BENCH("hex encode 1MiB", n, 500, (rt_hex_encode(hx, buf, n), hx[0]));
+  BENCH("hex decode 1MiB", n, 500, rt_hex_decode((uint8_t *)ub, hx, n));
   uint32_t h256[8] = {0};
   uint64_t h512[8] = {0};
   BENCH("sha256 blocks 1MiB", n, 200, (rt_sha256_block(h256, (const uint8_t *)buf, n), h256[0]));

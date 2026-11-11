@@ -3,6 +3,8 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
+	"strconv"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
@@ -57,6 +59,12 @@ func main() {
 	bench("hash 16B", 16, 50000000, func() int { return int(maphash.Bytes(seed, buf[sink&7:sink&7+16])) })
 	bench("Equal 1MiB", n, 2000, func() int { return b2i(bytes.Equal(buf, cpy)) })
 	bench("Index 64B in short string", 64, 20000000, func() int { return bytes.Index(buf[sink&1:sink&1+64], []byte("uvw")) })
+	nums := []string{"1234567890123456789", "456789"}
+	bench("parse 19 digits", 19, 50000000, func() int { v, _ := strconv.ParseUint(nums[sink&0], 10, 64); return int(v) })
+	bench("parse 6 digits", 6, 50000000, func() int { v, _ := strconv.ParseUint(nums[1+sink&0], 10, 64); return int(v) })
+	hx := make([]byte, 2*n)
+	bench("hex encode 1MiB", n, 500, func() int { hex.Encode(hx, buf); return int(hx[0]) })
+	bench("hex decode 1MiB", n, 500, func() int { k, _ := hex.Decode(ub, hx); return k })
 	h256 := sha256.New()
 	bench("sha256 blocks 1MiB", n, 200, func() int { h256.Write(buf); return 0 })
 	h512 := sha512.New()

@@ -237,6 +237,16 @@ intptr_t rt_index(const void *p, intptr_t n, const void *sep, intptr_t m);
 intptr_t rt_ascii_prefix(const void *p, intptr_t n);  // length of the leading ASCII bytes
 int32_t rt_utf8_valid(const void *p, intptr_t n);     // utf8.Valid
 intptr_t rt_utf8_count(const void *p, intptr_t n);    // utf8.RuneCount
+// Parse the leading run of ASCII decimal digits of p[0:n], at most 19 (no
+// overflow); returns how many digits were consumed (0: p[0] is not a digit)
+// and their value in *out. A building block for strconv and JSON number
+// parsing; signs, bases and overflow are the caller's.
+intptr_t rt_parse_digits(const void *p, intptr_t n, uint64_t *out);
+// Lowercase hex of src[0:n] into dst[0:2n] [hex.Encode].
+void rt_hex_encode(uint8_t *dst, const void *src, intptr_t n);
+// Decode src[0:2n] into dst[0:n] [hex.Decode]: returns n, or -(i+1) for the
+// first invalid character at src index i.
+intptr_t rt_hex_decode(uint8_t *dst, const void *src, intptr_t n);
 // wyhash (final v4): fast, good distribution, not a cryptographic hash.
 uint64_t rt_hash_bytes(const void *p, intptr_t n, uint64_t seed);
 uint64_t rt_hash_u64(uint64_t x, uint64_t seed);
