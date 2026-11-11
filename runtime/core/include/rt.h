@@ -107,6 +107,15 @@ intptr_t rt_numgoroutine(void);
 int32_t rt_gomaxprocs(int32_t n);
 int32_t rt_numcpu(void);
 
+// Fork-join loop: run body(ctx, lo, hi) over disjoint ranges covering
+// [0, n), on up to GOMAXPROCS goroutines including the caller, and return
+// when all are done. grain is the chunk size in iterations (<= 0: automatic,
+// about 4 chunks per processor). Chunks run in no particular order and
+// concurrently: body must only touch state that is independent per index.
+// body must not panic. Nested calls are fine.
+void rt_parallel_for(int64_t n, int64_t grain, void (*body)(void *ctx, int64_t lo, int64_t hi),
+                     void *ctx);
+
 // ---- Locks (for the Go runtime's own data structures) ----
 
 typedef struct rt_mutex { uint32_t state; } rt_mutex; // zero value is unlocked
