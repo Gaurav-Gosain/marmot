@@ -627,9 +627,13 @@ func snapshot(root, sha string) (string, error) {
 	}
 	olds, _ := filepath.Glob(filepath.Join(base, "tree-*"))
 	for _, o := range olds {
-		// Only remove stale snapshots: another run (maybe another worker's) may be using a
-		// recent one.
-		if fi, err := os.Stat(o); err == nil && time.Since(fi.ModTime()) > 2*time.Hour {
+		// Remove only snapshots whose owning process (the pid in the name) is gone.
+		name := filepath.Base(o)
+		pid := 0
+		if i := strings.LastIndexByte(name, '-'); i >= 0 {
+			fmt.Sscan(name[i+1:], &pid)
+		}
+		if pid <= 0 || syscall.Kill(pid, 0) != nil {
 			os.RemoveAll(o)
 		}
 	}
