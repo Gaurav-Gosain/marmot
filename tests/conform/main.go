@@ -62,7 +62,7 @@ var (
 	flNoWrite = flag.Bool("nowrite", false, "do not write results.json and RESULTS.md")
 	flMatrix  = flag.Bool("matrix", false, "run every program at -O0, -O2 and -Oz (plus any -bflags variations); results are named NAME@CONFIG")
 	flBFlags  = flag.String("bflags", "", "with -matrix: extra configs as label=FLAGS pairs separated by ';', run at -O2 with MARMOT_BACKEND_FLAGS=FLAGS")
-	flModes   = flag.String("modes", "", "comma list of build modes to run every program in: dev, release, O0, O1, O2, O3, Os, Oz; results are named NAME@MODE")
+	flModes   = flag.String("modes", "", "comma list of build modes to run every program in: dev, release, gcstress, poison, stress, O0, O1, O2, O3, Os, Oz; results are named NAME@MODE")
 	flLive    = flag.Bool("live", false, "run against the live tree instead of a snapshot (other workers may be mid-edit)")
 )
 
@@ -349,6 +349,14 @@ func buildConfigs() []config {
 				cs = append(cs, config{label: "dev"})
 			case m == "release":
 				cs = append(cs, config{label: "release", release: true})
+			case m == "gcstress":
+				// collect at every allocation opportunity: finds objects freed while still reachable
+				cs = append(cs, config{label: "gcstress", env: []string{"MARMOT_GCSTRESS=1"}})
+			case m == "poison":
+				// freed memory is filled with a poison pattern, so a use after free shows at once
+				cs = append(cs, config{label: "poison", env: []string{"MARMOT_POISON=1"}})
+			case m == "stress":
+				cs = append(cs, config{label: "stress", env: []string{"MARMOT_GCSTRESS=1", "MARMOT_POISON=1"}})
 			case strings.HasPrefix(m, "O"):
 				cs = append(cs, config{label: m, o: strings.ToLower(m[1:])})
 			}
@@ -421,7 +429,7 @@ func runOne(root, testsDir, work, marmot, name string, cfg config) result {
 		r.Detail = firstLines(bo.stdout+bo.stderr, 12)
 		return r
 	}
-	ro, err := execute(*flTimeout, tdir, nil, exe)
+	ro, err := execute(*flTimeout, tdir, cfg.env, exe)
 	if err != nil {
 		r.Reason, r.Detail = "crash", err.Error()
 		return r
