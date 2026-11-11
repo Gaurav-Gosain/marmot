@@ -20,7 +20,7 @@ func main() {
 	for e := l.Back(); e != nil; e = e.Prev() {
 		print(e.Value.(int), " ")
 	}
-	println(l.Len(), l.Front().Value)
+	println(l.Len(), l.Front().Value.(int))
 	l.Init()
 	println(l.Len(), l.Front() == nil)
 	r := ring.New(4)
@@ -30,5 +30,5 @@ func main() {
 	}
 	sum := 0
 	r.Do(func(v any) { sum += v.(int) })
-	println(sum, r.Move(2).Value)
+	println(sum, r.Move(2).Value.(int))
 }
