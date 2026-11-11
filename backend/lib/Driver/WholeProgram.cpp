@@ -303,6 +303,13 @@ std::string fingerprint(const CompileOptions &opts) {
      << opts.loops.versioning << opts.loops.typeAlias << "|";
   if (opts.rtBitcode)
     os << hashHex(opts.rtBitcode->bitcode->getBuffer());
+  os << "|pgo-gen=" << opts.pgoGen << "|pgo=";
+  if (!opts.pgoUse.empty()) {
+    if (auto buf = MemoryBuffer::getFile(opts.pgoUse))
+      os << hashHex((*buf)->getBuffer());
+    else
+      os << "missing:" << opts.pgoUse;
+  }
   return fp;
 }
 

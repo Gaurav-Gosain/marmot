@@ -26,6 +26,7 @@
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/StandardInstrumentations.h"
+#include "llvm/Support/PGOOptions.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/ToolOutputFile.h"
@@ -102,6 +103,8 @@ makeTargetMachine(const CompileOptions &opts, llvm::Triple &triple,
   llvm::TargetOptions to;
   to.FunctionSections = true;
   to.DataSections = true;
+  // With a profile, split cold blocks of hot functions into a cold section.
+  to.EnableMachineFunctionSplitter = !opts.pgoUse.empty();
   return std::unique_ptr<llvm::TargetMachine>(target->createTargetMachine(
       triple, cpu, features, to, llvm::Reloc::PIC_, std::nullopt,
       codegenLevel(opts.optLevel)));
@@ -189,7 +192,7 @@ void keepRecoverFramesUnmerged(llvm::Module &m) {
 }
 
 void runLLVMPipeline(llvm::Module &m, llvm::TargetMachine &tm, char level,
-                     const loops::Options &lopts) {
+                     const loops::Options &lopts, const CompileOptions &opts) {
   llvm::LoopAnalysisManager lam;
   llvm::FunctionAnalysisManager fam;
   llvm::CGSCCAnalysisManager cgam;
@@ -204,7 +207,16 @@ void runLLVMPipeline(llvm::Module &m, llvm::TargetMachine &tm, char level,
   llvm::PassInstrumentationCallbacks pic;
   llvm::StandardInstrumentations si(m.getContext(), /*DebugLogging=*/false);
   si.registerCallbacks(pic, &mam);
-  llvm::PassBuilder pb(&tm, pto, std::nullopt, &pic);
+  // Profile guided optimization: instrument (-pgo-gen) or use (-pgo).
+  std::optional<llvm::PGOOptions> pgo;
+  if (!opts.pgoGen.empty() && level != '0')
+    pgo = llvm::PGOOptions(opts.pgoGen, "", "", "", llvm::PGOOptions::IRInstr,
+                           llvm::PGOOptions::NoCSAction, llvm::PGOOptions::ColdFuncOpt::Default,
+                           /*DebugInfoForProfiling=*/false, /*PseudoProbe=*/false,
+                           /*AtomicCounterUpdate=*/true); // goroutines run on many threads
+  else if (!opts.pgoUse.empty() && level != '0')
+    pgo = llvm::PGOOptions(opts.pgoUse, "", "", "", llvm::PGOOptions::IRUse);
+  llvm::PassBuilder pb(&tm, pto, pgo, &pic);
   pb.registerModuleAnalyses(mam);
   pb.registerCGSCCAnalyses(cgam);
   pb.registerFunctionAnalyses(fam);
@@ -394,7 +406,7 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
 
   if (opts.verifyEach && llvm::verifyModule(lmod, &errs))
     return fail("LLVM IR verification failed");
-  runLLVMPipeline(lmod, tm, opts.optLevel, opts.loops);
+  runLLVMPipeline(lmod, tm, opts.optLevel, opts.loops, opts);
   times.opt += timer.lap();
 
   std::error_code ec;

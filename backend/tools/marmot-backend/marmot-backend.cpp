@@ -101,6 +101,15 @@ static cl::opt<bool> noBCV("no-bcv", cl::desc("Loop optimizer: no bounds check v
 static cl::opt<bool> typeAlias("type-alias",
                                cl::desc("Loop optimizer: alias metadata from Go type classes"),
                                cl::cat(cat));
+static cl::opt<std::string> pgoUse("pgo",
+                                   cl::desc("Optimize with this indexed profile "
+                                            "(llvm-profdata merge -o FILE *.profraw)"),
+                                   cl::value_desc("file"), cl::cat(cat));
+static cl::opt<std::string> pgoGen(
+    "pgo-gen", cl::ValueOptional,
+    cl::desc("Instrument for profiling; the program writes PATTERN at exit "
+             "(default default_%m.profraw)"),
+    cl::value_desc("pattern"), cl::cat(cat));
 static cl::opt<bool> verifyEach("verify-each",
                                 cl::desc("Verify IR after every pass"), cl::cat(cat));
 
@@ -160,6 +169,13 @@ int main(int argc, char **argv) {
   opts.initOptNone = initOptNone;
   opts.wpoImport = !noImport;
   opts.wpoClosedWorld = !noClosedWorld;
+  opts.pgoUse = pgoUse;
+  if (pgoGen.getNumOccurrences())
+    opts.pgoGen = pgoGen.empty() ? "default_%m.profraw" : std::string(pgoGen);
+  if (!opts.pgoUse.empty() && !opts.pgoGen.empty()) {
+    errs() << "marmot-backend: -pgo and -pgo-gen are exclusive\n";
+    return 1;
+  }
   opts.loops.enable = !noLoops;
   opts.loops.parallel = par && !noPar;
   opts.loops.fastFP = fastFP;

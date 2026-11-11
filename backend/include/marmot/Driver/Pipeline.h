@@ -34,6 +34,8 @@ struct CompileOptions {
   bool wpoImport = true;       // -wpo: import small functions across modules
   bool wpoClosedWorld = true;  // -wpo: devirtualized indirect calls lose their fallback
   loops::Options loops;        // loop optimizer (owner: loops), -O2 and -O3
+  std::string pgoUse;          // -pgo=FILE: indexed profile (llvm-profdata merge output)
+  std::string pgoGen;          // -pgo-gen[=pattern]: instrument; raw profile file pattern
   bool devirt = true;          // go-devirt at -O1 and up
   bool strings = true;         // go-strings at -O1 and up
   bool escape = true;          // go-escape at -O1 and up
