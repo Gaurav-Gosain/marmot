@@ -1,0 +1,11 @@
+offset ok 549755289590
+offset fails panic: runtime error: index out of range [1048576] with length 1048576
+neg ok 549755289597
+neg fails panic: runtime error: index out of range [-1]
+stride ok 536346624
+stride fails panic: runtime error: index out of range [1048576] with length 1048576
+huge fails panic: runtime error: index out of range [4611686018427387904] with length 1048576
+le fails panic: runtime error: index out of range [1048576] with length 1048576
+le ok 549755289600
+rowlen ok 499500
+rowlen fails panic: runtime error: index out of range [7] with length 7
