@@ -35,6 +35,8 @@ SUBST = [
     ("%llvm-readobj", os.path.join(BIN, "llvm-readobj")),
     ("%llvm-profdata", os.path.join(BIN, "llvm-profdata")),
     ("%llvm-dwarfdump", os.path.join(BIN, "llvm-dwarfdump")),
+    ("%dsymutil", os.path.join(BIN, "dsymutil")),
+    ("%pcln", os.path.join(ROOT, "build", "bin", "marmot-pcln")),
 ]
 
 
@@ -69,6 +71,7 @@ def run_test(path):
     for cmd in cmds:
         for k, v in SUBST:
             cmd = cmd.replace(k, v)
+        cmd = cmd.replace("%{basename_t}", os.path.basename(tmp))
         cmd = cmd.replace("%s", path).replace("%S", os.path.dirname(path)).replace("%t", tmp)
         # Own process group, killed as a whole on timeout.
         p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
