@@ -190,6 +190,25 @@ void rt_exitsyscall(void);
 int32_t rt_setjmp(void *buf) __attribute__((returns_twice));
 void rt_longjmp(void *buf, int32_t val) __attribute__((noreturn));
 
+// ---- Bytes and strings (SIMD: NEON on arm64, SSE2 on x86-64) ----
+//
+// Same results as the Go functions in brackets. Lengths are byte counts;
+// nothing past p+n is read. All are inlinable from rtcore.bc.
+
+intptr_t rt_index_byte(const void *p, intptr_t n, uint8_t c);       // bytealg.IndexByte, -1 if absent
+intptr_t rt_last_index_byte(const void *p, intptr_t n, uint8_t c);  // bytealg.LastIndexByte
+intptr_t rt_count_byte(const void *p, intptr_t n, uint8_t c);       // bytealg.Count
+int32_t rt_mem_equal(const void *a, const void *b, intptr_t n);     // 1 if equal
+int32_t rt_compare(const void *a, intptr_t an, const void *b, intptr_t bn);  // bytealg.Compare: -1, 0, 1
+// First index of sep[0:m] in p[0:n], -1 if absent, 0 if m == 0 [bytealg.Index, strings.Index].
+intptr_t rt_index(const void *p, intptr_t n, const void *sep, intptr_t m);
+intptr_t rt_ascii_prefix(const void *p, intptr_t n);  // length of the leading ASCII bytes
+int32_t rt_utf8_valid(const void *p, intptr_t n);     // utf8.Valid
+intptr_t rt_utf8_count(const void *p, intptr_t n);    // utf8.RuneCount
+// wyhash (final v4): fast, good distribution, not a cryptographic hash.
+uint64_t rt_hash_bytes(const void *p, intptr_t n, uint64_t seed);
+uint64_t rt_hash_u64(uint64_t x, uint64_t seed);
+
 // ---- Signals (os/signal) ----
 
 // Queue sig for rt_signal_recv instead of its default action. Returns 0 or
