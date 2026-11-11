@@ -24,6 +24,7 @@ func (f *funcGen) call(c *ssa.CallCommon, instr ssa.Instruction) string {
 			for i, a := range c.Args {
 				args[i] = f.value(a)
 			}
+			f.curArgs = c.Args
 			if r, ok := f.intrinsic(fn, args); ok {
 				return r
 			}

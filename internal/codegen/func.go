@@ -31,6 +31,7 @@ type funcGen struct {
 
 	frame         string             // _deferframe address, "" if none
 	noinlineCalls bool               // mark calls no_inline (defer thunks)
+	curArgs       []ssa.Value        // SSA arguments of a call being expanded as an intrinsic
 	volatile      map[ssa.Value]bool // stack slots that live across setjmp
 }
 

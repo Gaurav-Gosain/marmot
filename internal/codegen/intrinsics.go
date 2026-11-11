@@ -1,6 +1,8 @@
 package codegen
 
 import (
+	"strings"
+
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -42,6 +44,9 @@ func (f *funcGen) intrinsic(fn *ssa.Function, args []string) (res string, ok boo
 		fp := f.op("llvm.call_intrinsic \"llvm.frameaddress.p0\"(%s) : (i32) -> !llvm.ptr", f.constInt(0, "i32"))
 		return f.op("llvm.ptrtoint %s : !llvm.ptr to i64", fp), true
 	}
+	if fn.Pkg.Pkg.Path() == "internal/abi" && (fn.Name() == "FuncPCABI0" || fn.Name() == "FuncPCABIInternal") {
+		return f.funcPC(), true
+	}
 	if !atomicPkgs[fn.Pkg.Pkg.Path()] {
 		return "", false
 	}
@@ -75,4 +80,32 @@ func (f *funcGen) intrinsic(fn *ssa.Function, args []string) (res string, ok boo
 		return f.op("llvm.extractvalue %s[1] : !llvm.struct<(%s, i1)>", pair, map[string]string{"i8": "i8", "i32": "i32", "i64": "i64", "ptr": "ptr"}[op.typ]), true
 	}
 	return "", false
+}
+
+// funcPC implements internal/abi.FuncPCABI0 and FuncPCABIInternal: the code
+// address of a function value. A body-less libc_X_trampoline resolves to
+// the C symbol named by its //go:cgo_import_dynamic directive.
+func (f *funcGen) funcPC() string {
+	arg := f.curArgs[0]
+	if mi, ok := arg.(*ssa.MakeInterface); ok {
+		if fn, ok := mi.X.(*ssa.Function); ok && len(fn.FreeVars) == 0 {
+			sym := ""
+			if len(fn.Blocks) == 0 && fn.Pkg != nil && strings.HasSuffix(fn.Name(), "_trampoline") {
+				local := strings.TrimSuffix(fn.Name(), "_trampoline")
+				if c, ok := f.m.p.dynamic[fn.Pkg.Pkg.Path()+"."+local]; ok {
+					sym = c
+					f.m.declareRaw(sym, nil, "", "")
+				}
+			}
+			if sym == "" {
+				sym = f.m.funcRef(fn)
+			}
+			return f.op("llvm.ptrtoint %s : !llvm.ptr to i64", f.addressOf(sym))
+		}
+	}
+	// Dynamic func value: load the code pointer from the closure.
+	x := f.value(arg)
+	fv := f.extractRaw(x, tIface, 1)
+	code := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", fv)
+	return f.op("llvm.ptrtoint %s : !llvm.ptr to i64", code)
 }

@@ -55,6 +55,7 @@ type Program struct {
 	owner    map[*ssa.Function]*ssa.Package // functions emitted as strong definitions
 	byPkg    map[*ssa.Package][]*ssa.Function
 	linkname map[*ssa.Function]string // symbol overrides from //go:linkname
+	dynamic  map[string]string        // pkgpath.local -> C symbol from //go:cgo_import_dynamic
 	pragmas  map[*ssa.Function]pragma
 
 	mu   sync.Mutex
@@ -80,6 +81,7 @@ func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package
 		owner:    map[*ssa.Function]*ssa.Package{},
 		byPkg:    map[*ssa.Package][]*ssa.Function{},
 		linkname: map[*ssa.Function]string{},
+		dynamic:  map[string]string{},
 		pragmas:  map[*ssa.Function]pragma{},
 		syms:     map[*ssa.Function]string{},
 	}
@@ -147,6 +149,13 @@ func (p *Program) collect(pkg *ssa.Package) {
 	for _, f := range p.files[pkg.Pkg] {
 		for _, cg := range f.Comments {
 			for _, c := range cg.List {
+				if strings.HasPrefix(c.Text, "//go:cgo_import_dynamic ") {
+					fs := strings.Fields(c.Text)
+					if len(fs) >= 3 {
+						p.dynamic[pkg.Pkg.Path()+"."+fs[1]] = fs[2]
+					}
+					continue
+				}
 				if !strings.HasPrefix(c.Text, "//go:linkname ") {
 					continue
 				}

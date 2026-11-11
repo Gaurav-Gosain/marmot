@@ -81,6 +81,27 @@ func mergeDir(dst, stock, overlay string) error {
 		}
 	}
 	ovEnts = kept
+	// A MERGE file keeps the stock files: overlay files with the same name
+	// replace them, and "-name" lines hide stock files.
+	merge := false
+	hidden := map[string]bool{}
+	if data, err := os.ReadFile(filepath.Join(overlay, "MERGE")); overlay != "" && err == nil {
+		merge = true
+		hidden["MERGE"] = true
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "-") {
+				hidden[strings.TrimSpace(line[1:])] = true
+			}
+		}
+		kept = ovEnts[:0:0]
+		for _, e := range ovEnts {
+			if e.Name() != "MERGE" {
+				kept = append(kept, e)
+			}
+		}
+		ovEnts = kept
+	}
 	for _, e := range ovEnts {
 		if e.IsDir() {
 			ovDirs[e.Name()] = true
@@ -115,7 +136,10 @@ func mergeDir(dst, stock, overlay string) error {
 			}
 		}
 		// A package replaced by the overlay loses all of its stock files.
-		if ovHasGo && !isDir {
+		if ovHasGo && !isDir && !merge {
+			continue
+		}
+		if hidden[name] {
 			continue
 		}
 		if err := os.Symlink(filepath.Join(stock, name), filepath.Join(dst, name)); err != nil {
@@ -140,6 +164,10 @@ func overlayKey(realRoot, libSrc string) (string, error) {
 		rel, _ := filepath.Rel(libSrc, p)
 		if d.IsDir() {
 			rel += "/"
+		}
+		if d.Name() == "MERGE" {
+			data, _ := os.ReadFile(p)
+			rel += "\x00" + string(data)
 		}
 		paths = append(paths, rel)
 		return nil
