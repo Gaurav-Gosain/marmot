@@ -34,6 +34,7 @@ type openDefers struct {
 	rec    string
 	clo    string
 	gslot  string // the goroutine's g, saved at the push
+	noRec  bool   // nothing can panic while calls are pending: no record
 	runner string
 }
 
@@ -150,6 +151,7 @@ func (f *funcGen) setupOpenDefers() {
 	od.rec = f.alloca(tDefer, 8)
 	od.clo = f.alloca(mlir.Struct(mlir.Ptr, mlir.Ptr, mlir.Ptr), 8)
 	od.gslot = f.alloca(mlir.Ptr, 8)
+	od.noRec = !f.m.p.deferRecordNeeded(f.fn, od)
 	od.runner = f.m.openDeferRunner(f, od)
 	f.emit("llvm.store %s, %s {alignment = 8 : i64} : i8, !llvm.ptr", f.constInt(0, mlir.I8), od.slots)
 	code := f.addressOf(od.runner)
@@ -169,6 +171,9 @@ func (f *funcGen) openDefer(v *ssa.Defer) {
 	old := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> i8", od.slots)
 	nw := f.op("llvm.or %s, %s : i8", old, f.constInt(int64(1)<<k, mlir.I8))
 	f.emit("llvm.store %s, %s {alignment = 8 : i64} : i8, !llvm.ptr", nw, od.slots)
+	if od.noRec {
+		return
+	}
 	first := f.op("llvm.icmp \"eq\" %s, %s : i8", old, f.constInt(0, mlir.I8))
 	push, cont := f.newBlock(), f.newBlock()
 	f.emit("llvm.cond_br %s, %s, %s", first, push, cont)
@@ -238,7 +243,9 @@ func (f *funcGen) openRunDefers() {
 		f.emit("llvm.br %s", next)
 		fmt.Fprintf(f.b, "  %s:\n", next)
 	}
-	f.popDeferRecord(od)
+	if !od.noRec {
+		f.popDeferRecord(od)
+	}
 	f.emit("llvm.br %s", cont)
 	fmt.Fprintf(f.b, "  %s:\n", cont)
 }
