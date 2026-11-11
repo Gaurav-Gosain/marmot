@@ -12,6 +12,9 @@
 //     calls deferpush(d). fn is a func() closure; for `defer f(a, b)` the
 //     compiler builds a closure that calls f(a, b) and sets wrapped = true.
 //   - Every return path calls deferreturn(&fr) before returning.
+//   - A defer statement in a range-over-func loop body belongs to the
+//     enclosing function: d.frame is that function's frame (the SSA
+//     DeferStack operand) and d.rangefunc is set.
 //   - recover() compiles to gorecover(fp) where fp is the frame address of
 //     the function that contains the recover call (llvm.frameaddress(0)).
 //     Functions that call recover must not be inlined and must keep frame
@@ -39,6 +42,11 @@ type _defer struct {
 	// wrapped is true when fn is a compiler generated closure that calls
 	// the deferred function directly (defer f(args)).
 	wrapped bool
+	// rangefunc is true for a defer statement in a range-over-func loop
+	// body: the record belongs to the enclosing function's frame but is
+	// pushed while other frames (the iterator, the body closure) are
+	// active, so it may sit above their records on the chain.
+	rangefunc bool
 }
 
 // deferpush adds d to the current goroutine's defer chain.
@@ -48,20 +56,33 @@ func deferpush(d *_defer) {
 	gp._defer = d
 }
 
-// deferreturn runs and pops, in LIFO order, the deferred calls that belong
-// to frame fr. The compiler calls it on every return path of a function
-// with defers.
+// deferreturn runs and unlinks, in LIFO order, the deferred calls that
+// belong to frame fr. The compiler calls it on every return path of a
+// function with defers. Records of other frames that were pushed from a
+// range-over-func body (rangefunc) are skipped; any other record of
+// another frame ends the search, since it belongs to a caller.
 func deferreturn(fr *_deferframe) {
 	gp := getg()
+	prev := &gp._defer
 	for {
-		d := gp._defer
-		if d == nil || d.frame != fr {
+		d := *prev
+		if d == nil {
 			return
 		}
-		gp._defer = d.link
+		if d.frame != fr {
+			if !d.rangefunc {
+				return
+			}
+			prev = &d.link
+			continue
+		}
+		*prev = d.link
 		fn := d.fn
 		d.fn = nil
 		fn()
+		// The deferred call may have pushed and popped records; restart
+		// from the top so the chain is read fresh.
+		prev = &gp._defer
 	}
 }
 
