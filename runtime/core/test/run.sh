@@ -2,6 +2,9 @@
 # Build and run runtime core tests.
 #
 # Environment: CC, CFLAGS, LIB (archive or source files), OUT (build dir).
+# Tests run one at a time under nice (shared machine). On the laptop run a
+# subset: make test TESTS="test/sort.c test/simd.c"; full runs go to linux-host
+# (linux-build.sh).
 # Each test is a C file defining marmot_main. Header comments set expectations:
 #   // expect-exit: N        exit status (default 0)
 #   // expect-stdout: TEXT   stdout must equal TEXT (one line, \n appended)
@@ -29,7 +32,7 @@ for src in "$@"; do
   env_vars=$(sed -n 's|^// env: *||p' "$src" | head -1)
   tmo=$(sed -n 's|^// timeout: *||p' "$src" | head -1); tmo=${tmo:-60}
   start=$(date +%s)
-  env $env_vars perl -e 'alarm shift; exec @ARGV' "$tmo" "$bin" > "$OUT/$name.out" 2> "$OUT/$name.err"
+  env $env_vars nice -n 10 perl -e 'alarm shift; exec @ARGV' "$tmo" "$bin" > "$OUT/$name.out" 2> "$OUT/$name.err"
   code=$?
   dur=$(( $(date +%s) - start ))
   ok=1

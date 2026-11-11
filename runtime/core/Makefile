@@ -84,7 +84,8 @@ $(OBJ) $(OUT):
 
 # ---- tests ----
 
-TEST_SRCS := $(wildcard test/*.c)
+TESTS ?= $(wildcard test/*.c)
+TEST_SRCS := $(TESTS)
 
 test: all
 	@OUT=$(OBJ)/test LIB=$(OUT)/librtcore.a CC="$(CC)" CFLAGS="-O1 -g $(SYSROOT) -Iinclude" \
