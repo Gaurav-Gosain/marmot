@@ -106,7 +106,7 @@ func rewriteMapKey(g *gen, f *ast.File) {
 		orig := c.Node()
 		repl := &ast.ExprStmt{X: &ast.CallExpr{Fun: ast.NewIdent(name), Args: []ast.Expr{ie.X, call.Args[0], delta}}}
 		c.Replace(repl)
-		g.sites++
+		g.count()
 		g.undos = append(g.undos, func() {
 			astutil.Apply(f, nil, func(c2 *astutil.Cursor) bool {
 				if c2.Node() == repl {

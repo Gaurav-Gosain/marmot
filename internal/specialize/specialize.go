@@ -93,7 +93,12 @@ func BeforeSSA(in *Input) error {
 		return err
 	}
 	if in.Log != nil && res.Sites > 0 {
-		in.Log("specialize: %d call sites in %d packages", res.Sites, len(res.Changed))
+		var ks []string
+		for k, n := range res.Kinds {
+			ks = append(ks, fmt.Sprintf("%s %d", k, n))
+		}
+		sort.Strings(ks)
+		in.Log("specialize: %d call sites in %d packages (%s)", res.Sites, len(res.Changed), strings.Join(ks, ", "))
 	}
 	if dir := os.Getenv("MARMOT_SPEC_DUMP"); dir != "" {
 		if err := res.Dump(dir); err != nil {
@@ -108,6 +113,7 @@ func AfterSSA(in *Input) error { return nil }
 
 // Result describes what Rewrite changed.
 type Result struct {
+	Kinds   map[string]int // sites per feature
 	Sites   int
 	Changed []*packages.Package
 	Gen     map[*packages.Package]string // generated file source per changed package
@@ -173,16 +179,16 @@ func RewriteWith(pkgs []*packages.Package, on map[string]bool) (*Result, error) 
 		g.allPkgs = pkgs
 		for _, f := range p.Syntax {
 			before := g.sites
-			rewriteFmt(g, f)
-			rewriteJSON(g, f)
-			rewriteSort(g, f)
-			rewriteRegexp(g, f)
-			rewriteMapKey(g, f)
 			g.curFile = f
-			rewriteSplit(g, f)
-			rewriteBuilder(g, f)
-			rewriteClone(g, f)
-			rewriteFold(g, f)
+			for _, r := range []struct {
+				name string
+				run  func(*gen, *ast.File)
+			}{{"fmt", rewriteFmt}, {"json", rewriteJSON}, {"sort", rewriteSort}, {"regexp", rewriteRegexp},
+				{"mapkey", rewriteMapKey}, {"split", rewriteSplit}, {"builder", rewriteBuilder},
+				{"clone", rewriteClone}, {"fold", rewriteFold}} {
+				g.feature = r.name
+				r.run(g, f)
+			}
 			if g.sites > before {
 				g.blankUnusedImports(f)
 			}
@@ -222,6 +228,12 @@ func RewriteWith(pkgs []*packages.Package, on map[string]bool) (*Result, error) 
 			res.Sites += g.sites
 			res.Changed = append(res.Changed, p)
 			res.Gen[p] = src
+			if res.Kinds == nil {
+				res.Kinds = map[string]int{}
+			}
+			for k, n := range g.kinds {
+				res.Kinds[k] += n
+			}
 		}
 	}
 	return res, nil
@@ -322,6 +334,8 @@ type gen struct {
 	curFile      *ast.File
 	clones       map[string]string
 	wrappers     map[string]string
+	feature      string         // rewriter running now
+	kinds        map[string]int // sites per feature
 }
 
 func newGen(p *packages.Package) *gen {
@@ -464,7 +478,7 @@ func (g *gen) replaceCall(call *ast.CallExpr, name string, args []ast.Expr) {
 	call.Fun = &ast.Ident{Name: name, NamePos: call.Fun.Pos()}
 	call.Args = args
 	call.Ellipsis = token.NoPos
-	g.sites++
+	g.count()
 }
 
 // blankUnusedImports turns imports that no identifier of f uses any more
@@ -609,7 +623,7 @@ func (g *gen) replaceStmt(old, new ast.Stmt) {
 	if !done {
 		return
 	}
-	g.sites++
+	g.count()
 	g.undos = append(g.undos, func() {
 		astutil.Apply(f, nil, func(c *astutil.Cursor) bool {
 			if c.Node() == new {
@@ -635,7 +649,7 @@ func (g *gen) replaceExpr(old, new ast.Expr) {
 	if !done {
 		return
 	}
-	g.sites++
+	g.count()
 	g.undos = append(g.undos, func() {
 		astutil.Apply(f, nil, func(c *astutil.Cursor) bool {
 			if c.Node() == new {
@@ -644,4 +658,13 @@ func (g *gen) replaceExpr(old, new ast.Expr) {
 			return true
 		})
 	})
+}
+
+// count records one rewritten site for the running feature.
+func (g *gen) count() {
+	g.sites++
+	if g.kinds == nil {
+		g.kinds = map[string]int{}
+	}
+	g.kinds[g.feature]++
 }

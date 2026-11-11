@@ -183,6 +183,12 @@ func diffTest(t *testing.T, src string, minSites int) {
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if d := os.Getenv("SPEC_TEST_PROGRAMS"); d != "" {
+		// Keep a copy of the program, to run it under marmot as well.
+		pd := filepath.Join(d, strings.ToLower(strings.TrimPrefix(t.Name(), "Test")))
+		os.MkdirAll(pd, 0o755)
+		os.WriteFile(filepath.Join(pd, "main.go"), []byte(src), 0o644)
+	}
 	ov, sites, gen := specOverlay(t, dir)
 	if sites < minSites {
 		t.Fatalf("rewrote %d sites, want at least %d\n%s", sites, minSites, gen)
