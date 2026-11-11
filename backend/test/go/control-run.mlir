@@ -15,6 +15,17 @@
 // NOPANIC: result 1006
 // RECOVERED: result 26009
 // FATAL: panic: 100
+// RUN: %t.exe 50 | %FileCheck %s --check-prefix=THROUGH
+// RUN: %backend -O2 -emit=mlir -o - %s | %FileCheck %s --check-prefix=IR
+// A panic passes through @inner (defer without recover, no setjmp) and is
+// recovered in @outer: inc ran (+1), recoverer ran (+100), outer returns 7.
+// counter = 1 (go inc) + 1 + 100 = 102 -> 7 + 102*250 = 25507.
+// THROUGH: result 25507
+// IR-LABEL: llvm.func @inner
+// IR-NOT: rt_setjmp
+// IR: llvm.call @runtime.deferpush
+// IR-LABEL: llvm.func @outer
+// IR: rt_setjmp
 module {
   llvm.mlir.global external constant @"type:closure"(dense<0> : tensor<56xi8>) : !llvm.array<56 x i8>
   llvm.mlir.global internal @counter(0 : i64) : i64
@@ -112,18 +123,64 @@ module {
     go.panic %p2
   }
 
+  // func inner(k int) { defer inc(); panic(k) }
+  llvm.func @inner(%k: i64) {
+    go.defer_frame ^body, ^rec
+  ^body:
+    %ic = go.make_closure @inc(), @"type:closure" : () -> !llvm.ptr
+    go.defer %ic
+    %d = llvm.inttoptr %k : i64 to !llvm.ptr
+    %t = llvm.mlir.addressof @"type:closure" : !llvm.ptr
+    %p0 = llvm.mlir.poison : !llvm.struct<(ptr, ptr)>
+    %p1 = llvm.insertvalue %t, %p0[0] : !llvm.struct<(ptr, ptr)>
+    %p2 = llvm.insertvalue %d, %p1[1] : !llvm.struct<(ptr, ptr)>
+    go.panic %p2
+  ^rec:
+    llvm.return
+  }
+
+  // func outer(k int) (r int) { defer recoverer(); r = 7; inner(k); return 0 }
+  llvm.func @outer(%k: i64) -> i64 {
+    %one = llvm.mlir.constant(1 : i64) : i64
+    %r = llvm.alloca %one x i64 : (i64) -> !llvm.ptr
+    go.defer_frame ^body, ^rec
+  ^body:
+    %rc = go.make_closure @recoverer(), @"type:closure" : () -> !llvm.ptr
+    go.defer %rc
+    %c7 = llvm.mlir.constant(7 : i64) : i64
+    llvm.store %c7, %r : i64, !llvm.ptr
+    llvm.call @inner(%k) : (i64) -> ()
+    %z = llvm.mlir.constant(0 : i64) : i64
+    llvm.store %z, %r : i64, !llvm.ptr
+    go.run_defers
+    %v = llvm.load %r : !llvm.ptr -> i64
+    llvm.return %v : i64
+  ^rec:
+    %w = llvm.load %r : !llvm.ptr -> i64
+    llvm.return %w : i64
+  }
+
   // test_main(k): go inc(); r := f(k) (or g(k) for k == 100); return r + counter*1000/4
   llvm.func @test_main(%k: i64) -> i64 {
     %ic = go.make_closure @inc(), @"type:closure" : () -> !llvm.ptr
     go.go %ic
     %c100 = llvm.mlir.constant(100 : i64) : i64
+    %c50 = llvm.mlir.constant(50 : i64) : i64
     %isg = llvm.icmp "eq" %k, %c100 : i64
+    %iso = llvm.icmp "eq" %k, %c50 : i64
+    llvm.cond_br %iso, ^o, ^notO
+  ^o:
+    %ro = llvm.call @outer(%k) : (i64) -> i64
+    llvm.br ^count(%ro : i64)
+  ^notO:
     llvm.cond_br %isg, ^g, ^f
   ^g:
     %rg = llvm.call @g(%k) : (i64) -> i64
     llvm.return %rg : i64
   ^f:
-    %r = llvm.call @f(%k) : (i64) -> i64
+    %rf = llvm.call @f(%k) : (i64) -> i64
+    llvm.br ^count(%rf : i64)
+  ^count(%r: i64):
     %c = llvm.mlir.addressof @counter : !llvm.ptr
     %n = llvm.load %c : !llvm.ptr -> i64
     %m = llvm.mlir.constant(250 : i64) : i64

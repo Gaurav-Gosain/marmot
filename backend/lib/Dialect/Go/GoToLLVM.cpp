@@ -647,6 +647,15 @@ private:
     auto fn = op->getParentOfType<LLVM::LLVMFuncOp>();
     if (frames.count(&fn.getBody()))
       return op.emitOpError("more than one go.defer_frame in a function");
+    // Without a possible recover the frame is only an identity for its
+    // _defer records: one word, no setjmp, nothing pinned in memory.
+    if (op.getNorecover()) {
+      Value fr = entryAlloca(fn, i64());
+      frames[&fn.getBody()] = fr;
+      LLVM::BrOp::create(b, loc, ValueRange(), op.getNormal());
+      op.erase();
+      return success();
+    }
     auto frameTy = LLVM::LLVMArrayType::get(i64(), kJmpbufWords);
     Value fr = entryAlloca(fn, frameTy);
     frames[&fn.getBody()] = fr;

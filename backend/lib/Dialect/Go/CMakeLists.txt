@@ -5,6 +5,7 @@ add_library(MarmotGoDialect STATIC
   AggregateCopies.cpp
   BCE.cpp
   Devirt.cpp
+  OpenDefers.cpp
 )
 add_dependencies(MarmotGoDialect MarmotGoOpsIncGen MarmotGoPassesIncGen)
 target_link_libraries(MarmotGoDialect PUBLIC ${MARMOT_LLVM_LIBS})

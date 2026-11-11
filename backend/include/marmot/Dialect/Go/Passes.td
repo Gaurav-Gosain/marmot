@@ -58,4 +58,8 @@ def GoDevirt : Pass<"go-devirt", "::mlir::ModuleOp"> {
   let dependentDialects = ["::mlir::LLVM::LLVMDialect"];
 }
 
+def GoOpenDefers : Pass<"go-open-defers", "::mlir::ModuleOp"> {
+  let summary = "Drop the setjmp of defer frames whose deferred calls cannot recover";
+}
+
 #endif

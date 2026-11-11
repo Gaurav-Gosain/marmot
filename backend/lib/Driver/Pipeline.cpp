@@ -257,6 +257,8 @@ bool compileFile(const std::string &input, const std::string &output,
         pm.addPass(go::createGoEscape());
       if (opts.bce)
         pm.addPass(go::createGoBCE());
+      if (opts.openDefers)
+        pm.addPass(go::createGoOpenDefers());
     }
     pm.addPass(go::createGoToLLVM());
     // Always: large aggregate values would hang code generation.

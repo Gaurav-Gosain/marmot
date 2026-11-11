@@ -150,8 +150,9 @@ def Go_TypeAssertOp : Go_Op<"type_assert", [InferTypeOpAdaptor]> {
 def Go_DeferFrameOp : Go_Op<"defer_frame", [Terminator,
     DeclareOpInterfaceMethods<BranchOpInterface>]> {
   let summary = "set up the defer frame of a function; second entry after recover";
+  let arguments = (ins UnitAttr:$norecover);
   let successors = (successor AnySuccessor:$normal, AnySuccessor:$recover);
-  let assemblyFormat = "$normal `,` $recover attr-dict";
+  let assemblyFormat = "$normal `,` $recover (`norecover` $norecover^)? attr-dict";
   let hasVerifier = 1;
 }
 
