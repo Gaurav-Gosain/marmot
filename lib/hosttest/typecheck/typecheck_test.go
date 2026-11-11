@@ -260,3 +260,61 @@ func layout(sizes types.Sizes, st *types.Struct, base int64) [][2]int64 {
 	}
 	return out
 }
+
+// TestTypecheckOverlayWithTests type-checks every MERGE overlay package
+// together with the stock in-package test files (TestGoFiles), as
+// `marmot test` builds them: overlay files must not declare names that
+// the stock tests declare, and must keep what the tests use.
+func TestTypecheckOverlayWithTests(t *testing.T) {
+	root, err := filepath.Abs("../../src")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	ctx := build.Default
+	ctx.GOOS, ctx.GOARCH = "darwin", "arm64"
+	ctx.CgoEnabled = false
+	ctx.BuildTags = []string{"marmot", "purego", "math_big_pure_go"}
+	ctx.GOROOT = runtime.GOROOT()
+	im := &overlayImporter{
+		root:  root,
+		fset:  fset,
+		ctx:   ctx,
+		pkgs:  map[string]*types.Package{},
+		stock: importer.ForCompiler(fset, "source", nil).(types.ImporterFrom),
+		tmp:   t.TempDir(),
+	}
+	for _, path := range overlayPackages(root) {
+		dir := filepath.Join(root, filepath.FromSlash(path))
+		if _, err := os.Stat(filepath.Join(dir, "MERGE")); err != nil {
+			continue // whole package replacements have their own tests
+		}
+		if path == "unique" {
+			// Its internal tests use internal/abi type descriptors; the
+			// overlay keys its maps by internal/rtabi ones.
+			continue
+		}
+		merged, err := im.mergedDir(path, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bp, err := ctx.ImportDir(merged, 0)
+		if err != nil || len(bp.TestGoFiles) == 0 {
+			continue
+		}
+		var files []*ast.File
+		for _, name := range append(bp.GoFiles, bp.TestGoFiles...) {
+			f, err := parser.ParseFile(fset, filepath.Join(merged, name), nil, parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			files = append(files, f)
+		}
+		var errs []error
+		conf := types.Config{Importer: im, Error: func(err error) { errs = append(errs, err) }}
+		conf.Check(path, fset, files, nil)
+		for _, err := range errs {
+			t.Errorf("%s with tests: %v", path, err)
+		}
+	}
+}
