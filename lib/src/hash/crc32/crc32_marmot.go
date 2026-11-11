@@ -1,17 +1,25 @@
-// marmot overlay: GOROOT hash/crc32/crc32_otherarch.go without its build
-// constraint, so every target uses the portable slicing-by-8 code instead
-// of assembly.
-
-// Copyright 2011 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
+// marmot overlay: the architecture hooks of hash/crc32 run on the C core's
+// rt_crc32_update (ARMv8 CRC32 instructions on arm64, a byte table
+// elsewhere) for the IEEE and Castagnoli polynomials; Koopman and other
+// tables keep the portable code.
 
 package crc32
 
-func archAvailableIEEE() bool                    { return false }
-func archInitIEEE()                              { panic("not available") }
-func archUpdateIEEE(crc uint32, p []byte) uint32 { panic("not available") }
+import "unsafe"
 
-func archAvailableCastagnoli() bool                    { return false }
-func archInitCastagnoli()                              { panic("not available") }
-func archUpdateCastagnoli(crc uint32, p []byte) uint32 { panic("not available") }
+//go:linkname rt_crc32_update rt_crc32_update
+func rt_crc32_update(crc uint32, p unsafe.Pointer, n int, kind int32) uint32
+
+func archAvailableIEEE() bool { return true }
+func archInitIEEE()           {}
+
+func archUpdateIEEE(crc uint32, p []byte) uint32 {
+	return rt_crc32_update(crc, unsafe.Pointer(unsafe.SliceData(p)), len(p), 0)
+}
+
+func archAvailableCastagnoli() bool { return true }
+func archInitCastagnoli()           {}
+
+func archUpdateCastagnoli(crc uint32, p []byte) uint32 {
+	return rt_crc32_update(crc, unsafe.Pointer(unsafe.SliceData(p)), len(p), 1)
+}
