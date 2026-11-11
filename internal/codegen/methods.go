@@ -3,6 +3,8 @@ package codegen
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"go/token"
 	"go/types"
 	"sort"
 	"strings"
@@ -26,6 +28,8 @@ func (p *Program) methodKey(fn *types.Func) string {
 // interface method calls (name and signature) and the types whose values
 // can be held in interfaces. Method code is kept for the pairs of both.
 func (p *Program) computeUsedMethods() {
+	p.punned = map[string]bool{}
+	p.localPun = map[ssa.Value]bool{}
 	p.globalRead = map[*ssa.Global]bool{}
 	used := map[string]bool{}
 	ifaceTypes := map[string]bool{}
@@ -79,6 +83,9 @@ func (p *Program) computeUsedMethods() {
 						used[p.methodKey(cc.Method)] = true
 					}
 					if callee := cc.StaticCallee(); callee != nil {
+						if callee.Pkg != nil && callee.Pkg.Pkg.Path() == "reflect" && callee.Name() == "NewAt" {
+							p.punAll = true // pointers of any type to arbitrary memory
+						}
 						if p.isReflectMethodLookup(callee) {
 							p.keepExported = true
 						}
@@ -91,6 +98,15 @@ func (p *Program) computeUsedMethods() {
 				if mi, ok := instr.(*ssa.MakeInterface); ok {
 					addIface(mi.X.Type())
 					converted = append(converted, mi.X.Type())
+				}
+				if cv, ok := instr.(*ssa.Convert); ok && isUnsafePointer(cv.X.Type()) {
+					if pt, ok := cv.Type().Underlying().(*types.Pointer); ok {
+						if onlyDereferenced(cv) {
+							p.localPun[cv] = true // *(*T)(unsafe.Pointer(q)): only these accesses
+						} else {
+							p.addPunned(pt.Elem())
+						}
+					}
 				}
 				ops = instr.Operands(ops[:0])
 				for _, o := range ops {
@@ -177,6 +193,12 @@ func (p *Program) computeUsedMethods() {
 	if p.reflectCall {
 		h.Write([]byte("reflectCall"))
 	}
+	pkeys := make([]string, 0, len(p.punned))
+	for k := range p.punned {
+		pkeys = append(pkeys, k)
+	}
+	sort.Strings(pkeys)
+	fmt.Fprintf(h, "punAll=%v %s\n", p.punAll, strings.Join(pkeys, ";"))
 	tkeys := make([]string, 0, len(ifaceTypes))
 	for k := range ifaceTypes {
 		tkeys = append(tkeys, k)
@@ -379,4 +401,62 @@ func (p *Program) implementers(iface types.Type, max int) ([]types.Type, bool) {
 	sort.Slice(out, func(i, j int) bool { return p.canonical(out[i]) < p.canonical(out[j]) })
 	p.implCache[key] = out
 	return out, len(out) <= max
+}
+
+// Type punning (for the loops component' alias analysis, docs/loops.md): every
+// type reached by a conversion unsafe.Pointer -> *T, with all its field and
+// element types. Loads and stores of such types carry go.unsafe, since the
+// memory behind them may hold values of another type.
+
+func (p *Program) addPunned(t types.Type) {
+	k := p.canonical(t)
+	if p.punned[k] {
+		return
+	}
+	p.punned[k] = true
+	switch u := t.Underlying().(type) {
+	case *types.Struct:
+		for i := 0; i < u.NumFields(); i++ {
+			p.addPunned(u.Field(i).Type())
+		}
+	case *types.Array:
+		p.addPunned(u.Elem())
+	}
+}
+
+// isPunned reports whether accesses of type t need go.unsafe.
+func (p *Program) isPunned(t types.Type) bool {
+	if p.punAll {
+		return true
+	}
+	if p.punned == nil {
+		return false
+	}
+	return p.punned[p.canonical(t)]
+}
+
+// onlyDereferenced reports whether pointer v is only loaded from or stored
+// through directly (the value reinterpretation idiom), so it cannot reach
+// other code.
+func onlyDereferenced(v ssa.Value) bool {
+	refs := v.Referrers()
+	if refs == nil {
+		return false
+	}
+	for _, r := range *refs {
+		switch x := r.(type) {
+		case *ssa.UnOp:
+			if x.Op != token.MUL || x.X != v {
+				return false
+			}
+		case *ssa.Store:
+			if x.Addr != v || x.Val == v {
+				return false
+			}
+		case *ssa.DebugRef:
+		default:
+			return false
+		}
+	}
+	return true
 }

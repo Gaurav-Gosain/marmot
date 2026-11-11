@@ -32,6 +32,7 @@ type funcGen struct {
 	frame             string // _deferframe address, "" if none
 	noinlineCalls     bool   // mark calls no_inline (defer thunks)
 	curBlock          *ssa.BasicBlock
+	forceUnsafe       bool // the access goes through a locally punned pointer
 	implicitRunDefers bool
 	curArgs           []ssa.Value        // SSA arguments of a call being expanded as an intrinsic
 	volatile          map[ssa.Value]bool // stack slots that live across setjmp
@@ -293,7 +294,7 @@ func (f *funcGen) load(p string, t types.Type, volatile ...bool) string {
 	if len(volatile) > 0 && volatile[0] {
 		vol = "volatile "
 	}
-	v := f.op("llvm.load %s%s {alignment = %d : i64} : !llvm.ptr -> %s", vol, p, f.m.p.opts.Sizes.Alignof(t), mt)
+	v := f.op("llvm.load %s%s {alignment = %d : i64%s} : !llvm.ptr -> %s", vol, p, f.m.p.opts.Sizes.Alignof(t), f.unsafeAttr(t), mt)
 	if isBool(t) {
 		return f.op("llvm.trunc %s : i8 to i1", v)
 	}
@@ -314,7 +315,7 @@ func (f *funcGen) store(v, p string, t types.Type, volatile ...bool) {
 	if len(volatile) > 0 && volatile[0] {
 		vol = "volatile "
 	}
-	f.emit("llvm.store %s%s, %s {alignment = %d : i64} : %s, !llvm.ptr", vol, v, p, f.m.p.opts.Sizes.Alignof(t), mt)
+	f.emit("llvm.store %s%s, %s {alignment = %d : i64%s} : %s, !llvm.ptr", vol, v, p, f.m.p.opts.Sizes.Alignof(t), f.unsafeAttr(t), mt)
 }
 
 // extract reads field i of an aggregate register value of LLVM type at,
@@ -503,7 +504,9 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 		if needsNilCheck(v.Addr) {
 			f.nilCheck(addr)
 		}
+		f.forceUnsafe = f.m.p.localPun[v.Addr]
 		f.store(f.value(v.Val), addr, v.Val.Type(), f.volatile[v.Addr])
+		f.forceUnsafe = false
 	case *ssa.Extract:
 		tt := f.tm.valType(v.Tuple.Type())
 		f.vals[v] = f.extractRaw(f.value(v.Tuple), tt, v.Index)
@@ -677,6 +680,14 @@ func (f *funcGen) newObject(t types.Type) string {
 	return f.rtcall("newobject", f.typeDesc(t))
 }
 
+// unsafeAttr returns ", go.unsafe" for accesses of punned types.
+func (f *funcGen) unsafeAttr(t types.Type) string {
+	if f.forceUnsafe || f.m.p.isPunned(t) {
+		return ", go.unsafe"
+	}
+	return ""
+}
+
 // goOps reports whether to emit go dialect ops.
 func (f *funcGen) goOps() bool { return f.m.p.opts.GoDialect }
 
@@ -715,7 +726,10 @@ func (f *funcGen) unop(v *ssa.UnOp) string {
 		if needsNilCheck(v.X) {
 			f.nilCheck(x)
 		}
-		return f.load(x, v.Type(), f.volatile[v.X])
+		f.forceUnsafe = f.m.p.localPun[v.X]
+		r := f.load(x, v.Type(), f.volatile[v.X])
+		f.forceUnsafe = false
+		return r
 	case token.ARROW:
 		return f.recv(v)
 	}

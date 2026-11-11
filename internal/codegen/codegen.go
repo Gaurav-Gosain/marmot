@@ -79,6 +79,9 @@ type Program struct {
 	fmaBlocked map[token.Pos]bool // float multiplications under an explicit conversion
 
 	ifaceTypeList []types.Type            // the types of ifaceTypes
+	punned        map[string]bool         // types reached by unsafe.Pointer -> *T
+	punAll        bool                    // reflect.NewAt reachable: every access is unsafe
+	localPun      map[ssa.Value]bool      // conversions only dereferenced in place
 	implCache     map[string][]types.Type // interface -> closed-world implementers
 	mainPath      string                  // import path of the main package
 	globalRead    map[*ssa.Global]bool    // globals read anywhere in the program
