@@ -191,6 +191,7 @@ var (
 	notes      = flag.String("notes", "", "free text stored in the results file")
 	sizeOnly   = flag.Bool("size-only", false, "build once and record size and output check only, no timing")
 	resume     = flag.Bool("resume", false, "continue the results file of this label and date: skip program and toolchain pairs already measured without noise")
+	redo       = flag.String("redo", "", "with -resume: comma separated programs whose old rows are discarded and measured again")
 	noSnapshot = flag.Bool("no-snapshot", false, "use the live tree for marmot instead of a snapshot (do not use for long runs)")
 )
 
@@ -252,7 +253,14 @@ func main() {
 		if data, err := os.ReadFile(path); err == nil {
 			var old File
 			if json.Unmarshal(data, &old) == nil {
+				redoSet := map[string]bool{}
+				for _, n := range strings.Split(*redo, ",") {
+					redoSet[strings.TrimSpace(n)] = true
+				}
 				for _, r := range old.Results {
+					if redoSet[r.Program] {
+						continue // superseded: measured again at the new revision
+					}
 					if r.Status == "ok" && !r.Noisy {
 						file.Results = append(file.Results, r)
 						done[r.Program+"|"+r.Toolchain] = true

@@ -1,22 +1,23 @@
-// defer in a hot loop: a small function that defers an update, called many times.
+// deferloop: defer in a hot loop. Each iteration depends on the state left by the previous one
+// through its deferred calls, so the loop cannot be folded to a closed form.
 package main
 
 const iters = 200000000
 
-var total int
+var state uint64
 
-func add(p *int, v int) { *p += v }
+func add(p *uint64, d uint64) { *p += d }
 
 func step(i int) {
-	local := 0
-	defer add(&local, i)
-	defer func() { total += local }()
-	local++
+	v := uint64(i)*2654435761 ^ state
+	defer func() { state = state*6364136223846793005 + v }()
+	defer add(&v, state>>7)
+	v ^= v >> 3
 }
 
 func main() {
 	for i := 0; i < iters; i++ {
 		step(i)
 	}
-	println("deferloop", total)
+	println("deferloop", state)
 }
