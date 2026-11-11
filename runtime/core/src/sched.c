@@ -342,9 +342,9 @@ static void newm(rt_p *p, bool spinning) {
   m->spinning = spinning;
   spin_unlock(&sched.lock);
   rt_m *me = rt_tls_m;
-  if (me) atomic_fetch_add(&me->locks, 1);
+  if (me) me->locks++;
   bool ok = os_thread_create(mstart, m, 256 << 10);
-  if (me) atomic_fetch_sub(&me->locks, 1);
+  if (me) me->locks--;
   if (!ok) rt_throw("newm: cannot create thread");
   sysmon_start();
 }
@@ -544,17 +544,17 @@ void start_the_world(void) {
 static void mcall(int32_t req) {
   rt_m *m = getm();
   rt_g *g = m->curg;
-  atomic_fetch_add(&m->locks, 1);
+  m->locks++;
   m->req = req;
   rt_ctx_switch(&g->sp, m->g0.sp);
-  atomic_fetch_sub(&getm()->locks, 1);
+  getm()->locks--;
 }
 
 static void goexit_final(rt_g *g);
 
 static void gstart(void *arg) {
   rt_g *g = arg;
-  atomic_fetch_sub(&getm()->locks, 1);  // taken by execute
+  getm()->locks--;  // taken by execute
   void (*fn)(void *) = g->fn;
   void *a = g->arg;
   g->arg = NULL;
@@ -569,9 +569,9 @@ static void execute(rt_m *m, rt_g *g) {
   g->m = m;
   atomic_store_explicit(&g->status, G_RUNNING, memory_order_relaxed);
   atomic_fetch_add_explicit(&m->p->schedtick, 1, memory_order_relaxed);
-  atomic_fetch_add(&m->locks, 1);
+  m->locks++;
   rt_ctx_switch(&m->g0.sp, g->sp);
-  atomic_fetch_sub(&m->locks, 1);
+  m->locks--;
 }
 
 static void goexit_final(rt_g *g) {
@@ -791,7 +791,7 @@ static void schedule_loop(rt_m *m) {
 
 static rt_g *newproc(void (*fn)(void *), void *arg, bool system) {
   rt_m *m = getm();
-  atomic_fetch_add(&m->locks, 1);
+  m->locks++;
   rt_p *p = m->p;
   rt_g *g = p ? gfget(p) : NULL;
   if (!g) g = galloc(g_stacksize);
@@ -812,7 +812,7 @@ static rt_g *newproc(void (*fn)(void *), void *arg, bool system) {
     globrunqput(g);
     spin_unlock(&sched.lock);
   }
-  atomic_fetch_sub(&m->locks, 1);
+  m->locks--;
   sysmon_start();
   wakep();
   return g;
@@ -844,7 +844,7 @@ RT_API void rt_ready(rt_g *g) {
   if (!atomic_compare_exchange_strong(&g->status, &s, G_RUNNABLE))
     rt_throw("rt_ready: goroutine is not waiting");
   rt_m *m = getm();
-  if (m) atomic_fetch_add(&m->locks, 1);
+  if (m) m->locks++;
   rt_p *p = m ? m->p : NULL;
   if (p && atomic_load(&p->status) == P_RUNNING && p->m == m) {
     runqput(p, g, true);
@@ -853,7 +853,7 @@ RT_API void rt_ready(rt_g *g) {
     globrunqput(g);
     spin_unlock(&sched.lock);
   }
-  if (m) atomic_fetch_sub(&m->locks, 1);
+  if (m) m->locks--;
   wakep();
 }
 

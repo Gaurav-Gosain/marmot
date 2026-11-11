@@ -22,7 +22,7 @@ RT_API void rt_set_sigpanic(void (*fn)(uintptr_t addr, int32_t kind)) { sigpanic
 static void sigurg(int sig, siginfo_t *info, void *ctx) {
   int saved = errno;
   rt_m *m = rt_tls_m;
-  if (m && atomic_load(&sched.gcwaiting) && atomic_load(&m->locks) == 0 && m->curg && m->p &&
+  if (m && atomic_load(&sched.gcwaiting) && m->locks == 0 && m->curg && m->p &&
       atomic_load(&m->p->status) == P_RUNNING && m->p->m == m) {
     rt_g *g = m->curg;
     uintptr_t sp = (uintptr_t)__builtin_frame_address(0);
@@ -73,7 +73,7 @@ static void sigfault(int sig, siginfo_t *info, void *ctxp) {
   }
   // A fault in goroutine code (not inside the runtime core) becomes a Go
   // panic through the hook, as if the faulting instruction called it.
-  if (g && sigpanic_fn && atomic_load(&m->locks) == 0) {
+  if (g && sigpanic_fn && m->locks == 0) {
     int32_t kind = addr < 0x10000 ? 1 : 2;
 #if RT_OS_DARWIN && RT_ARCH_ARM64
     uc->uc_mcontext->__ss.__x[0] = addr;

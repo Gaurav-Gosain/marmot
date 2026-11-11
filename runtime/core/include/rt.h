@@ -52,7 +52,11 @@ void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintptr_t e
 void rt_gc_collect(void);
 // Register [start, end) as a conservative root range (globals).
 void rt_gc_add_roots(void *start, void *end);
-// Run fn(obj) once before obj is freed. Used by runtime.SetFinalizer.
+// Run fn(obj) once before obj is freed. Used by runtime.SetFinalizer. obj
+// must be the start of a heap object. fn runs on a runtime goroutine (it may
+// allocate, lock and park); finalizers run one at a time. fn NULL removes the
+// finalizer. An object reachable from another finalizable object is not
+// finalized in the same cycle.
 void rt_gc_set_finalizer(void *obj, void (*fn)(void *));
 
 typedef struct rt_memstats {
@@ -80,7 +84,10 @@ rt_g *rt_current(void);
 void rt_gosched(void);
 // Park the current goroutine until rt_ready(g) is called. If unlock is not
 // NULL it is called with lock after the goroutine is off its stack, so a
-// waker that holds the same lock cannot miss the park.
+// waker that holds the same lock cannot miss the park. unlock runs on the
+// scheduler's thread stack, not on a goroutine: it may be a C-ABI Go function
+// but must only release locks (and call rt_ready); it must not allocate,
+// park, panic, or use rt_current/rt_gslot.
 void rt_park(void (*unlock)(void *), void *lock);
 // Make a parked goroutine runnable. Safe from any thread.
 void rt_ready(rt_g *g);
@@ -132,6 +139,19 @@ intptr_t rt_close(int32_t fd);
 // wrappers). Returns -errno on failure.
 intptr_t rt_syscall(uintptr_t num, uintptr_t a1, uintptr_t a2, uintptr_t a3,
                     uintptr_t a4, uintptr_t a5, uintptr_t a6);
+// Call the C function fn with nargs (0..9) word-sized arguments. The first
+// nfixed are the named parameters; the rest are variadic (open's mode,
+// fcntl's arg): pass nfixed = nargs for a non-variadic function, and at least
+// 1 fixed argument for a variadic one. errno is cleared before the call and
+// *err (if not NULL) receives errno after it, whatever the result; the caller
+// decides whether the result means failure. A function returning int leaves
+// the upper 32 bits of the result undefined: truncate per type.
+// rt_libcall wraps the call in rt_entersyscall/rt_exitsyscall; rt_libcall_raw
+// does not (for calls that cannot block).
+intptr_t rt_libcall(void *fn, const uintptr_t *args, int32_t nargs, int32_t nfixed,
+                    int32_t *err);
+intptr_t rt_libcall_raw(void *fn, const uintptr_t *args, int32_t nargs, int32_t nfixed,
+                        int32_t *err);
 // Mark the current goroutine as entering/leaving a blocking system call.
 void rt_entersyscall(void);
 void rt_exitsyscall(void);

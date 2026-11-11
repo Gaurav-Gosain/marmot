@@ -86,6 +86,7 @@ void marmot_main(void) {
     for (int i = 0; i < 200; i++) rt_go(worker, (void *)1);
     wg_wait(&wg);
   }
+  for (int i = 0; i < 1000 && rt_numgoroutine() != 1; i++) rt_gosched();
   CHECK(rt_numgoroutine() == 1);
   out("done\n");
 }

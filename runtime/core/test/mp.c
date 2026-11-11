@@ -93,6 +93,8 @@ void marmot_main(void) {
   v = take(&ring[0]);
   give(&ring[1], -1);
   wg_wait(&ringwg);
+  // Goroutines that called wg_done may not have exited yet.
+  for (int i = 0; i < 1000 && rt_numgoroutine() != 1; i++) rt_sleep(1000000);
   CHECK(rt_numgoroutine() == 1);
   out("ok\n");
 }

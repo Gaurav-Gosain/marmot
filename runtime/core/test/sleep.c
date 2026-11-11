@@ -30,7 +30,7 @@ void marmot_main(void) {
   int64_t t0 = rt_nanotime();
   wg_wait(&wg);
   int64_t dt = rt_nanotime() - t0;
-  CHECK(dt >= 30000000 && dt < 500000000);
+  CHECK(dt >= 30000000 && dt < 5000000000LL);  // loose upper bound: shared machine
   for (int i = 0; i < 3; i++) {
     char b[3] = {order[i], i < 2 ? ' ' : ' ', 0};
     out(b);

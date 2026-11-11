@@ -52,7 +52,13 @@ void *os_map(uintptr_t n) {
 
 void os_unmap(void *p, uintptr_t n) { munmap(p, n); }
 
-void os_release(void *p, uintptr_t n) { madvise(p, n, MADV_FREE_REUSABLE); }
+// Only whole OS pages inside [p, p+n) are released: the kernel would round a
+// partial page outward and discard live neighbors.
+void os_release(void *p, uintptr_t n) {
+  uintptr_t lo = ((uintptr_t)p + rt_pagesize - 1) & ~(rt_pagesize - 1);
+  uintptr_t hi = ((uintptr_t)p + n) & ~(rt_pagesize - 1);
+  if (hi > lo) madvise((void *)lo, hi - lo, MADV_FREE_REUSABLE);
+}
 
 void os_protect_none(void *p, uintptr_t n) { mprotect(p, n, PROT_NONE); }
 

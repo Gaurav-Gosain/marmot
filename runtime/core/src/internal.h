@@ -52,7 +52,8 @@ bool os_commit(void *p, uintptr_t n);
 // Map fresh zeroed read/write memory. Returns NULL on failure.
 void *os_map(uintptr_t n);
 void os_unmap(void *p, uintptr_t n);
-// Tell the OS the pages may be discarded; later reads see zero or old data.
+// Tell the OS the whole pages inside [p, p+n) may be discarded; later reads
+// see zero or old data.
 void os_release(void *p, uintptr_t n);
 void os_protect_none(void *p, uintptr_t n);
 int32_t os_ncpu(void);
@@ -209,7 +210,7 @@ struct rt_m {
   rt_m *alllink;
   rt_m *idlelink;
   int64_t id;
-  _Atomic int32_t locks;    // >0: runtime critical section, no async stop
+  volatile int32_t locks;   // >0: runtime critical section, no async stop (only this thread and its signal handler touch it)
   bool spinning;            // looking for work
   bool idle;                // on the idle M list
   note park;
