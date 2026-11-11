@@ -184,3 +184,189 @@ func TestJSONDifferential(t *testing.T) {
 	}
 	diffTest(t, jsonProgram, 30)
 }
+
+// jsonDecodeProgram unmarshals many inputs, valid and not, into values that
+// start empty and values that start filled, and prints the result, the
+// error, and slice capacities (the legacy merge rules decide those).
+const jsonDecodeProgram = `package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"regexp"
+	"strings"
+)
+
+var ptrRE = regexp.MustCompile("0x[0-9a-f]+")
+
+type Item struct {
+	ID    int               ` + "`json:\"id\"`" + `
+	Name  string            ` + "`json:\"name\"`" + `
+	Price float64           ` + "`json:\"price\"`" + `
+	Tags  []string          ` + "`json:\"tags\"`" + `
+	Attrs map[string]string ` + "`json:\"attrs\"`" + `
+	Next  *Item             ` + "`json:\"next,omitempty\"`" + `
+}
+
+type Nums struct {
+	I8  int8
+	I16 int16
+	I32 int32
+	I64 int64
+	U8  uint8
+	U16 uint16
+	U32 uint32
+	U64 uint64
+	F32 float32
+	F64 float64
+	B   bool
+	S   string
+	hidden int
+}
+
+type Label string
+
+type Named struct {
+	L  Label
+	LL []Label
+	M  map[Label]int
+	P  *int
+	PP **Nums
+}
+
+var out strings.Builder
+
+func show(name string, v any, err error) {
+	out.WriteString(ptrRE.ReplaceAllString(fmt.Sprintf("%s: %+v | err=%v\n", name, v, err), "PTR"))
+}
+
+func main() {
+	itemInputs := []string{
+		` + "`" + `{"id":1,"name":"a","price":2.5,"tags":["x","y"],"attrs":{"k":"v"},"next":{"id":2}}` + "`" + `,
+		` + "`" + `  {"id" : -3 , "name":"é\n\"q\"\\", "price":1e3, "tags":[], "attrs":{}, "next":null}  ` + "`" + `,
+		` + "`" + `{"ID":4}` + "`" + `,
+		` + "`" + `{"Name":"case","PRICE":1}` + "`" + `,
+		` + "`" + `{"unknown":{"a":[1,2,{"b":null}]},"id":5,"x":"😀"}` + "`" + `,
+		` + "`" + `{"id":6,"id":7,"tags":["a"],"tags":["b","c"]}` + "`" + `,
+		` + "`" + `{"id":1.5}` + "`" + `,
+		` + "`" + `{"id":"1"}` + "`" + `,
+		` + "`" + `{"id":99999999999999999999}` + "`" + `,
+		` + "`" + `{"price":1e400}` + "`" + `,
+		` + "`" + `{"name":5}` + "`" + `,
+		` + "`" + `{"tags":"x"}` + "`" + `,
+		` + "`" + `{"id":1,}` + "`" + `,
+		` + "`" + `{"id":1` + "`" + `,
+		` + "`" + `{"id":1} x` + "`" + `,
+		` + "`" + `{"id":01}` + "`" + `,
+		` + "`" + `{"name":"a\x01b"}` + "`" + `,
+		"{\"name\":\"bad\xff\xfeutf8\"}",
+		` + "`" + `{"name":"\ud800 lone"}` + "`" + `,
+		` + "`" + `null` + "`" + `,
+		` + "`" + `{"id":null,"name":null,"tags":null,"attrs":null,"next":null}` + "`" + `,
+		` + "`" + `[]` + "`" + `,
+		` + "`" + `` + "`" + `,
+		` + "`" + `{"attrs":{"a":"1","a":"2"}}` + "`" + `,
+		` + "`" + `{"next":{"next":{"next":{"id":9}}}}` + "`" + `,
+		` + "`" + `{"Ünknown":1}` + "`" + `,
+		` + "`" + `{"nAmE":"fold"}` + "`" + `,
+		` + "`" + `{"id":-0,"price":-0.0}` + "`" + `,
+		` + "`" + `{"price":1E-2,"id":0}` + "`" + `,
+		` + "`" + `{"tags":["a",null,"c"]}` + "`" + `,
+		` + "`" + `{"tags":[1]}` + "`" + `,
+	}
+	for i, in := range itemInputs {
+		var v Item
+		err := json.Unmarshal([]byte(in), &v)
+		show(fmt.Sprint("item", i), v, err)
+		pre := Item{ID: 100, Name: "pre", Tags: make([]string, 1, 4), Attrs: map[string]string{"old": "x"}, Next: &Item{Name: "kept"}}
+		pre.Tags[0] = "t0"
+		full := pre.Tags[:4]
+		full[1], full[2], full[3] = "stale1", "stale2", "stale3"
+		err = json.Unmarshal([]byte(in), &pre)
+		show(fmt.Sprint("pre", i), pre, err)
+		fmt.Fprintln(&out, len(pre.Tags), cap(pre.Tags), full, pre.Next != nil)
+		if pre.Next != nil {
+			show("next", *pre.Next, nil)
+		}
+	}
+	listInputs := []string{
+		` + "`" + `[{"id":1},{"id":2,"next":{"id":3}}]` + "`" + `,
+		` + "`" + `[]` + "`" + `,
+		` + "`" + `null` + "`" + `,
+		` + "`" + `[{"id":1},]` + "`" + `,
+		` + "`" + `[{"id":1} {"id":2}]` + "`" + `,
+		` + "`" + `[1]` + "`" + `,
+	}
+	for i, in := range listInputs {
+		var v []Item
+		err := json.Unmarshal([]byte(in), &v)
+		show(fmt.Sprint("list", i), v, err)
+		fmt.Fprintln(&out, v == nil, len(v), cap(v))
+		pre := make([]Item, 1, 3)
+		pre[0].Name = "keep"
+		pre[:3][1].Name = "stale"
+		err = json.Unmarshal([]byte(in), &pre)
+		show(fmt.Sprint("prelist", i), pre, err)
+		fmt.Fprintln(&out, pre == nil, len(pre), cap(pre))
+	}
+	numInputs := []string{
+		` + "`" + `{"I8":-128,"I16":32767,"I32":-2147483648,"I64":9223372036854775807,"U8":255,"U16":65535,"U32":4294967295,"U64":18446744073709551615,"F32":3.4e38,"F64":-1.5e-300,"B":true,"S":"s"}` + "`" + `,
+		` + "`" + `{"I8":128}` + "`" + `, ` + "`" + `{"I8":-129}` + "`" + `, ` + "`" + `{"U8":256}` + "`" + `, ` + "`" + `{"U8":-1}` + "`" + `,
+		` + "`" + `{"U64":18446744073709551616}` + "`" + `, ` + "`" + `{"I64":-9223372036854775808}` + "`" + `,
+		` + "`" + `{"I64":-9223372036854775809}` + "`" + `, ` + "`" + `{"F32":3.5e38}` + "`" + `, ` + "`" + `{"F32":1e-46}` + "`" + `,
+		` + "`" + `{"B":"true"}` + "`" + `, ` + "`" + `{"B":1}` + "`" + `, ` + "`" + `{"B":null,"S":null,"I8":null}` + "`" + `,
+		` + "`" + `{"hidden":5}` + "`" + `, ` + "`" + `{"S":"tab\tin"}` + "`" + `, ` + "`" + `{"I8":1e1}` + "`" + `,
+		` + "`" + `{"F64":-}` + "`" + `, ` + "`" + `{"F64":.5}` + "`" + `, ` + "`" + `{"F64":5.}` + "`" + `, ` + "`" + `{"F64":0.1e+2}` + "`" + `,
+	}
+	for i, in := range numInputs {
+		v := Nums{I8: 1, B: true, S: "old"}
+		err := json.Unmarshal([]byte(in), &v)
+		show(fmt.Sprint("num", i), v, err)
+	}
+	five := 5
+	namedInputs := []string{
+		` + "`" + `{"L":"l","LL":["a","b"],"M":{"x":1,"y":2},"P":7,"PP":{"I8":3}}` + "`" + `,
+		` + "`" + `{"P":null,"PP":null,"M":null,"LL":null}` + "`" + `,
+		` + "`" + `{"M":{"x":"bad"}}` + "`" + `,
+		` + "`" + `{"PP":{"I8":3,"S":"deep"}}` + "`" + `,
+	}
+	for i, in := range namedInputs {
+		inner := &Nums{S: "inner"}
+		v := Named{P: &five, PP: &inner, M: map[Label]int{"old": 1}}
+		err := json.Unmarshal([]byte(in), &v)
+		show(fmt.Sprint("named", i), v, err)
+		if v.P != nil {
+			fmt.Fprintln(&out, *v.P, v.P == &five)
+		}
+		if v.PP != nil && *v.PP != nil {
+			show("pp", **v.PP, nil)
+			fmt.Fprintln(&out, *v.PP == inner)
+		}
+	}
+	var nilp *Item
+	show("nilptr", nilp, json.Unmarshal([]byte("{}"), nilp))
+	m := map[string][]int{}
+	show("map", m, json.Unmarshal([]byte(` + "`" + `{"a":[1,2],"b":[],"c":null}` + "`" + `), &m))
+	var big []Item
+	var sb strings.Builder
+	sb.WriteString("[")
+	for i := 0; i < 2000; i++ {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		fmt.Fprintf(&sb, ` + "`" + `{"id":%d,"name":"item-%d","price":%d.25,"tags":["a","t%d"],"attrs":{"size":"%d"}}` + "`" + `, i, i, i%500, i%10, i%7)
+	}
+	sb.WriteString("]")
+	err := json.Unmarshal([]byte(sb.String()), &big)
+	fmt.Fprintln(&out, len(big), err, big[1999].Name, big[1234].Attrs)
+	os.Stdout.WriteString(out.String())
+}
+`
+
+func TestJSONDecodeDifferential(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs with the go tool")
+	}
+	diffTest(t, jsonDecodeProgram, 8)
+}

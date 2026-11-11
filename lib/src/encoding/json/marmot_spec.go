@@ -7,7 +7,9 @@ package json
 
 import (
 	"bytes"
+	"encoding/binary"
 	"math"
+	"math/bits"
 	"strconv"
 	"strings"
 	"sync"
@@ -73,9 +75,65 @@ type MarmotDecoder struct {
 	buf   []byte
 	pos   int
 	depth int
+	cache *[256]string // interned short strings, as the general path keeps
 }
 
+var marmotCaches = sync.Pool{New: func() any { return new([256]string) }}
+
 func MarmotNewDecoder(data []byte) MarmotDecoder { return MarmotDecoder{buf: data} }
+
+// MarmotNewDecoderCached is MarmotNewDecoder with a string cache; call
+// Release when done.
+func MarmotNewDecoderCached(data []byte) MarmotDecoder {
+	return MarmotDecoder{buf: data, cache: marmotCaches.Get().(*[256]string)}
+}
+
+// Release returns the string cache.
+func (d *MarmotDecoder) Release() {
+	if d.cache != nil {
+		marmotCaches.Put(d.cache)
+		d.cache = nil
+	}
+}
+
+// intern is encoding/json/v2's makeString.
+func (d *MarmotDecoder) intern(b []byte) string {
+	c := d.cache
+	if c == nil || len(b) < 2 || len(b) > 256 {
+		return string(b)
+	}
+	var h uint32
+	switch {
+	case len(b) >= 8:
+		lo := binary.LittleEndian.Uint64(b[:8])
+		hi := binary.LittleEndian.Uint64(b[len(b)-8:])
+		h = marmotHash64(uint32(lo), uint32(lo>>32)) ^ marmotHash64(uint32(hi), uint32(hi>>32))
+	case len(b) >= 4:
+		lo := binary.LittleEndian.Uint32(b[:4])
+		hi := binary.LittleEndian.Uint32(b[len(b)-4:])
+		h = marmotHash64(lo, hi)
+	default:
+		lo := binary.LittleEndian.Uint16(b[:2])
+		hi := binary.LittleEndian.Uint16(b[len(b)-2:])
+		h = marmotHash64(uint32(lo), uint32(hi))
+	}
+	i := h % uint32(len(*c))
+	if s := (*c)[i]; s == string(b) {
+		return s
+	}
+	s := string(b)
+	(*c)[i] = s
+	return s
+}
+
+func marmotHash64(lo, hi uint32) uint32 {
+	h := uint32(0x165667b1) + 8
+	h += lo * 0xc2b2ae3d
+	h = bits.RotateLeft32(h, 17) * 0x27d4eb2f
+	h += hi * 0xc2b2ae3d
+	h = bits.RotateLeft32(h, 17) * 0x27d4eb2f
+	return h
+}
 
 func (d *MarmotDecoder) ws() {
 	for d.pos < len(d.buf) {
@@ -185,7 +243,10 @@ func (d *MarmotDecoder) Key() ([]byte, bool) {
 // Str reads a string token.
 func (d *MarmotDecoder) Str() (string, bool) {
 	b, ok := d.Bytes()
-	return string(b), ok
+	if !ok {
+		return "", false
+	}
+	return d.intern(b), true
 }
 
 func (d *MarmotDecoder) number() ([]byte, bool) {
@@ -334,4 +395,13 @@ func MarmotMaybeFold(k []byte, names ...string) bool {
 		}
 	}
 	return false
+}
+
+// KeyStr reads an object member name as a string, and the colon after it.
+func (d *MarmotDecoder) KeyStr() (string, bool) {
+	k, ok := d.Key()
+	if !ok {
+		return "", false
+	}
+	return d.intern(k), true
 }

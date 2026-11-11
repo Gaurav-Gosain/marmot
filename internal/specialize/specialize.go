@@ -262,6 +262,7 @@ type gen struct {
 	undos   []func()
 	tokens  map[string]string // short package name used in decls -> import path
 	json    *jsonEnc
+	jdec    *jsonDec
 }
 
 func newGen(p *packages.Package) *gen {

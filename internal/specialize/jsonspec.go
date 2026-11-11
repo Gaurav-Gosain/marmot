@@ -23,7 +23,7 @@ import (
 // it gives up and calls json.Marshal, so results and errors are unchanged.
 
 // jsonFuncs are the encoding/json functions the pass rewrites.
-var jsonFuncs = map[string]bool{"Marshal": true}
+var jsonFuncs = map[string]bool{"Marshal": true, "Unmarshal": true}
 
 // jsonMethods are the methods that make encoding/json call user code.
 var jsonMethods = []string{"MarshalJSON", "MarshalJSONTo", "MarshalText", "AppendText",
@@ -362,10 +362,15 @@ func rewriteJSON(g *gen, f *ast.File) {
 			return true
 		}
 		fn := calleeFunc(g.info, call)
-		if fn == nil || fn.Pkg().Path() != "encoding/json" || !jsonFuncs[fn.Name()] || len(call.Args) != 1 || call.Ellipsis.IsValid() {
+		if fn == nil || fn.Pkg().Path() != "encoding/json" || !jsonFuncs[fn.Name()] || call.Ellipsis.IsValid() {
 			return true
 		}
-		g.jsonMarshal(call)
+		switch {
+		case fn.Name() == "Marshal" && len(call.Args) == 1:
+			g.jsonMarshal(call)
+		case fn.Name() == "Unmarshal" && len(call.Args) == 2:
+			g.jsonUnmarshal(call)
+		}
 		return true
 	})
 }
@@ -405,4 +410,325 @@ func (g *gen) jsonMarshal(call *ast.CallExpr) {
 	g.usePkg("strconv", "strconv")
 	g.usePkg("slices", "slices")
 	g.replaceCall(call, name, []ast.Expr{call.Args[0]})
+}
+
+// jsonDec generates decoders. A decoder has the signature
+//
+//	func(d *json.MarmotDecoder, v *T, dry bool) bool
+//
+// and with dry set it must not touch v (which is then nil).
+type jsonDec struct {
+	g     *gen
+	names typeutil.Map
+}
+
+func (jd *jsonDec) decoder(t types.Type) (string, bool) {
+	if v := jd.names.At(t); v != nil {
+		return v.(string), v.(string) != ""
+	}
+	if hasJSONMethods(t) {
+		return "", false
+	}
+	tsrc := jd.g.typeExpr(t)
+	if tsrc == "" {
+		return "", false
+	}
+	name := jd.g.newName("jdec")
+	jd.names.Set(t, name)
+	body, ok := jd.body(t, tsrc)
+	if !ok {
+		jd.names.Set(t, "")
+		return "", false
+	}
+	jd.g.decls = append(jd.g.decls, fmt.Sprintf("func %s(d *json.MarmotDecoder, v *%s, dry bool) bool {\n%s}\n", name, tsrc, body))
+	return name, true
+}
+
+// body returns the decoder body for *v of type t (source tsrc).
+func (jd *jsonDec) body(t types.Type, tsrc string) (string, bool) {
+	var b strings.Builder
+	w := func(format string, a ...any) { fmt.Fprintf(&b, "\t"+format+"\n", a...) }
+	// null leaves scalars and structs unchanged and sets nillable kinds to nil.
+	nullKeep := func() {
+		w("if d.Peek() == 'n' {")
+		w("\treturn d.Lit(\"null\")")
+		w("}")
+	}
+	nullNil := func() {
+		w("if d.Peek() == 'n' {")
+		w("\tif !d.Lit(\"null\") {")
+		w("\t\treturn false")
+		w("\t}")
+		w("\tif !dry {")
+		w("\t\t*v = nil")
+		w("\t}")
+		w("\treturn true")
+		w("}")
+	}
+	switch u := t.Underlying().(type) {
+	case *types.Basic:
+		nullKeep()
+		switch {
+		case u.Kind() == types.Bool:
+			w("x, ok := d.Bool()")
+		case u.Info()&types.IsInteger != 0 && u.Info()&types.IsUnsigned != 0:
+			w("x, ok := d.Uint(%d)", jd.g.bits(u))
+		case u.Info()&types.IsInteger != 0:
+			w("x, ok := d.Int(%d)", jd.g.bits(u))
+		case u.Info()&types.IsFloat != 0:
+			w("x, ok := d.Float(%d)", jd.g.bits(u))
+		case u.Info()&types.IsString != 0:
+			w("if d.Peek() != '\"' {")
+			w("\treturn false")
+			w("}")
+			w("x, ok := d.Str()")
+		default:
+			return "", false
+		}
+		w("if ok && !dry {")
+		w("\t*v = %s(x)", tsrc)
+		w("}")
+		w("return ok")
+	case *types.Pointer:
+		elem, ok := jd.decoder(u.Elem())
+		esrc := jd.g.typeExpr(u.Elem())
+		if !ok || esrc == "" {
+			return "", false
+		}
+		nullNil()
+		w("if dry {")
+		w("\treturn %s(d, nil, true)", elem)
+		w("}")
+		w("if *v == nil {")
+		w("\t*v = new(%s)", esrc)
+		w("}")
+		w("return %s(d, *v, false)", elem)
+	case *types.Slice:
+		if eb, ok := u.Elem().Underlying().(*types.Basic); ok && eb.Kind() == types.Uint8 {
+			return "", false
+		}
+		elem, ok := jd.decoder(u.Elem())
+		if !ok {
+			return "", false
+		}
+		nullNil()
+		w("if !d.Open('[') {")
+		w("\treturn false")
+		w("}")
+		w("if dry {")
+		w("\tfor i := 0; ; i++ {")
+		w("\t\tmore, ok := d.Next(']', i)")
+		w("\t\tif !ok {")
+		w("\t\t\treturn false")
+		w("\t\t}")
+		w("\t\tif !more {")
+		w("\t\t\treturn true")
+		w("\t\t}")
+		w("\t\tif !%s(d, nil, true) {", elem)
+		w("\t\t\treturn false")
+		w("\t\t}")
+		w("\t}")
+		w("}")
+		// Legacy merge: reuse the whole capacity without zeroing, grow by
+		// append, an empty array gives an empty slice with no capacity.
+		w("s := *v")
+		w("s = s[:cap(s)]")
+		w("n := 0")
+		w("for i := 0; ; i++ {")
+		w("\tmore, ok := d.Next(']', i)")
+		w("\tif !ok {")
+		w("\t\treturn false")
+		w("\t}")
+		w("\tif !more {")
+		w("\t\tbreak")
+		w("\t}")
+		w("\tif n == len(s) {")
+		w("\t\tvar zero %s", jd.g.typeExpr(u.Elem()))
+		w("\t\ts = append(s, zero)")
+		w("\t\ts = s[:cap(s)]")
+		w("\t}")
+		w("\tif !%s(d, &s[n], false) {", elem)
+		w("\t\treturn false")
+		w("\t}")
+		w("\tn++")
+		w("}")
+		w("if n == 0 {")
+		w("\t*v = %s{}", tsrc)
+		w("} else {")
+		w("\t*v = s[:n]")
+		w("}")
+		w("return true")
+	case *types.Map:
+		kb, ok := u.Key().Underlying().(*types.Basic)
+		if !ok || kb.Info()&types.IsString == 0 || hasJSONMethods(u.Key()) {
+			return "", false
+		}
+		ksrc, esrc := jd.g.typeExpr(u.Key()), jd.g.typeExpr(u.Elem())
+		elem, ok := jd.decoder(u.Elem())
+		if !ok || ksrc == "" || esrc == "" {
+			return "", false
+		}
+		nullNil()
+		w("if !d.Open('{') {")
+		w("\treturn false")
+		w("}")
+		w("var m %s", tsrc)
+		w("if !dry {")
+		w("\tif *v == nil {")
+		w("\t\t*v = make(%s)", tsrc)
+		w("\t}")
+		w("\tm = *v")
+		w("}")
+		w("for i := 0; ; i++ {")
+		w("\tmore, ok := d.Next('}', i)")
+		w("\tif !ok {")
+		w("\t\treturn false")
+		w("\t}")
+		w("\tif !more {")
+		w("\t\treturn true")
+		w("\t}")
+		w("\tif dry {")
+		w("\t\tif _, ok := d.Key(); !ok || !%s(d, nil, true) {", elem)
+		w("\t\t\treturn false")
+		w("\t\t}")
+		w("\t\tcontinue")
+		w("\t}")
+		w("\tks, ok := d.KeyStr()")
+		w("\tif !ok {")
+		w("\t\treturn false")
+		w("\t}")
+		w("\tk := %s(ks)", ksrc)
+		w("\tvar e %s", esrc)
+		w("\tif !%s(d, &e, false) {", elem)
+		w("\t\treturn false")
+		w("\t}")
+		w("\tm[k] = e")
+		w("}")
+	case *types.Struct:
+		fs, ok := jd.g.jsonFields(u)
+		if !ok {
+			return "", false
+		}
+		nullKeep()
+		w("if !d.Open('{') {")
+		w("\treturn false")
+		w("}")
+		w("for i := 0; ; i++ {")
+		w("\tmore, ok := d.Next('}', i)")
+		w("\tif !ok {")
+		w("\t\treturn false")
+		w("\t}")
+		w("\tif !more {")
+		w("\t\treturn true")
+		w("\t}")
+		w("\tk, ok := d.Key()")
+		w("\tif !ok {")
+		w("\t\treturn false")
+		w("\t}")
+		// Match the member name: switch on length, then compare bytes.
+		byLen := map[int][]int{}
+		var lens []int
+		for i, f := range fs {
+			if _, ok := byLen[len(f.name)]; !ok {
+				lens = append(lens, len(f.name))
+			}
+			byLen[len(f.name)] = append(byLen[len(f.name)], i)
+		}
+		w("\tf := -1")
+		w("\tswitch len(k) {")
+		for _, n := range lens {
+			w("\tcase %d:", n)
+			for j, i := range byLen[n] {
+				var conds []string
+				for c := 0; c < n; c++ {
+					conds = append(conds, fmt.Sprintf("k[%d] == %s", c, strconv.QuoteRune(rune(fs[i].name[c]))))
+				}
+				if n == 0 {
+					conds = []string{"true"}
+				}
+				kw := "if"
+				if j > 0 {
+					kw = "} else if"
+				}
+				w("\t\t%s %s {", kw, strings.Join(conds, " && "))
+				w("\t\t\tf = %d", i)
+			}
+			w("\t\t}")
+		}
+		w("\t}")
+		w("\tswitch f {")
+		var names []string
+		for i, f := range fs {
+			fd, ok := jd.decoder(f.typ)
+			if !ok {
+				return "", false
+			}
+			names = append(names, strconv.Quote(f.name))
+			w("\tcase %d:", i)
+			w("\t\tif dry {")
+			w("\t\t\tok = %s(d, nil, true)", fd)
+			w("\t\t} else {")
+			w("\t\t\tok = %s(d, &v.%s, false)", fd, f.goName)
+			w("\t\t}")
+		}
+		w("\tdefault:")
+		if len(names) > 0 {
+			w("\t\tif json.MarmotMaybeFold(k, %s) {", strings.Join(names, ", "))
+			w("\t\t\treturn false")
+			w("\t\t}")
+		}
+		w("\t\tok = d.Skip()")
+		w("\t}")
+		w("\tif !ok {")
+		w("\t\treturn false")
+		w("\t}")
+		w("}")
+	default:
+		return "", false
+	}
+	return b.String(), true
+}
+
+// bits is the size in bits of a basic numeric type.
+func (g *gen) bits(b *types.Basic) int {
+	return int(g.pkg.TypesSizes.Sizeof(b) * 8)
+}
+
+func (g *gen) jsonUnmarshal(call *ast.CallExpr) {
+	t := g.info.Types[call.Args[1]].Type
+	if t == nil {
+		return
+	}
+	pt, ok := t.(*types.Pointer)
+	if !ok {
+		return // only *T for a named or literal pointer type
+	}
+	tsrc := g.typeExpr(pt.Elem())
+	if tsrc == "" {
+		return
+	}
+	if g.jdec == nil {
+		g.jdec = &jsonDec{g: g}
+	}
+	dec, ok := g.jdec.decoder(pt.Elem())
+	if !ok {
+		return
+	}
+	name := g.newName("json")
+	g.decls = append(g.decls, fmt.Sprintf(`func %s(data []byte, v *%s) error {
+	if v == nil {
+		return json.Unmarshal(data, v)
+	}
+	d := json.MarmotNewDecoder(data)
+	if !%s(&d, nil, true) || !d.End() {
+		return json.Unmarshal(data, v)
+	}
+	d = json.MarmotNewDecoderCached(data)
+	%s(&d, v, false)
+	d.Release()
+	return nil
+}
+`, name, tsrc, dec, dec))
+	g.usePkg("encoding/json", "json")
+	g.replaceCall(call, name, []ast.Expr{call.Args[0], call.Args[1]})
 }
