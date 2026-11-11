@@ -137,7 +137,7 @@ func (f *funcGen) deferStmt(v *ssa.Defer) {
 	var rec string
 	if inLoop(v.Block()) || !own {
 		// The record must outlive this frame (or this iteration).
-		rec = f.rtcall("newobject", f.typeDesc(deferRecordType))
+		rec = f.newObject(deferRecordType)
 	} else {
 		rec = f.alloca(tDefer, 8)
 	}
