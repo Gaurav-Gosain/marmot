@@ -57,6 +57,7 @@ type sg struct {
 	sig    bool   // a SIGURG is pending for its M
 	stop   int    // > 0: stopped in sched_stop_self, waiting for this world generation to end
 	stats  bool   // the stop is rt_gc_stats (no gc_mu)
+	stale  bool   // in a syscall, its P was taken: m->p still names it (only the status CAS decides)
 }
 
 type sstate struct {
@@ -70,6 +71,7 @@ type sstate struct {
 	runq      []int
 	spinners  int  // spinners with a P (their Ps have owner -2)
 	nmspin    int  // nmspinning
+	before50f bool // before rtcore 50f70c9: p->m stays set during a syscall, the exit CAS does not set it
 	fix       bool // rtcore 5a287c8: REQ_EXITSYSCALL takes an idle P or queues in one sched.lock
 	// hold; an M that stops spinning rechecks the global queue
 	spinPh int // 0 no spinner; 1 holds a P (findrunnable); 2 released its P, still spinning;
@@ -99,7 +101,7 @@ func (s *sstate) key() string {
 				st = 2
 			}
 		}
-		fmt.Fprint(&b, g.pc, string(g.script), g.p, g.waits, g.sig, st, g.stats, ";")
+		fmt.Fprint(&b, g.pc, string(g.script), g.p, g.waits, g.sig, st, g.stats, g.stale, ";")
 	}
 	return b.String()
 }
@@ -298,7 +300,7 @@ func (s *sstate) moves() []move {
 					t.ps[p] = pStop
 					t.stopwait--
 					if o := t.owner[p]; o >= 0 {
-						t.gs[o].p = -1
+						t.gs[o].stale = true
 					}
 					t.owner[p] = -1
 				}
@@ -326,7 +328,7 @@ func (s *sstate) moves() []move {
 					t.ps[p] = pStop
 					t.stopwait--
 					if o := t.owner[p]; o >= 0 {
-						t.gs[o].p = -1
+						t.gs[o].stale = true
 					}
 					t.owner[p] = -1
 					changed = true
@@ -378,13 +380,28 @@ func (s *sstate) moves() []move {
 		case gExitSys:
 			t := s.clone()
 			tg := &t.gs[i]
-			if g.p >= 0 && t.ps[g.p] == pSys { // CAS P_SYSCALL -> P_RUNNING
+			if g.p >= 0 && t.ps[g.p] == pSys { // CAS P_SYSCALL -> P_RUNNING on m->p
 				t.ps[g.p] = pRun
 				tg.pc = gRun
+				if g.stale && s.before50f {
+					// ABA: the P went to another M, which is now in a syscall itself;
+					// this M wins the CAS but p->m still names the other M
+					tg.stale = false
+					add(fmt.Sprintf("g%d exitsyscall wins the CAS on P%d owned by g%d (ABA)", i, g.p, t.owner[g.p]), t)
+					continue
+				}
+				if g.stale { // 50f70c9: the CAS winner sets p->m; the other M will lose its CAS
+					if o := t.owner[g.p]; o >= 0 && o != i {
+						t.gs[o].stale = true
+					}
+					tg.stale = false
+				}
+				t.owner[g.p] = i
 				add(fmt.Sprintf("g%d exitsyscall keeps its P", i), t)
 				continue
 			}
 			tg.p = -1
+			tg.stale = false
 			if !t.gcwaiting {
 				if p := t.idleP(); p >= 0 {
 					t.ps[p], t.owner[p] = pRun, i
@@ -424,7 +441,7 @@ func (s *sstate) moves() []move {
 		o := t.owner[p]
 		t.owner[p] = -1
 		if o >= 0 {
-			t.gs[o].p = -1
+			t.gs[o].stale = true
 		}
 		switch {
 		case len(t.runq) > 0 && t.spinPh == 0:
@@ -636,6 +653,37 @@ func TestSTWSpinWindowBefore5a287c8(t *testing.T) {
 // With 5a287c8, no state is stuck.
 func TestSTWFixed(t *testing.T) {
 	for _, sc := range append(stwScripts, []string{"x", "x"}, []string{"x", "s"}, []string{"xs", "g"}, []string{"x", "x", "g"}) {
+		s := newSTW(sc...)
+		s.fix = true
+		trace, n := stwCheck(s)
+		t.Logf("%v: %d states", sc, n)
+		if trace != nil {
+			t.Errorf("%v: stuck after:\n  %s", sc, strings.Join(trace, "\n  "))
+		}
+	}
+}
+
+// Before rtcore 50f70c9 two Ms could own one P: the P of an M in a syscall is taken and run
+// by another M that enters a syscall too; the first M returns and wins the status CAS while
+// p->m still names the other M. Its SIGURG handler then refuses to stop (p->m != m) and stop
+// the world waits forever (the double GC hang of marmot-2).
+func TestSTWTwoOwnersBefore50f70c9(t *testing.T) {
+	for _, sc := range [][]string{{"sg", "xs"}, {"sg", "xsg"}, {"sg", "g", "xs"}} {
+		s := newSTW(sc...)
+		s.fix = true
+		s.before50f = true
+		trace, n := stwCheck(s)
+		t.Logf("%v: %d states", sc, n)
+		if trace != nil {
+			t.Logf("stuck:\n  %s", strings.Join(trace, "\n  "))
+			return
+		}
+	}
+	t.Fatal("the two-owner interleaving is not found")
+}
+
+func TestSTWTwoOwnersFixed(t *testing.T) {
+	for _, sc := range [][]string{{"sg", "xs"}, {"sg", "xsg"}, {"sg", "g", "xs"}} {
 		s := newSTW(sc...)
 		s.fix = true
 		trace, n := stwCheck(s)
