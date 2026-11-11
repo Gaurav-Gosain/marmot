@@ -57,7 +57,7 @@ namespace marmot {
 namespace {
 
 // Bump when the meaning of a cache entry changes.
-constexpr const char *kCacheVersion = "marmot-backend-cache-18";
+constexpr const char *kCacheVersion = "marmot-backend-cache-19";
 
 // Largest function, in LLVM instructions, imported into other modules.
 constexpr unsigned kImportLimit = 40;
@@ -186,6 +186,7 @@ struct Def {
   std::string qname; // global name, or "<module>:<name>" for local symbols
   bool isFunc = false, local = false, importable = false;
   bool copyable = false; // linkonce or weak: any module may hold a copy
+  std::string hash;      // importable functions: hash of the body
   std::vector<std::string> refs; // qualified names
   // Type descriptors this definition uses for more than allocation (see
   // descriptorEscapes); their reflection tables must stay.
@@ -198,6 +199,7 @@ struct ModuleInfo {
   ParsedModulePtr parsed;
   std::vector<std::pair<std::string, unsigned>> decls; // external functions, arg count
   std::string declTable;                               // restricted escape table
+  std::string pkg; // Go package (module attribute marmot.package); dev imports stay inside it
   std::string keyB;                                    // translation cache key
   std::string bitcode;
   std::vector<Def> defs;
@@ -321,9 +323,42 @@ void descriptorEscapes(const GlobalValue &gv, std::set<std::string> &out) {
 // Reference summary in cache form: "D\t<flags>\t<qname>" then "R\t<ref>"
 // lines; "X\t<root>" for appending-global roots. Names hold no tabs or
 // newlines.
-std::string summarize(Module &m) {
+// Hash of a function body that does not depend on the rest of the module:
+// the instruction text without metadata numbers, plus the contents of the
+// attached metadata (debug locations, TBAA, ranges) and the attributes.
+std::string bodyHash(Function &f) {
+  std::string text;
+  raw_string_ostream os(text);
+  f.getAttributes().print(os);
+  os << "\n" << typeString(f.getFunctionType()) << "\n";
+  SmallVector<std::pair<unsigned, MDNode *>, 4> mds;
+  for (BasicBlock &bb : f)
+    for (Instruction &inst : bb) {
+      std::string line;
+      raw_string_ostream ls(line);
+      inst.print(ls);
+      for (size_t c = 0; c < line.size(); ++c) { // "!123" -> "!"
+        os << line[c];
+        if (line[c] == '!')
+          while (c + 1 < line.size() && isdigit((unsigned char)line[c + 1]))
+            ++c;
+      }
+      os << "\n";
+      inst.getAllMetadata(mds);
+      for (auto &[kind, md] : mds)
+        md->printTree(os, f.getParent());
+      if (const DebugLoc &dl = inst.getDebugLoc())
+        os << " @" << dl.getLine() << ":" << dl.getCol();
+      os << "\n";
+    }
+  return hashHex(text);
+}
+
+std::string summarize(Module &m, StringRef pkg) {
   std::string out;
   raw_string_ostream os(out);
+  if (!pkg.empty())
+    os << "P\t" << pkg << "\n";
   auto add = [&](GlobalValue &gv) {
     if (gv.isDeclaration())
       return;
@@ -348,6 +383,8 @@ std::string summarize(Module &m) {
        << (importable ? 'i' : '-')
        << (gv.hasLinkOnceLinkage() || gv.hasWeakLinkage() ? 'o' : '-') << "\t"
        << qualifyRaw(gv) << "\n";
+    if (importable)
+      os << "H\t" << bodyHash(cast<Function>(gv)) << "\n";
     for (const GlobalValue *r : refs)
       os << "R\t" << qualifyRaw(*r) << "\n";
     std::set<std::string> uses;
@@ -389,6 +426,10 @@ void loadSummary(StringRef text, unsigned idx, ModuleInfo &info) {
       d.copyable = flags.size() > 3 && flags[3] == 'o';
       d.qname = localize(name, idx);
       info.defs.push_back(std::move(d));
+    } else if (tag == "P") {
+      info.pkg = rest.str();
+    } else if (tag == "H" && !info.defs.empty()) {
+      info.defs.back().hash = rest.str();
     } else if (tag == "R" && !info.defs.empty()) {
       info.defs.back().refs.push_back(localize(rest, idx));
     } else if (tag == "E" && !info.defs.empty()) {
@@ -506,6 +547,56 @@ bool writeFile(const std::string &path, StringRef data) {
 }
 
 } // namespace
+
+// Links the bodies of the named functions from other modules into m as
+// available_externally definitions (inlining only; the source module keeps
+// the real definition). imp: source module index -> function names.
+bool importBodies(Module &m, const std::map<unsigned, std::set<std::string>> &imp,
+                  std::vector<ModuleInfo> &mods, LLVMContext &ctx, raw_ostream &es,
+                  StringRef in) {
+  for (auto &[si, names] : imp) {
+    auto srcOr = getLazyBitcodeModule(MemoryBufferRef(mods[si].bitcode, mods[si].job.in), ctx);
+    if (!srcOr) {
+      es << in << ": " << toString(srcOr.takeError()) << "\n";
+      return false;
+    }
+    std::unique_ptr<Module> src = std::move(*srcOr);
+    // Keep linkonce/weak definitions: an imported body may use one that only
+    // the source module defines, and the source module may drop its copy.
+    // The linker copies only those that are needed.
+    for (Function &f : *src)
+      if (!f.isDeclaration() && !names.count(f.getName().str()) &&
+          !f.hasLinkOnceLinkage() && !f.hasWeakLinkage()) {
+        f.deleteBody();
+        f.setComdat(nullptr);
+        if (f.hasLocalLinkage())
+          f.setLinkage(GlobalValue::ExternalLinkage);
+      }
+    for (GlobalVariable &v : make_early_inc_range(src->globals())) {
+      if (v.hasAppendingLinkage()) {
+        v.eraseFromParent();
+        continue;
+      }
+      if (!v.isDeclaration() && !v.hasLinkOnceLinkage() && !v.hasWeakLinkage()) {
+        v.setInitializer(nullptr);
+        v.setComdat(nullptr);
+        v.setLinkage(GlobalValue::ExternalLinkage);
+      }
+    }
+    if (Error e = src->materializeAll()) {
+      es << in << ": " << toString(std::move(e)) << "\n";
+      return false;
+    }
+    if (Linker::linkModules(m, std::move(src), Linker::Flags::LinkOnlyNeeded)) {
+      es << in << ": cross-module import failed\n";
+      return false;
+    }
+    for (const std::string &n : names)
+      if (Function *f = m.getFunction(n); f && !f->isDeclaration())
+        f->setLinkage(GlobalValue::AvailableExternallyLinkage);
+  }
+  return true;
+}
 
 bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &opts,
                          unsigned threads, bool wpo, const std::string &cacheDir,
@@ -682,6 +773,9 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     if (!ensureParsed(i, es, t))
       return;
     applyTable(moduleOp(i), m.declTable);
+    std::string pkg;
+    if (auto a = moduleOp(i)->getAttrOfType<mlir::StringAttr>("marmot.package"))
+      pkg = a.getValue().str();
     std::string err;
     auto tm = createTargetMachine(opts, err);
     if (!tm) {
@@ -694,7 +788,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     if (!lm)
       return;
     auto t0 = std::chrono::steady_clock::now();
-    std::string summary = summarize(*lm);
+    std::string summary = summarize(*lm, pkg);
     loadSummary(summary, i, m);
     {
       raw_string_ostream os(m.bitcode);
@@ -716,11 +810,58 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     return ok;
   }
 
-  // Dev mode: every module on its own.
+  // Dev mode: every module on its own, plus available_externally copies of
+  // small functions from other modules of the same Go package (the frontend
+  // splits a package into one module per source file). The object's cache key
+  // includes the bodies of what it imports, so an edit elsewhere in the
+  // package recompiles a module only if a body it inlines changed.
   if (!wpo) {
+    std::vector<std::map<unsigned, std::set<std::string>>> imports(mods.size());
+    std::vector<std::string> importKey(mods.size());
+    if (opts.wpoImport && opts.optLevel != '0') {
+      StringMap<std::pair<unsigned, unsigned>> byName;
+      StringSet<> dup;
+      for (unsigned mi = 0; mi < mods.size(); ++mi)
+        for (unsigned di = 0; di < mods[mi].defs.size(); ++di) {
+          const Def &d = mods[mi].defs[di];
+          if (d.isFunc && !d.local && !byName.try_emplace(d.qname, mi, di).second)
+            dup.insert(d.qname);
+        }
+      constexpr unsigned kDevImportBudget = 200;
+      for (unsigned i = 0; i < mods.size(); ++i) {
+        if (mods[i].pkg.empty())
+          continue;
+        SmallVector<const std::string *, 64> work;
+        for (const Def &d : mods[i].defs)
+          if (d.isFunc)
+            for (const std::string &r : d.refs)
+              work.push_back(&r);
+        unsigned count = 0;
+        std::map<std::string, std::string> taken; // name -> body hash
+        while (!work.empty() && count < kDevImportBudget) {
+          const std::string &r = *work.pop_back_val();
+          auto it = byName.find(r);
+          if (it == byName.end() || dup.contains(r))
+            continue;
+          auto [si, sj] = it->second;
+          const Def &callee = mods[si].defs[sj];
+          if (si == i || !callee.importable || mods[si].pkg != mods[i].pkg)
+            continue;
+          if (!imports[i][si].insert(r).second)
+            continue;
+          ++count;
+          ++stats.imported;
+          taken[r] = callee.hash;
+          for (const std::string &rr : callee.refs)
+            work.push_back(&rr);
+        }
+        for (auto &[n, h] : taken)
+          importKey[i] += n + "=" + h + "\n";
+      }
+    }
     parallel([&](unsigned i, raw_ostream &es, PhaseTimes &t) {
       ModuleInfo &m = mods[i];
-      std::string key = hashHex(m.keyB + "|obj");
+      std::string key = hashHex(m.keyB + "|obj|" + importKey[i]);
       if (cacheObjects) {
         if (auto obj = cache.get(key, "o")) {
           if (!opts.prepareOnly && !writeFile(m.job.out, *obj))
@@ -736,11 +877,14 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         es << m.job.in << ": " << (tm ? toString(mOr.takeError()) : err) << "\n";
         return;
       }
+      if (!imports[i].empty() && !importBodies(**mOr, imports[i], mods, ctx, es, m.job.in))
+        return;
       std::string out = m.job.out;
       if (opts.prepareOnly) // the object goes to the cache only
         out = m.job.out + ".prepare.tmp";
       if (!optimizeAndEmit(**mOr, *tm, m.job.in, out, opts, t, es))
         return;
+      ++stats.compiled;
       if (cacheObjects)
         if (auto obj = MemoryBuffer::getFile(out, false, false))
           cache.put(key, "o", (*obj)->getBuffer());
@@ -1072,47 +1216,8 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       }
 
     // Imports.
-    for (auto &[si, names] : imports[i]) {
-      auto srcOr = getLazyBitcodeModule(MemoryBufferRef(mods[si].bitcode, mods[si].job.in), ctx);
-      if (!srcOr) {
-        es << info.job.in << ": " << toString(srcOr.takeError()) << "\n";
-        return;
-      }
-      std::unique_ptr<Module> src = std::move(*srcOr);
-      // Keep linkonce/weak definitions: an imported body may use one that only
-      // the source module defines, and the source module may drop its copy.
-      // The linker copies only those that are needed.
-      for (Function &f : *src)
-        if (!f.isDeclaration() && !names.count(f.getName().str()) &&
-            !f.hasLinkOnceLinkage() && !f.hasWeakLinkage()) {
-          f.deleteBody();
-          f.setComdat(nullptr);
-          if (f.hasLocalLinkage())
-            f.setLinkage(GlobalValue::ExternalLinkage);
-        }
-      for (GlobalVariable &v : make_early_inc_range(src->globals())) {
-        if (v.hasAppendingLinkage()) {
-          v.eraseFromParent();
-          continue;
-        }
-        if (!v.isDeclaration() && !v.hasLinkOnceLinkage() && !v.hasWeakLinkage()) {
-          v.setInitializer(nullptr);
-          v.setComdat(nullptr);
-          v.setLinkage(GlobalValue::ExternalLinkage);
-        }
-      }
-      if (Error e = src->materializeAll()) {
-        es << info.job.in << ": " << toString(std::move(e)) << "\n";
-        return;
-      }
-      if (Linker::linkModules(*m, std::move(src), Linker::Flags::LinkOnlyNeeded)) {
-        es << info.job.in << ": cross-module import failed\n";
-        return;
-      }
-      for (const std::string &n : names)
-        if (Function *f = m->getFunction(n); f && !f->isDeclaration())
-          f->setLinkage(GlobalValue::AvailableExternallyLinkage);
-    }
+    if (!importBodies(*m, imports[i], mods, ctx, es, info.job.in))
+      return;
     // Guarded devirtualization of indirect calls (func values, interface
     // methods): when at most two address-taken functions in the program have
     // the call's type, call them directly behind a pointer compare; the
@@ -1179,6 +1284,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     t.link += msSince(t0);
     if (!optimizeAndEmit(*m, *tm, info.job.in, info.job.out, opts, t, es))
       return;
+    ++stats.compiled;
     if (cacheObjects)
       if (auto obj = MemoryBuffer::getFile(info.job.out, false, false))
         cache.put(key, "o", (*obj)->getBuffer());

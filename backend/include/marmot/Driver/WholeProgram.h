@@ -23,6 +23,7 @@ struct WpoStats {
   unsigned escapeRounds = 0, noEscapeParams = 0;
   unsigned cacheHits = 0, cacheMisses = 0, prunedTypes = 0;
   std::atomic<unsigned> devirtualized{0};
+  std::atomic<unsigned> compiled{0}; // objects optimized and emitted (not from the cache)
 };
 
 // Compiles a batch: escape summaries are propagated across modules, then

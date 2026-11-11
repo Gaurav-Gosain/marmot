@@ -299,11 +299,11 @@ int main(int argc, char **argv) {
       errs() << format("batch: %u functions, %u live, %u internalized, %u imported, "
                        "%u no-escape params after %u escape rounds, %u calls devirtualized, "
                        "%u types without reflection tables, "
-                       "cache %u hits %u misses\n",
+                       "cache %u hits %u misses, compiled %u of %zu objects\n",
                        st.functions, st.liveFunctions, st.internalized, st.imported,
                        st.noEscapeParams, st.escapeRounds, st.devirtualized.load(),
                        st.prunedTypes,
-                       st.cacheHits, st.cacheMisses);
+                       st.cacheHits, st.cacheMisses, st.compiled.load(), wjobs.size());
   } else if (work.size() == 1) {
     runJob(work[0], false);
   } else {
