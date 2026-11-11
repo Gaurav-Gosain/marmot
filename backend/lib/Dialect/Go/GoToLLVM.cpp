@@ -380,10 +380,15 @@ private:
 
   LogicalResult lower(IndexOp op) {
     Location loc = op.getLoc();
-    if (!op.getNocheck() &&
-        failed(boundsCheck(op, op.getIndex(), op.getLen(), true, boundsIndex,
-                           op.getUnsignedIndex())))
+    if (op.getNocheck()) {
+      // The check was proven to hold: keep the fact for LLVM, which uses it
+      // to remove other checks.
+      Value inRange = icmp(loc, LLVM::ICmpPredicate::ult, op.getIndex(), op.getLen());
+      LLVM::AssumeOp::create(b, loc, inRange);
+    } else if (failed(boundsCheck(op, op.getIndex(), op.getLen(), true, boundsIndex,
+                                  op.getUnsignedIndex()))) {
       return failure();
+    }
     Value addr = LLVM::GEPOp::create(b, loc, ptrTy, op.getElemType(), op.getBase(),
                                      ValueRange{op.getIndex()});
     op.replaceAllUsesWith(addr);

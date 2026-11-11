@@ -4,6 +4,7 @@
 #include "marmot/Dialect/Go/Passes.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/Matchers.h"
 
@@ -175,10 +176,16 @@ struct GoBCEPass : marmot::go::impl::GoBCEBase<GoBCEPass> {
           kept.push_back(op);
           return;
         }
-        if (auto ix = dyn_cast<IndexOp>(op))
+        if (auto ix = dyn_cast<IndexOp>(op)) {
           ix.setNocheck(true);
-        else
+        } else {
+          // Keep the proven fact for LLVM (see go.index nocheck lowering).
+          OpBuilder b(op);
+          Value inRange =
+              LLVM::ICmpOp::create(b, op->getLoc(), LLVM::ICmpPredicate::ult, i, n);
+          LLVM::AssumeOp::create(b, op->getLoc(), inRange);
           toErase.push_back(op);
+        }
       });
       for (Operation *op : toErase)
         op->erase();
