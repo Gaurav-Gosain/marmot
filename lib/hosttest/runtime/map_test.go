@@ -365,3 +365,28 @@ func BenchmarkHostMapAccessInt(b *testing.B) {
 	}
 	_ = s
 }
+
+func TestGroupGCBits(t *testing.T) {
+	strBits := byte(1)
+	ptrBits := byte(1)
+	kt := &_type{size: 16, ptrdata: 8, gcdata: &strBits, kind: kindString, align: 8, tflag: tflagComparable}
+	et := &_type{size: 8, ptrdata: 8, gcdata: &ptrBits, kind: kindPointer, align: 8, tflag: tflagComparable | tflagRegularMemory | tflagDirectIface}
+	mt := mapType(kt, et)
+	m := makemap(mt, 0)
+	if m.gcbits == nil {
+		t.Fatal("no group bitmap")
+	}
+	words := m.groupSize / 8
+	for w := uintptr(0); w < words; w++ {
+		got := *(*byte)(unsafe.Add(unsafe.Pointer(m.gcbits), w/8))&(1<<(w%8)) != 0
+		// Word 0 is the control word; slot s starts at word 1+3s: key
+		// pointer, key length, element pointer.
+		want := w > 0 && ((w-1)%3 == 0 || (w-1)%3 == 2)
+		if got != want {
+			t.Fatalf("word %d: bit %v want %v", w, got, want)
+		}
+	}
+	if makemap(mt, 0).gcbits != m.gcbits {
+		t.Errorf("bitmap not shared per map type")
+	}
+}

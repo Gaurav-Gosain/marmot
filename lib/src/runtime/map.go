@@ -55,6 +55,7 @@ type hmap struct {
 	iterSeq    uint32 // iterations started, for the random start slot
 	keyKind    uint8
 	noscan     bool
+	gcbits     *byte // pointer bitmap of one group, nil to scan conservatively
 	key        *_type
 	elem       *_type
 	elemOff    uintptr // offset of the element in a slot
@@ -105,6 +106,9 @@ func makemap(t *maptype, hint int) *hmap {
 	m.slotSize = alignUp(m.elemOff+e.size, max(kalign, ealign))
 	m.groupSize = 8 + groupSlots*m.slotSize
 	m.noscan = k.ptrdata == 0 && e.ptrdata == 0
+	if !m.noscan {
+		m.gcbits = groupGCBits(t, m.groupSize, m.slotSize, m.elemOff)
+	}
 	switch {
 	case k.kind == kindString:
 		m.keyKind = keyString
@@ -131,6 +135,67 @@ func makemap64(t *maptype, hint int64) *hmap {
 // entries.
 func makemap_small(t *maptype) *hmap {
 	return makemap(t, 0)
+}
+
+// Group pointer bitmaps, one per map type, built on first use and kept for
+// the life of the program (the collector reads them for every group
+// array of the type).
+type groupBits struct {
+	t    *maptype
+	bits *byte
+	next *groupBits
+}
+
+var (
+	groupBitsLock mutex
+	groupBitsList *groupBits
+)
+
+// groupGCBits returns the pointer bitmap of one group of map type t (one
+// bit per word, least significant bit first), or nil if the key or element
+// must be scanned conservatively or the layout is not word aligned.
+func groupGCBits(t *maptype, groupSize, slotSize, elemOff uintptr) *byte {
+	k, e := t.key, t.elem
+	if k.ptrdata != 0 && k.gcdata == nil || e.ptrdata != 0 && e.gcdata == nil {
+		return nil
+	}
+	if slotSize%ptrSize != 0 || elemOff%ptrSize != 0 && e.ptrdata != 0 {
+		return nil
+	}
+	lock(&groupBitsLock)
+	for gb := groupBitsList; gb != nil; gb = gb.next {
+		if gb.t == t {
+			unlock(&groupBitsLock)
+			return gb.bits
+		}
+	}
+	words := groupSize / ptrSize
+	bits := (*byte)(mallocgc((words+7)/8, nil))
+	set := func(w uintptr) {
+		b := (*byte)(unsafe.Add(unsafe.Pointer(bits), w/8))
+		*b |= 1 << (w % 8)
+	}
+	for s := uintptr(0); s < groupSlots; s++ {
+		base := (8 + s*slotSize) / ptrSize
+		for w := uintptr(0); w < k.ptrdata/ptrSize; w++ {
+			if *(*byte)(unsafe.Add(unsafe.Pointer(k.gcdata), w/8))&(1<<(w%8)) != 0 {
+				set(base + w)
+			}
+		}
+		ebase := (8 + s*slotSize + elemOff) / ptrSize
+		for w := uintptr(0); w < e.ptrdata/ptrSize; w++ {
+			if *(*byte)(unsafe.Add(unsafe.Pointer(e.gcdata), w/8))&(1<<(w%8)) != 0 {
+				set(ebase + w)
+			}
+		}
+	}
+	gb := (*groupBits)(mallocConservative(unsafe.Sizeof(groupBits{})))
+	gb.t = t
+	gb.bits = bits
+	gb.next = groupBitsList
+	groupBitsList = gb
+	unlock(&groupBitsLock)
+	return bits
 }
 
 // groupsForCount returns the number of groups needed to hold n entries
@@ -602,9 +667,12 @@ func (m *hmap) resize(n uintptr) {
 		oldN = m.mask + 1
 	}
 	size := n * m.groupSize
-	if m.noscan {
+	switch {
+	case m.noscan:
 		m.groups = mallocgc(size, nil)
-	} else {
+	case m.gcbits != nil:
+		m.groups = mallocPrecise(size, m.gcbits, m.groupSize)
+	default:
 		m.groups = mallocConservative(size)
 	}
 	for g := uintptr(0); g < n; g++ {

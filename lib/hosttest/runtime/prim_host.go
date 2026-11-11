@@ -43,6 +43,10 @@ func mallocConservative(size uintptr) unsafe.Pointer {
 	return unsafe.Pointer(&b[0])
 }
 
+func mallocPrecise(size uintptr, bits *byte, elemsize uintptr) unsafe.Pointer {
+	return mallocConservative(size)
+}
+
 func memmove(dst, src unsafe.Pointer, n uintptr) {
 	if n == 0 {
 		return

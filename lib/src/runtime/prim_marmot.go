@@ -11,6 +11,7 @@
 //	lock(*mutex), unlock(*mutex)
 //	mallocgc(size uintptr, typ *_type) unsafe.Pointer
 //	mallocConservative(size uintptr) unsafe.Pointer
+//	mallocPrecise(size uintptr, bits *byte, elemsize uintptr) unsafe.Pointer
 //	memmove(dst, src unsafe.Pointer, n uintptr)
 //	memclrNoHeapPointers(p unsafe.Pointer, n uintptr)
 //	memequal(a, b unsafe.Pointer, n uintptr) bool
@@ -58,6 +59,12 @@ func mallocgc(size uintptr, typ *_type) unsafe.Pointer {
 		return rt_alloc(size, rtAllocConservative, nil, 0)
 	}
 	return rt_alloc(size, rtAllocPrecise, unsafe.Pointer(typ.gcdata), typ.size)
+}
+
+// mallocPrecise allocates size bytes made of size/elemsize elements, each
+// described by the static pointer bitmap bits (elemsize a multiple of 8).
+func mallocPrecise(size uintptr, bits *byte, elemsize uintptr) unsafe.Pointer {
+	return rt_alloc(size, rtAllocPrecise, unsafe.Pointer(bits), elemsize)
 }
 
 // mallocConservative allocates size bytes that are scanned conservatively.
