@@ -280,7 +280,7 @@ func (p *Program) computeSymbol(fn *ssa.Function) string {
 		return p.computeSymbol(fn.Parent()) + strings.TrimPrefix(fn.Name(), fn.Parent().Name())
 	}
 	if fn.Pkg != nil && fn.Synthetic == "" {
-		path := fn.Pkg.Pkg.Path()
+		path := rtPath(fn.Pkg.Pkg)
 		if recv := fn.Signature.Recv(); recv != nil {
 			rt := recv.Type()
 			ptr := ""

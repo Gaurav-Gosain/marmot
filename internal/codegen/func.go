@@ -183,6 +183,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 		f.implicitRunDefers = !hasRunDefers(fn)
 	}
 	f.computeSinks()
+	f.sinkAllocs()
 	f.findMapFusions()
 	// Phis are block arguments; name them all first because branches
 	// may pass them before their block is emitted.

@@ -355,9 +355,19 @@ func stripRecv(sig *types.Signature) *types.Signature {
 // pkgPathOf returns the defining package path for named types, "" otherwise.
 func pkgPathOf(t types.Type) string {
 	if n, ok := types.Unalias(t).(*types.Named); ok && n.Obj().Pkg() != nil {
-		return n.Obj().Pkg().Path()
+		return rtPath(n.Obj().Pkg())
 	}
 	return ""
+}
+
+// rtPath is the package path as gc shows it at run time (reflect,
+// symbols, tracebacks): "main" for the main package (gc names it so
+// whatever its import path), the import path otherwise.
+func rtPath(pkg *types.Package) string {
+	if pkg.Name() == "main" {
+		return "main"
+	}
+	return pkg.Path()
 }
 
 // methodName is the runtime method name: bare when exported, else
@@ -366,7 +376,7 @@ func methodName(fn *types.Func) string {
 	if fn.Exported() || fn.Pkg() == nil {
 		return fn.Name()
 	}
-	return fn.Pkg().Path() + "." + fn.Name()
+	return rtPath(fn.Pkg()) + "." + fn.Name()
 }
 
 // sortedIfaceMethods returns the methods of an interface in runtime order.

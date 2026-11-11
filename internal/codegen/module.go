@@ -299,7 +299,7 @@ func (m *moduleGen) global(g *ssa.Global) {
 }
 
 func (m *moduleGen) globalSym(g *ssa.Global) string {
-	return g.Pkg.Pkg.Path() + "." + g.Name()
+	return rtPath(g.Pkg.Pkg) + "." + g.Name()
 }
 
 // globalRef makes a global available and returns its symbol.
