@@ -493,3 +493,36 @@ func TestIfaceeqDistinctItabs(t *testing.T) {
 		t.Errorf("nil interface comparison")
 	}
 }
+
+func TestGetitab(t *testing.T) {
+	sig := &_type{kind: kindFunc, str: "func() string"}
+	other := &_type{kind: kindFunc, str: "func() int"}
+	imeths := []imethod{{name: "A", ityp: sig}, {name: "B", ityp: sig}}
+	inter := &interfacetype{typ: _type{kind: kindInterface, str: "main.I"}, methods: &imeths[0], mcount: 2}
+	code := unsafe.Pointer(new(int))
+	mk := func(ms []method) *_type {
+		return &_type{kind: kindStruct, str: "main.T", uncommon: &uncommontype{methods: &ms[0], mcount: uint32(len(ms))}}
+	}
+	// B has a nil ifn (never called through an interface): still matches.
+	good := mk([]method{{name: "A", mtyp: sig, ifn: code}, {name: "B", mtyp: sig}, {name: "C", mtyp: sig, ifn: code}})
+	m := assertE2I2(inter, good)
+	if m == nil || *itabFun(m, 0) != code || *itabFun(m, 1) != nil {
+		t.Fatalf("good type: itab %v", m)
+	}
+	if assertE2I2(inter, good) != m {
+		t.Errorf("itab not cached")
+	}
+	wrongSig := mk([]method{{name: "A", mtyp: sig, ifn: code}, {name: "B", mtyp: other, ifn: code}})
+	if assertE2I2(inter, wrongSig) != nil || assertE2I2(inter, wrongSig) != nil {
+		t.Errorf("wrong signature accepted")
+	}
+	missing := mk([]method{{name: "A", mtyp: sig, ifn: code}})
+	got := errMsg(catch(func() { assertE2I(inter, missing) }))
+	if got != "interface conversion: main.T is not main.I: missing method B" {
+		t.Errorf("got %q", got)
+	}
+	got = errMsg(catch(func() { assertE2I(inter, nil) }))
+	if got != "interface conversion: interface is nil, not main.I" {
+		t.Errorf("got %q", got)
+	}
+}

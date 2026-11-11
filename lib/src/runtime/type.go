@@ -235,7 +235,8 @@ type structtype struct {
 // The compiler emits itabs as linkonce_odr constants when it knows the
 // concrete type at the conversion; the runtime builds others in assertE2I.
 // fun has one code address per interface method, in interfacetype method
-// order (method.ifn values). The C struct is { inter, typ, hash, fun[N] };
+// order (method.ifn values; nil for a method the compiler proved is never
+// called through an interface). The C struct is { inter, typ, hash, fun[N] };
 // the Go declaration uses a length 1 array, and the runtime indexes past it.
 type itab struct {
 	inter *interfacetype
@@ -243,8 +244,10 @@ type itab struct {
 	// hash is a copy of a hash of typ used by type switches; the compiler
 	// may emit 0, the runtime does not depend on it.
 	hash uint32
-	_    uint32
-	fun  [1]unsafe.Pointer
+	// flags is runtime private; the compiler emits 0. itabBad marks a
+	// cached negative result (typ does not implement inter).
+	flags uint32
+	fun   [1]unsafe.Pointer
 }
 
 // eface is the layout of interface{} (any).

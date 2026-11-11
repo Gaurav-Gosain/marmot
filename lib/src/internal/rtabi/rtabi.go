@@ -153,7 +153,7 @@ type Itab struct {
 	Inter *InterfaceType
 	Typ   *Type
 	Hash  uint32
-	_     uint32
+	Flags uint32
 	Fun   [1]unsafe.Pointer
 }
 

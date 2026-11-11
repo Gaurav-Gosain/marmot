@@ -6,13 +6,15 @@ package runtime
 import "unsafe"
 
 // itabTable is an open addressing hash set of itabs built at run time,
-// including negative results (fun[0] == nil for a type that does not
+// including negative results (flags&itabBad for a type that does not
 // implement the interface). Compiler emitted itabs are not in it.
 type itabTableType struct {
 	size    uintptr // a power of two
 	count   uintptr
 	entries unsafe.Pointer // size *itab slots
 }
+
+const itabBad = 1
 
 var (
 	itabLock  mutex
@@ -98,7 +100,7 @@ func getitab(inter *interfacetype, typ *_type, canfail bool) *itab {
 		itabTable.add(m)
 	}
 	unlock(&itabLock)
-	if *itabFun(m, 0) != nil {
+	if m.flags&itabBad == 0 {
 		return m
 	}
 	if canfail {
@@ -108,7 +110,9 @@ func getitab(inter *interfacetype, typ *_type, canfail bool) *itab {
 }
 
 // itabInit fills in m.fun. Both method lists are sorted by name, so one
-// merge pass finds every method. On a missing method fun[0] is set to nil.
+// merge pass finds every method. A method matches on name and signature;
+// its ifn may be nil when the compiler proved it is never called through
+// an interface. On a missing method m is marked itabBad.
 func itabInit(m *itab) {
 	inter := m.inter
 	typ := m.typ
@@ -124,7 +128,7 @@ func itabInit(m *itab) {
 		for ; j < nt; j++ {
 			tm := typ.methodAt(j)
 			if tm.name == im.name {
-				if tm.mtyp == im.ityp && tm.ifn != nil {
+				if tm.mtyp == im.ityp {
 					*itabFun(m, k) = tm.ifn
 					found = true
 				}
@@ -136,7 +140,7 @@ func itabInit(m *itab) {
 			}
 		}
 		if !found {
-			*itabFun(m, 0) = nil
+			m.flags |= itabBad
 			return
 		}
 	}
@@ -154,7 +158,7 @@ func itabMissing(inter *interfacetype, typ *_type) string {
 		found := false
 		for j := 0; j < nt; j++ {
 			tm := typ.methodAt(j)
-			if tm.name == im.name && tm.mtyp == im.ityp && tm.ifn != nil {
+			if tm.name == im.name && tm.mtyp == im.ityp {
 				found = true
 				break
 			}
