@@ -40,7 +40,7 @@ type Input struct {
 const GenFile = "zz_marmot_spec.go"
 
 // Features are the specializations, each behind its own switch.
-var Features = []string{"fmt", "jsonenc", "jsondec", "sort", "regexp", "mapkey", "split"}
+var Features = []string{"fmt", "jsonenc", "jsondec", "sort", "regexp", "mapkey", "split", "builder"}
 
 // releaseDefault lists the features on by default in release builds. A
 // feature joins it only after the full conformance matrix and a fuzz round
@@ -175,6 +175,7 @@ func RewriteWith(pkgs []*packages.Package, on map[string]bool) (*Result, error) 
 			rewriteMapKey(g, f)
 			g.curFile = f
 			rewriteSplit(g, f)
+			rewriteBuilder(g, f)
 			if g.sites > before {
 				g.blankUnusedImports(f)
 			}
