@@ -4,9 +4,9 @@
 // (internal/rtabi, mirrored from runtime/type.go). Supported: type
 // inspection, values of every kind, setters, conversions, maps, slices,
 // channels, DeepEqual, and Value.Call and Value.Method through the
-// compiler's call adapters (functype.call, method.tfn). Not supported:
-// MakeFunc, Method(i).Func, and creating new types (StructOf, FuncOf,
-// ...), which panic.
+// compiler's call adapters (functype.call, method.tfn), and types made at
+// run time (SliceOf, MapOf, StructOf, ...; see typeof_marmot.go). Not
+// supported: MakeFunc and Method(i).Func, which panic.
 package reflect
 
 import (
@@ -699,20 +699,6 @@ func ptrTo(t *rtabi.Type) *rtabi.Type {
 	pi, _ := ptrMap.LoadOrStore(t, pp)
 	return &pi.(*rtabi.PtrType).Type
 }
-
-// SliceOf, MapOf, ArrayOf, ChanOf, FuncOf and StructOf would create new
-// types at run time, which marmot does not support.
-
-func SliceOf(t Type) Type       { panic("reflect.SliceOf: not supported by marmot") }
-func MapOf(key, elem Type) Type { panic("reflect.MapOf: not supported by marmot") }
-func ArrayOf(length int, elem Type) Type {
-	panic("reflect.ArrayOf: not supported by marmot")
-}
-func ChanOf(dir ChanDir, t Type) Type { panic("reflect.ChanOf: not supported by marmot") }
-func FuncOf(in, out []Type, variadic bool) Type {
-	panic("reflect.FuncOf: not supported by marmot")
-}
-func StructOf(fields []StructField) Type { panic("reflect.StructOf: not supported by marmot") }
 
 // A StructTag is the tag string in a struct field.
 type StructTag string
