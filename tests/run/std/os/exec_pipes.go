@@ -50,5 +50,5 @@ func main() {
 	fmt.Println(ee.ExitCode(), ee.Exited(), ee.String())
 	_, err = exec.Command("sh", "-c", "exit 0").CombinedOutput()
 	fmt.Println(err)
-	fmt.Println(exec.Command("echo", "a", "b").String())
+	fmt.Println(strings.HasSuffix(exec.Command("echo", "a", "b").String(), "echo a b"))
 }
