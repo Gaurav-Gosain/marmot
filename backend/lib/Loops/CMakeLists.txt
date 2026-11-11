@@ -21,6 +21,7 @@ add_library(MarmotLoops STATIC
   Versioning.cpp
   Interchange.cpp
   Jam.cpp
+  MaskedJam.cpp
   Parallelize.cpp
   Register.cpp
 )

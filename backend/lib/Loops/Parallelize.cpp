@@ -34,6 +34,7 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Module.h"
@@ -1362,6 +1363,8 @@ public:
         FAM.invalidate(*F, PreservedAnalyses::none());
         if (!did)
           break;
+        if (verifyFunction(*F, &errs()))
+          report_fatal_error("loops: loop-parallelize produced invalid IR in " + F->getName());
         changed = true;
         // A versioned fast copy has no checks left in front of its loads:
         // hoist the invariant ones (row headers) before looking at it.
@@ -1372,6 +1375,9 @@ public:
         FAM.invalidate(*F, PreservedAnalyses::none());
       }
     }
+    for (Function &G : M)
+      if (G.hasFnAttribute("marmot-par-body") && verifyFunction(G, &errs()))
+        report_fatal_error("loops: invalid chunk function " + G.getName());
     // Drop our markers.
     for (Function *F : fns)
       for (BasicBlock &bb : *F)

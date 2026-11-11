@@ -22,6 +22,8 @@
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/PassManager.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Scalar/LoopPassManager.h"
 #include "llvm/Transforms/Scalar/SimpleLoopUnswitch.h"
@@ -94,9 +96,12 @@ public:
       }
       note("jammed by " + Twine(JamCount));
       changed = true;
+      if (verifyFunction(F, &errs()))
+        report_fatal_error("loops: loop-jam produced invalid IR in " + F.getName());
     }
-    if (!changed)
-      return PreservedAnalyses::all();
+    // The unswitch and CFG cleanup above may have changed F even when
+    // nothing was jammed.
+    (void)changed;
     return PreservedAnalyses::none();
   }
 

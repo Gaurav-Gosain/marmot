@@ -36,6 +36,8 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/PassManager.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -439,6 +441,8 @@ public:
         break;
       changed = true;
       FAM.invalidate(F, PreservedAnalyses::none());
+      if (verifyFunction(F, &errs()))
+        report_fatal_error("loops: interchange produced invalid IR in " + F.getName());
     }
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }

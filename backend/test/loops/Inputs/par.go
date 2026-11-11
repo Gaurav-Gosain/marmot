@@ -276,6 +276,29 @@ func untilZero(a []int64) []int64 {
 	return e
 }
 
+// Escape-time loop (mandelbrot's shape): masked jam runs 4 pixels per inner
+// step; width 403 leaves a remainder of 3 for the original loop.
+//go:noinline
+func escape(out []int32, w, h int) int {
+	inside := 0
+	for py := 0; py < h; py++ {
+		ci := 2.0*float64(py)/float64(h) - 1.0
+		for px := 0; px < w; px++ {
+			cr := 2.0*float64(px)/float64(w) - 1.5
+			zr, zi := 0.0, 0.0
+			i := 0
+			for ; i < 60 && zr*zr+zi*zi <= 4.0; i++ {
+				zr, zi = zr*zr-zi*zi+cr, 2*zr*zi+ci
+			}
+			if i == 60 {
+				inside++
+			}
+			out[py*w+px] = int32(i)*1000 + int32(zr*100)
+		}
+	}
+	return inside
+}
+
 func main() {
 	a := make([]int64, n)
 	fill(a, 42)
@@ -369,4 +392,12 @@ func main() {
 	}
 	ez := untilZero(z)
 	println("untilzero", len(ez), ez[0], ez[1], ez[4320], sum(ez))
+
+	eo := make([]int32, 403*211)
+	in := escape(eo, 403, 211)
+	h := uint64(0)
+	for _, v := range eo {
+		h = h*1000003 + uint64(uint32(v))
+	}
+	println("escape", in, h, eo[0], eo[403*105+201])
 }

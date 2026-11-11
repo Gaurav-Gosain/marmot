@@ -49,6 +49,8 @@ bool versionBoundsChecks(llvm::Function &F, llvm::Loop *L, llvm::LoopInfo &LI,
 void addParallelize(llvm::ModulePassManager &mpm, const Options &opts);
 // reduction interchange (Interchange.cpp, Rule I).
 void addInterchange(llvm::FunctionPassManager &fpm, const Options &opts);
+// masked jam (MaskedJam.cpp, Rule M).
+void addMaskedJam(llvm::FunctionPassManager &fpm, const Options &opts);
 // loop-jam (Jam.cpp): unroll-and-jam of chunk loops by JamCount.
 constexpr unsigned JamCount = 4;
 void addJam(llvm::FunctionPassManager &fpm, const Options &opts);

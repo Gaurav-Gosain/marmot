@@ -27,6 +27,7 @@ void registerLLVMPasses(PassBuilder &pb, const Options &opts) {
     if (ol.getSpeedupLevel() < 2 || ol.getSizeLevel() > 0 || !opts.parallel)
       return;
     addInterchange(fpm, opts);
+    addMaskedJam(fpm, opts);
     addJam(fpm, opts);
   });
 }
