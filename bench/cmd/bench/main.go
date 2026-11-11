@@ -127,6 +127,8 @@ type Result struct {
 	Run          *Stat  `json:"run_ms,omitempty"`
 	RSS          int64  `json:"peak_rss_bytes,omitempty"`
 	OutputMatch  *bool  `json:"output_match,omitempty"`
+	// Load is the one minute load average when this program was measured.
+	Load float64 `json:"load_avg_1m"`
 }
 
 // Meta records the environment so a results file stands on its own.
@@ -292,7 +294,7 @@ func filter[T any](in []T, names []string, key func(T) string) []T {
 }
 
 func measure(p Program, t Toolchain) Result {
-	r := Result{Program: p.Name, Tier: p.Tier, Toolchain: t.Name}
+	r := Result{Program: p.Name, Tier: p.Tier, Toolchain: t.Name, Load: loadAvg1()}
 	dir := filepath.Join(work, "out", t.Name)
 	check(os.MkdirAll(dir, 0o755))
 	out := filepath.Join(dir, p.Name)
@@ -698,4 +700,20 @@ func lockBenchmarks() {
 		check(syscall.Flock(int(f.Fd()), syscall.LOCK_EX))
 	}
 	lockFile = f // held until the process exits
+}
+
+// loadAvg1 returns the one minute load average, or 0 when it cannot be read.
+func loadAvg1() float64 {
+	var s string
+	if runtime.GOOS == "darwin" {
+		s = strings.Trim(sh("sysctl", "-n", "vm.loadavg"), "{} ")
+	} else if b, err := os.ReadFile("/proc/loadavg"); err == nil {
+		s = string(b)
+	}
+	f := strings.Fields(s)
+	if len(f) == 0 {
+		return 0
+	}
+	v, _ := strconv.ParseFloat(f[0], 64)
+	return v
 }

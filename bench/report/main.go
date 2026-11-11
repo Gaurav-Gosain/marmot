@@ -28,18 +28,19 @@ type Stat struct {
 }
 
 type Result struct {
-	Program      string `json:"program"`
-	Tier         string `json:"tier"`
-	Toolchain    string `json:"toolchain"`
-	Status       string `json:"status"`
-	Error        string `json:"error"`
-	BuildCold    *Stat  `json:"build_cold_ms"`
-	BuildWarm    *Stat  `json:"build_warm_ms"`
-	Size         int64  `json:"size_bytes"`
-	SizeStripped int64  `json:"size_stripped_bytes"`
-	Run          *Stat  `json:"run_ms"`
-	RSS          int64  `json:"peak_rss_bytes"`
-	OutputMatch  *bool  `json:"output_match"`
+	Program      string  `json:"program"`
+	Tier         string  `json:"tier"`
+	Toolchain    string  `json:"toolchain"`
+	Status       string  `json:"status"`
+	Error        string  `json:"error"`
+	BuildCold    *Stat   `json:"build_cold_ms"`
+	BuildWarm    *Stat   `json:"build_warm_ms"`
+	Size         int64   `json:"size_bytes"`
+	SizeStripped int64   `json:"size_stripped_bytes"`
+	Run          *Stat   `json:"run_ms"`
+	RSS          int64   `json:"peak_rss_bytes"`
+	OutputMatch  *bool   `json:"output_match"`
+	Load         float64 `json:"load_avg_1m"`
 }
 
 type Meta struct {
@@ -665,7 +666,7 @@ func writeTargets(f File, idx map[string]Result, progs []string) {
 	type line struct {
 		prog, class, owner, status string
 		floor, wall, cpu           float64
-		have                       bool
+		have, loaded               bool
 	}
 	var lines []line
 	for _, p := range progs {
@@ -693,6 +694,8 @@ func writeTargets(f File, idx map[string]Result, progs []string) {
 			l.status = "NO BASELINE"
 		default:
 			l.have = true
+			// A row is flagged when either side was measured with load above half the cores.
+			l.loaded = f.Meta.NCPU > 0 && (g.Load > float64(f.Meta.NCPU)/2 || m.Load > float64(f.Meta.NCPU)/2)
 			l.wall = g.Run.Median / m.Run.Median
 			if g.Run.CPU > 0 && m.Run.CPU > 0 {
 				l.cpu = g.Run.CPU / m.Run.CPU
@@ -735,6 +738,23 @@ func writeTargets(f File, idx map[string]Result, progs []string) {
 		w("- Geometric mean speedup: **%.2fx** over %d programs (suite target 5x)\n", math.Exp(sum/float64(n)), n)
 	} else {
 		w("- Geometric mean speedup: n/a (no marmot results)\n")
+	}
+	var csum float64
+	cn, loadedN := 0, 0
+	for _, l := range lines {
+		if l.have && l.cpu > 0 {
+			csum += math.Log(l.cpu)
+			cn++
+		}
+		if l.have && l.loaded {
+			loadedN++
+		}
+	}
+	if cn > 0 {
+		w("- Geometric mean CPU time speedup (user plus system): %.2fx over %d programs. Under machine load use this ranking for working purposes; wall numbers are unreliable.\n", math.Exp(csum/float64(cn)), cn)
+	}
+	if loadedN > 0 {
+		w("- **%d of %d rows were measured on a loaded machine** (one minute load above half the cores). Do not publish these. Publishable numbers come from a quiet machine only.\n", loadedN, len(lines))
 	}
 	w("- Programs at 10x or more: %d of %d (target: half)\n", ten, len(lines))
 	w("- Programs meeting their class floor: %d of %d\n", met, len(lines))
@@ -787,6 +807,9 @@ func writeTargets(f File, idx map[string]Result, progs []string) {
 		wall, cpu := "-", "-"
 		if l.have {
 			wall = fmt.Sprintf("%.2fx", l.wall)
+			if l.loaded {
+				wall += " (loaded machine)"
+			}
 			if l.cpu > 0 {
 				cpu = fmt.Sprintf("%.2fx", l.cpu)
 			}
