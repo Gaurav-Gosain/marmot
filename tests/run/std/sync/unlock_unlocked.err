@@ -1,0 +1,2 @@
+start
+fatal error: sync: unlock of unlocked mutex

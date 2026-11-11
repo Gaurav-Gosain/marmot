@@ -1,0 +1,7 @@
+1
+init cfg
+42 42
+init pair
+p p true
+once func
+in once
