@@ -39,6 +39,7 @@
 #include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Scalar/LICM.h"
 #include "llvm/Transforms/Scalar/LoopPassManager.h"
@@ -59,6 +60,12 @@ namespace {
 // when tripCount * costPerIteration reaches MinParallelWork, and each chunk
 // gets at least GrainWork units.
 constexpr uint64_t MinParallelWork = 200000;
+} // namespace
+// Testing aid: run every accepted loop in parallel, however small, so test
+// suites with small loops exercise the parallel path (chunks of 1 iteration).
+static cl::opt<bool> ForcePar("loops-force-par", cl::Hidden,
+                              cl::desc("Loop optimizer: parallelize accepted loops of any size"));
+namespace {
 constexpr uint64_t GrainWork = 20000;
 // Assumed trip count of an inner loop whose trip count is not a constant.
 constexpr uint64_t UnknownInnerTrips = 64;
@@ -1269,6 +1276,8 @@ void Parallelizer::transform(Plan &P) {
   IRBuilder<> b(at);
   Value *tc = b.CreateAdd(b.CreateZExtOrTrunc(btc, i64), ConstantInt::get(i64, 1), "par.tc");
   uint64_t minIters = std::max<uint64_t>(2, (MinParallelWork + P.costPerIter - 1) / P.costPerIter);
+  if (ForcePar)
+    minIters = 1;
   Value *cond = b.CreateICmpUGE(tc, ConstantInt::get(i64, minIters), "par.big");
   for (auto &c : P.leChecks) {
     Value *l = exp.expandCodeFor(c.first, nullptr, at);
@@ -1294,8 +1303,12 @@ void Parallelizer::transform(Plan &P) {
   }
   b.SetInsertPoint(at);
   uint64_t grainIters = std::max<uint64_t>(1, (GrainWork + P.costPerIter - 1) / P.costPerIter);
-  Value *grain = b.CreateBinaryIntrinsic(Intrinsic::umax, ConstantInt::get(i64, grainIters),
-                                         b.CreateLShr(tc, 6), nullptr, "par.grain");
+  if (ForcePar)
+    grainIters = 1;
+  Value *grain = ForcePar ? static_cast<Value *>(ConstantInt::get(i64, 1))
+                          : b.CreateBinaryIntrinsic(Intrinsic::umax,
+                                                    ConstantInt::get(i64, grainIters),
+                                                    b.CreateLShr(tc, 6), nullptr, "par.grain");
 
   BasicBlock *par = BasicBlock::Create(C, "par.run", &F, header);
   b.CreateCondBr(cond, par, header);
