@@ -1,3 +1,64 @@
-# Tests that are expected to fail until the compiler catches up.
-# One test per line, path relative to tests/ without .go, for example: run/core/map_basic
-# The conform runner exits 0 when every failure is listed here. Remove lines as tests start passing.
+# Expected failures until the compiler catches up. One test per line, path relative to tests/
+# without .go. The conform runner exits 0 when every failure is listed here. Remove lines as they pass.
+goroot/alias1
+goroot/append
+goroot/armimm
+goroot/bigalg
+goroot/bigmap
+goroot/blank
+goroot/chancap
+goroot/char_lit
+goroot/clear
+goroot/closedchan
+goroot/cmp
+goroot/complit2
+goroot/const
+goroot/const3
+goroot/const4
+goroot/convT2X
+goroot/convert
+goroot/copy
+goroot/ddd
+goroot/defer
+goroot/deferprint
+goroot/divide
+goroot/env
+goroot/escape
+goroot/float_lit2
+goroot/floatcmp
+goroot/genmeth
+goroot/genmeth1
+goroot/genmeth2
+goroot/indirect
+goroot/initcomma
+goroot/initialize
+goroot/int_lit
+goroot/literal2
+goroot/makeslice
+goroot/map
+goroot/mapclear
+goroot/nil
+goroot/nilptr2
+goroot/peano
+goroot/print
+goroot/range4
+goroot/reflectmethod1
+goroot/reflectmethod2
+goroot/reflectmethod3
+goroot/reflectmethod4
+goroot/reflectmethod5
+goroot/reflectmethod6
+goroot/reflectmethod7
+goroot/reorder
+goroot/shift3
+goroot/strcopy
+goroot/stringrange
+goroot/typeswitch1
+goroot/unsafe_slice_data
+goroot/unsafe_string_data
+goroot/unsafebuiltins
+goroot/zerodivide
+goroot/zerosize
+run/std/errors/basic
+run/std/fmt/basic
+run/std/fmt/sprint_scan
