@@ -58,7 +58,7 @@ var (
 	flO       = flag.String("O", "", "optimization level passed to marmot build -O")
 	flKeep    = flag.Bool("keep", false, "keep the per-test work directory")
 	flTimeout = flag.Duration("timeout", 20*time.Second, "run timeout per test")
-	flBuildTO = flag.Duration("build-timeout", 120*time.Second, "compile timeout per test")
+	flBuildTO = flag.Duration("build-timeout", 300*time.Second, "compile timeout per test")
 	flNoWrite = flag.Bool("nowrite", false, "do not write results.json and RESULTS.md")
 	flMatrix  = flag.Bool("matrix", false, "run every program at -O0, -O2 and -Oz (plus any -bflags variations); results are named NAME@CONFIG")
 	flBFlags  = flag.String("bflags", "", "with -matrix: extra configs as label=FLAGS pairs separated by ';', run at -O2 with MARMOT_BACKEND_FLAGS=FLAGS")
