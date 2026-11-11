@@ -129,7 +129,11 @@ func Rewrite(pkgs []*packages.Package) (*Result, error) {
 		}
 		g := newGen(p)
 		for _, f := range p.Syntax {
+			before := g.sites
 			rewriteFmt(g, f)
+			if g.sites > before {
+				g.blankUnusedImports(f)
+			}
 		}
 		depChanged := false
 		for path := range p.Imports {
@@ -372,6 +376,36 @@ func (g *gen) replaceCall(call *ast.CallExpr, name string, args []ast.Expr) {
 	call.Args = args
 	call.Ellipsis = token.NoPos
 	g.sites++
+}
+
+// blankUnusedImports turns imports that no identifier of f uses any more
+// (after rewriting) into blank imports, which keeps their initialization.
+func (g *gen) blankUnusedImports(f *ast.File) {
+	used := map[types.Object]bool{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok {
+			if pn, ok := g.info.Uses[id].(*types.PkgName); ok {
+				used[pn] = true
+			}
+		}
+		return true
+	})
+	for _, spec := range f.Imports {
+		var obj types.Object
+		if spec.Name != nil {
+			obj = g.info.Defs[spec.Name]
+		} else {
+			obj = g.info.Implicits[spec]
+		}
+		pn, ok := obj.(*types.PkgName)
+		if !ok || used[pn] {
+			continue
+		}
+		spec := spec
+		old := spec.Name
+		g.undos = append(g.undos, func() { spec.Name = old })
+		spec.Name = &ast.Ident{Name: "_", NamePos: spec.Pos()}
+	}
 }
 
 func (g *gen) source() string {

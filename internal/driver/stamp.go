@@ -44,8 +44,8 @@ func (b *build) buildStamp(goos, goarch string) string {
 		fileSig(h, exe)
 	}
 	fileSig(h, filepath.Join(b.cfg.Root, "build", "bin", "marmot-backend"))
-	fileSig(h, filepath.Join(b.cfg.Root, "build", "lib", "librtcore.a"))
-	fileSig(h, filepath.Join(b.cfg.Root, "build", "lib", "rtcore.bc"))
+	fileSig(h, b.rtLib("librtcore.a"))
+	fileSig(h, b.rtLib("rtcore.bc"))
 	for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_NO_BACKEND", "MARMOT_DIALECT", "MARMOT_KEEP_SYMBOLS", "MARMOT_LINKMAP", "MARMOT_WPO", "MARMOT_SPEC"} {
 		fmt.Fprintf(h, "%s=%s\n", k, os.Getenv(k))
 	}
@@ -61,7 +61,7 @@ func stampExe(root, stamp string) string {
 
 // upToDate copies the executable of a previous identical build to out.
 func (b *build) upToDate(stamp, out string) bool {
-	if stamp == "" || b.cfg.NoCache || b.cfg.Emit != "exe" || b.cfg.Work {
+	if stamp == "" || b.cfg.NoCache || b.cfg.Emit != "exe" || b.cfg.Work || b.cross() {
 		return false
 	}
 	cached := stampExe(b.cfg.Root, stamp)
@@ -73,7 +73,7 @@ func (b *build) upToDate(stamp, out string) bool {
 
 // saveStamp records out as the result of the build with this stamp.
 func (b *build) saveStamp(stamp, out string) {
-	if stamp == "" || b.cfg.NoCache || b.cfg.Emit != "exe" {
+	if stamp == "" || b.cfg.NoCache || b.cfg.Emit != "exe" || b.cross() {
 		return
 	}
 	cached := stampExe(b.cfg.Root, stamp)
@@ -107,7 +107,7 @@ func (b *build) packageKeys(lp *loader.Program, cg *codegen.Program, pkgs []*ssa
 	if exe, err := os.Executable(); err == nil {
 		fileSig(exeSig, exe)
 	}
-	fmt.Fprintf(exeSig, "%s %s %s %s %v\n", b.cfg.OptLevel, b.cfg.Emit, b.cfg.Dialect, b.cfg.GC, b.cfg.Release)
+	fmt.Fprintf(exeSig, "%s %s %s %s %v %s/%s\n", b.cfg.OptLevel, b.cfg.Emit, b.cfg.Dialect, b.cfg.GC, b.cfg.Release, b.goos, b.goarch)
 	for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_DIALECT", "MARMOT_SPEC"} {
 		fmt.Fprintf(exeSig, "%s=%s\n", k, os.Getenv(k))
 	}

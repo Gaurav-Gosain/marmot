@@ -351,14 +351,11 @@ func (g *gen) fmtCall(call *ast.CallExpr, name string) {
 
 	var body strings.Builder
 	w := func(format string, a ...any) { fmt.Fprintf(&body, "\t"+format+"\n", a...) }
-	fmtName := g.importName("fmt")
-	_ = fmtName
 	if name == "Errorf" {
 		w("p := fmt.MarmotNewErrorPrinter()")
 	} else {
 		if name == "Printf" || name == "Print" || name == "Println" {
 			w("w := os.Stdout")
-			g.importName("os")
 		}
 		w("p := fmt.MarmotNewPrinter()")
 	}
@@ -402,9 +399,7 @@ func (g *gen) fmtCall(call *ast.CallExpr, name string) {
 	case "Printf", "Fprintf", "Print", "Fprint", "Println", "Fprintln":
 		w("return fmt.MarmotWrite(p, w)")
 		result = "(int, error)"
-		if name[0] == 'F' {
-			g.importName("io")
-		} else {
+		if name[0] != 'F' {
 			headParams = nil
 		}
 	case "Sprintf", "Sprint", "Sprintln":
@@ -425,7 +420,13 @@ func (g *gen) fmtCall(call *ast.CallExpr, name string) {
 	fname := g.newName("fmt")
 	src := fmt.Sprintf("func %s(%s) %s {\n%s}\n", fname, strings.Join(params, ", "), result, body.String())
 	// The generated file refers to fmt, io and os by these names.
-	src = strings.NewReplacer("fmt.", g.importName("fmt")+".", "io.Writer", g.importName("io")+".Writer", "os.Stdout", g.importName("os")+".Stdout").Replace(src)
+	var repl []string
+	for _, r := range [][3]string{{"fmt.", "fmt", "."}, {"io.Writer", "io", ".Writer"}, {"os.Stdout", "os", ".Stdout"}} {
+		if strings.Contains(src, r[0]) {
+			repl = append(repl, r[0], g.importName(r[1])+r[2])
+		}
+	}
+	src = strings.NewReplacer(repl...).Replace(src)
 	g.decls = append(g.decls, src)
 	newArgs := append(append([]ast.Expr{}, head...), args...)
 	g.replaceCall(call, fname, newArgs)

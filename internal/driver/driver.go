@@ -71,9 +71,11 @@ func llvmTool(name string) string {
 }
 
 type build struct {
-	cfg   Config
-	work  string
-	start time.Time
+	cfg    Config
+	work   string
+	start  time.Time
+	goos   string // target
+	goarch string
 }
 
 func (b *build) haveBackend() bool {
@@ -108,7 +110,11 @@ func Build(cfg Config) (string, error) {
 	stop := handleSignals()
 	defer stop()
 
-	goos, goarch := runtime.GOOS, runtime.GOARCH
+	goos, goarch, err := parseTarget(cfg.Target)
+	if err != nil {
+		return "", err
+	}
+	b.goos, b.goarch = goos, goarch
 	stamp := ""
 	if cfg.Output != "" && cfg.Emit == "exe" {
 		stamp = b.buildStamp(goos, goarch)
@@ -326,8 +332,11 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 		if !b.cfg.NoCache {
 			args = append(args, "-cache-dir", filepath.Join(b.cfg.Root, "build", "cache", "backend"))
 		}
-		if bc := filepath.Join(b.cfg.Root, "build", "lib", "rtcore.bc"); fileExists(bc) {
+		if bc := b.rtLib("rtcore.bc"); fileExists(bc) {
 			args = append(args, "--rt-bitcode="+bc)
+		}
+		if b.cross() {
+			args = append(args, "--target="+b.goos+"/"+b.goarch)
 		}
 		if err := b.run(backend, args...); err != nil {
 			return nil, err
@@ -367,9 +376,12 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 }
 
 func (b *build) link(objs []string, out string) error {
-	rt := filepath.Join(b.cfg.Root, "build", "lib", "librtcore.a")
+	rt := b.rtLib("librtcore.a")
 	if !fileExists(rt) {
 		return fmt.Errorf("%s is missing; run make rtcore", rt)
+	}
+	if b.cross() {
+		return b.linkBundle(objs, rt, out)
 	}
 	args := []string{"-o", out}
 	args = append(args, objs...)
@@ -457,4 +469,55 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return os.WriteFile(dst, data, 0o644)
+}
+
+// parseTarget turns "-target os/arch" (or "") into GOOS and GOARCH.
+func parseTarget(t string) (string, string, error) {
+	if t == "" {
+		return runtime.GOOS, runtime.GOARCH, nil
+	}
+	parts := strings.Split(t, "/")
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("bad -target %q: want os/arch, for example linux/amd64", t)
+	}
+	switch t {
+	case "darwin/arm64", "darwin/amd64", "linux/amd64", "linux/arm64":
+		return parts[0], parts[1], nil
+	}
+	return "", "", fmt.Errorf("unsupported -target %q (darwin/arm64, darwin/amd64, linux/amd64, linux/arm64)", t)
+}
+
+// cross reports whether the target differs from the host.
+func (b *build) cross() bool { return b.goos != runtime.GOOS || b.goarch != runtime.GOARCH }
+
+// rtLib returns the runtime core library file for the target.
+func (b *build) rtLib(name string) string {
+	if b.cross() {
+		return filepath.Join(b.cfg.Root, "build", "lib", b.goos+"-"+b.goarch, name)
+	}
+	return filepath.Join(b.cfg.Root, "build", "lib", name)
+}
+
+// linkBundle writes, for a cross build, a directory at out holding the
+// objects, the runtime core library and link.sh, to link on the target.
+func (b *build) linkBundle(objs []string, rt, out string) error {
+	os.RemoveAll(out)
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		return err
+	}
+	var names []string
+	for i, o := range objs {
+		name := fmt.Sprintf("m%03d.o", i)
+		if err := copyFile(o, filepath.Join(out, name)); err != nil {
+			return err
+		}
+		names = append(names, name)
+	}
+	if err := copyFile(rt, filepath.Join(out, "librtcore.a")); err != nil {
+		return err
+	}
+	exe := filepath.Base(out)
+	script := fmt.Sprintf("#!/bin/sh\n# Link the %s/%s program built by marmot. Run in this directory.\nset -e\ncd \"$(dirname \"$0\")\"\n${CC:-clang} -o %s %s librtcore.a -lpthread -Wl,--gc-sections -s\n",
+		b.goos, b.goarch, exe, strings.Join(names, " "))
+	return os.WriteFile(filepath.Join(out, "link.sh"), []byte(script), 0o755)
 }
