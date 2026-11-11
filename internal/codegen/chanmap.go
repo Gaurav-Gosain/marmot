@@ -117,6 +117,10 @@ func (f *funcGen) makeMap(v *ssa.MakeMap) {
 }
 
 func (f *funcGen) lookup(v *ssa.Lookup) {
+	if u := f.fuseLookup[v]; u != nil {
+		f.fusedLookup(v, u)
+		return
+	}
 	x := f.value(v.X)
 	if isString(v.X.Type()) {
 		f.fail(v.Pos(), "string Lookup")
@@ -138,13 +142,13 @@ func (f *funcGen) lookup(v *ssa.Lookup) {
 	if fk, kv := f.fastMapKey(mt.Key(), v.Index); fk != "" {
 		desc := f.typeDesc(v.X.Type())
 		if v.CommaOk {
-			r := f.rtcall("mapaccess2_fast"+fk, desc, x, kv)
+			r := f.rtcall("mapaccess2_fast"+fk, append([]string{desc, x}, kv...)...)
 			rt := mlir.Struct(mlir.Ptr, mlir.I1)
 			val := f.load(f.extractRaw(r, rt, 0), mt.Elem())
 			f.vals[v] = f.build(f.tm.valType(v.Type()), val, f.extractRaw(r, rt, 1))
 			return
 		}
-		f.vals[v] = f.load(f.rtcall("mapaccess1_fast"+fk, desc, x, kv), mt.Elem())
+		f.vals[v] = f.load(f.rtcall("mapaccess1_fast"+fk, append([]string{desc, x}, kv...)...), mt.Elem())
 		return
 	}
 	key := f.spill(f.value(v.Index), mt.Key())
@@ -165,6 +169,10 @@ func (f *funcGen) lookup(v *ssa.Lookup) {
 func (f *funcGen) mapUpdate(v *ssa.MapUpdate) {
 	m := f.value(v.Map)
 	mt := mapTypeOf(v.Map.Type())
+	if slot, ok := f.fuseSlot[v]; ok {
+		f.store(f.value(v.Value), slot, mt.Elem())
+		return
+	}
 	if f.goOps() && !f.tm.isBig(mt.Key()) && !f.tm.isBig(mt.Elem()) {
 		f.emit("go.map_update %s[%s] = %s, %s : %s, %s", m, f.value(v.Key), f.value(v.Value),
 			mlir.Symbol(f.m.typeDescSym(v.Map.Type())), f.tm.valType(mt.Key()), f.tm.valType(mt.Elem()))
@@ -172,7 +180,7 @@ func (f *funcGen) mapUpdate(v *ssa.MapUpdate) {
 	}
 	if fk, kv := f.fastMapKey(mt.Key(), v.Key); fk != "" {
 		val := f.value(v.Value)
-		slot := f.rtcall("mapassign_fast"+fk, f.typeDesc(v.Map.Type()), m, kv)
+		slot := f.rtcall("mapassign_fast"+fk, append([]string{f.typeDesc(v.Map.Type()), m}, kv...)...)
 		f.store(val, slot, mt.Elem())
 		return
 	}
@@ -189,7 +197,7 @@ func (f *funcGen) mapDelete(mv, kv ssa.Value) {
 		return
 	}
 	if fk, k := f.fastMapKey(mt.Key(), kv); fk != "" {
-		f.rtcall("mapdelete_fast"+fk, f.typeDesc(mv.Type()), f.value(mv), k)
+		f.rtcall("mapdelete_fast"+fk, append([]string{f.typeDesc(mv.Type()), f.value(mv)}, k...)...)
 		return
 	}
 	key := f.spill(f.value(kv), mt.Key())
@@ -348,25 +356,63 @@ func isInvalid(t types.Type) bool {
 // fastMapKey picks the runtime's fast map entry points (key by value, as
 // gc does): "32" and "64" for 4 and 8 byte integers and pointers, "str"
 // for strings; "" otherwise (floats keep the generic path for NaN rules).
-func (f *funcGen) fastMapKey(kt types.Type, k ssa.Value) (string, string) {
+func (f *funcGen) fastMapKey(kt types.Type, k ssa.Value) (string, []string) {
 	if f.m.p.runtimeFunc("mapaccess1_fast64") == nil {
-		return "", ""
+		return "", nil
+	}
+	if f.plain128(kt) && f.m.p.runtimeFunc("mapaccess1_fast128") != nil {
+		// Two words, passed by value (rtgo: k0, k1 uint64).
+		p := f.spill(f.value(k), kt)
+		k0 := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> i64", p)
+		p1 := f.op("llvm.getelementptr %s[8] : (!llvm.ptr) -> !llvm.ptr, i8", p)
+		k1 := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> i64", p1)
+		return "128", []string{k0, k1}
 	}
 	kv := f.value(k)
 	switch u := kt.Underlying().(type) {
 	case *types.Basic:
 		switch u.Kind() {
 		case types.Int32, types.Uint32:
-			return "32", kv
+			return "32", []string{kv}
 		case types.Int, types.Uint, types.Int64, types.Uint64, types.Uintptr:
-			return "64", kv
+			return "64", []string{kv}
 		case types.String:
-			return "str", kv
+			return "str", []string{kv}
 		case types.UnsafePointer:
-			return "64", f.op("llvm.ptrtoint %s : !llvm.ptr to i64", kv)
+			return "64", []string{f.op("llvm.ptrtoint %s : !llvm.ptr to i64", kv)}
 		}
 	case *types.Pointer, *types.Chan:
-		return "64", f.op("llvm.ptrtoint %s : !llvm.ptr to i64", kv)
+		return "64", []string{f.op("llvm.ptrtoint %s : !llvm.ptr to i64", kv)}
 	}
-	return "", ""
+	return "", nil
+}
+
+// plain128 reports whether t is a 16 byte key made only of integers with no
+// padding, so key equality is equality of its two words.
+func (f *funcGen) plain128(t types.Type) bool {
+	sz := f.m.p.opts.Sizes
+	if sz.Sizeof(t) != 16 {
+		return false
+	}
+	var plain func(t types.Type) bool
+	plain = func(t types.Type) bool {
+		switch u := t.Underlying().(type) {
+		case *types.Basic:
+			return u.Info()&types.IsInteger != 0
+		case *types.Array:
+			return plain(u.Elem())
+		case *types.Struct:
+			var n int64
+			for i := 0; i < u.NumFields(); i++ {
+				ft := u.Field(i).Type()
+				if !plain(ft) || u.Field(i).Name() == "_" {
+					return false
+				}
+				n += sz.Sizeof(ft)
+			}
+			return n == sz.Sizeof(t)
+		}
+		return false
+	}
+	return plain(t)
 }

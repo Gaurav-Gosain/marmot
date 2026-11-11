@@ -52,6 +52,8 @@ type funcGen struct {
 	sunk              map[ssa.Instruction]bool              // loads moved after calls (evalorder.go)
 	sinkBefore        map[ssa.Instruction][]ssa.Instruction // emit these sunk loads before the instruction
 	sunkDone          map[ssa.Instruction]bool
+	fuseLookup        map[*ssa.Lookup]*ssa.MapUpdate // map read-modify-write pairs (mapfuse.go)
+	fuseSlot          map[*ssa.MapUpdate]string
 }
 
 // function emits fn. shared functions get linkonce_odr linkage.
@@ -180,6 +182,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 		f.implicitRunDefers = !hasRunDefers(fn)
 	}
 	f.computeSinks()
+	f.findMapFusions()
 	// Phis are block arguments; name them all first because branches
 	// may pass them before their block is emitted.
 	for _, b := range fn.Blocks {
