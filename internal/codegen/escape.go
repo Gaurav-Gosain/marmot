@@ -1,9 +1,9 @@
 package codegen
 
 import (
-	"os"
 	"go/token"
 	"go/types"
+	"os"
 
 	"golang.org/x/tools/go/ssa"
 )
