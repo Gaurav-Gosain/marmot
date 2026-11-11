@@ -90,8 +90,8 @@ static cl::opt<unsigned> splitLarge(
     cl::desc("Batch without -wpo: split modules above N instructions into function groups "
              "compiled in parallel; writes OUT.parts (0: off)"),
     cl::init(0));
-static cl::opt<bool> stringsNoCopy(
-    "strings-nocopy", cl::desc("go-strings rule S3: no-copy string(b) for transient uses"));
+static cl::opt<bool> noStringsNoCopy(
+    "no-strings-nocopy", cl::desc("Without go-strings rule S3 (no-copy string(b))"));
 static cl::opt<bool> noImport("no-import", cl::desc("-wpo without cross-module imports"),
                               cl::cat(cat));
 static cl::opt<bool> noLoops("no-loops", cl::desc("Disable the loop optimizer"), cl::cat(cat));
@@ -196,7 +196,7 @@ int main(int argc, char **argv) {
   opts.initOptNone = initOptNone;
   opts.wpoImport = !noImport;
   opts.splitInstrs = splitLarge;
-  opts.stringsNoCopy = stringsNoCopy;
+  opts.stringsNoCopy = !noStringsNoCopy;
   opts.wpoClosedWorld = !noClosedWorld;
   opts.wpoPruneTypes = !noPruneTypes;
   opts.pgoUse = pgoUse;

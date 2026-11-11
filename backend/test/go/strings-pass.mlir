@@ -1,5 +1,5 @@
-// RUN: %marmot-opt --go-strings %s | %FileCheck %s --check-prefixes=CHECK,OFF
-// RUN: %marmot-opt --go-strings='no-copy=1' %s | %FileCheck %s --check-prefixes=CHECK,NC
+// RUN: %marmot-opt --go-strings='no-copy=0' %s | %FileCheck %s --check-prefixes=CHECK,OFF
+// RUN: %marmot-opt --go-strings %s | %FileCheck %s --check-prefixes=CHECK,NC
 !str = !llvm.struct<(ptr, i64)>
 !slice = !llvm.struct<(ptr, i64, i64)>
 module {
@@ -48,7 +48,7 @@ module {
     llvm.return %o : !str
   }
 
-  // m[string(b)] and string(b) == s: no copy (S3, only with no-copy=1).
+  // m[string(b)] and string(b) == s: no copy (S3; no-copy=0 turns it off).
   // Stored or passed on: copy.
   // CHECK-LABEL: llvm.func @nocopy
   // NC: go.bytes_to_str %arg1 nocopy
