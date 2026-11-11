@@ -76,6 +76,13 @@ public:
                               .Case([&](StrConcatOp o) { return lower(o); })
                               .Case([&](StrToBytesOp o) { return lower(o); })
                               .Case([&](BytesToStrOp o) { return lower(o); })
+                              .Case([&](MakeMapOp o) { return lower(o); })
+                              .Case([&](MapLookupOp o) { return lower(o); })
+                              .Case([&](MapUpdateOp o) { return lower(o); })
+                              .Case([&](MapDeleteOp o) { return lower(o); })
+                              .Case([&](MakeChanOp o) { return lower(o); })
+                              .Case([&](ChanSendOp o) { return lower(o); })
+                              .Case([&](ChanRecvOp o) { return lower(o); })
                               .Default([&](Operation *o) {
                                 return o->emitOpError("no lowering to llvm");
                               });
@@ -785,6 +792,148 @@ private:
       r = call(loc, *fn, {op.getBytes()});
     }
     op.replaceAllUsesWith(r);
+    op.erase();
+    return success();
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Maps and channels family
+  //===--------------------------------------------------------------------===//
+
+  // A temporary slot of memory type t: an entry block alloca, live from here
+  // to endTemp.
+  Value temp(Operation *at, Type t) {
+    Value p = entryAlloca(at->getParentOfType<LLVM::LLVMFuncOp>(), memoryType(t));
+    LLVM::LifetimeStartOp::create(b, at->getLoc(), p);
+    return p;
+  }
+  void endTemp(Location loc, Value p) { LLVM::LifetimeEndOp::create(b, loc, p); }
+
+  // Loads a value of SSA type t from memory (i1 is stored as i8).
+  Value loadMem(Location loc, Type t, Value addr) {
+    Type mt = memoryType(t);
+    Value v = LLVM::LoadOp::create(b, loc, mt, addr);
+    if (mt != t)
+      v = LLVM::TruncOp::create(b, loc, t, v);
+    return v;
+  }
+
+  // A temporary holding v; returns its address.
+  Value spill(Operation *at, Value v) {
+    Value p = temp(at, v.getType());
+    storeMem(at->getLoc(), v, p);
+    return p;
+  }
+
+  LogicalResult lower(MakeMapOp op) {
+    auto t = addressOf(op, op.getDescAttr());
+    auto fn = runtimeFunc(op, "makemap", ptrTy, {ptrTy, i64()});
+    if (failed(t) || failed(fn))
+      return failure();
+    op.replaceAllUsesWith(call(op.getLoc(), *fn, {*t, op.getHint()}));
+    op.erase();
+    return success();
+  }
+
+  LogicalResult lower(MapLookupOp op) {
+    Location loc = op.getLoc();
+    auto t = addressOf(op, op.getDescAttr());
+    if (failed(t))
+      return failure();
+    Value k = spill(op, op.getKey());
+    Value slot, ok;
+    if (op.getCommaok()) {
+      auto resTy = LLVM::LLVMStructType::getLiteral(b.getContext(), {ptrTy, b.getI1Type()});
+      auto fn = runtimeFunc(op, "mapaccess2", resTy, {ptrTy, ptrTy, ptrTy});
+      if (failed(fn))
+        return failure();
+      Value r = call(loc, *fn, {*t, op.getMap(), k});
+      slot = LLVM::ExtractValueOp::create(b, loc, r, ArrayRef<int64_t>{0});
+      ok = LLVM::ExtractValueOp::create(b, loc, r, ArrayRef<int64_t>{1});
+    } else {
+      auto fn = runtimeFunc(op, "mapaccess1", ptrTy, {ptrTy, ptrTy, ptrTy});
+      if (failed(fn))
+        return failure();
+      slot = call(loc, *fn, {*t, op.getMap(), k});
+    }
+    endTemp(loc, k);
+    // The slot is never nil: it points at a zero value when the key is absent.
+    op.getResult().replaceAllUsesWith(loadMem(loc, op.getValueType(), slot));
+    if (ok)
+      op.getOk().replaceAllUsesWith(ok);
+    op.erase();
+    return success();
+  }
+
+  LogicalResult lower(MapUpdateOp op) {
+    Location loc = op.getLoc();
+    auto t = addressOf(op, op.getDescAttr());
+    auto fn = runtimeFunc(op, "mapassign", ptrTy, {ptrTy, ptrTy, ptrTy});
+    if (failed(t) || failed(fn))
+      return failure();
+    Value k = spill(op, op.getKey());
+    Value slot = call(loc, *fn, {*t, op.getMap(), k});
+    endTemp(loc, k);
+    storeMem(loc, op.getValue(), slot);
+    op.erase();
+    return success();
+  }
+
+  LogicalResult lower(MapDeleteOp op) {
+    Location loc = op.getLoc();
+    auto t = addressOf(op, op.getDescAttr());
+    auto fn = runtimeFunc(op, "mapdelete", Type(), {ptrTy, ptrTy, ptrTy});
+    if (failed(t) || failed(fn))
+      return failure();
+    Value k = spill(op, op.getKey());
+    call(loc, *fn, {*t, op.getMap(), k});
+    endTemp(loc, k);
+    op.erase();
+    return success();
+  }
+
+  LogicalResult lower(MakeChanOp op) {
+    auto t = addressOf(op, op.getDescAttr());
+    auto fn = runtimeFunc(op, "makechan", ptrTy, {ptrTy, i64()});
+    if (failed(t) || failed(fn))
+      return failure();
+    op.replaceAllUsesWith(call(op.getLoc(), *fn, {*t, op.getSize()}));
+    op.erase();
+    return success();
+  }
+
+  LogicalResult lower(ChanSendOp op) {
+    Location loc = op.getLoc();
+    auto fn = runtimeFunc(op, "chansend1", Type(), {ptrTy, ptrTy});
+    if (failed(fn))
+      return failure();
+    Value v = spill(op, op.getValue());
+    call(loc, *fn, {op.getChan(), v});
+    endTemp(loc, v);
+    op.erase();
+    return success();
+  }
+
+  LogicalResult lower(ChanRecvOp op) {
+    Location loc = op.getLoc();
+    Value slot = temp(op, op.getValueType());
+    Value ok;
+    if (op.getCommaok()) {
+      auto fn = runtimeFunc(op, "chanrecv2", b.getI1Type(), {ptrTy, ptrTy});
+      if (failed(fn))
+        return failure();
+      ok = call(loc, *fn, {op.getChan(), slot});
+    } else {
+      auto fn = runtimeFunc(op, "chanrecv1", Type(), {ptrTy, ptrTy});
+      if (failed(fn))
+        return failure();
+      call(loc, *fn, {op.getChan(), slot});
+    }
+    Value v = loadMem(loc, op.getValueType(), slot);
+    endTemp(loc, slot);
+    op.getResult().replaceAllUsesWith(v);
+    if (ok)
+      op.getOk().replaceAllUsesWith(ok);
     op.erase();
     return success();
   }

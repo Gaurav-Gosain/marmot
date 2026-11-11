@@ -216,4 +216,62 @@ def Go_BytesToStrOp : Go_Op<"bytes_to_str"> {
   let assemblyFormat = "$bytes (`nocopy` $nocopy^)? attr-dict";
 }
 
+//===----------------------------------------------------------------------===//
+// Maps and channels family
+//===----------------------------------------------------------------------===//
+
+def Go_MakeMapOp : Go_Op<"make_map"> {
+  let summary = "make(map[K]V, hint)";
+  let arguments = (ins FlatSymbolRefAttr:$desc, I64:$hint);
+  let results = (outs LLVM_DefaultPointer:$result);
+  let assemblyFormat = "$desc `,` $hint attr-dict";
+}
+
+def Go_MapLookupOp : Go_Op<"map_lookup", [InferTypeOpAdaptor]> {
+  let summary = "m[k], optionally with comma-ok";
+  let arguments = (ins FlatSymbolRefAttr:$desc, LLVM_DefaultPointer:$map,
+                       AnyType:$key, TypeAttr:$value_type, UnitAttr:$commaok);
+  let results = (outs AnyType:$result, Optional<I1>:$ok);
+  let assemblyFormat = [{
+    $map `[` $key `]` `,` $desc (`commaok` $commaok^)? attr-dict
+    `:` type($key) `->` $value_type
+  }];
+}
+
+def Go_MapUpdateOp : Go_Op<"map_update"> {
+  let summary = "m[k] = v";
+  let arguments = (ins FlatSymbolRefAttr:$desc, LLVM_DefaultPointer:$map,
+                       AnyType:$key, AnyType:$value);
+  let assemblyFormat = [{
+    $map `[` $key `]` `=` $value `,` $desc attr-dict `:` type($key) `,` type($value)
+  }];
+}
+
+def Go_MapDeleteOp : Go_Op<"map_delete"> {
+  let summary = "delete(m, k)";
+  let arguments = (ins FlatSymbolRefAttr:$desc, LLVM_DefaultPointer:$map, AnyType:$key);
+  let assemblyFormat = "$map `[` $key `]` `,` $desc attr-dict `:` type($key)";
+}
+
+def Go_MakeChanOp : Go_Op<"make_chan"> {
+  let summary = "make(chan T, size)";
+  let arguments = (ins FlatSymbolRefAttr:$desc, I64:$size);
+  let results = (outs LLVM_DefaultPointer:$result);
+  let assemblyFormat = "$desc `,` $size attr-dict";
+}
+
+def Go_ChanSendOp : Go_Op<"chan_send"> {
+  let summary = "c <- v";
+  let arguments = (ins LLVM_DefaultPointer:$chan, AnyType:$value);
+  let assemblyFormat = "$chan `,` $value attr-dict `:` type($value)";
+}
+
+def Go_ChanRecvOp : Go_Op<"chan_recv", [InferTypeOpAdaptor]> {
+  let summary = "<-c, optionally with comma-ok";
+  let arguments = (ins LLVM_DefaultPointer:$chan, TypeAttr:$value_type,
+                       UnitAttr:$commaok);
+  let results = (outs AnyType:$result, Optional<I1>:$ok);
+  let assemblyFormat = "$chan (`commaok` $commaok^)? attr-dict `:` $value_type";
+}
+
 #endif

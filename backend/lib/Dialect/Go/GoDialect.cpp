@@ -169,5 +169,27 @@ LogicalResult StrConcatOp::verify() {
   return success();
 }
 
+//===----------------------------------------------------------------------===//
+// Maps and channels family
+//===----------------------------------------------------------------------===//
+
+LogicalResult MapLookupOp::inferReturnTypes(MLIRContext *ctx, std::optional<Location>,
+                                            Adaptor adaptor,
+                                            SmallVectorImpl<Type> &results) {
+  results.push_back(adaptor.getValueType());
+  if (adaptor.getCommaok())
+    results.push_back(IntegerType::get(ctx, 1));
+  return success();
+}
+
+LogicalResult ChanRecvOp::inferReturnTypes(MLIRContext *ctx, std::optional<Location>,
+                                           Adaptor adaptor,
+                                           SmallVectorImpl<Type> &results) {
+  results.push_back(adaptor.getValueType());
+  if (adaptor.getCommaok())
+    results.push_back(IntegerType::get(ctx, 1));
+  return success();
+}
+
 #define GET_OP_CLASSES
 #include "marmot/Dialect/Go/GoOps.cpp.inc"
