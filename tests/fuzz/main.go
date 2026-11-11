@@ -160,6 +160,9 @@ func (g *gen) cond() string {
 // extStmt emits a statement over the map m, string s, float f or a goroutine fan-out.
 func (g *gen) extStmt() {
 	v := g.vars[g.r.Intn(len(g.vars))]
+	for v.name[0] != 'v' {
+		v = g.vars[g.r.Intn(len(g.vars))]
+	}
 	switch g.r.Intn(9) {
 	case 0:
 		g.emit("m[int(%s)%%8] += int(%s)", g.expr(v, 2), g.anyVar())
@@ -214,6 +217,9 @@ func (g *gen) stmt() {
 	switch k := g.r.Intn(10); {
 	case k < 5 || g.depth >= 3:
 		v := g.vars[g.r.Intn(len(g.vars))]
+		for v.name[0] != 'v' { // loop counters are read only, otherwise a loop may never end
+			v = g.vars[g.r.Intn(len(g.vars))]
+		}
 		ops := []string{"=", "+=", "-=", "*=", "^=", "|=", "&="}
 		g.emit("%s %s %s", v.name, ops[g.r.Intn(len(ops))], g.expr(v, 3))
 	case k < 7:
