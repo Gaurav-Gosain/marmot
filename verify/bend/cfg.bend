@@ -261,3 +261,142 @@ law t_after_h:
 
 def t_after_h(E, entry, w, x, h, t, sp1, sp2, te, dom, pw, hw):
   t_after_h.go(E, entry, w, x, h, t, L.mem(t, L.before(h, w)), {==}, L.mem(h, w), {==}, sp1, sp2, te, dom, pw, hw)
+
+# d == h contradicts eqn(d, h) == False
+law ne_of:
+  for +d: Nat
+  for +h: Nat
+  for +dh: {L.eqn(d, h) == False{} : Bool}
+  for e: {d == h : Nat}
+  Empty
+
+def ne_of(d, h, dh, e):
+  L.bclash(L.eqn(d, h), (%e : {L.eqn(d, _) == True{} : Bool}; L.eqn_refl(d)), dh)
+
+def no_t_front.nil(-E: Nat -> Nat -> Data, +y: Nat, +d: Nat, +h: Nat, +t: Nat, c: Bool, ec: {c == L.eqn(t, y) : Bool}, sp: SP(E, h, t), +e: E(d, y), +dh: {L.eqn(d, h) == False{} : Bool}) -> {L.or(c, False{}) == False{} : Bool}:
+  match c:
+    case True{}:
+      +ty : {t == y : Nat} = L.eqn_true(t, y, Equal.sym(Bool, True{}, L.eqn(t, y), ec))
+      Empty.absurd({True{} == False{} : Bool}, ne_of(d, h, dh, sp(d, (%Equal.sym(Nat, t, y, ty) : E(d, _); e))))
+    case False{}:
+      {==}
+
+def no_t_front.con(-E: Nat -> Nat -> Data, +y: Nat, +z: Nat, +v2: +List<Nat>, +h: Nat, +t: Nat, c: Bool, ec: {c == L.eqn(t, y) : Bool}, sp: SP(E, h, t), +e: E(z, y), +nh2: {L.mem(h, Con{z, v2}) == False{} : Bool}, rec: SP(E, h, t) -> {L.mem(t, Con{z, v2}) == False{} : Bool}) -> {L.or(c, L.mem(t, Con{z, v2})) == False{} : Bool}:
+  match c:
+    case True{}:
+      +ty : {t == y : Nat} = L.eqn_true(t, y, Equal.sym(Bool, True{}, L.eqn(t, y), ec))
+      zh : {z == h : Nat} = sp(z, (%Equal.sym(Nat, t, y, ty) : E(z, _); e))
+      Empty.absurd({True{} == False{} : Bool}, L.bclash(L.mem(h, Con{z, v2}), L.mem_hit(h, z, v2, zh), nh2))
+    case False{}:
+      rec(sp)
+
+# V6: in a walk y :: v ++ [d] ++ s where neither y :: v has h nor d is h, t is not in y :: v
+# (t's predecessor would be an h).
+law no_t_front:
+  for -E: Nat -> Nat -> Data
+  for +entry: Nat
+  for +v: +List<Nat>
+  for +y: Nat
+  for +d: Nat
+  for +s: +List<Nat>
+  for +h: Nat
+  for +t: Nat
+  for sp: SP(E, h, t)
+  for +p: VW(E, entry, y, L.app(v, Con{d, s}))
+  for +nh: {L.mem(h, Con{y, v}) == False{} : Bool}
+  for +dh: {L.eqn(d, h) == False{} : Bool}
+  {L.mem(t, Con{y, v}) == False{} : Bool}
+
+def no_t_front(E, entry, v, y, d, s, h, t, sp, p, nh, dh):
+  match v:
+    case Nil{}:
+      (+e, +k) = p
+      no_t_front.nil(E, y, d, h, t, L.eqn(t, y), {==}, sp, e, dh)
+    case Con{z, v2}:
+      (+e, +k) = p
+      +nh2 : {L.mem(h, Con{z, v2}) == False{} : Bool} = L.or_false_r(L.eqn(h, y), L.mem(h, Con{z, v2}), nh)
+      no_t_front.con(E, y, z, v2, h, t, L.eqn(t, y), {==}, sp, e, nh2, sp2 => no_t_front(E, entry, v2, z, d, s, h, t, sp2, k, nh2, dh))
+
+law no_t_front_valid:
+  for -E: Nat -> Nat -> Data
+  for +entry: Nat
+  for +v: +List<Nat>
+  for +d: Nat
+  for +s: +List<Nat>
+  for +h: Nat
+  for +t: Nat
+  for sp: SP(E, h, t)
+  for +p: Valid(E, entry, L.app(v, Con{d, s}))
+  for +nh: {L.mem(h, v) == False{} : Bool}
+  for +dh: {L.eqn(d, h) == False{} : Bool}
+  {L.mem(t, v) == False{} : Bool}
+
+def no_t_front_valid(E, entry, v, d, s, h, t, sp, p, nh, dh):
+  match v:
+    case Nil{}:
+      {==}
+    case Con{y, v2}:
+      no_t_front(E, entry, v2, y, d, s, h, t, sp, p, nh, dh)
+
+# d dominates h, d != h, and the walk at d has no other d: then it has no h.
+def d_noh.go(-E: Nat -> Nat -> Data, +entry: Nat, +r2: +List<Nat>, +d: Nat, +h: Nat, c: Bool, ec: {c == L.mem(h, r2) : Bool}, +dh: {L.eqn(d, h) == False{} : Bool}, domdh: Dom(E, entry, d, h), +vw2: VW(E, entry, d, r2), +nd2: {L.mem(d, r2) == False{} : Bool}) -> {c == False{} : Bool}:
+  match c:
+    case False{}:
+      {==}
+    case True{}:
+      +rs : {r2 == L.app(L.before(h, r2), Con{h, L.after(h, r2)}) : +List<Nat>} = L.split(h, r2, Equal.sym(Bool, True{}, L.mem(h, r2), ec))
+      +vw3 : VW(E, entry, d, L.app(L.before(h, r2), Con{h, L.after(h, r2)})) = (%rs : VW(E, entry, d, _); vw2)
+      +vh : VW(E, entry, h, L.after(h, r2)) = vw_suffix(E, entry, L.before(h, r2), d, h, L.after(h, r2), vw3)
+      +dm : {L.mem(d, Con{h, L.after(h, r2)}) == True{} : Bool} = domdh(Con{h, L.after(h, r2)}, vh, {==})
+      +dm2 : {L.mem(d, r2) == True{} : Bool} = (%Equal.sym(+List<Nat>, r2, L.app(L.before(h, r2), Con{h, L.after(h, r2)}), rs) : {L.mem(d, _) == True{} : Bool}; L.mem_app_r(d, L.before(h, r2), Con{h, L.after(h, r2)}, dm))
+      Empty.absurd({True{} == False{} : Bool}, L.bclash(L.mem(d, r2), dm2, nd2))
+
+def d_after_h.step(-E: Nat -> Nat -> Data, +entry: Nat, +w: +List<Nat>, +x: Nat, +h: Nat, +t: Nat, +d: Nat, +dh: {L.eqn(d, h) == False{} : Bool}, domdh: Dom(E, entry, d, h), sp1: SP(E, h, t), sp2: SP(E, h, t), sp3: SP(E, h, t), +te: {L.eqn(t, entry) == False{} : Bool}, domtx: Dom(E, entry, t, x), +pw1: Valid(E, entry, L.app(L.before(d, w), Con{d, L.after(d, w)})), +hw1: {L.hd(L.app(L.before(d, w), Con{d, L.after(d, w)})) == x : Nat}, +nh1: {L.mem(h, L.before(d, w)) == False{} : Bool}, dp: Deep(E, entry, d)) -> Empty:
+  (+r2, q) = dp
+  (+vw2, +nd2) = q
+  +nh2 : {L.mem(h, r2) == False{} : Bool} = d_noh.go(E, entry, r2, d, h, L.mem(h, r2), {==}, dh, domdh, vw2, nd2)
+  +nt2 : {L.mem(t, r2) == False{} : Bool} = no_t(E, entry, r2, d, h, t, sp1, te, vw2, nh2)
+  +td : {L.eqn(t, d) == False{} : Bool} = L.eqn_false(t, d, e => not_at_t(E, entry, r2, d, h, t, sp2, te, vw2, nh2, Equal.sym(Nat, t, d, e)))
+  +ntd : {L.mem(t, Con{d, r2}) == False{} : Bool} = L.or_ff(L.eqn(t, d), L.mem(t, r2), td, nt2)
+  +nt1 : {L.mem(t, L.before(d, w)) == False{} : Bool} = no_t_front_valid(E, entry, L.before(d, w), d, L.after(d, w), h, t, sp3, pw1, nh1, dh)
+  +pw3 : Valid(E, entry, L.app(L.before(d, w), Con{d, r2})) = valid_splice(E, entry, L.before(d, w), d, L.after(d, w), r2, pw1, vw2)
+  +hw3 : {L.hd(L.app(L.before(d, w), Con{d, r2})) == x : Nat} = Equal.trans(Nat, L.hd(L.app(L.before(d, w), Con{d, r2})), L.hd(L.app(L.before(d, w), Con{d, L.after(d, w)})), x, Equal.sym(Nat, L.hd(L.app(L.before(d, w), Con{d, L.after(d, w)})), L.hd(L.app(L.before(d, w), Con{d, r2})), L.hd_app(L.before(d, w), d, L.after(d, w), r2)), hw1)
+  L.bclash(L.mem(t, L.app(L.before(d, w), Con{d, r2})), domtx(L.app(L.before(d, w), Con{d, r2}), pw3, hw3), L.mem_app_false(t, L.before(d, w), Con{d, r2}, nt1, ntd))
+
+def d_after_h.go(-E: Nat -> Nat -> Data, +entry: Nat, +w: +List<Nat>, +x: Nat, +h: Nat, +t: Nat, +d: Nat, c: Bool, ec: {c == L.mem(d, L.before(h, w)) : Bool}, +dh: {L.eqn(d, h) == False{} : Bool}, domdh: Dom(E, entry, d, h), sp1: SP(E, h, t), sp2: SP(E, h, t), sp3: SP(E, h, t), +te: {L.eqn(t, entry) == False{} : Bool}, domtx: Dom(E, entry, t, x), +pw: Valid(E, entry, w), +hw: {L.hd(w) == x : Nat}) -> {c == False{} : Bool}:
+  match c:
+    case False{}:
+      {==}
+    case True{}:
+      +m1 : {L.mem(d, L.before(h, w)) == True{} : Bool} = Equal.sym(Bool, True{}, L.mem(d, L.before(h, w)), ec)
+      +nh1 : {L.mem(h, L.before(d, w)) == False{} : Bool} = L.bd_no_h(d, h, w, m1)
+      +ws : {w == L.app(L.before(d, w), Con{d, L.after(d, w)}) : +List<Nat>} = L.split(d, w, L.mem_before(d, h, w, m1))
+      +pw1 : Valid(E, entry, L.app(L.before(d, w), Con{d, L.after(d, w)})) = (%ws : Valid(E, entry, _); pw)
+      +hw1 : {L.hd(L.app(L.before(d, w), Con{d, L.after(d, w)})) == x : Nat} = (%ws : {L.hd(_) == x : Nat}; hw)
+      +vws : VW(E, entry, d, L.after(d, w)) = valid_suffix(E, entry, L.before(d, w), d, L.after(d, w), pw1)
+      Empty.absurd({True{} == False{} : Bool}, d_after_h.step(E, entry, w, x, h, t, d, dh, domdh, sp1, sp2, sp3, te, domtx, pw1, hw1, nh1, deepest(E, entry, L.after(d, w), d, d, vws, L.mem_head(d, L.after(d, w)))))
+
+# T2: d dominates h and d != h; t has the single predecessor h, is not the entry block, and
+# dominates x. Then on every walk now at x, d does not occur after the last h. (So a value
+# defined in d still has the value it had at the last visit of h.)
+law d_after_h:
+  for -E: Nat -> Nat -> Data
+  for +entry: Nat
+  for +w: +List<Nat>
+  for +x: Nat
+  for +h: Nat
+  for +t: Nat
+  for +d: Nat
+  for +dh: {L.eqn(d, h) == False{} : Bool}
+  for domdh: Dom(E, entry, d, h)
+  for sp1: SP(E, h, t)
+  for sp2: SP(E, h, t)
+  for sp3: SP(E, h, t)
+  for +te: {L.eqn(t, entry) == False{} : Bool}
+  for domtx: Dom(E, entry, t, x)
+  for +pw: Valid(E, entry, w)
+  for +hw: {L.hd(w) == x : Nat}
+  {L.mem(d, L.before(h, w)) == False{} : Bool}
+
+def d_after_h(E, entry, w, x, h, t, d, dh, domdh, sp1, sp2, sp3, te, domtx, pw, hw):
+  d_after_h.go(E, entry, w, x, h, t, d, L.mem(d, L.before(h, w)), {==}, dh, domdh, sp1, sp2, sp3, te, domtx, pw, hw)

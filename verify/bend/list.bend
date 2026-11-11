@@ -417,3 +417,34 @@ def or_tf(a, b, m, nb):
       {==}
     case False{}:
       Empty.absurd({False{} == True{} : Bool}, bclash(b, m, nb))
+
+law mem_tail:
+  for +x: Nat
+  for +y: Nat
+  for +l: +List<Nat>
+  for m: {mem(x, l) == True{} : Bool}
+  {mem(x, Con{y, l}) == True{} : Bool}
+
+def mem_tail.go(c: Bool, -b: Bool, m: {b == True{} : Bool}) -> {or(c, b) == True{} : Bool}:
+  match c:
+    case True{}:
+      {==}
+    case False{}:
+      m
+
+def mem_tail(x, y, l, m):
+  mem_tail.go(eqn(x, y), mem(x, l), m)
+
+law mem_app_r:
+  for +x: Nat
+  for +a: +List<Nat>
+  for +b: +List<Nat>
+  for m: {mem(x, b) == True{} : Bool}
+  {mem(x, app(a, b)) == True{} : Bool}
+
+def mem_app_r(x, a, b, m):
+  match a:
+    case Nil{}:
+      m
+    case Con{y, r}:
+      mem_tail(x, y, app(r, b), mem_app_r(x, r, b, m))
