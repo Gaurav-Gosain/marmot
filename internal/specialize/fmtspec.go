@@ -463,6 +463,11 @@ func (g *gen) fmtCall(call *ast.CallExpr, name string) {
 			return // already errors.New(format)
 		}
 	}
+	for _, a := range call.Args {
+		if _, multi := g.info.Types[a].Type.(*types.Tuple); multi {
+			return // f(g()) with a multi-value g
+		}
+	}
 	ops := make([]operand, len(args))
 	for i, a := range args {
 		ops[i] = g.operand(a)

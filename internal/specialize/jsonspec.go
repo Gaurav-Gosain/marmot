@@ -104,8 +104,9 @@ func (g *gen) jsonFields(st *types.Struct) ([]jsonField, bool) {
 // jsonEnc generates encoders for one package.
 type jsonEnc struct {
 	g     *gen
-	names typeutil.Map // types.Type -> encoder function name ("" while failing)
+	names typeutil.Map // types.Type -> encoder function name ("" once failed)
 	bad   bool
+	trial []types.Type // types named during the attempts in progress
 }
 
 // encoder returns the name of the generated encoder for t, generating it on
@@ -125,9 +126,17 @@ func (je *jsonEnc) encoder(t types.Type) (string, bool) {
 	}
 	name := je.g.newName("jenc")
 	je.names.Set(t, name) // allows recursive types
+	mark, started := len(je.g.decls), len(je.trial)
+	je.trial = append(je.trial, t)
 	body, ok := je.body(t)
 	if !ok {
-		je.names.Set(t, "")
+		// Roll back everything generated since this attempt began: those
+		// encoders may refer to this one.
+		je.g.decls = je.g.decls[:mark]
+		for _, tt := range je.trial[started:] {
+			je.names.Set(tt, "")
+		}
+		je.trial = je.trial[:started]
 		return "", false
 	}
 	je.g.decls = append(je.g.decls, fmt.Sprintf("func %s(b []byte, v *%s, d int) ([]byte, bool) {\n\tif d > 1000 {\n\t\treturn b, false\n\t}\n\tok := true\n\t_ = ok\n%s\treturn b, true\n}\n", name, tsrc, body))
@@ -389,6 +398,11 @@ func rewriteJSON(g *gen, f *ast.File) {
 	if g.json == nil {
 		g.json = &jsonEnc{g: g}
 	}
+	// Decoders and encoders refer to these whether or not the call that
+	// asked for them is rewritten; unused imports are dropped in source().
+	g.usePkg("encoding/json", "json")
+	g.usePkg("strconv", "strconv")
+	g.usePkg("slices", "slices")
 	ast.Inspect(f, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
@@ -457,6 +471,7 @@ func (g *gen) jsonMarshal(call *ast.CallExpr) {
 type jsonDec struct {
 	g     *gen
 	names typeutil.Map
+	trial []types.Type
 }
 
 func (jd *jsonDec) decoder(t types.Type) (string, bool) {
@@ -472,9 +487,15 @@ func (jd *jsonDec) decoder(t types.Type) (string, bool) {
 	}
 	name := jd.g.newName("jdec")
 	jd.names.Set(t, name)
+	mark, started := len(jd.g.decls), len(jd.trial)
+	jd.trial = append(jd.trial, t)
 	body, ok := jd.body(t, tsrc)
 	if !ok {
-		jd.names.Set(t, "")
+		jd.g.decls = jd.g.decls[:mark]
+		for _, tt := range jd.trial[started:] {
+			jd.names.Set(tt, "")
+		}
+		jd.trial = jd.trial[:started]
 		return "", false
 	}
 	jd.g.decls = append(jd.g.decls, fmt.Sprintf("func %s(d *json.MarmotDecoder, v *%s, dry bool) bool {\n%s}\n", name, tsrc, body))
