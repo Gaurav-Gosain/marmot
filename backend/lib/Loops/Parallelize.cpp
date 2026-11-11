@@ -241,6 +241,14 @@ private:
 
   std::string why;
   bool extraExits = false; // analyze rejected L only for its extra exits
+  // Analysis of the fast copy Rule V would make: exits other than the
+  // latch's are ignored (they would be gone).
+  bool ignoreExits = false;
+  // Set when the memory analysis failed only because a pointer is loaded
+  // inside L; in the fast copy LICM may hoist it, so the probe accepts.
+  bool softMemReject = false;
+  BasicBlock *latchExit = nullptr;
+  const SCEV *tripBtc = nullptr;
   bool reject(const Twine &msg) {
     why = msg.str();
     return false;
@@ -295,6 +303,25 @@ bool Parallelizer::visit(Loop *L) {
     }
     if (extraExits && opts.versioning) {
       extraExits = false;
+      std::string pwhy = why;
+      // Version only when the fast copy would run in parallel: a
+      // precondition that buys nothing costs time on every entry (fannkuch's
+      // 2 to 3 iteration flip loop).
+      Plan probe;
+      probe.loop = L;
+      ignoreExits = true;
+      softMemReject = false;
+      bool would = analyze(L, probe) || softMemReject;
+      ignoreExits = false;
+      if (!would) {
+        remark(L, "not parallel: " + pwhy + "; not versioned: the fast copy would not be "
+                  "parallel either (" + why + ")");
+        markDecided(L);
+        for (Loop *child : *L)
+          if (visit(child))
+            return true;
+        return false;
+      }
       std::string vwhy;
       if (versionBoundsChecks(F, L, LI, SE, DT, AA, vwhy)) {
         if (std::getenv("MARMOT_LOOPS_DEBUG")) {
@@ -329,17 +356,21 @@ bool Parallelizer::analyze(Loop *L, Plan &P) {
   if (!L->isLoopSimplifyForm())
     return reject("not in simplified form");
   BasicBlock *latch = L->getLoopLatch();
-  if (L->getExitingBlock() != latch) {
+  if (!ignoreExits && L->getExitingBlock() != latch) {
     extraExits = true;
     return reject("more than one exit, or the exit is not at the latch "
                   "(bounds check or break in the loop)");
   }
-  if (!L->getExitBlock())
+  if (!ignoreExits && !L->getExitBlock())
     return reject("no unique exit block");
   auto *br = dyn_cast<BranchInst>(latch->getTerminator());
   if (!br || !br->isConditional())
     return reject("latch does not end in a conditional branch");
-  const SCEV *btc = SE.getBackedgeTakenCount(L);
+  latchExit = L->contains(br->getSuccessor(0)) ? br->getSuccessor(1) : br->getSuccessor(0);
+  if (L->contains(latchExit))
+    return reject("latch does not exit");
+  const SCEV *btc = ignoreExits ? SE.getExitCount(L, latch) : SE.getBackedgeTakenCount(L);
+  tripBtc = btc;
   if (isa<SCEVCouldNotCompute>(btc))
     return reject("trip count not computable");
   if (!btc->getType()->isIntegerTy() || btc->getType()->getIntegerBitWidth() > 64)
@@ -512,7 +543,9 @@ bool Parallelizer::analyzeReduction(Loop *L, PHINode *phi, Reduction &R) {
         return reject("non-instruction user");
       if (!L->contains(ui)) {
         auto *ep = dyn_cast<PHINode>(ui);
-        if (!ep || ep->getParent() != L->getExitBlock() || m != R.next)
+        if (ignoreExits && ui->getParent() != latchExit)
+          continue; // on a check exit path that the fast copy will not have
+        if (!ep || ep->getParent() != latchExit || m != R.next)
           return reject("value used outside the loop other than the final result");
         continue;
       }
@@ -669,7 +702,7 @@ bool Parallelizer::rowAccess(Loop *L, Plan &P, Access &a) {
   const SCEV *oc, *ol, *oh;
   if (isa<SCEVCouldNotCompute>(off) || off->getType() != ity || !decompose(off, L, oc, ol, oh))
     return false;
-  const SCEV *btc = SE.getTruncateOrZeroExtend(SE.getBackedgeTakenCount(L), ity);
+  const SCEV *btc = SE.getTruncateOrZeroExtend(tripBtc, ity);
   const SCEV *span = SE.getMulExpr(oc, btc);
   const SCEV *zero = SE.getZero(ity);
   const SCEV *lo, *hi;
@@ -763,9 +796,11 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
     if (!a.affine)
       rowAccess(L, P, a);
   for (Access &a : accs)
-    if (a.store && !a.affine && a.family < 0)
+    if (a.store && !a.affine && a.family < 0) {
+      softMemReject = true;
       return reject("store address is not affine in the loop's induction "
                     "or its base pointer changes in the loop");
+    }
   for (Family &f : P.families)
     if (f.written && !f.perIter)
       return reject("every iteration writes the same rows");
@@ -805,7 +840,7 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
 
   // Different objects: whole-loop byte ranges must not overlap, unless alias
   // analysis (including the Go type classes) already says they differ.
-  const SCEV *btc = SE.getTruncateOrZeroExtend(SE.getBackedgeTakenCount(L), ity);
+  const SCEV *btc = SE.getTruncateOrZeroExtend(tripBtc, ity);
   auto add3 = [&](const SCEV *a, const SCEV *b, const SCEV *c) {
     return SE.getAddExpr(SE.getAddExpr(a, b), c);
   };
@@ -893,9 +928,11 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
         continue;
       if (noAlias(u, v) && (!v.store || noAlias(v, u)))
         continue;
-      if (v.variant)
+      if (v.variant) {
+        softMemReject = true;
         return reject("load through a pointer computed in the loop may alias a "
                       "stored object");
+      }
       if (u.family < 0 && v.family < 0) {
         P.overlaps.push_back({u.s, u.e, v.s, v.e});
         continue;
@@ -931,6 +968,8 @@ bool Parallelizer::liveOuts(Loop *L, Plan &P) {
         auto *ui = dyn_cast<Instruction>(u);
         if (ui && L->contains(ui))
           continue;
+        if (ignoreExits && ui && ui->getParent() != latchExit)
+          continue; // check exit path, gone in the fast copy
         bool ok = false;
         for (Reduction &R : P.reds)
           if (R.next == &I)
