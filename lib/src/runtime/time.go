@@ -72,7 +72,12 @@ func (t *timeTimer) start(when, period int64) {
 	t.when = when
 	t.period = period
 	tok := &timerToken{t: t, seq: t.seq}
-	t.handle = rt_timer_start(when, timerFirePC, unsafe.Pointer(tok))
+	t.handle = rt_timer_start(when, lazyPC(&timerFirePC, timerFireCode), unsafe.Pointer(tok))
+}
+
+func timerFireCode() unsafe.Pointer {
+	tf := timerFire
+	return funcPC(unsafe.Pointer(&tf))
 }
 
 // stop disarms t and reports whether it was pending. t.mu is held.

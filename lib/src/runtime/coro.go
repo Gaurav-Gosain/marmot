@@ -46,14 +46,14 @@ func coroswitch(c *coro) {
 		c.started = true
 		c.other = gp
 		unlock(&c.lock)
-		rt_go(corostartPC, unsafe.Pointer(c))
+		rt_go(lazyPC(&corostartPC, corostartCode), unsafe.Pointer(c))
 		goparkForever()
 		return
 	}
 	next := c.other
 	c.other = gp
 	unlock(&c.lock)
-	rt_park(coroReadyCommitPC, unsafe.Pointer(next))
+	rt_park(lazyPC(&coroReadyCommitPC, coroReadyCommitCode), unsafe.Pointer(next))
 }
 
 // corostart runs the coroutine body on its own goroutine. When the body
@@ -69,4 +69,14 @@ func corostart(p unsafe.Pointer) {
 	if next != nil {
 		rt_ready(next.handle)
 	}
+}
+
+func corostartCode() unsafe.Pointer {
+	f := corostart
+	return funcPC(unsafe.Pointer(&f))
+}
+
+func coroReadyCommitCode() unsafe.Pointer {
+	f := coroReadyCommit
+	return funcPC(unsafe.Pointer(&f))
 }

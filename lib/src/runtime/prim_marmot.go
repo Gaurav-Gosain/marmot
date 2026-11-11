@@ -147,8 +147,8 @@ func getg() *g {
 }
 
 // Park primitives. The C core calls the unlock callback by code address;
-// the addresses are computed once at init (taking the address of a func
-// variable on every park would allocate).
+// the addresses are computed once, at init or on first use (taking the
+// address of a func variable on every park would allocate).
 var (
 	parkunlockPC      unsafe.Pointer
 	selparkcommitPC   unsafe.Pointer
@@ -165,12 +165,18 @@ func initParkPCs() {
 	selparkcommitPC = funcPC(unsafe.Pointer(&sc))
 	gs := gostart
 	gostartPC = funcPC(unsafe.Pointer(&gs))
-	tf := timerFire
-	timerFirePC = funcPC(unsafe.Pointer(&tf))
-	cr := coroReadyCommit
-	coroReadyCommitPC = funcPC(unsafe.Pointer(&cr))
-	cs := corostart
-	corostartPC = funcPC(unsafe.Pointer(&cs))
+}
+
+// lazyPC returns *pc, computing it with f on first use. The timer and
+// coroutine callbacks are set up this way so that a program that uses
+// neither does not link them (and the C core code they reach).
+func lazyPC(pc *unsafe.Pointer, f func() unsafe.Pointer) unsafe.Pointer {
+	if p := atomicLoadp(pc); p != nil {
+		return p
+	}
+	p := f()
+	atomicStorep(pc, p)
+	return p
 }
 
 // goparkunlock parks the current goroutine and unlocks l once it is off
