@@ -15,6 +15,9 @@ fail=0
 failed=""
 for src in "$@"; do
   name=$(basename "$src" .c)
+  if [ -n "${TSAN:-}" ] && grep -q '^// tsan: skip' "$src"; then
+    echo "skip $name (tsan)"; continue
+  fi
   bin="$OUT/$name"
   if ! $CC $CFLAGS "$src" $LIB -lpthread -o "$bin" 2> "$OUT/$name.build"; then
     echo "FAIL $name (build)"; cat "$OUT/$name.build"

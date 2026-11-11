@@ -1,6 +1,7 @@
 // Stop the world reaches goroutines in tight loops (signal preemption) and in
 // syscalls; GOMAXPROCS can grow and shrink at run time.
 // expect-stdout: ok
+// tsan: skip (ThreadSanitizer defers async signals until a syscall, so tight loops never stop)
 // env: GOMAXPROCS=4
 // timeout: 60
 #include "rtest.h"

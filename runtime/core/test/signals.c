@@ -35,6 +35,7 @@ void marmot_main(void) {
   // deadlock, a signal from another thread ends it.
   pthread_t t;
   pthread_create(&t, 0, later, 0);
+  pthread_detach(t);
   wg_wait(&wg);
   CHECK(got[0] == SIGUSR1 && got[1] == SIGHUP && got[2] == SIGUSR2);
   CHECK(rt_signal_ignored(SIGUSR1) == 0);

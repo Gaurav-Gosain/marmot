@@ -81,7 +81,7 @@ test-asan:
 		sh test/run.sh $(TEST_SRCS)
 
 test-tsan:
-	@OUT=$(OBJ)/test-tsan LIB="$(abspath $(SAN_SRC))" CC="$(CC)" \
+	@TSAN=1 OUT=$(OBJ)/test-tsan LIB="$(abspath $(SAN_SRC))" CC="$(CC)" \
 		CFLAGS="-O1 -g $(CFLAGS_COMMON) -DRT_SANITIZE=1 -fsanitize=thread" \
 		sh test/run.sh $(TEST_SRCS)
 

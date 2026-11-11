@@ -1,6 +1,7 @@
 // Graph stress on several goroutines and threads at once, with tight loops
 // that must be stopped by signal.
 // expect-stdout: ok
+// tsan: skip (ThreadSanitizer defers async signals until a syscall, so tight loops never stop)
 // env: GOMAXPROCS=4
 // timeout: 180
 #include "gcgraph.h"

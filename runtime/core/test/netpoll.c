@@ -51,6 +51,11 @@ static void ticker(void *arg) {
   }
 }
 
+static void woken(void *arg) {
+  CHECK(rt_poll_wait(arg, 'r', 0) == 3);
+  wg_done(&wg);
+}
+
 static void evicted(void *arg) {
   CHECK(rt_poll_wait(arg, 'r', 0) == 2);
   wg_done(&wg);
@@ -83,6 +88,12 @@ void marmot_main(void) {
   CHECK(rt_nanotime() - t0 >= 20000000);
   CHECK(rt_poll_wait(pds[0], 'r', rt_nanotime() - 1) == 1);
   // Writable right away (edge seen at registration).
+  // rt_poll_wake wakes a parked reader with 3.
+  wg_add(&wg, 1);
+  rt_go(woken, pds[2]);
+  rt_sleep(2000000);
+  rt_poll_wake(pds[2], 'r');
+  wg_wait(&wg);
   // Eviction wakes a parked reader with 2.
   wg_add(&wg, 1);
   rt_go(evicted, pds[1]);

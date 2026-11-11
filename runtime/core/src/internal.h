@@ -21,6 +21,19 @@
 // Conservative scanning reads arbitrary words (stack redzones, padding).
 #define NO_SANITIZE __attribute__((no_sanitize("address", "thread", "undefined")))
 
+// ThreadSanitizer needs to know about goroutine switches.
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define RT_TSAN 1
+#endif
+#endif
+#ifdef RT_TSAN
+void *__tsan_get_current_fiber(void);
+void *__tsan_create_fiber(unsigned flags);
+void __tsan_destroy_fiber(void *fiber);
+void __tsan_switch_to_fiber(void *fiber, unsigned flags);
+#endif
+
 #if defined(__aarch64__)
 #define RT_ARCH_ARM64 1
 #elif defined(__x86_64__)
@@ -160,6 +173,7 @@ struct rt_g {
   rt_m *m;                // M running this G, or NULL
   rt_g *schedlink;        // run queue and free list link
   uint32_t gidx;          // index in the goroutine table
+  void *tsan_fiber;       // ThreadSanitizer builds only
   void *syscallsp;        // sp saved at rt_entersyscall
   void *syscallregs[24];  // callee-saved registers at rt_entersyscall
   rt_timer *sleeptimer;   // rt_sleep, allocated on first use (not GC memory)
@@ -192,7 +206,7 @@ struct rt_p {
   _Atomic uint32_t runqhead;
   _Atomic uint32_t runqtail;
   rt_g *_Atomic runnext;
-  rt_g *runq[RUNQ_SIZE];
+  rt_g *_Atomic runq[RUNQ_SIZE];  // relaxed atomics: stealers read slots racily
   mcache *mcache;
   _Atomic uint32_t syscalltick;  // incremented on each syscall entry
   uint32_t sysmon_tick;          // last tick seen by sysmon
@@ -264,7 +278,7 @@ void tls_init(void);
 typedef struct schedt {
   rt_spin lock;
   rt_g *runqhead, *runqtail;  // global run queue
-  int32_t runqsize;
+  _Atomic int32_t runqsize;   // written under lock, read without it
   rt_p *pidle;
   _Atomic int32_t npidle;
   rt_m *midle;
@@ -276,7 +290,7 @@ typedef struct schedt {
   rt_p *allp[256];           // MAXPROCS
   _Atomic int32_t nallp;      // allocated Ps
   _Atomic int32_t nprocs;     // GOMAXPROCS
-  rt_m *timer_m;              // idle M sleeping until the next timer
+  rt_m *_Atomic timer_m;      // idle M sleeping until the next timer
   int64_t timer_until;
   rt_g *gfree;                // global free goroutines
   int32_t ngfree;

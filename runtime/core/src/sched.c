@@ -128,7 +128,7 @@ static void stack_give(rt_p *p, rt_g *g) {
     }
     *stack_link(b) = gstack_free;
     gstack_free = b;
-    ngstack_free++;
+    __atomic_store_n(&ngstack_free, ngstack_free + 1, __ATOMIC_RELAXED);
   }
   spin_unlock(&stack_lock);
   p->stackcache[p->nstackcache++] = base;
@@ -136,12 +136,12 @@ static void stack_give(rt_p *p, rt_g *g) {
 
 static void stack_take(rt_p *p, rt_g *g) {
   uintptr_t base = 0;
-  if (p && p->nstackcache == 0 && ngstack_free > 0) {
+  if (p && p->nstackcache == 0 && __atomic_load_n(&ngstack_free, __ATOMIC_RELAXED) > 0) {
     spin_lock(&stack_lock);
     while (p->nstackcache < 16 && gstack_free) {
       uintptr_t b = gstack_free;
       gstack_free = *stack_link(b);
-      ngstack_free--;
+      __atomic_store_n(&ngstack_free, ngstack_free - 1, __ATOMIC_RELAXED);
       p->stackcache[p->nstackcache++] = b;
     }
     spin_unlock(&stack_lock);
@@ -238,7 +238,8 @@ static bool runqputslow(rt_p *p, rt_g *g, uint32_t h, uint32_t t) {
   rt_g *batch[RUNQ_SIZE / 2 + 1];
   uint32_t n = (t - h) / 2;
   if (n != RUNQ_SIZE / 2) rt_throw("runqputslow: queue is not full");
-  for (uint32_t i = 0; i < n; i++) batch[i] = p->runq[(h + i) % RUNQ_SIZE];
+  for (uint32_t i = 0; i < n; i++)
+    batch[i] = atomic_load_explicit(&p->runq[(h + i) % RUNQ_SIZE], memory_order_relaxed);
   if (!atomic_compare_exchange_strong_explicit(&p->runqhead, &h, h + n, memory_order_release,
                                                memory_order_relaxed))
     return false;
@@ -261,7 +262,7 @@ static void runqput(rt_p *p, rt_g *g, bool next) {
     uint32_t h = atomic_load_explicit(&p->runqhead, memory_order_acquire);
     uint32_t t = atomic_load_explicit(&p->runqtail, memory_order_relaxed);
     if (t - h < RUNQ_SIZE) {
-      p->runq[t % RUNQ_SIZE] = g;
+      atomic_store_explicit(&p->runq[t % RUNQ_SIZE], g, memory_order_relaxed);
       atomic_store_explicit(&p->runqtail, t + 1, memory_order_release);
       return;
     }
@@ -276,7 +277,7 @@ static rt_g *runqget(rt_p *p) {
     uint32_t h = atomic_load_explicit(&p->runqhead, memory_order_acquire);
     uint32_t t = atomic_load_explicit(&p->runqtail, memory_order_relaxed);
     if (t == h) return NULL;
-    rt_g *g = p->runq[h % RUNQ_SIZE];
+    rt_g *g = atomic_load_explicit(&p->runq[h % RUNQ_SIZE], memory_order_relaxed);
     if (atomic_compare_exchange_strong_explicit(&p->runqhead, &h, h + 1, memory_order_release,
                                                 memory_order_relaxed))
       return g;
@@ -295,7 +296,7 @@ static uint32_t runqgrab(rt_p *victim, rt_p *p, uint32_t tail, bool stealnext) {
         rt_g *next = atomic_load(&victim->runnext);
         if (next) {
           if (!atomic_compare_exchange_strong(&victim->runnext, &next, NULL)) continue;
-          p->runq[tail % RUNQ_SIZE] = next;
+          atomic_store_explicit(&p->runq[tail % RUNQ_SIZE], next, memory_order_relaxed);
           return 1;
         }
       }
@@ -303,7 +304,9 @@ static uint32_t runqgrab(rt_p *victim, rt_p *p, uint32_t tail, bool stealnext) {
     }
     if (n > RUNQ_SIZE / 2) continue;  // inconsistent snapshot
     for (uint32_t i = 0; i < n; i++)
-      p->runq[(tail + i) % RUNQ_SIZE] = victim->runq[(h + i) % RUNQ_SIZE];
+      atomic_store_explicit(&p->runq[(tail + i) % RUNQ_SIZE],
+                            atomic_load_explicit(&victim->runq[(h + i) % RUNQ_SIZE], memory_order_relaxed),
+                            memory_order_relaxed);
     if (atomic_compare_exchange_strong_explicit(&victim->runqhead, &h, h + n,
                                                 memory_order_release, memory_order_relaxed))
       return n;
@@ -315,7 +318,7 @@ static rt_g *runqsteal(rt_p *p, rt_p *victim, bool stealnext) {
   uint32_t n = runqgrab(victim, p, t, stealnext);
   if (n == 0) return NULL;
   n--;
-  rt_g *g = p->runq[(t + n) % RUNQ_SIZE];
+  rt_g *g = atomic_load_explicit(&p->runq[(t + n) % RUNQ_SIZE], memory_order_relaxed);
   if (n > 0) atomic_store_explicit(&p->runqtail, t + n, memory_order_release);
   return g;
 }
@@ -416,6 +419,9 @@ static void checkdead(void) {
 static void mstart(void *arg) {
   rt_m *m = arg;
   setm(m);
+#ifdef RT_TSAN
+  m->g0.tsan_fiber = __tsan_get_current_fiber();
+#endif
   m->thread = (void *)pthread_self();
   signal_init_thread(m);
   rt_p *p = m->nextp;
@@ -640,6 +646,9 @@ static void mcall(int32_t req) {
   rt_g *g = m->curg;
   m->locks++;
   m->req = req;
+#ifdef RT_TSAN
+  __tsan_switch_to_fiber(m->g0.tsan_fiber, 0);
+#endif
   rt_ctx_switch(&g->sp, m->g0.sp);
   getm()->locks--;
 }
@@ -669,6 +678,10 @@ static void execute(rt_m *m, rt_g *g) {
   atomic_store_explicit(&g->status, G_RUNNING, memory_order_relaxed);
   atomic_fetch_add_explicit(&m->p->schedtick, 1, memory_order_relaxed);
   m->locks++;
+#ifdef RT_TSAN
+  if (!g->tsan_fiber) g->tsan_fiber = __tsan_create_fiber(0);
+  __tsan_switch_to_fiber(g->tsan_fiber, 0);
+#endif
   rt_ctx_switch(&m->g0.sp, g->sp);
   m->locks--;
 }
@@ -1214,6 +1227,9 @@ void sched_init(void) {
   main_stacksize = parse_size(rt_getenv("MARMOT_MAINSTACKSIZE"), main_stacksize);
   rt_m *m = &m0;
   setm(m);
+#ifdef RT_TSAN
+  m->g0.tsan_fiber = __tsan_get_current_fiber();
+#endif
   m->thread = (void *)pthread_self();
   m->fastrand = rt_fastrand() | 1;
   sched.mcount = 1;

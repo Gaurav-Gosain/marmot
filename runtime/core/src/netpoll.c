@@ -25,6 +25,7 @@ typedef struct polldesc {
   bool closing;
   bool rready, wready;        // readiness seen while nobody waited
   bool rtimeout, wtimeout;
+  bool rwoken, wwoken;        // rt_poll_wake
   rt_g *rg, *wg;              // waiting goroutines
   rt_timer *rt, *wt;          // deadline timers
   struct polldesc *next;      // free list
@@ -205,6 +206,23 @@ RT_API void rt_poll_evict(void *h) {
   if (w) rt_ready(w);
 }
 
+RT_API void rt_poll_wake(void *h, int32_t mode) {
+  polldesc *pd = h;
+  rt_g *g = NULL;
+  spin_lock(&pd->lock);
+  if (mode == 'r' && pd->rg) {
+    g = pd->rg;
+    pd->rg = NULL;
+    pd->rwoken = true;
+  } else if (mode == 'w' && pd->wg) {
+    g = pd->wg;
+    pd->wg = NULL;
+    pd->wwoken = true;
+  }
+  spin_unlock(&pd->lock);
+  if (g) rt_ready(g);
+}
+
 RT_API void rt_poll_close(void *h) {
   polldesc *pd = h;
   rt_poll_evict(pd);
@@ -271,9 +289,11 @@ RT_API int32_t rt_poll_wait(void *h, int32_t mode, int64_t deadline) {
     if (rd) {
       pd->rg = rt_current();
       pd->rtimeout = false;
+      pd->rwoken = false;
     } else {
       pd->wg = rt_current();
       pd->wtimeout = false;
+      pd->wwoken = false;
     }
     rt_timer *t = rd ? pd->rt : pd->wt;
     if (deadline > 0) itimer_start(t, deadline, rd ? deadline_read : deadline_write, pd);
@@ -289,6 +309,10 @@ RT_API int32_t rt_poll_wait(void *h, int32_t mode, int64_t deadline) {
     if (timedout) {
       spin_unlock(&pd->lock);
       return 1;
+    }
+    if (rd ? pd->rwoken : pd->wwoken) {
+      spin_unlock(&pd->lock);
+      return 3;
     }
     // Woken by readiness or eviction: loop to report it. Readiness was
     // handed to us directly (the flag stays clear), so return ready unless

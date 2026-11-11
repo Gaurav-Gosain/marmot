@@ -142,11 +142,14 @@ void *rt_poll_open(int32_t fd);  // NULL on failure
 // Wake waiters with "closed" and unregister; call before close(fd).
 void rt_poll_close(void *pd);
 // Park until fd is ready for mode ('r' or 'w'), the monotonic deadline
-// passes (deadline 0: none), or rt_poll_evict. Returns 0 ready, 1 timed
-// out, 2 evicted.
+// passes (deadline 0: none), rt_poll_evict or rt_poll_wake. Returns 0 ready,
+// 1 timed out, 2 evicted, 3 woken by rt_poll_wake.
 int32_t rt_poll_wait(void *pd, int32_t mode, int64_t deadline);
 // Wake all waiters on pd with 2 (closing); later waits return 2 at once.
 void rt_poll_evict(void *pd);
+// Wake the goroutine waiting on pd for mode with result 3, without closing
+// (for a deadline change while it waits). No effect if nobody waits.
+void rt_poll_wake(void *pd, int32_t mode);
 // Generic escape hatch for the syscall package. num is the host's system call
 // number (on darwin this goes through libc syscall(); prefer the dedicated
 // wrappers). Returns -errno on failure.
