@@ -335,7 +335,7 @@ func (p *Program) stackAllocs(fn *ssa.Function) map[ssa.Value]bool {
 // fn only loads through the free variable. gc captures such variables by
 // value too.
 func (p *Program) byValueFreeVars(fn *ssa.Function) map[int]bool {
-	if fn.Parent() == nil || fn.Synthetic != "" || len(fn.FreeVars) == 0 {
+	if !optByValue || fn.Parent() == nil || fn.Synthetic != "" || len(fn.FreeVars) == 0 {
 		return nil
 	}
 	p.escMu.Lock()
@@ -408,6 +408,12 @@ func allocSettled(mc *ssa.MakeClosure, b ssa.Value) bool {
 			sb, mb := x.Block(), mc.Block()
 			if sb == mb {
 				if pos(x) > pos(mc) {
+					return false
+				}
+				// In a loop the store runs again after the closure of the
+				// previous iteration was made, unless the variable itself is
+				// created fresh in this iteration (Alloc earlier in the block).
+				if inLoop(sb) && (a.Block() != sb || pos(a) > pos(x)) {
 					return false
 				}
 			} else if !sb.Dominates(mb) || inLoop(sb) {

@@ -25,6 +25,7 @@ import (
 //	                     reads, string ranges, map keys, unsafe builtins, append,
 //	                     //go:noescape body-less functions)
 //	MARMOT_STACKCONV     frame buffers for string(b), []byte(s) and small make
+//	MARMOT_BYVALUE       closures capture settled variables by value
 //
 // What stays on: intraprocedural escape analysis (a value passed to any
 // call, other than len, cap, copy and print builtins, escapes).
@@ -44,11 +45,12 @@ var (
 	optXPkgEscape   = lifetimeOn("MARMOT_XPKG_ESCAPE")
 	optEscapeExt    = lifetimeOn("MARMOT_ESCAPE_EXT")
 	optStackConv    = lifetimeOn("MARMOT_STACKCONV")
+	optByValue      = lifetimeOn("MARMOT_BYVALUE")
 )
 
 // LifetimeEnv lists the switch variables (for cache keys).
 var LifetimeEnv = []string{"MARMOT_LIFETIME", "MARMOT_REUSE", "MARMOT_REGIONS", "MARMOT_FRAME_REGIONS",
-	"MARMOT_ALLOCSINK", "MARMOT_ESCAPE_SUMMARY", "MARMOT_XPKG_ESCAPE", "MARMOT_ESCAPE_EXT", "MARMOT_STACKCONV"}
+	"MARMOT_ALLOCSINK", "MARMOT_ESCAPE_SUMMARY", "MARMOT_XPKG_ESCAPE", "MARMOT_ESCAPE_EXT", "MARMOT_STACKCONV", "MARMOT_BYVALUE"}
 
 // LifetimeSummary describes which lifetime transforms are on.
 func LifetimeSummary() string {

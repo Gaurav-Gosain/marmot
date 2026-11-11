@@ -282,6 +282,15 @@ func chainDeadAfter(c *ssa.Call) bool {
 		if !deadAfter(v, c) {
 			return false
 		}
+		// Element addresses taken from v point into the same array: their
+		// loads and stores are uses too (verify counterexample 5).
+		if refs := v.Referrers(); refs != nil {
+			for _, r := range *refs {
+				if ia, ok := r.(*ssa.IndexAddr); ok && !deadAfter(ia, c) {
+					return false
+				}
+			}
+		}
 		switch x := v.(type) {
 		case *ssa.Phi:
 			for _, e := range x.Edges {
