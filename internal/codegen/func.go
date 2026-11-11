@@ -32,7 +32,9 @@ type funcGen struct {
 	frame             string // _deferframe address, "" if none
 	noinlineCalls     bool   // mark calls no_inline (defer thunks)
 	curBlock          *ssa.BasicBlock
-	forceUnsafe       bool // the access goes through a locally punned pointer
+	appendElems       map[*ssa.Slice][]ssa.Value // append(s, a, b): elements by varargs slice
+	skipInstr         map[ssa.Instruction]bool   // instructions folded into others
+	forceUnsafe       bool                       // the access goes through a locally punned pointer
 	implicitRunDefers bool
 	curArgs           []ssa.Value        // SSA arguments of a call being expanded as an intrinsic
 	volatile          map[ssa.Value]bool // stack slots that live across setjmp
@@ -134,6 +136,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 		}
 	}
 
+	f.findAppendElems()
 	if needsFrame(fn) {
 		f.volatile = volatileAllocs(fn)
 		f.setupFrame()
@@ -168,7 +171,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 			f.rtcall("deferreturn", f.frame)
 		}
 		for _, instr := range b.Instrs {
-			if f.m.static != nil && f.m.static.skip[instr] {
+			if f.m.static != nil && f.m.static.skip[instr] || f.skipInstr[instr] {
 				continue
 			}
 			f.curPos = instr.Pos()

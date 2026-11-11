@@ -517,7 +517,16 @@ func (b *build) linkBundle(objs []string, rt, out string) error {
 		return err
 	}
 	exe := filepath.Base(out)
-	script := fmt.Sprintf("#!/bin/sh\n# Link the %s/%s program built by marmot. Run in this directory.\nset -e\ncd \"$(dirname \"$0\")\"\n${CC:-clang} -o %s %s librtcore.a -lpthread -Wl,--gc-sections -s\n",
-		b.goos, b.goarch, exe, strings.Join(names, " "))
+	script := fmt.Sprintf(`#!/bin/sh
+# Link the %s/%s program built by marmot: sh link.sh [output]
+# The output defaults to %s inside this directory; a relative path is
+# relative to the current directory.
+set -e
+dir="$(cd "$(dirname "$0")" && pwd)"
+out="${1:-$dir/%s}"
+case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
+cd "$dir"
+${CC:-clang} -o "$out" %s librtcore.a -lpthread -Wl,--gc-sections -s
+`, b.goos, b.goarch, exe, exe, strings.Join(names, " "))
 	return os.WriteFile(filepath.Join(out, "link.sh"), []byte(script), 0o755)
 }

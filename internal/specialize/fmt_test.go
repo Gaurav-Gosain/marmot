@@ -41,6 +41,26 @@ type Pt struct {
 	Tag  string
 }
 
+type Inner struct {
+	U    uint16
+	F    float32
+	name string
+}
+
+type Outer struct {
+	In   Inner
+	B    bool
+	C    complex64
+	S    Stringy
+	Name Name
+}
+
+type Nums struct {
+	A int
+	B uint8
+	C int64
+}
+
 type errT struct{ msg string }
 
 func (e *errT) Error() string { return "errT:" + e.msg }
@@ -101,6 +121,10 @@ func out(s string) { sb.WriteString(s); sb.WriteByte('\n') }
 		{"Stringy", "1, -2", gen("vsdq", true, true, false)},
 		{"Fmter", "Fmter{1}, Fmter{2}", gen("vdsx", true, true, true)},
 		{"Pt", `Pt{}, Pt{1, -2, "a b"}`, gen("vd", true, true, false)},
+		{"Inner", `Inner{}, Inner{7, -1.5, "in"}`, gen("vdxs", true, true, true)},
+		{"Outer", `Outer{}, Outer{Inner{1, 2, "x"}, true, complex(1, 2), 3, "nm"}`, gen("vs", true, true, false)},
+		{"Nums", `Nums{}, Nums{-1, 255, math.MinInt64}`, gen("vdxXboc", true, true, false)},
+		{"struct{ A int; B string }", `{}, {1, "b"}`, gen("v", true, false, false)},
 		{"*Pt", `nil`, gen("vd", false, true, false)},
 		{"any", `nil, 1, "s", 2.5, Pt{3, 4, "t"}, Stringy(9), []int{1, 2}, map[string]int{"a": 1, "b": 2}`, gen("vsdT", true, true, false)},
 		{"error", `nil, errors.New("boom"), &errT{"x"}`, gen("vsqw", true, true, false)},

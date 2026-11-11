@@ -268,8 +268,91 @@ func (f *funcGen) sliceToArrayPointer(v *ssa.SliceToArrayPointer) {
 	f.vals[v] = f.extractRaw(x, tSlice, 0)
 }
 
+// appendElems recognizes append(s, a, b, c): SSA builds a heap varargs
+// array, stores the elements, slices it and appends the slice. When the
+// array has no other use, the elements are returned (in order) and the
+// array, its stores and the slice are skipped.
+func (f *funcGen) findAppendElems() {
+	f.appendElems = map[*ssa.Slice][]ssa.Value{}
+	for _, b := range f.fn.Blocks {
+		for _, instr := range b.Instrs {
+			a, ok := instr.(*ssa.Alloc)
+			if !ok || a.Comment != "varargs" {
+				continue
+			}
+			at, ok := a.Type().(*types.Pointer).Elem().Underlying().(*types.Array)
+			if !ok {
+				continue
+			}
+			elems := make([]ssa.Value, at.Len())
+			var skip []ssa.Instruction
+			var sl *ssa.Slice
+			good := true
+			for _, r := range *a.Referrers() {
+				switch x := r.(type) {
+				case *ssa.IndexAddr:
+					c, ok := x.Index.(*ssa.Const)
+					refs := *x.Referrers()
+					if !ok || len(refs) != 1 {
+						good = false
+						break
+					}
+					st, ok := refs[0].(*ssa.Store)
+					i := c.Int64()
+					if !ok || st.Addr != x || i < 0 || i >= at.Len() || elems[i] != nil {
+						good = false
+						break
+					}
+					elems[i] = st.Val
+					skip = append(skip, x, st)
+				case *ssa.Slice:
+					if sl != nil || x.Low != nil || x.High != nil || x.Max != nil {
+						good = false
+						break
+					}
+					sl = x
+				case *ssa.DebugRef:
+				default:
+					good = false
+				}
+			}
+			if !good || sl == nil {
+				continue
+			}
+			for _, e := range elems {
+				if e == nil {
+					good = false
+				}
+			}
+			refs := *sl.Referrers()
+			if !good || len(refs) != 1 {
+				continue
+			}
+			call, ok := refs[0].(*ssa.Call)
+			if !ok || len(call.Call.Args) != 2 || call.Call.Args[1] != ssa.Value(sl) {
+				continue
+			}
+			if bi, ok := call.Call.Value.(*ssa.Builtin); !ok || bi.Name() != "append" {
+				continue
+			}
+			if f.skipInstr == nil {
+				f.skipInstr = map[ssa.Instruction]bool{}
+			}
+			f.skipInstr[a] = true
+			f.skipInstr[sl] = true
+			for _, i := range skip {
+				f.skipInstr[i] = true
+			}
+			f.appendElems[sl] = elems
+		}
+	}
+}
+
 // append(s, t...) where t is a slice (or a string for []byte).
 func (f *funcGen) append(sv, tv ssa.Value) string {
+	if sl, ok := tv.(*ssa.Slice); ok && f.appendElems[sl] != nil {
+		return f.appendValues(sv, f.appendElems[sl])
+	}
 	s := f.value(sv)
 	t := f.value(tv)
 	st := sv.Type().Underlying().(*types.Slice)
@@ -301,3 +384,38 @@ func (f *funcGen) append(sv, tv ssa.Value) string {
 }
 
 var _ = token.NoPos
+
+// appendValues appends individual elements: grow if needed, then store
+// each element in place (no varargs array).
+func (f *funcGen) appendValues(sv ssa.Value, elems []ssa.Value) string {
+	s := f.value(sv)
+	et := sv.Type().Underlying().(*types.Slice).Elem()
+	vals := make([]string, len(elems))
+	for i, e := range elems {
+		vals[i] = f.value(e)
+	}
+	p := f.extractRaw(s, tSlice, 0)
+	l := f.extractRaw(s, tSlice, 1)
+	c := f.extractRaw(s, tSlice, 2)
+	newLen := f.op("llvm.add %s, %s : i64", l, f.constInt(int64(len(elems)), mlir.I64))
+	grow := f.op("llvm.icmp \"ugt\" %s, %s : i64", newLen, c)
+	growB, done := f.newBlock(), f.newBlock()
+	f.emit("llvm.cond_br %s weights([1, 100]), %s, %s(%s, %s : !llvm.ptr, i64)", grow, growB, done, p, c)
+	saved := f.b
+	f.b = &f.cold
+	f.b.WriteString("  " + growB + ":\n")
+	g := f.rtcall("growslice", f.typeDesc(et), p, l, c, newLen)
+	f.emit("llvm.br %s(%s, %s : !llvm.ptr, i64)", done, f.extractRaw(g, tSlice, 0), f.extractRaw(g, tSlice, 2))
+	f.b = saved
+	np, nc := f.newVal(), f.newVal()
+	f.b.WriteString("  " + done + "(" + np + ": !llvm.ptr, " + nc + ": i64):\n")
+	mt := f.tm.memType(et)
+	for i, v := range vals {
+		idx := l
+		if i > 0 {
+			idx = f.op("llvm.add %s, %s : i64", l, f.constInt(int64(i), mlir.I64))
+		}
+		f.store(v, f.gepDyn(np, mt, idx), et)
+	}
+	return f.build(tSlice, np, newLen, nc)
+}

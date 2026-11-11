@@ -252,40 +252,53 @@ func fmtMethods(t types.Type) bool {
 	return false
 }
 
-// emitOperand returns the statement that prints operand op (parameter name
-// v) with verb, mirroring printArg.
-func emitOperand(op operand, v string, verb rune) string {
+// emitOperand returns the statements that print operand op (parameter name
+// v) with verb under flag bits, mirroring printArg.
+func (g *gen) emitOperand(op operand, v string, verb rune, bits uint) string {
 	general := fmt.Sprintf("fmt.MarmotArg(p, %s, %d)", v, verb)
-	if !op.static || op.typ == nil || op.tsrc == "any" || verb == 'T' || verb == 'p' {
+	if !op.static || op.typ == nil || op.tsrc == "any" || verb == 'T' || verb == 'p' || verb == 'w' {
 		return general
 	}
-	t := op.typ
-	if _, named := types.Unalias(t).(*types.Named); named && fmtMethods(t) {
-		return general
+	if code, ok := g.emitValue(op.typ, v, verb, bits, 0); ok {
+		return code
 	}
-	if s, ok := types.Unalias(t).(*types.Slice); ok {
+	return general
+}
+
+// emitValue prints the value v of static type t at the given printValue
+// depth (0 is printArg). It fails when fmt would take a path the typed entry
+// points do not reproduce exactly: methods, invalid verbs (whose error text
+// names the dynamic type), or kinds without a typed path.
+func (g *gen) emitValue(t types.Type, v string, verb rune, bits uint, depth int) (string, bool) {
+	if fmtMethods(t) {
+		return "", false
+	}
+	if s, ok := types.Unalias(t).(*types.Slice); ok && depth == 0 {
 		if b, ok := s.Elem().(*types.Basic); ok && b.Kind() == types.Uint8 && strings.ContainsRune("vdsxXq", verb) {
-			return fmt.Sprintf("fmt.MarmotBytes(p, %s, %d)", v, verb)
+			return fmt.Sprintf("fmt.MarmotBytes(p, %s, %d)", v, verb), true
 		}
-		return general
+		return "", false
+	}
+	if st, ok := t.Underlying().(*types.Struct); ok {
+		return g.emitStruct(t, st, v, verb, bits, depth)
 	}
 	b, ok := t.Underlying().(*types.Basic)
 	if !ok {
-		return general
+		return "", false
 	}
 	switch {
 	case b.Kind() == types.Bool:
 		if verb == 't' || verb == 'v' {
-			return fmt.Sprintf("fmt.MarmotBool(p, bool(%s), %d)", v, verb)
+			return fmt.Sprintf("fmt.MarmotBool(p, bool(%s), %d)", v, verb), true
 		}
-	case b.Info()&types.IsInteger != 0 && b.Kind() != types.Uintptr || b.Kind() == types.Uintptr:
+	case b.Info()&types.IsInteger != 0:
 		if !strings.ContainsRune("vdboOxXcqU", verb) {
 			break
 		}
 		if b.Info()&types.IsUnsigned != 0 {
-			return fmt.Sprintf("fmt.MarmotUint(p, uint64(%s), %d)", v, verb)
+			return fmt.Sprintf("fmt.MarmotUint(p, uint64(%s), %d)", v, verb), true
 		}
-		return fmt.Sprintf("fmt.MarmotInt(p, int64(%s), %d)", v, verb)
+		return fmt.Sprintf("fmt.MarmotInt(p, int64(%s), %d)", v, verb), true
 	case b.Info()&types.IsFloat != 0:
 		if !strings.ContainsRune("vbgGxXfFeE", verb) {
 			break
@@ -294,7 +307,7 @@ func emitOperand(op operand, v string, verb rune) string {
 		if b.Kind() == types.Float32 {
 			size = 32
 		}
-		return fmt.Sprintf("fmt.MarmotFloat(p, float64(%s), %d, %d)", v, size, verb)
+		return fmt.Sprintf("fmt.MarmotFloat(p, float64(%s), %d, %d)", v, size, verb), true
 	case b.Info()&types.IsComplex != 0:
 		if !strings.ContainsRune("vbgGxXfFeE", verb) {
 			break
@@ -303,13 +316,55 @@ func emitOperand(op operand, v string, verb rune) string {
 		if b.Kind() == types.Complex64 {
 			size = 64
 		}
-		return fmt.Sprintf("fmt.MarmotComplex(p, complex128(%s), %d, %d)", v, size, verb)
+		return fmt.Sprintf("fmt.MarmotComplex(p, complex128(%s), %d, %d)", v, size, verb), true
 	case b.Info()&types.IsString != 0:
 		if strings.ContainsRune("vsxXq", verb) {
-			return fmt.Sprintf("fmt.MarmotString(p, string(%s), %d)", v, verb)
+			return fmt.Sprintf("fmt.MarmotString(p, string(%s), %d)", v, verb), true
 		}
 	}
-	return general
+	return "", false
+}
+
+// emitStruct is printValue's struct case: {f1 f2}, {A:f1 B:f2} under %+v,
+// pkg.T{A:f1, B:f2} under %#v.
+func (g *gen) emitStruct(t types.Type, st *types.Struct, v string, verb rune, bits uint, depth int) (string, bool) {
+	if depth > 3 {
+		return "", false
+	}
+	sharpV, plusV := bits&fSharpV != 0, bits&fPlusV != 0
+	var b strings.Builder
+	if sharpV {
+		n, ok := types.Unalias(t).(*types.Named)
+		if !ok || n.TypeArgs() != nil || n.Obj().Pkg() == nil {
+			return "", false // reflect's string for these is not derived here
+		}
+		fmt.Fprintf(&b, "fmt.MarmotLit(p, %s)\n\t", strconv.Quote(n.Obj().Pkg().Name()+"."+n.Obj().Name()))
+	}
+	b.WriteString("fmt.MarmotByte(p, '{')")
+	for i := 0; i < st.NumFields(); i++ {
+		f := st.Field(i)
+		if f.Name() == "_" || (!f.Exported() && f.Pkg() != g.pkg.Types) {
+			return "", false
+		}
+		if i > 0 {
+			if sharpV {
+				b.WriteString("\n\tfmt.MarmotLit(p, \", \")")
+			} else {
+				b.WriteString("\n\tfmt.MarmotByte(p, ' ')")
+			}
+		}
+		if plusV || sharpV {
+			fmt.Fprintf(&b, "\n\tfmt.MarmotLit(p, %s)", strconv.Quote(f.Name()+":"))
+		}
+		code, ok := g.emitValue(f.Type(), v+"."+f.Name(), verb, bits, depth+1)
+		if !ok {
+			return "", false
+		}
+		b.WriteString("\n\t")
+		b.WriteString(code)
+	}
+	b.WriteString("\n\tfmt.MarmotByte(p, '}')")
+	return b.String(), true
 }
 
 func (g *gen) fmtCall(call *ast.CallExpr, name string) {
@@ -371,14 +426,14 @@ func (g *gen) fmtCall(call *ast.CallExpr, name string) {
 				continue
 			}
 			w("fmt.MarmotFlags(p, %d, %d, %d)", op.bits, op.wid, op.prec)
-			w("%s", emitOperand(ops[op.arg], fmt.Sprintf("a%d", op.arg), op.verb))
+			w("%s", g.emitOperand(ops[op.arg], fmt.Sprintf("a%d", op.arg), op.verb, op.bits))
 		}
 	case strings.HasSuffix(name, "ln"):
 		for i, op := range ops {
 			if i > 0 {
 				w("fmt.MarmotByte(p, ' ')")
 			}
-			w("%s", emitOperand(op, fmt.Sprintf("a%d", i), 'v'))
+			w("%s", g.emitOperand(op, fmt.Sprintf("a%d", i), 'v', 0))
 		}
 		w("fmt.MarmotByte(p, '\\n')")
 	default: // Print family: space between operands when neither is a string
@@ -390,7 +445,7 @@ func (g *gen) fmtCall(call *ast.CallExpr, name string) {
 			if i > 0 && !op.isStr && !prevString {
 				w("fmt.MarmotByte(p, ' ')")
 			}
-			w("%s", emitOperand(op, fmt.Sprintf("a%d", i), 'v'))
+			w("%s", g.emitOperand(op, fmt.Sprintf("a%d", i), 'v', 0))
 			prevString = op.isStr
 		}
 	}
