@@ -134,31 +134,71 @@ int main(int argc, char **argv) {
     }
   }
 
-  // Strings: function names, then file names.
-  std::string strs, lines, table;
+  // Version 2 (docs/pcln.md). Arm64 instructions are 4 bytes, so pc deltas
+  // are stored in instructions there.
+  uint32_t quantum = obj.getArch() == Triple::aarch64 ? 4 : 1;
+  std::string strs;
+  std::map<std::string, uint32_t> strOff;
   auto addStr = [&](const std::string &s) {
-    uint32_t off = strs.size();
-    strs += s;
-    strs.push_back('\0');
-    return off;
+    auto [it, fresh] = strOff.try_emplace(s, strs.size());
+    if (fresh) {
+      strs += s;
+      strs.push_back('\0');
+    }
+    return it->second;
   };
-  std::vector<uint32_t> fileOff;
+  // Prefix tables: directories of files, package paths of functions. A
+  // file is uvarint dir + base name; a function name uvarint pkg + rest.
+  std::vector<std::string> dirs, pkgs;
+  std::map<std::string, uint32_t> dirIdx, pkgIdx;
+  auto prefixed = [&](const std::string &full, bool isFunc) {
+    size_t cut;
+    if (isFunc) {
+      size_t slash = full.rfind('/', full.find('('));
+      size_t dot = full.find('.', slash == std::string::npos ? 0 : slash + 1);
+      cut = dot == std::string::npos ? 0 : dot + 1;
+    } else {
+      size_t slash = full.rfind('/');
+      cut = slash == std::string::npos ? 0 : slash + 1;
+    }
+    std::string head = full.substr(0, cut);
+    auto &idx = isFunc ? pkgIdx : dirIdx;
+    auto &list = isFunc ? pkgs : dirs;
+    auto [it, fresh] = idx.try_emplace(head, list.size());
+    if (fresh)
+      list.push_back(head);
+    std::string rec;
+    uvarint(rec, it->second + 1); // never a zero byte: records are NUL terminated
+    rec += full.substr(cut);
+    return addStr(rec);
+  };
+  std::vector<uint32_t> fileRec;
   for (const std::string &f : files)
-    fileOff.push_back(addStr(f));
-  std::string ftab;
+    fileRec.push_back(prefixed(f, false));
+
+  std::string ftab, lines;
+  uint64_t textEnd = 0;
   for (auto &[lo, f] : funcs) {
     std::stable_sort(f.rows.begin(), f.rows.end());
+    // Only rows that change the line or the file (DWARF also has rows for
+    // columns and statement flags).
+    std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> rows;
+    for (auto &r : f.rows)
+      if (rows.empty() || std::get<1>(rows.back()) != std::get<1>(r) ||
+          std::get<2>(rows.back()) != std::get<2>(r))
+        rows.push_back(r);
     uint32_t lineOff = lines.size();
-    uint32_t entryLine = f.rows.empty() ? 0 : std::get<1>(f.rows.front());
-    uint32_t entryFile = f.rows.empty() ? 0 : std::get<2>(f.rows.front());
-    uvarint(lines, f.rows.size());
+    uint32_t entryLine = rows.empty() ? 0 : std::get<1>(rows.front());
+    uint32_t entryFile = rows.empty() ? 0 : std::get<2>(rows.front());
+    uvarint(lines, rows.empty() ? 0 : rows.size() - 1);
+    uvarint(lines, entryLine);
     uvarint(lines, entryFile);
-    uint64_t pc = f.lo;
+    uint64_t pc = rows.empty() ? f.lo : std::get<0>(rows.front());
     int64_t line = entryLine;
     uint32_t file = entryFile;
-    for (auto &[rpc, rline, rfile] : f.rows) {
-      uvarint(lines, rpc - pc);
-      // The low bit says whether a file index follows.
+    for (size_t r = 1; r < rows.size(); ++r) {
+      auto &[rpc, rline, rfile] = rows[r];
+      uvarint(lines, (rpc - pc) / quantum);
       int64_t delta = int64_t(rline) - line;
       bool fileChange = rfile != file;
       svarint(lines, delta * 2 + (fileChange ? 1 : 0));
@@ -168,29 +208,38 @@ int main(int argc, char **argv) {
       line = rline;
       file = rfile;
     }
-    u64(ftab, f.lo - base);
-    u32(ftab, uint32_t(f.hi - f.lo));
-    u32(ftab, addStr(f.name));
+    u32(ftab, uint32_t(f.lo - base));
+    u32(ftab, prefixed(f.name, true));
     u32(ftab, lineOff);
-    u32(ftab, entryLine);
+    textEnd = std::max(textEnd, f.hi - base);
   }
-  std::string ftabFiles;
-  for (uint32_t o : fileOff)
-    u32(ftabFiles, o);
+  std::string fileTab, dirTab, pkgTab;
+  for (uint32_t o : fileRec)
+    u32(fileTab, o);
+  for (const std::string &d : dirs)
+    u32(dirTab, addStr(d));
+  for (const std::string &p : pkgs)
+    u32(pkgTab, addStr(p));
 
-  // Header: magic, version, counts, offsets (from the start of the table).
-  const uint32_t hdr = 8 + 4 * 7;
-  uint32_t funcOff = hdr, fileTabOff = funcOff + ftab.size(),
-           lineOffAll = fileTabOff + ftabFiles.size(), strOff = lineOffAll + lines.size();
-  table += "MRMTPCLN";
-  u32(table, 1);
+  const uint32_t hdr = 8 + 4 * 13;
+  uint32_t funcOff = hdr, fileOff = funcOff + ftab.size(), dirOff = fileOff + fileTab.size(),
+           pkgOff = dirOff + dirTab.size(), lineOff = pkgOff + pkgTab.size(),
+           strOff2 = lineOff + lines.size();
+  std::string table = "MRMTPCLN";
+  u32(table, 2);
   u32(table, funcs.size());
   u32(table, files.size());
+  u32(table, dirs.size());
+  u32(table, pkgs.size());
+  u32(table, quantum);
+  u32(table, uint32_t(textEnd));
   u32(table, funcOff);
-  u32(table, fileTabOff);
-  u32(table, lineOffAll);
-  u32(table, strOff);
-  table += ftab + ftabFiles + lines + strs;
+  u32(table, fileOff);
+  u32(table, dirOff);
+  u32(table, pkgOff);
+  u32(table, lineOff);
+  u32(table, strOff2);
+  table += ftab + fileTab + dirTab + pkgTab + lines + strs;
 
   std::error_code ec;
   raw_fd_ostream os(output, ec);
@@ -200,6 +249,7 @@ int main(int argc, char **argv) {
   }
   os << table;
   errs() << "marmot-pcln: " << funcs.size() << " functions, " << files.size() << " files, "
-         << table.size() << " bytes\n";
+         << table.size() << " bytes (functions " << ftab.size() << ", lines " << lines.size()
+         << ", strings " << strs.size() << ")\n";
   return 0;
 }
