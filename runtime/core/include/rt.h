@@ -113,6 +113,10 @@ void rt_handoff(rt_g *target, void (*unlock)(void *), void *lock);
 void rt_goexit(void) __attribute__((noreturn));
 // Per-goroutine slot for the Go runtime (defer chain, panic state). The slot
 // is a GC root. Returns the address of the slot for the current goroutine.
+// Goroutine structures are reused: a new goroutine starts with the value
+// the previous goroutine on the same structure left there (NULL for a
+// structure never used), so the Go side can recycle its per-goroutine data;
+// it must check that the data belongs to rt_current().
 void **rt_gslot(void);
 // Per-goroutine scratch word used to pass a value across park/ready
 // (channel element pointer, select case index).

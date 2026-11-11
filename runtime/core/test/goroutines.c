@@ -8,8 +8,7 @@ static int counter;
 static rt_mutex mu;
 
 static void worker(void *arg) {
-  CHECK(*rt_gslot() == 0);
-  *rt_gslot() = arg;
+  *rt_gslot() = arg;  // may hold a previous goroutine's value
   for (int i = 0; i < 10; i++) {
     rt_lock(&mu);
     counter++;

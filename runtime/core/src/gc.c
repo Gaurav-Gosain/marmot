@@ -678,6 +678,7 @@ void gc_collect(bool forced) {
   bool queued = mark_finalizers();
   int64_t t2 = os_nanotime();
   sweep_all();
+  regions_trim();
   int64_t t3 = os_nanotime();
   uint64_t live = atomic_load(&heap_live);
   if (gc_percent >= 0) {

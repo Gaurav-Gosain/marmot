@@ -232,6 +232,7 @@ struct rt_m {
   rt_g *curg;               // running goroutine or NULL
   rt_p *p;                  // attached P
   mcache *mcache;           // p->mcache, cached for the allocation fast path
+  void *rcache;             // region.c per-thread caches
   rt_p *nextp;              // P handed over before wakeup
   rt_m *alllink;
   rt_m *idlelink;
@@ -369,6 +370,7 @@ void sched_timer_added(int64_t when);
 
 // ---- Regions (region.c) ----
 void regions_scan_roots(void (*scan)(uintptr_t lo, uintptr_t hi));
+void regions_trim(void);
 
 // ---- Memory (malloc.c, gc.c) ----
 

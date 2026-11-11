@@ -705,10 +705,12 @@ static void goexit_final(rt_g *g) {
   }
   g->fn = NULL;
   g->arg = NULL;
-  g->slot = NULL;
   g->param = NULL;
   atomic_store(&g->status, G_DEAD);
-  glive_set(g, false);
+  // slot survives for the next goroutine that reuses this structure (rtgo
+  // recycles its per-goroutine data); the GC keeps scanning it, so the
+  // table bit stays set while the slot is in use.
+  if (!g->slot) glive_set(g, false);
 }
 
 INLINE void cpu_relax_sched(void) {
@@ -1007,8 +1009,7 @@ static rt_g *newproc(void (*fn)(void *), void *arg, bool system) {
   if (!g) g = galloc(0);
   g->fn = fn;
   g->arg = arg;
-  g->slot = NULL;
-  g->param = NULL;
+  g->param = NULL;  // slot is kept from the previous user of this structure
   g->system = system;
   g->preempt = false;
   g->id = atomic_fetch_add(&sched.goidgen, 1) + 1;
@@ -1282,7 +1283,10 @@ void sysmon_start(void) {
 
 static void scan_g(rt_g *g, void (*scan)(uintptr_t lo, uintptr_t hi)) {
   uint32_t s = atomic_load(&g->status);
-  if (s == G_IDLE || s == G_DEAD) return;
+  if (s == G_IDLE || s == G_DEAD) {
+    scan((uintptr_t)&g->slot, (uintptr_t)(&g->slot + 1));  // kept for reuse
+    return;
+  }
   scan((uintptr_t)&g->arg, (uintptr_t)(&g->arg + 1));
   scan((uintptr_t)&g->slot, (uintptr_t)(&g->slot + 1));
   scan((uintptr_t)&g->param, (uintptr_t)(&g->param + 1));
