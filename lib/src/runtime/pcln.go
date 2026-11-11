@@ -1,5 +1,6 @@
 // The pc table: function names, files and lines for code addresses, built
-// by the backend into the binary (docs/pcln.md, version 2). It serves
+// by the backend into the binary (docs/pcln.md, versions 2 and 3; version 3
+// adds the inline trees that give the frames of inlined calls). It serves
 // runtime.Caller, runtime.Callers frames, FuncForPC and panic tracebacks.
 //
 // The table is read in place; lookups allocate nothing except when a name
@@ -9,8 +10,6 @@
 package runtime
 
 import "unsafe"
-
-const pclnVersion = 2
 
 // pclnTable is a decoded header of the pc table.
 type pclnTable struct {
@@ -29,6 +28,10 @@ type pclnTable struct {
 	pkgOff  uint32
 	lineOff uint32
 	strOff  uint32
+	// Version 3 inline trees; ninl is 0 in version 2.
+	ninl      uint32
+	inlIdxOff uint32
+	inlOff    uint32
 }
 
 func (t *pclnTable) u32(off uint32) uint32 {
@@ -69,8 +72,20 @@ func (t *pclnTable) init(data unsafe.Pointer, size, base uintptr) bool {
 		}
 	}
 	t.data, t.size, t.base = data, size, base
-	if t.u32(8) != pclnVersion {
+	version := t.u32(8)
+	if version != 2 && version != 3 {
 		return false
+	}
+	if version == 3 {
+		if size < hdr+12 {
+			return false
+		}
+		t.ninl = t.u32(60)
+		t.inlIdxOff = t.u32(64)
+		t.inlOff = t.u32(68)
+		if uintptr(t.inlIdxOff)+uintptr(t.ninl)*8 > size {
+			return false
+		}
 	}
 	t.nfuncs = t.u32(12)
 	t.nfiles = t.u32(16)
@@ -201,4 +216,110 @@ func (t *pclnTable) lookup(pc uintptr) (pcInfo, bool) {
 	}
 	r.line = int(l)
 	return r, true
+}
+
+// inlineTree returns the offset of the inline tree of function k, or
+// false if k has no inlined calls.
+func (t *pclnTable) inlineTree(k uint32) (uint32, bool) {
+	lo, hi := uint32(0), t.ninl
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		fk := t.u32(t.inlIdxOff + 8*mid)
+		switch {
+		case fk == k:
+			return t.inlOff + t.u32(t.inlIdxOff+8*mid+4), true
+		case fk < k:
+			lo = mid + 1
+		default:
+			hi = mid
+		}
+	}
+	return 0, false
+}
+
+// inlNode is one inlined call of an inline tree.
+type inlNode struct {
+	parent  uint32 // 0: the function itself; k: node k-1
+	nameRec uint32
+	file    uint32
+	line    uint32
+}
+
+// inlNodeAt decodes node idx (0-based) of the tree whose node list starts
+// at off (after the node count).
+func (t *pclnTable) inlNodeAt(off, idx uint32) inlNode {
+	var n inlNode
+	for i := uint32(0); i <= idx; i++ {
+		n.parent, off = t.uvarint(off)
+		n.nameRec, off = t.uvarint(off)
+		n.file, off = t.uvarint(off)
+		n.line, off = t.uvarint(off)
+	}
+	return n
+}
+
+// inlineNode returns the 1-based node of the innermost inlined call that
+// covers offset off in function k, the node list offset, or 0.
+func (t *pclnTable) inlineNode(k, off uint32) (node, nodes uint32) {
+	tree, ok := t.inlineTree(k)
+	if !ok {
+		return 0, 0
+	}
+	n, i := t.uvarint(tree)
+	nodes = i
+	for j := uint32(0); j < n; j++ { // skip the nodes
+		for f := 0; f < 4; f++ {
+			_, i = t.uvarint(i)
+		}
+	}
+	nr, i := t.uvarint(i)
+	at := t.funcStart(k)
+	for j := uint32(0); j < nr; j++ {
+		var gap, l, nd uint32
+		gap, i = t.uvarint(i)
+		l, i = t.uvarint(i)
+		nd, i = t.uvarint(i)
+		lo := at + gap*t.quantum
+		at = lo + l*t.quantum
+		if off < lo {
+			break
+		}
+		if off < at {
+			return nd, nodes
+		}
+	}
+	return 0, nodes
+}
+
+// frames stores the logical frames at pc, innermost first, in out and
+// returns how many it stored: the frames of calls inlined at pc, then the
+// function holding pc. It allocates nothing.
+func (t *pclnTable) frames(pc uintptr, out []pcInfo) int {
+	info, ok := t.lookup(pc)
+	if !ok || len(out) == 0 {
+		return 0
+	}
+	node, nodes := uint32(0), uint32(0)
+	if t.ninl != 0 {
+		k, _ := t.findFunc(uint32(pc - t.base))
+		node, nodes = t.inlineNode(k, uint32(pc-t.base))
+	}
+	n := 0
+	cur := info // name of the innermost frame, file and line from the rows
+	for node != 0 && n < len(out) {
+		nd := t.inlNodeAt(nodes, node-1)
+		cur.namePrefix, cur.name = t.record(nd.nameRec, t.pkgOff, t.npkgs)
+		out[n] = cur
+		n++
+		// The caller's frame: its line is the call site.
+		cur.filePrefix, cur.file = t.fileName(nd.file)
+		cur.line = int(nd.line)
+		node = nd.parent
+	}
+	if n < len(out) {
+		cur.namePrefix, cur.name = info.namePrefix, info.name
+		out[n] = cur
+		n++
+	}
+	return n
 }

@@ -109,8 +109,8 @@ func SetMutexProfileFraction(rate int) int { return 0 }
 func SetBlockProfileRate(rate int)         {}
 
 // Stack traces. Callers walks the frame record chain; the backend's pc
-// table (pcln.go) maps the pcs to functions, files and lines. Functions
-// that LLVM inlined do not appear as frames of their own.
+// table (pcln.go) maps the pcs to functions, files and lines, and (table
+// version 3) to the frames of calls that LLVM inlined.
 
 // The pc table of the binary, loaded on first use.
 var (
@@ -148,21 +148,48 @@ func pcLookup(pc uintptr) (pcInfo, bool) {
 	return t.lookup(pc)
 }
 
+// maxInlineDepth bounds the logical frames taken for one pc.
+const maxInlineDepth = 32
+
+// pcFrames stores the logical frames at pc (inlined calls first) in out.
+func pcFrames(pc uintptr, out []pcInfo) int {
+	t := pclntab()
+	if t == nil {
+		return 0
+	}
+	return t.frames(pc, out)
+}
+
 // Caller reports file and line number information about function
 // invocations on the calling goroutine's stack. skip 0 is the caller of
 // Caller.
 //
 //go:noinline
 func Caller(skip int) (pc uintptr, file string, line int, ok bool) {
-	var rpc [1]uintptr
-	if skip < 0 || callers(getcallerfp(), skip, rpc[:]) == 0 {
+	if skip < 0 {
 		return 0, "", 0, false
 	}
-	info, found := pcLookup(rpc[0] - 1)
-	if !found {
-		return rpc[0], "", 0, false
+	// skip counts logical frames: walk physical frames and expand the
+	// inlined calls of each.
+	var rpc [64]uintptr
+	n := callers(getcallerfp(), 0, rpc[:])
+	var fr [maxInlineDepth]pcInfo
+	for _, p := range rpc[:n] {
+		k := pcFrames(p-1, fr[:])
+		if k == 0 {
+			if skip == 0 {
+				return p, "", 0, false
+			}
+			skip--
+			continue
+		}
+		if skip < k {
+			f := fr[skip]
+			return p, f.filePrefix + f.file, f.line, true
+		}
+		skip -= k
 	}
-	return rpc[0], info.filePrefix + info.file, info.line, true
+	return 0, "", 0, false
 }
 
 // Callers fills pc with the return program counters of function
@@ -259,6 +286,7 @@ type Frame struct {
 // PC values returned by Callers.
 type Frames struct {
 	callers []uintptr
+	pending []Frame // logical frames of the current pc not returned yet
 }
 
 // CallersFrames takes a slice of PCs returned by Callers.
@@ -268,19 +296,36 @@ func CallersFrames(callers []uintptr) *Frames {
 
 // Next returns a Frame and whether there are more frames.
 func (ci *Frames) Next() (frame Frame, more bool) {
-	if len(ci.callers) == 0 {
-		return Frame{}, false
+	if len(ci.pending) == 0 {
+		if len(ci.callers) == 0 {
+			return Frame{}, false
+		}
+		pc := ci.callers[0]
+		ci.callers = ci.callers[1:]
+		var fr [maxInlineDepth]pcInfo
+		n := pcFrames(pc-1, fr[:])
+		if n == 0 {
+			ci.pending = append(ci.pending, Frame{PC: pc})
+		}
+		for i, info := range fr[:n] {
+			f := Frame{
+				PC:       pc,
+				Function: info.namePrefix + info.name,
+				File:     info.filePrefix + info.file,
+				Line:     info.line,
+			}
+			if i == n-1 {
+				// The physical function; inlined frames have no entry
+				// (as in gc).
+				f.Entry = info.entry
+				f.Func = &Func{entry: info.entry, name: f.Function}
+			}
+			ci.pending = append(ci.pending, f)
+		}
 	}
-	frame.PC = ci.callers[0]
-	ci.callers = ci.callers[1:]
-	if info, ok := pcLookup(frame.PC - 1); ok {
-		frame.Function = info.namePrefix + info.name
-		frame.File = info.filePrefix + info.file
-		frame.Line = info.line
-		frame.Entry = info.entry
-		frame.Func = &Func{entry: info.entry, name: frame.Function}
-	}
-	return frame, len(ci.callers) > 0
+	frame = ci.pending[0]
+	ci.pending = ci.pending[1:]
+	return frame, len(ci.pending) > 0 || len(ci.callers) > 0
 }
 
 // Stack formats a stack trace of the calling goroutine into buf and
@@ -292,12 +337,14 @@ func Stack(buf []byte, all bool) int {
 	n := copy(buf, "goroutine "+itoa(getg().goid)+" [running]:\n")
 	var pcs [64]uintptr
 	k := callers(getcallerfp(), 0, pcs[:])
+	var fr [maxInlineDepth]pcInfo
 	for _, pc := range pcs[:k] {
-		info, ok := pcLookup(pc - 1)
-		if !ok || info.line == 0 {
-			continue
+		for _, info := range fr[:pcFrames(pc-1, fr[:])] {
+			if info.line == 0 && info.file == "" {
+				continue
+			}
+			n += copy(buf[n:], info.namePrefix+info.name+"(...)\n\t"+info.filePrefix+info.file+":"+itoa(int64(info.line))+"\n")
 		}
-		n += copy(buf[n:], info.namePrefix+info.name+"(...)\n\t"+info.filePrefix+info.file+":"+itoa(int64(info.line))+"\n")
 	}
 	return n
 }
@@ -308,27 +355,33 @@ func printTraceback(fp uintptr) {
 	var pcs [100]uintptr
 	k := callers(fp, 0, pcs[:])
 	leading := true
+	var fr [maxInlineDepth]pcInfo
 	for _, pc := range pcs[:k] {
-		info, ok := pcLookup(pc - 1)
-		if !ok {
-			continue
+		nf := pcFrames(pc-1, fr[:])
+		for _, info := range fr[:nf] {
+			if info.line == 0 && info.file == "" || leading && info.namePrefix == "runtime." {
+				// C frames of the runtime core and the panic machinery.
+				continue
+			}
+			leading = false
+			printFrame(info, pc)
 		}
-		if info.line == 0 || leading && info.namePrefix == "runtime." {
-			// C frames of the runtime core and the panic machinery.
-			continue
-		}
-		leading = false
-		printstring(info.namePrefix)
-		printstring(info.name)
-		printstring("(...)\n\t")
-		printstring(info.filePrefix)
-		printstring(info.file)
-		printstring(":")
-		printint(int64(info.line))
-		printstring(" +")
-		printhex(uint64(pc - info.entry))
-		printstring("\n")
 	}
+}
+
+// printFrame prints one traceback frame; pc is the return address of the
+// physical frame.
+func printFrame(info pcInfo, pc uintptr) {
+	printstring(info.namePrefix)
+	printstring(info.name)
+	printstring("(...)\n\t")
+	printstring(info.filePrefix)
+	printstring(info.file)
+	printstring(":")
+	printint(int64(info.line))
+	printstring(" +")
+	printhex(uint64(pc - info.entry))
+	printstring("\n")
 }
 
 // MemStats records statistics about the memory allocator.
