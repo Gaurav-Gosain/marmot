@@ -41,6 +41,8 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/FileSystem.h"
+#include <mutex>
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Scalar/LICM.h"
 #include "llvm/Transforms/Scalar/LoopPassManager.h"
@@ -172,6 +174,14 @@ struct Plan {
     IntegerType *elem;
   };
   std::vector<Private> privs;
+  // Certificate for verify (-loops-report): the accesses and, for every
+  // (store, other access) pair Rule P checked, why they cannot conflict.
+  std::vector<Access> accesses;
+  struct Pair {
+    int a, b;
+    const char *why;
+  };
+  std::vector<Pair> pairs;
 };
 
 const char *kindName(RedKind k) {
@@ -298,6 +308,7 @@ private:
   bool liveOuts(Loop *L, Plan &P);
   uint64_t cost(Loop *L);
   void transform(Plan &P);
+  void writeReport(Plan &P);
   Value *emitRowCheck(Plan &P, SCEVExpander &exp, Instruction *at);
   Function *outline(Plan &P, StructType *ctxTy);
 };
@@ -316,6 +327,79 @@ void markDecided(Loop *L) {
                                         MDNode::get(latch->getContext(), {}));
 }
 
+static cl::opt<std::string> ReportFile(
+    "loops-report", cl::Hidden,
+    cl::desc("Loop optimizer: append one JSON certificate per parallelized loop to this file"));
+
+static std::string scevJSON(const SCEV *S) {
+  if (!S)
+    return "null";
+  if (auto *c = dyn_cast<SCEVConstant>(S))
+    if (c->getAPInt().getSignificantBits() <= 64)
+      return std::to_string(c->getAPInt().getSExtValue());
+  return "\"sym\"";
+}
+
+static std::string jsonStr(StringRef s) {
+  std::string o = "\"";
+  for (char ch : s) {
+    if (ch == '"' || ch == '\\')
+      o += '\\';
+    if (uint8_t(ch) < 0x20)
+      continue;
+    o += ch;
+  }
+  return o + "\"";
+}
+
+void Parallelizer::writeReport(Plan &P) {
+  if (ReportFile.empty())
+    return;
+  std::string j;
+  raw_string_ostream os(j);
+  Loop *L = P.loop;
+  const SCEV *btc = tripBtc;
+  os << "{\"func\":" << jsonStr(F.getName()) << ",\"loop\":" << jsonStr(L->getHeader()->getName())
+     << ",\"btc\":" << (isa_and_nonnull<SCEVConstant>(btc) ? scevJSON(btc) : "null") << ",\"phis\":[";
+  bool first = true;
+  for (IndVar &iv : P.ivs) {
+    os << (first ? "" : ",") << "{\"kind\":\"" << (iv.poly ? "poly" : "ind") << "\",\"width\":"
+       << iv.phi->getType()->getPrimitiveSizeInBits().getFixedValue() << "}";
+    first = false;
+  }
+  for (Reduction &R : P.reds) {
+    os << (first ? "" : ",") << "{\"kind\":\"red\",\"op\":\"" << kindName(R.kind)
+       << "\",\"width\":" << R.phi->getType()->getIntegerBitWidth() << "}";
+    first = false;
+  }
+  os << "],\"accesses\":[";
+  for (size_t i = 0; i < P.accesses.size(); i++) {
+    Access &a = P.accesses[i];
+    Value *base = a.baseValue ? a.baseValue : getUnderlyingObject(a.ptr);
+    std::string bn = base && base->hasName() ? base->getName().str() : "";
+    if (bn.empty() && base) {
+      raw_string_ostream bs(bn);
+      base->printAsOperand(bs, false);
+    }
+    os << (i ? "," : "") << "{\"id\":" << i << ",\"base\":" << jsonStr(bn)
+       << ",\"store\":" << (a.store ? "true" : "false") << ",\"size\":" << a.size
+       << ",\"coef\":" << scevJSON(a.coef) << ",\"lo\":" << scevJSON(a.lo)
+       << ",\"hi\":" << scevJSON(a.hi) << ",\"row\":" << (a.family >= 0 ? "true" : "false")
+       << "}";
+  }
+  os << "],\"pairs\":[";
+  for (size_t i = 0; i < P.pairs.size(); i++)
+    os << (i ? "," : "") << "{\"a\":" << P.pairs[i].a << ",\"b\":" << P.pairs[i].b
+       << ",\"why\":\"" << P.pairs[i].why << "\"}";
+  os << "]}\n";
+  static std::mutex mu; // batch mode compiles modules on several threads
+  std::lock_guard<std::mutex> lock(mu);
+  std::error_code ec;
+  raw_fd_ostream out(ReportFile, ec, sys::fs::OF_Append);
+  if (!ec)
+    out << j;
+}
+
 bool Parallelizer::visit(Loop *L) {
   if (!isDecided(L)) {
     Plan P;
@@ -325,6 +409,7 @@ bool Parallelizer::visit(Loop *L) {
                     Twine(P.leChecks.size() + P.overlaps.size()) +
                     " run time checks, cost/iter " + Twine(P.costPerIter));
       markDecided(L);
+      writeReport(P);
       transform(P);
       return true;
     }
@@ -991,8 +1076,11 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
         continue;
       if (y.coef != x.coef)
         return reject("accesses to one object advance at different rates");
-      if (interleaved(L, P, x, y))
+      size_t nle = P.leChecks.size();
+      if (interleaved(L, P, x, y)) {
+        P.pairs.push_back({int(i), int(j), P.leChecks.size() > nle ? "runtime" : "strided"});
         continue;
+      }
       const SCEV *c = x.coef;
       if (SE.isKnownNegative(c))
         c = SE.getNegativeSCEV(c);
@@ -1012,6 +1100,7 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
             return reject("accesses of neighbouring iterations overlap");
         P.leChecks.push_back({e, c});
       }
+      P.pairs.push_back({int(i), int(j), P.leChecks.size() > nle ? "runtime" : "window"});
     }
   }
 
@@ -1105,8 +1194,16 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
       Unit &v = units[j];
       if (i == j || (v.store && j < i))
         continue;
-      if (noAlias(u, v) && (!v.store || noAlias(v, u)))
+      auto record = [&](const char *why) {
+        for (Access *x : u.accs)
+          for (Access *y : v.accs)
+            if (x->store)
+              P.pairs.push_back({int(x - accs.data()), int(y - accs.data()), why});
+      };
+      if (noAlias(u, v) && (!v.store || noAlias(v, u))) {
+        record("noalias");
         continue;
+      }
       if (v.variant) {
         softMemReject = true;
         return reject("load through a pointer computed in the loop may alias a "
@@ -1114,9 +1211,11 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
       }
       if (u.family < 0 && v.family < 0) {
         P.overlaps.push_back({u.s, u.e, v.s, v.e});
+        record("runtime");
         continue;
       }
       inSet[i] = inSet[j] = true;
+      record("rows");
     }
   }
   for (size_t i = 0; i < units.size(); i++) {
@@ -1135,6 +1234,12 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
       c.insts.push_back(a->inst);
     P.classes.push_back(std::move(c));
   }
+  for (size_t i = 0; i < accs.size(); i++)
+    if (accs[i].priv >= 0 && accs[i].store)
+      for (size_t j = 0; j < accs.size(); j++)
+        if (j != i)
+          P.pairs.push_back({int(i), int(j), "private"});
+  P.accesses = accs;
   // GPU offer: only plain objects with known whole-loop ranges.
   P.gpuOK = true;
   for (Unit &u : units) {
