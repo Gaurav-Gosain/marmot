@@ -30,6 +30,19 @@ namespace {
 
 constexpr llvm::StringLiteral kNoEscape = "go.noescape";
 
+// Pointers, and aggregates that contain one (slices, strings, interfaces):
+// the parameters that get summaries. For an aggregate, "does not escape"
+// means no pointer inside it escapes.
+bool holdsPointer(Type t) {
+  if (isa<LLVM::LLVMPointerType>(t))
+    return true;
+  if (auto st = dyn_cast<LLVM::LLVMStructType>(t))
+    return llvm::any_of(st.getBody(), holdsPointer);
+  if (auto at = dyn_cast<LLVM::LLVMArrayType>(t))
+    return holdsPointer(at.getElementType());
+  return false;
+}
+
 class EscapeAnalysis {
 public:
   explicit EscapeAnalysis(ModuleOp m) : symbols(m) {}
@@ -38,6 +51,11 @@ public:
   bool paramNoEscape(LLVM::LLVMFuncOp callee, unsigned i) {
     if (i >= callee.getNumArguments())
       return false;
+    // C library functions that only read or write through their pointers.
+    StringRef n = callee.getSymName();
+    if (n == "memmove" || n == "memcpy" || n == "memset" || n == "memcmp" ||
+        n == "bcmp" || n == "strlen")
+      return true;
     return callee.getArgAttr(i, kNoEscape) ||
            callee.getArgAttr(i, LLVM::LLVMDialect::getNoCaptureAttrName());
   }
@@ -85,6 +103,9 @@ public:
               taint(i.getResult());
               return false;
             })
+            .Case([&](LLVM::MemcpyOp) { return false; })
+            .Case([&](LLVM::MemmoveOp) { return false; })
+            .Case([&](LLVM::MemsetOp) { return false; })
             .Case([&](LLVM::LifetimeStartOp) { return false; })
             .Case([&](LLVM::LifetimeEndOp) { return false; })
             .Case([&](BranchOpInterface br) {
@@ -159,7 +180,7 @@ public:
       if (!f.isExternal()) {
         fns.push_back(f);
         for (unsigned i = 0; i < f.getNumArguments(); ++i)
-          if (isa<LLVM::LLVMPointerType>(f.getArgument(i).getType()))
+          if (holdsPointer(f.getArgument(i).getType()))
             f.setArgAttr(i, kNoEscape, UnitAttr::get(m.getContext()));
       }
     });

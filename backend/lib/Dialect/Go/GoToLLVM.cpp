@@ -49,8 +49,11 @@ public:
       for (unsigned i = 0; i < fn.getNumArguments(); ++i)
         if (fn.getArgAttr(i, "go.noescape")) {
           fn.removeArgAttr(i, "go.noescape");
-          fn.setArgAttr(i, LLVM::LLVMDialect::getNoCaptureAttrName(),
-                        UnitAttr::get(fn.getContext()));
+          // LLVM's no-capture applies to pointer parameters only; summaries
+          // of slice and string parameters serve go-escape alone.
+          if (isa<LLVM::LLVMPointerType>(fn.getArgumentTypes()[i]))
+            fn.setArgAttr(i, LLVM::LLVMDialect::getNoCaptureAttrName(),
+                          UnitAttr::get(fn.getContext()));
         }
     });
     // Runtime allocation functions return fresh memory: noalias results let
