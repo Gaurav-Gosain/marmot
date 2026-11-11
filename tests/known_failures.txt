@@ -22,3 +22,4 @@ run/opt/panic_in_loop@Oz  # recovered panic then nil deref panic is not recovera
 run/opt/fma_cases  # NaN sign bit differs for z-x*y and -(x*y)+z (marmot negates the NaN operand before fusing)
 run/std/runtime/goroutines_gc  # runtime.Caller unsupported (no pc to file:line table yet)
 run/std/log/basic  # runtime.Caller unsupported, log.Lshortfile prints ???:0
+run/core/eval_order_var_after_call  # gc reads plain variables after calls in the same expression; marmot reads them in source order
