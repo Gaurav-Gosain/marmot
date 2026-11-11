@@ -16,6 +16,7 @@
 #include "malloc.h"
 
 static rt_mutex gc_mu;
+uint32_t gc_mu_state(void) { return __atomic_load_n((uint32_t *)&gc_mu.state, __ATOMIC_RELAXED); }
 static bool gc_trace;
 static _Atomic uint64_t num_gc;
 static uint64_t pause_total_ns;

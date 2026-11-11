@@ -50,7 +50,7 @@ ALL_CFLAGS := $(CFLAGS_COMMON) $(CFLAGS)
 
 C_SRCS  := $(wildcard src/*.c) $(wildcard gpu/*.c)
 # Cold code (startup, signals, timers, I/O, OS glue) is built for size.
-COLD    := entry io libcall netpoll os_darwin os_linux pcln gcpar signal timer util par gpu
+COLD    := entry io libcall netpoll os_darwin os_linux pcln gcpar signal timer util par gpu watchdog
 COLD_OBJS := $(patsubst %,$(OBJ)/%.o,$(COLD))
 COLD_BCS  := $(patsubst %,$(OBJ)/%.bc,$(COLD))
 S_SRCS  := $(wildcard src/*.S)

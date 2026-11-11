@@ -255,6 +255,12 @@ struct rt_m {
   void *thread;              // pthread_t
   uint64_t fastrand;
   uintptr_t sigstack;        // alternate signal stack
+  // MARMOT_DEADLOCK_DEBUG: SIGURG deliveries, stops, and why the last one
+  // did not stop (sigurg's checks, in order: 1 no gcwaiting, 2 locks, 3 no
+  // curg, 4 no P, 5 P not running, 6 P owned by another M, 7 not on the
+  // goroutine stack).
+  _Atomic uint32_t nsigurg, nsigstop;
+  _Atomic int32_t sigurg_why;
 };
 
 // Current M. The thread pointer is read with volatile asm on every call, so
@@ -318,6 +324,11 @@ typedef struct schedt {
   bool main_exited;           // main goroutine called rt_goexit
 } schedt;
 extern schedt sched;
+
+// MARMOT_DEADLOCK_DEBUG (watchdog.c): print every M, P and G (sched.c).
+void sched_dump(void);
+void watchdog_start(void);
+uint32_t gc_mu_state(void);
 extern rt_g *rt_main_g;
 
 void sched_init(void);
@@ -344,6 +355,7 @@ void signal_raise_sigpipe(void);
 bool signal_deliver(void);
 // A goroutine is parked in rt_signal_recv.
 bool signal_waiting(void);
+void signal_check_stuck(void);
 void sysmon_start(void);
 void sysmon_kick(void);
 // netpoll.c

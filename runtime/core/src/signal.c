@@ -28,11 +28,52 @@ static rt_spin sig_lock;
 static rt_g *sig_waiter;
 static _Atomic int32_t sig_nwaiting;
 
+// Signals whose default action ends the process. When the Go side asked
+// for one (signal.Notify) but no goroutine takes it, the process must still
+// end: a second arrival while the first is pending, or the first pending for
+// 3 seconds (sysmon checks, signal_check_stuck), restores the default action
+// and raises it. A healthy program takes a signal within milliseconds.
+#define SIG_TERMINATING ((1ull << SIGTERM) | (1ull << SIGINT) | (1ull << SIGHUP) | (1ull << SIGQUIT))
+static _Atomic int64_t sig_since[64];  // monotonic time a terminating signal became pending
+
+static void sig_die(int sig) {
+  signal(sig, SIG_DFL);
+  sigset_t set;
+  sigemptyset(&set);
+  sigaddset(&set, sig);
+  pthread_sigmask(SIG_UNBLOCK, &set, NULL);
+  raise(sig);
+  os_exit(128 + sig);  // not reached for a terminating signal
+}
+
 static void sig_queue(int sig, siginfo_t *info, void *ctx) {
   int saved = errno;
-  atomic_fetch_or(&sig_pending, 1ull << sig);
+  uint64_t bit = 1ull << sig;
+  uint64_t old = atomic_fetch_or(&sig_pending, bit);
+  if (bit & SIG_TERMINATING) {
+    if (old & bit) sig_die(sig);  // second one while the first waits: give up on the Go side
+    atomic_store(&sig_since[sig], os_nanotime());
+  }
   sysmon_kick();
   errno = saved;
+}
+
+// sysmon, every round: terminating signals nobody took for 3 seconds.
+void signal_check_stuck(void) {
+  uint64_t p = atomic_load(&sig_pending) & SIG_TERMINATING;
+  if (!p) return;
+  int64_t now = os_nanotime();
+  while (p) {
+    int sig = __builtin_ctzll(p);
+    p &= p - 1;
+    int64_t t = atomic_load(&sig_since[sig]);
+    if (t && now - t > 3000000000LL && (atomic_load(&sig_pending) & (1ull << sig))) {
+      rt_print("marmot: signal ");
+      rt_printi(sig);
+      rt_print(" not received by the program for 3 s (scheduler stuck?): default action\n");
+      sig_die(sig);
+    }
+  }
 }
 
 bool signal_waiting(void) { return atomic_load(&sig_nwaiting) > 0; }
@@ -122,13 +163,28 @@ static void sigurg(int sig, siginfo_t *info, void *ctx) {
     sysmon_kick();
   }
   rt_m *m = getm();
-  if (m && atomic_load(&sched.gcwaiting) && m->locks == 0 && m->curg && m->p &&
-      atomic_load(&m->p->status) == P_RUNNING && m->p->m == m) {
-    rt_g *g = m->curg;
-    uintptr_t sp = (uintptr_t)__builtin_frame_address(0);
-    // Only stop when running on the goroutine stack: the signal frame, with
-    // all registers of the interrupted code, is then above sp.
-    if (sp > g->stack_lo && sp < g->stack_hi) sched_stop_self((void *)sp, g->stack_hi);
+  if (m) {
+    atomic_fetch_add_explicit(&m->nsigurg, 1, memory_order_relaxed);
+    int why = !atomic_load(&sched.gcwaiting) ? 1
+              : m->locks != 0                ? 2
+              : !m->curg                     ? 3
+              : !m->p                        ? 4
+              : atomic_load(&m->p->status) != P_RUNNING ? 5
+              : m->p->m != m                 ? 6
+                                             : 0;
+    if (why == 0) {
+      rt_g *g = m->curg;
+      uintptr_t sp = (uintptr_t)__builtin_frame_address(0);
+      // Only stop when running on the goroutine stack: the signal frame,
+      // with all registers of the interrupted code, is then above sp.
+      if (sp > g->stack_lo && sp < g->stack_hi) {
+        atomic_fetch_add_explicit(&m->nsigstop, 1, memory_order_relaxed);
+        sched_stop_self((void *)sp, g->stack_hi);
+      } else {
+        why = 7;
+      }
+    }
+    atomic_store_explicit(&m->sigurg_why, why, memory_order_relaxed);
   }
   errno = saved;
 }

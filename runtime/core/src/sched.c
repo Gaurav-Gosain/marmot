@@ -225,7 +225,7 @@ static void gfput(rt_p *p, rt_g *g) {
       p->gfree = x->schedlink;
       p->ngfree--;
       x->schedlink = sched.gfree;
-      sched.gfree = x;
+      __atomic_store_n(&sched.gfree, x, __ATOMIC_RELAXED);
       sched.ngfree++;
     }
     spin_unlock(&sched.lock);
@@ -233,11 +233,12 @@ static void gfput(rt_p *p, rt_g *g) {
 }
 
 static rt_g *gfget(rt_p *p) {
-  if (!p->gfree && sched.gfree) {
+  // Unlocked peek at the global list (rechecked under the lock).
+  if (!p->gfree && __atomic_load_n(&sched.gfree, __ATOMIC_RELAXED)) {
     spin_lock(&sched.lock);
     while (p->ngfree < 32 && sched.gfree) {
       rt_g *x = sched.gfree;
-      sched.gfree = x->schedlink;
+      __atomic_store_n(&sched.gfree, x->schedlink, __ATOMIC_RELAXED);
       sched.ngfree--;
       x->schedlink = p->gfree;
       p->gfree = x;
@@ -656,8 +657,11 @@ void stop_the_world(void) {
         q->m = NULL;
         atomic_fetch_add(&q->syscalltick, 1);
         sched.stopwait--;
-      } else if (s == P_RUNNING && q->m && q->m != m) {
-        signal_preempt(q->m);
+      } else if (s == P_RUNNING) {
+        // q->m is written by an M leaving a syscall without sched.lock; a
+        // stale value only delays the signal to the next round.
+        rt_m *qm = __atomic_load_n(&q->m, __ATOMIC_RELAXED);
+        if (qm && qm != m) signal_preempt(qm);
       }
     }
     waiting = sched.stopwait > 0;
@@ -1243,6 +1247,14 @@ RT_API void rt_entersyscall(void) {
   atomic_store(&g->status, G_SYSCALL);
   rt_p *p = m->p;
   atomic_fetch_add(&p->syscalltick, 1);
+  // A P in a syscall belongs to no M (as in gc): sysmon or stop the world
+  // may take it, another M may run it and enter a syscall itself, and
+  // whoever leaves its syscall first and wins the CAS in rt_exitsyscall
+  // owns it. With p->m left set, an M returning to a P that another M had
+  // since taken into its own syscall won the CAS while p->m still named the
+  // other M: two Ms ran on one P, and stop the world signalled the wrong M
+  // and waited forever (marmot-2 hang with one M blocked on gc_mu).
+  __atomic_store_n(&p->m, NULL, __ATOMIC_RELAXED);
   atomic_store(&p->status, P_SYSCALL);
   if (atomic_load(&sched.gcwaiting)) {
     spin_lock(&sched.lock);
@@ -1264,6 +1276,7 @@ RT_API void rt_exitsyscall(void) {
   rt_p *p = m->p;
   uint32_t s = P_SYSCALL;
   if (p && atomic_compare_exchange_strong(&p->status, &s, P_RUNNING)) {
+    __atomic_store_n(&p->m, m, __ATOMIC_RELAXED);  // ours again (m->p, m->mcache still point at it)
     atomic_store(&g->status, G_RUNNING);
     return;
   }
@@ -1328,6 +1341,7 @@ static void sysmon(void *arg) {
     uint32_t w = atomic_load(&sysmon_wake);
     os_futex_wait(&sysmon_wake, w, (int64_t)delay * 1000);
     if (signal_deliver()) idle = 0;
+    signal_check_stuck();
     if (idle > 50) {
       delay *= 2;
       if (delay > 10000) delay = 10000;
@@ -1358,6 +1372,118 @@ void sysmon_start(void) {
     __atomic_store_n(&sysmon_started, true, __ATOMIC_RELEASE);
   }
   spin_unlock(&sysmon_lock);
+}
+
+// ---- MARMOT_DEADLOCK_DEBUG ----
+
+static const char *pstatus_name(uint32_t s) {
+  static const char *names[] = {"idle", "running", "syscall", "gcstop", "dead"};
+  return s < 5 ? names[s] : "?";
+}
+
+static const char *gstatus_name(uint32_t s) {
+  switch (s) {
+    case G_IDLE: return "idle";
+    case G_RUNNABLE: return "runnable";
+    case G_RUNNING: return "running";
+    case G_SYSCALL: return "syscall";
+    case G_WAITING: return "waiting";
+    case G_DEAD: return "dead";
+  }
+  return "?";
+}
+
+static void kv(const char *k, int64_t v) {
+  rt_print(" ");
+  rt_print(k);
+  rt_print("=");
+  rt_printi(v);
+}
+
+// Racy snapshot from a thread outside the scheduler: no locks, so it works
+// while the scheduler is stuck holding one.
+void sched_dump(void) {
+  rt_print("== marmot scheduler state\nsched:");
+  kv("gcwaiting", atomic_load(&sched.gcwaiting));
+  kv("stopwait", sched.stopwait);
+  kv("stopnote", atomic_load(&sched.stopnote.key));
+  kv("worldgen", atomic_load(&sched.worldgen));
+  kv("worldsema", __atomic_load_n((uint32_t *)&worldsema.state, __ATOMIC_RELAXED));
+  kv("gc_mu", gc_mu_state());
+  kv("lock", atomic_load(&sched.lock.v));
+  kv("runqsize", atomic_load(&sched.runqsize));
+  kv("npidle", atomic_load(&sched.npidle));
+  kv("nmspinning", atomic_load(&sched.nmspinning));
+  kv("nmidle", sched.nmidle);
+  kv("mcount", sched.mcount);
+  kv("nprocs", atomic_load(&sched.nprocs));
+  kv("ngoroutines", atomic_load(&sched.ngoroutines));
+  kv("timer_m", sched.timer_m ? sched.timer_m->id : -1);
+  kv("timer_next_ms", atomic_load(&timer_next_when) == INT64_MAX
+                          ? -1
+                          : (atomic_load(&timer_next_when) - os_nanotime()) / 1000000);
+  kv("netpoll_waiters", atomic_load(&netpoll_waiters));
+  kv("netpoll_blocked", atomic_load(&netpoll_blocked));
+  rt_print("\n");
+  int32_t np = atomic_load(&sched.nallp);
+  for (int32_t i = 0; i < np; i++) {
+    rt_p *p = sched.allp[i];
+    rt_print("P");
+    rt_printi(i);
+    rt_print(": ");
+    rt_print(pstatus_name(atomic_load(&p->status)));
+    rt_m *pm = p->m;
+    kv("m", pm ? pm->id : -1);
+    kv("runq", (int64_t)(atomic_load(&p->runqtail) - atomic_load(&p->runqhead)));
+    rt_g *rn = atomic_load(&p->runnext);
+    kv("runnext", rn ? rn->id : -1);
+    kv("schedtick", atomic_load(&p->schedtick));
+    kv("syscalltick", atomic_load(&p->syscalltick));
+    rt_print("\n");
+  }
+  for (rt_m *m = sched.allm; m; m = m->alllink) {
+    rt_print("M");
+    rt_printi(m->id);
+    rt_print(":");
+    kv("p", m->p ? m->p->id : -1);
+    kv("curg", m->curg ? m->curg->id : -1);
+    kv("locks", m->locks);
+    kv("spinning", m->spinning);
+    kv("idle", m->idle);
+    kv("nextp", m->nextp ? m->nextp->id : -1);
+    kv("req", m->req);
+    kv("park", atomic_load(&m->park.key));
+    kv("sigurg", atomic_load(&m->nsigurg));
+    kv("sigstop", atomic_load(&m->nsigstop));
+    kv("sigurg_why", atomic_load(&m->sigurg_why));
+    rt_print("\n");
+  }
+  uint32_t n = __atomic_load_n(&nallg, __ATOMIC_ACQUIRE), shown = 0;
+  for (uint32_t i = 0; i < n && shown < 200; i++) {
+    rt_g *g = gchunks[i / GCHUNK]->g[i % GCHUNK];
+    uint32_t st = atomic_load(&g->status);
+    if (st == G_DEAD || st == G_IDLE) continue;
+    shown++;
+    rt_print("G");
+    rt_printi(g->id);
+    rt_print(": ");
+    rt_print(gstatus_name(st));
+    rt_m *gm = g->m;
+    kv("m", gm ? gm->id : -1);
+    if (g->system) rt_print(" system");
+    if (g == rt_main_g) rt_print(" main");
+    rt_print("\n");
+  }
+  rt_print("== end\n");
+}
+
+// Sum of scheduling events: unchanged while nothing is scheduled.
+uint64_t sched_progress(void) {
+  uint64_t t = atomic_load(&sched.worldgen);
+  int32_t np = atomic_load(&sched.nallp);
+  for (int32_t i = 0; i < np; i++)
+    t += atomic_load(&sched.allp[i]->schedtick) + atomic_load(&sched.allp[i]->syscalltick);
+  return t;
 }
 
 // ---- GC support ----
@@ -1442,6 +1568,8 @@ void sched_init(void) {
   acquirep(m, sched.allp[0]);
   signal_init();
   signal_init_thread(m);
+  const char *dd = rt_getenv("MARMOT_DEADLOCK_DEBUG");
+  if (dd && dd[0] && dd[0] != '0') watchdog_start();
 }
 
 static void main_entry(void *arg) { marmot_main(); }
