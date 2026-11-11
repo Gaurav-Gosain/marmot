@@ -42,6 +42,30 @@ and global addresses are never null), Rule P rows and run time range checks, Rul
 bounds, Rules I, T, M, loop-jam, the escape cycle rule, the runtime
 models. See docs/verify.md for the order of work.
 
+## Status of findings
+
+- Rule P polynomial inductions narrower than 64 bits (`testdata/progs/polyinduct16.go`): fixed
+  at HEAD by commit df62fdf (loops, "exact polynomial inductions below 64 bits"), which
+  computes binomial(k, 2) from the 64-bit counter as `Poly.binom_halving` proves. The
+  program prints the same as stock Go under dev, go dialect and -par (`progs.sh`).
+
+## Rule P claims the checker cannot re-check
+
+In `backend/test/loops/Inputs/par.go` the checker reports two claims as not re-checkable,
+both a store paired with itself under reason `window`:
+
+- `main.escape`: the store `out[py*w+px]` in the loop over `px`;
+- `main.rows`: the store `row[c]` (`g[r*w + c]`) in the loop over `c`.
+
+In both the loop's step is a constant (coef 4 bytes) but the offset range [lo, hi] is the
+row start `4*w*py` (or `4*w*r`), which depends on the outer loop and on `w`, so the report
+says `"lo":"sym","hi":"sym"`. For a self pair the proved condition
+(`RuleP.windows_disjoint`) needs only `hi - lo + size <= |coef|`, that is `hi - lo`, which
+is 0 here (lo and hi are the same expression). To make such claims checkable the report
+needs `span` = hi - lo whenever ScalarEvolution proves it a constant (and, for pairs of
+different accesses, `lo` and `hi` as differences from one shared symbolic start, or as
+affine forms over named invariants so the checker can cancel them). Requested from loops.
+
 ## Certificate checking (go-bce)
 
 `marmot-opt --go-bce='report=FILE'` writes one line per removed check: function, walk index,
