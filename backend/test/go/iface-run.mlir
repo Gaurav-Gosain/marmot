@@ -23,15 +23,16 @@ module {
   llvm.mlir.global external constant @"type:main.T"(dense<0> : tensor<56xi8>) : !llvm.array<56 x i8>
   llvm.mlir.global external constant @"type:int"(dense<0> : tensor<56xi8>) : !llvm.array<56 x i8>
   llvm.mlir.global external constant @"type:any"(dense<0> : tensor<56xi8>) : !llvm.array<56 x i8>
-  llvm.mlir.global external constant @test_itab() : !llvm.struct<(ptr, ptr, array<1 x ptr>)> {
-    %0 = llvm.mlir.poison : !llvm.struct<(ptr, ptr, array<1 x ptr>)>
+  // itab layout of lib/src/runtime/type.go: {inter, typ, hash, _, fun[1]}.
+  llvm.mlir.global external constant @test_itab() : !llvm.struct<(ptr, ptr, i32, i32, array<1 x ptr>)> {
+    %0 = llvm.mlir.zero : !llvm.struct<(ptr, ptr, i32, i32, array<1 x ptr>)>
     %i = llvm.mlir.addressof @"type:main.I" : !llvm.ptr
     %t = llvm.mlir.addressof @"type:*main.T" : !llvm.ptr
     %f = llvm.mlir.addressof @"main.(*T).Get" : !llvm.ptr
-    %1 = llvm.insertvalue %i, %0[0] : !llvm.struct<(ptr, ptr, array<1 x ptr>)>
-    %2 = llvm.insertvalue %t, %1[1] : !llvm.struct<(ptr, ptr, array<1 x ptr>)>
-    %3 = llvm.insertvalue %f, %2[2, 0] : !llvm.struct<(ptr, ptr, array<1 x ptr>)>
-    llvm.return %3 : !llvm.struct<(ptr, ptr, array<1 x ptr>)>
+    %1 = llvm.insertvalue %i, %0[0] : !llvm.struct<(ptr, ptr, i32, i32, array<1 x ptr>)>
+    %2 = llvm.insertvalue %t, %1[1] : !llvm.struct<(ptr, ptr, i32, i32, array<1 x ptr>)>
+    %3 = llvm.insertvalue %f, %2[4, 0] : !llvm.struct<(ptr, ptr, i32, i32, array<1 x ptr>)>
+    llvm.return %3 : !llvm.struct<(ptr, ptr, i32, i32, array<1 x ptr>)>
   }
 
   // func (t *T) Get() int { return t.x }

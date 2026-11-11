@@ -473,6 +473,14 @@ private:
     }, null);
   }
 
+  // The itab header with an open-ended method table.
+  Type itabType() {
+    MLIRContext *ctx = b.getContext();
+    return LLVM::LLVMStructType::getLiteral(
+        ctx, {ptrTy, ptrTy, b.getI32Type(), b.getI32Type(),
+              LLVM::LLVMArrayType::get(ptrTy, 0)});
+  }
+
   Value makeIface(Location loc, Value tab, Value data) {
     Value s = LLVM::PoisonOp::create(b, loc, ifaceType(b.getContext()));
     s = LLVM::InsertValueOp::create(b, loc, s, tab, ArrayRef<int64_t>{0});
@@ -496,10 +504,11 @@ private:
     Value ok = icmp(loc, LLVM::ICmpPredicate::ne, tab, null);
     if (failed(emitCheck(op, ok, "panicnil", {})))
       return failure();
-    // itab = {inter, typ, fun[N]}: method i is word i+2.
+    // itab = {inter *interfacetype, typ *_type, hash uint32, _ uint32,
+    // fun [N]unsafe.Pointer} (lib/src/runtime/type.go): method K is fun[K].
     Value slot = LLVM::GEPOp::create(
-        b, loc, ptrTy, ptrTy, tab,
-        ArrayRef<LLVM::GEPArg>{static_cast<int32_t>(op.getMethod() + 2)});
+        b, loc, ptrTy, itabType(), tab,
+        ArrayRef<LLVM::GEPArg>{0, 4, static_cast<int32_t>(op.getMethod())});
     Value fn = loadInvariant(loc, ptrTy, slot);
     SmallVector<Type> params{ptrTy};
     llvm::append_range(params, op.getArgs().getTypes());

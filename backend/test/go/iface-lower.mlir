@@ -26,7 +26,7 @@ module {
   // CHECK: %[[DATA:.*]] = llvm.extractvalue %arg0[1]
   // CHECK: llvm.icmp "ne" %[[TAB]]
   // CHECK: llvm.cond_br
-  // CHECK: %[[SLOT:.*]] = llvm.getelementptr %[[TAB]][5] : (!llvm.ptr) -> !llvm.ptr, !llvm.ptr
+  // CHECK: %[[SLOT:.*]] = llvm.getelementptr %[[TAB]][0, 4, 3] : (!llvm.ptr) -> !llvm.ptr, !llvm.struct<(ptr, ptr, i32, i32, array<0 x ptr>)>
   // CHECK: %[[FN:.*]] = llvm.load %[[SLOT]] invariant : !llvm.ptr -> !llvm.ptr
   // CHECK: llvm.call %[[FN]](%[[DATA]], %arg1) : !llvm.ptr, (!llvm.ptr, i64) -> i32
   llvm.func @call(%i: !llvm.struct<(ptr, ptr)>, %x: i64) -> i32 {
