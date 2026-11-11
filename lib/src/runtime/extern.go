@@ -237,19 +237,47 @@ func ReadMemStats(m *MemStats) {
 	m.EnableGC = true
 }
 
-// Finalizers.
+// Finalizers and cleanups.
+//
+// Each object with a finalizer or cleanups has one entry in finTable and
+// one rt_gc_set_finalizer registration, whose callback runs them. Keys are
+// stored inverted (^address): the table's memory is scanned
+// conservatively, and an inverted address does not keep the object alive.
 
-const finTabMin = 64
+type finEntry struct {
+	fn       any    // finalizer func value, nil if none
+	argIface bool   // the finalizer takes an interface parameter
+	typ      *_type // type of the object pointer
+	cleanups []cleanupEntry
+}
 
-// finTab maps objects to finalizers. Keys are stored as uintptr in noscan
-// memory so that the table does not keep objects alive.
+type cleanupEntry struct {
+	id uint64
+	fn func()
+}
+
 var (
-	finLock  mutex
-	finKeys  []uintptr
-	finFuncs []any // the finalizer func value
-	finArgIf []bool
-	finTypes []*_type
+	finLock       mutex
+	finTable      map[uintptr]*finEntry
+	cleanupNextID uint64
 )
+
+// finEntryFor returns the entry for obj, creating it and registering the
+// collector callback on first use. finLock must be held.
+func finEntryFor(obj unsafe.Pointer) *finEntry {
+	if finTable == nil {
+		finTable = make(map[uintptr]*finEntry)
+	}
+	key := ^uintptr(obj)
+	e := finTable[key]
+	if e == nil {
+		e = &finEntry{}
+		finTable[key] = e
+		fin := runFinalizer
+		rt_gc_set_finalizer(obj, funcPC(unsafe.Pointer(&fin)))
+	}
+	return e
+}
 
 // SetFinalizer sets the finalizer associated with obj to finalizer, which
 // is called once in a separate goroutine when obj becomes unreachable.
@@ -262,85 +290,56 @@ func SetFinalizer(obj any, finalizer any) {
 	if e.typ.kind != kindPointer {
 		throw("runtime.SetFinalizer: first argument is " + e.typ.str + ", not pointer")
 	}
-	p := uintptr(e.data)
-	if p == 0 {
+	if e.data == nil {
 		throw("nil elem type!")
 	}
 	f := efaceOf(&finalizer)
-	lock(&finLock)
-	idx := -1
-	for i, k := range finKeys {
-		if k == p {
-			idx = i
-			break
+	argIface := false
+	if f.typ != nil {
+		if f.typ.kind != kindFunc {
+			throw("runtime.SetFinalizer: second argument is " + f.typ.str + ", not a function")
 		}
+		ft := (*functype)(unsafe.Pointer(f.typ))
+		argIface = ft.inCount == 1 && ft.param(0).kind == kindInterface
 	}
+	lock(&finLock)
 	if f.typ == nil {
-		if idx >= 0 {
-			finFuncs[idx] = nil
-			finKeys[idx] = 0
+		if ent := finTable[^uintptr(e.data)]; ent != nil {
+			ent.fn = nil
 		}
 		unlock(&finLock)
 		return
 	}
-	if f.typ.kind != kindFunc {
-		unlock(&finLock)
-		throw("runtime.SetFinalizer: second argument is " + f.typ.str + ", not a function")
-	}
-	ft := (*functype)(unsafe.Pointer(f.typ))
-	argIsIface := ft.inCount == 1 && ft.param(0).kind == kindInterface
-	if idx < 0 {
-		for i, k := range finKeys {
-			if k == 0 {
-				idx = i
-				break
-			}
-		}
-	}
-	if idx < 0 {
-		finKeys = append(finKeys, p)
-		finFuncs = append(finFuncs, finalizer)
-		finArgIf = append(finArgIf, argIsIface)
-		finTypes = append(finTypes, e.typ)
-	} else {
-		finKeys[idx] = p
-		finFuncs[idx] = finalizer
-		finArgIf[idx] = argIsIface
-		finTypes[idx] = e.typ
-	}
+	ent := finEntryFor(e.data)
+	ent.fn = finalizer
+	ent.argIface = argIface
+	ent.typ = e.typ
 	unlock(&finLock)
-	fin := runFinalizer
-	rt_gc_set_finalizer(e.data, funcPC(unsafe.Pointer(&fin)))
 }
 
-// runFinalizer is called by the collector for an object with a finalizer.
+// runFinalizer is called by the collector, on a runtime goroutine, for an
+// object that became unreachable.
 func runFinalizer(obj unsafe.Pointer) {
-	p := uintptr(obj)
 	lock(&finLock)
-	var fn any
-	var argIf bool
-	var typ *_type
-	for i, k := range finKeys {
-		if k == p {
-			fn = finFuncs[i]
-			argIf = finArgIf[i]
-			typ = finTypes[i]
-			finKeys[i] = 0
-			finFuncs[i] = nil
-			finTypes[i] = nil
-			break
-		}
-	}
+	key := ^uintptr(obj)
+	ent := finTable[key]
+	delete(finTable, key)
 	unlock(&finLock)
-	if fn == nil {
+	if ent == nil {
 		return
 	}
-	// fn is func(*T) or func(any) (results are ignored).
-	fv := efaceOf(&fn).data
-	if argIf {
+	for _, c := range ent.cleanups {
+		c.fn()
+	}
+	if ent.fn == nil {
+		return
+	}
+	// The finalizer is func(*T) or func(any); results are ignored.
+	fv := efaceOf(&ent.fn).data
+	if ent.argIface {
 		var arg any
 		ae := efaceOf(&arg)
-		ae.typ = typ
+		ae.typ = ent.typ
 		ae.data = obj
 		f := *(*func(any))(unsafe.Pointer(&fv))
 		f(arg)
@@ -352,17 +351,45 @@ func runFinalizer(obj unsafe.Pointer) {
 
 // Cleanup is a handle to a cleanup call for a specific object.
 type Cleanup struct {
-	id uint64
+	id  uint64
+	key uintptr // ^address of the object
 }
 
-// AddCleanup attaches a cleanup function to ptr. marmot runs cleanups only
-// when the collector supports it; the call is accepted and may never run.
+// AddCleanup attaches a cleanup function to ptr: some time after ptr
+// becomes unreachable, the runtime calls cleanup(arg) on a separate
+// goroutine. cleanup and arg must not reference ptr, or it never becomes
+// unreachable.
 func AddCleanup[T, S any](ptr *T, cleanup func(S), arg S) Cleanup {
-	return Cleanup{}
+	if ptr == nil {
+		throw("runtime.AddCleanup: ptr is nil")
+	}
+	p := unsafe.Pointer(ptr)
+	fn := func() { cleanup(arg) }
+	lock(&finLock)
+	cleanupNextID++
+	id := cleanupNextID
+	ent := finEntryFor(p)
+	ent.cleanups = append(ent.cleanups, cleanupEntry{id: id, fn: fn})
+	unlock(&finLock)
+	return Cleanup{id: id, key: ^uintptr(p)}
 }
 
 // Stop cancels the cleanup call.
-func (c Cleanup) Stop() {}
+func (c Cleanup) Stop() {
+	if c.id == 0 {
+		return
+	}
+	lock(&finLock)
+	if ent := finTable[c.key]; ent != nil {
+		for i, ce := range ent.cleanups {
+			if ce.id == c.id {
+				ent.cleanups = append(ent.cleanups[:i], ent.cleanups[i+1:]...)
+				break
+			}
+		}
+	}
+	unlock(&finLock)
+}
 
 // A Pinner is a set of Go objects each pinned to a fixed location in
 // memory. marmot's collector never moves objects, so pinning is a no-op.
