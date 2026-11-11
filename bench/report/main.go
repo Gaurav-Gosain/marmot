@@ -814,6 +814,13 @@ func writeTargets(f File, idx map[string]Result, progs []string) {
 	}
 	os.MkdirAll(filepath.Join(root, ".work"), 0o755)
 	os.WriteFile(filepath.Join(root, ".work", "slower"+sfx+".tsv"), []byte(slow.String()), 0o644)
+	var under strings.Builder
+	for _, l := range lines {
+		if l.have && l.status == "NOT MET" {
+			fmt.Fprintf(&under, "%s\t%s\t%.2f\t%.0f\n", l.owner, l.prog, l.wall, l.floor)
+		}
+	}
+	os.WriteFile(filepath.Join(root, ".work", "under"+sfx+".tsv"), []byte(under.String()), 0o644)
 	var fails strings.Builder
 	for _, l := range lines {
 		if r, ok := idx[l.prog+"|"+tool]; ok && r.Status != "ok" {
