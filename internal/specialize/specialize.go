@@ -503,7 +503,7 @@ func (g *gen) source() string {
 	return b.String()
 }
 
-var pkgTokenRE = regexp.MustCompile(`\b(json|strconv|slices|bits)\.`)
+var pkgTokenRE = regexp.MustCompile(`\b(json|strconv|slices|bits|math)\.`)
 
 // resolveTokens replaces the short package names registered with usePkg.
 func (g *gen) resolveTokens() {

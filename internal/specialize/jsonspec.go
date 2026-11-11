@@ -722,6 +722,50 @@ func (jd *jsonDec) body(t types.Type, tsrc string) (string, bool) {
 	return b.String(), true
 }
 
+// freshCheck returns a condition that holds when the value expression v of
+// type t is bitwise the zero value (so -0.0 is not fresh), or false when
+// the check would be too large or cannot be written.
+func freshCheck(pkg *types.Package, t types.Type, v string, depth int) (string, bool) {
+	if depth > 2 {
+		return "", false
+	}
+	switch u := t.Underlying().(type) {
+	case *types.Basic:
+		switch {
+		case u.Kind() == types.Bool:
+			return "!" + v, true
+		case u.Kind() == types.Float32:
+			return "math.Float32bits(float32(" + v + ")) == 0", true
+		case u.Kind() == types.Float64:
+			return "math.Float64bits(float64(" + v + ")) == 0", true
+		case u.Info()&types.IsInteger != 0:
+			return v + " == 0", true
+		case u.Info()&types.IsString != 0:
+			return "len(" + v + ") == 0", true
+		}
+	case *types.Pointer, *types.Slice, *types.Map, *types.Chan, *types.Signature, *types.Interface:
+		return v + " == nil", true
+	case *types.Struct:
+		if u.NumFields() > 16 {
+			return "", false
+		}
+		conds := []string{"true"}
+		for i := 0; i < u.NumFields(); i++ {
+			f := u.Field(i)
+			if f.Name() == "_" || f.Embedded() || (!f.Exported() && f.Pkg() != pkg) {
+				return "", false
+			}
+			c, ok := freshCheck(pkg, f.Type(), v+"."+f.Name(), depth+1)
+			if !ok {
+				return "", false
+			}
+			conds = append(conds, "("+c+")")
+		}
+		return strings.Join(conds, " && "), true
+	}
+	return "", false
+}
+
 // bits is the size in bits of a basic numeric type.
 func (g *gen) bits(b *types.Basic) int {
 	return int(g.pkg.TypesSizes.Sizeof(b) * 8)
@@ -748,11 +792,29 @@ func (g *gen) jsonUnmarshal(call *ast.CallExpr) {
 		return
 	}
 	name := g.newName("json")
+	// When *v is still the zero value, decoding into a zero temporary and
+	// assigning it on success is the same as decoding into *v, and failure
+	// leaves *v untouched: one pass, no dry run.
+	fresh := ""
+	if cond, ok := freshCheck(g.pkg.Types, pt.Elem(), "(*v)", 0); ok {
+		fresh = fmt.Sprintf(`	if %s {
+		var tmp %s
+		d := json.MarmotNewDecoderCached(data)
+		if %s(&d, &tmp, false) && d.End() {
+			d.Release()
+			*v = tmp
+			return nil
+		}
+		d.Release()
+		return json.Unmarshal(data, v)
+	}
+`, cond, tsrc, dec)
+	}
 	g.decls = append(g.decls, fmt.Sprintf(`func %s(data []byte, v *%s) error {
 	if v == nil {
 		return json.Unmarshal(data, v)
 	}
-	d := json.MarmotNewDecoder(data)
+%s	d := json.MarmotNewDecoder(data)
 	if !%s(&d, nil, true) || !d.End() {
 		return json.Unmarshal(data, v)
 	}
@@ -761,7 +823,10 @@ func (g *gen) jsonUnmarshal(call *ast.CallExpr) {
 	d.Release()
 	return nil
 }
-`, name, tsrc, dec, dec))
+`, name, tsrc, fresh, dec, dec))
+	if fresh != "" {
+		g.usePkg("math", "math")
+	}
 	g.usePkg("encoding/json", "json")
 	g.replaceCall(call, name, []ast.Expr{call.Args[0], call.Args[1]})
 }

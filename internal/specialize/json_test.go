@@ -344,6 +344,16 @@ func main() {
 			fmt.Fprintln(&out, *v.PP == inner)
 		}
 	}
+	negz := Nums{}
+	zero := 0.0
+	negz.F64 = -zero
+	err0 := json.Unmarshal([]byte(` + "`" + `{"I8":2}` + "`" + `), &negz)
+	fmt.Fprintln(&out, "negzero", negz.I8, 1/negz.F64, err0)
+	var fresh Nums
+	err0 = json.Unmarshal([]byte(` + "`" + `{"I8":3,"S":"x"}` + "`" + `), &fresh)
+	show("fresh", fresh, err0)
+	err0 = json.Unmarshal([]byte(` + "`" + `{"I8":3,"S":5}` + "`" + `), &fresh)
+	show("fresh-bad", fresh, err0)
 	var nilp *Item
 	show("nilptr", nilp, json.Unmarshal([]byte("{}"), nilp))
 	m := map[string][]int{}
