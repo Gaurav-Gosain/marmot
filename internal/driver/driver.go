@@ -75,14 +75,15 @@ func llvmTool(name string) string {
 }
 
 type build struct {
-	cfg     Config
-	work    string
-	start   time.Time
-	goos    string // target
-	goarch  string
-	testDir string   // directory of the package under test
-	dylibs  []string // from //go:cgo_import_dynamic
-	out     string
+	cfg        Config
+	keepLocals bool // link without -x (the first link of a pc table build)
+	work       string
+	start      time.Time
+	goos       string // target
+	goarch     string
+	testDir    string   // directory of the package under test
+	dylibs     []string // from //go:cgo_import_dynamic
+	out        string
 }
 
 func (b *build) haveBackend() bool {
@@ -475,7 +476,10 @@ func (b *build) link1(objs []string, rt, out string, extra []string) error {
 		// drops it from the symbol table (Go symbol names are long).
 		args = append(args, "-Wl,-dead_strip")
 		if os.Getenv("MARMOT_KEEP_SYMBOLS") == "" {
-			args = append(args, "-Wl,-x", "-Wl,-exported_symbol,_main")
+			if !b.keepLocals {
+				args = append(args, "-Wl,-x")
+			}
+			args = append(args, "-Wl,-exported_symbol,_main")
 			if !b.wantPcln() {
 				args = append(args, "-Wl,-S") // no debug map
 			}
@@ -484,6 +488,14 @@ func (b *build) link1(objs []string, rt, out string, extra []string) error {
 		args = append(args, "-Wl,--gc-sections")
 		if !b.wantPcln() {
 			args = append(args, "-s")
+		}
+	}
+	if o := b.cfg.OptLevel; o != "s" && o != "z" {
+		// Keep parallel GC in programs that never start a goroutine (rtcore).
+		if runtime.GOOS == "darwin" {
+			args = append(args, "-Wl,-u,_rt_gc_parallel_enable")
+		} else {
+			args = append(args, "-Wl,-u,rt_gc_parallel_enable")
 		}
 	}
 	args = append(args, extra...)

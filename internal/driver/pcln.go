@@ -49,7 +49,11 @@ func (b *build) linkWithPcln(link func(extra []string, out string) error, out st
 	if err := os.WriteFile(ph, []byte{0}, 0o644); err != nil {
 		return err
 	}
-	if err := link([]string{"-Wl,-sectcreate,__TEXT,__marmot_pcln," + ph}, tmp); err != nil {
+	// marmot-pcln needs the local (C) symbols to end Go function ranges.
+	b.keepLocals = true
+	err := link([]string{"-Wl,-sectcreate,__TEXT,__marmot_pcln," + ph}, tmp)
+	b.keepLocals = false
+	if err != nil {
 		return err
 	}
 	dsym := filepath.Join(b.work, "nopcln.dSYM")
