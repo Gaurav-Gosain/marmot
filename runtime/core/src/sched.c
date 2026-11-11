@@ -905,7 +905,18 @@ top:
       atomic_fetch_sub(&sched.nmspinning, 1);
     }
     // Recheck all queues: a goroutine may have been queued after the
-    // check above while nobody saw our P as idle.
+    // check above while nobody saw our P as idle, or while we were still
+    // counted as spinning (rt_ready then skips wakep). The global queue
+    // first: Ms without a P (syscall exit, sysmon, timers) queue there.
+    if (atomic_load(&sched.runqsize) > 0) {
+      spin_lock(&sched.lock);
+      rt_p *q = sched.runqsize > 0 && !atomic_load(&sched.gcwaiting) ? pidleget() : NULL;
+      spin_unlock(&sched.lock);
+      if (q) {
+        acquirep(m, q);
+        goto top;
+      }
+    }
     int32_t n = atomic_load(&sched.nallp);
     for (int32_t i = 0; i < n; i++) {
       rt_p *v = sched.allp[i];
@@ -1038,12 +1049,22 @@ static void schedule_loop(rt_m *m) {
         // m->handoff_g runs next (findrunnable takes it first).
         break;
       }
-      case REQ_EXITSYSCALL:
+      case REQ_EXITSYSCALL: {
+        // Back from a syscall without a P. Take an idle P or queue g in the
+        // same critical section: a P that sysmon hands off (handoffp) after
+        // an earlier failed pidleget would otherwise go idle while g sits in
+        // the global queue and every M sleeps (lost wakeup).
         atomic_store(&g->status, G_RUNNABLE);
         spin_lock(&sched.lock);
-        globrunqput(g);
+        rt_p *p = atomic_load(&sched.gcwaiting) ? NULL : pidleget();
+        if (!p) globrunqput(g);
         spin_unlock(&sched.lock);
+        if (p) {
+          acquirep(m, p);
+          runqput(p, g, true);
+        }
         break;
+      }
       default:
         rt_throw("schedule: bad request");
     }
