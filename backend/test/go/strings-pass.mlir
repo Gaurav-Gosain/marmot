@@ -104,4 +104,15 @@ module {
     %out = go.str_concat %in, %y
     llvm.return %out : !str
   }
+
+  // A concat operand is not transient even with no write after it:
+  // concatstrings returns its only non-empty operand as is
+  // (verify/testdata/progs/nocopyconcat.go).
+  // CHECK-LABEL: llvm.func @concatuse
+  // CHECK: go.bytes_to_str %arg0{{$}}
+  llvm.func @concatuse(%b: !slice, %x: !str) -> !str {
+    %s = go.bytes_to_str %b
+    %r = go.str_concat %x, %s
+    llvm.return %r : !str
+  }
 }

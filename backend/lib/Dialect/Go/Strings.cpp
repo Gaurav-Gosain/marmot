@@ -75,8 +75,9 @@ bool isTransientUse(OpOperand &use) {
     return use.get() == ml.getKey();
   if (auto md = dyn_cast<MapDeleteOp>(u))
     return use.get() == md.getKey();
-  if (isa<StrConcatOp>(u))
-    return true;
+  // Not go.str_concat: runtime.concatstrings returns its only non-empty
+  // operand without copying, so the result could be the no-copy view
+  // (verify/testdata/progs/nocopyconcat.go).
   if (auto ev = dyn_cast<LLVM::ExtractValueOp>(u))
     return ev.getPosition() == ArrayRef<int64_t>{1};
   if (auto call = dyn_cast<LLVM::CallOp>(u))
