@@ -57,6 +57,13 @@ void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintptr_t e
 void rt_free(void *p, uintptr_t size);
 
 void rt_gc_collect(void);
+// Parallel marking and sweeping are linked only into programs that start a
+// goroutine (rt_go) or link this function; others collect on one thread,
+// which saves about 2.3 KB of text. Linking it is enough (its object file
+// has a constructor that enables parallel GC): a driver that wants parallel
+// GC in single-goroutine programs passes -u rt_gc_parallel_enable
+// (Mach-O: -u _rt_gc_parallel_enable). Calling it is harmless.
+void rt_gc_parallel_enable(void);
 // Register [start, end) as a conservative root range (globals).
 void rt_gc_add_roots(void *start, void *end);
 // Run fn(obj) once before obj is freed. Used by runtime.SetFinalizer. obj

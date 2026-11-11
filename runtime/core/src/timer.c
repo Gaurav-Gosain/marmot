@@ -35,7 +35,6 @@ static rt_g *timer_g;
 static bool timer_g_parked;
 static rt_spin timer_g_lock;
 
-void timer_init(void) {}
 
 static void hswap(int32_t i, int32_t j) {
   rt_timer *t = theap[i];
@@ -70,7 +69,18 @@ static void update_next(void) {
 }
 
 // tlock held.
+// First timer: hook the timer code into the scheduler and the GC.
+static void timers_use(void) {
+  if (__atomic_load_n(&hook_timers_check, __ATOMIC_ACQUIRE)) return;
+  __atomic_store_n(&hook_timers_scan, timers_scan_roots, __ATOMIC_RELEASE);
+  __atomic_store_n(&hook_sysmon_start, sysmon_start, __ATOMIC_RELEASE);
+  __atomic_store_n(&hook_timers_check, timers_check, __ATOMIC_RELEASE);
+  // sysmon starts at the next goroutine or thread start (called with the
+  // timer lock held: no thread creation here).
+}
+
 static void heap_add(rt_timer *t) {
+  timers_use();
   if (tlen == tcap) {
     int32_t ncap = tcap ? tcap * 2 : 64;
     rt_timer **n = persistent_alloc((uintptr_t)ncap * sizeof *n, 8);

@@ -38,6 +38,29 @@ static rt_mutex worldsema;
 static void schedule_loop(rt_m *m) NORETURN;
 void sysmon_start(void);
 
+int64_t (*hook_timers_check)(int64_t now);
+void (*hook_timers_scan)(void (*scan)(uintptr_t lo, uintptr_t hi));
+int32_t (*hook_netpoll)(int64_t ns);
+void (*hook_netpoll_break)(void);
+void (*hook_sysmon_start)(void);
+
+INLINE void *hook_get(void *pp) { return __atomic_load_n((void **)pp, __ATOMIC_ACQUIRE); }
+
+static void timers_check_h(int64_t now) {
+  int64_t (*f)(int64_t) = hook_get(&hook_timers_check);
+  if (f) f(now);
+}
+
+static int32_t netpoll_h(int64_t ns) {
+  int32_t (*f)(int64_t) = hook_get(&hook_netpoll);
+  return f ? f(ns) : 0;
+}
+
+static void sysmon_start_h(void) {
+  void (*f)(void) = hook_get(&hook_sysmon_start);
+  if (f) f();
+}
+
 // ---- stacks and goroutine structures ----
 
 static bool stack_alloc(rt_g *g, uintptr_t size) {
@@ -476,7 +499,7 @@ static void newm(rt_p *p, bool spinning) {
   bool ok = os_thread_create(mstart, m, 256 << 10);
   if (me) me->locks--;
   if (!ok) rt_throw("newm: cannot create thread");
-  sysmon_start();
+  sysmon_start_h();
 }
 
 // Run some M with p (or an idle P if p is NULL). spinning: the caller
@@ -548,7 +571,8 @@ static void handoffp(rt_p *p) {
 }
 
 void sched_timer_added(int64_t when) {
-  if (atomic_load(&netpoll_blocked)) netpoll_break();
+  void (*brk)(void) = hook_get(&hook_netpoll_break);
+  if (brk && atomic_load(&netpoll_blocked)) brk();
   spin_lock(&sched.lock);
   rt_m *tm = sched.timer_m;
   if (tm && when < sched.timer_until) {
@@ -812,7 +836,7 @@ top:
     int64_t now = 0;
     if (atomic_load_explicit(&timer_next_when, memory_order_relaxed) != INT64_MAX) {
       now = os_nanotime();
-      if (now >= atomic_load(&timer_next_when)) timers_check(now);
+      if (now >= atomic_load(&timer_next_when)) timers_check_h(now);
     }
     if (p->schedtick % 61 == 0 && sched.runqsize > 0) {
       spin_lock(&sched.lock);
@@ -827,7 +851,7 @@ top:
       spin_unlock(&sched.lock);
       if (g) goto found;
     }
-    if (atomic_load(&netpoll_waiters) > 0 && !atomic_load(&netpoll_blocked) && netpoll(0) > 0 &&
+    if (atomic_load(&netpoll_waiters) > 0 && !atomic_load(&netpoll_blocked) && netpoll_h(0) > 0 &&
         (g = runqget(p)) != NULL)
       goto found;
     int32_t np = atomic_load(&sched.nprocs);
@@ -911,9 +935,9 @@ stop:
       int64_t next = atomic_load(&timer_next_when);
       int64_t now = os_nanotime();
       int64_t timeout = next == INT64_MAX ? -1 : (next > now ? next - now : 0);
-      if (atomic_load(&netpoll_waiters) > 0 && !atomic_load(&sched.gcwaiting)) netpoll(timeout);
+      if (atomic_load(&netpoll_waiters) > 0 && !atomic_load(&sched.gcwaiting)) netpoll_h(timeout);
       atomic_store(&netpoll_blocked, 0);
-      if (atomic_load(&timer_next_when) <= os_nanotime()) timers_check(os_nanotime());
+      if (atomic_load(&timer_next_when) <= os_nanotime()) timers_check_h(os_nanotime());
       spin_lock(&sched.lock);
       rt_p *p = NULL;
       if (!atomic_load(&sched.gcwaiting)) p = pidleget();
@@ -952,7 +976,7 @@ stop:
       goto top;
     }
     // Woken for timers, without a P.
-    if (atomic_load(&timer_next_when) <= os_nanotime()) timers_check(os_nanotime());
+    if (atomic_load(&timer_next_when) <= os_nanotime()) timers_check_h(os_nanotime());
     spin_lock(&sched.lock);
     rt_p *p = NULL;
     if (!atomic_load(&sched.gcwaiting)) p = pidleget();
@@ -1053,12 +1077,20 @@ static rt_g *newproc(void (*fn)(void *), void *arg, bool system) {
     spin_unlock(&sched.lock);
   }
   m->locks--;
-  sysmon_start();
+  sysmon_start_h();
   wakep();
   return g;
 }
 
-RT_API void rt_go(void (*fn)(void *), void *arg) { newproc(fn, arg, false); }
+// A second goroutine: the program needs sysmon (syscall retake) and gets
+// the parallel collector.
+RT_API void rt_go(void (*fn)(void *), void *arg) {
+  if (UNLIKELY(!hook_get(&hook_sysmon_start))) {
+    __atomic_store_n(&hook_sysmon_start, sysmon_start, __ATOMIC_RELEASE);
+    gc_parallel_enable();
+  }
+  newproc(fn, arg, false);
+}
 
 rt_g *new_system_g(void (*fn)(void *), void *arg) { return newproc(fn, arg, true); }
 
@@ -1285,7 +1317,7 @@ static void sysmon(void *arg) {
     int64_t now = os_nanotime();
     int got = retake(now);
     if (atomic_load(&netpoll_waiters) > 0 && !atomic_load(&netpoll_blocked) &&
-        now - atomic_load(&netpoll_last) > 10000000 && netpoll(0) > 0)
+        now - atomic_load(&netpoll_last) > 10000000 && netpoll_h(0) > 0)
       got++;
     // Timers overdue while no M is waiting for them.
     int64_t next = atomic_load(&timer_next_when);

@@ -354,9 +354,19 @@ extern _Atomic int32_t netpoll_waiters;
 extern _Atomic int32_t netpoll_blocked;
 extern _Atomic int64_t netpoll_last;
 
+// Optional subsystems. The scheduler and the GC reach timers, the poller and
+// sysmon only through these hooks, which the subsystems install on first
+// use (a timer added, a descriptor opened, a goroutine started), so
+// programs that never use them do not link them (dead stripping).
+extern int64_t (*hook_timers_check)(int64_t now);
+extern void (*hook_timers_scan)(void (*scan)(uintptr_t lo, uintptr_t hi));
+extern int32_t (*hook_netpoll)(int64_t ns);
+extern void (*hook_netpoll_break)(void);
+extern void (*hook_sysmon_start)(void);
+void gc_parallel_enable(void);
+
 // ---- Timers (timer.c) ----
 
-void timer_init(void);
 // Run due timers. Returns the next deadline or -1. Called on g0 with a P.
 int64_t timers_check(int64_t now);
 int64_t timers_next(void);

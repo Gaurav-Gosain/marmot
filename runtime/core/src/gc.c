@@ -419,11 +419,40 @@ static void drain_parallel(gcw *w) {
   }
 }
 
+// One worker, no helpers: the stack loop of drain_parallel without sharing
+// or termination detection.
+static void drain_serial(gcw *w) {
+  uintptr_t pf[8];
+  uint32_t ph = 0, pn = 0;
+  while (w->len > 0 || pn > 0) {
+    if (w->len > 0 && pn < 8) {
+      uintptr_t o = w->stk[--w->len];
+      __builtin_prefetch((const void *)o);
+      pf[(ph + pn) & 7] = o;
+      pn++;
+      continue;
+    }
+    uintptr_t o = pf[ph];
+    ph = (ph + 1) & 7;
+    pn--;
+    scan_object(w, o);
+    w->nscan++;
+  }
+}
+
+// Parallel marking and sweeping (helper threads, work sharing) are linked
+// only into programs that call gc_parallel_enable: rt_go does (a program
+// with one goroutine collects serially), and so does
+// rt_gc_parallel_enable, which a driver can force with -u. Until then the
+// collector drains alone and gc_nhelpers stays 0.
+static void (*drain_fn)(gcw *) = drain_serial;
+static void (*helpers_init_fn)(void);
+
 // Single-threaded drain (finalizer marking); no phase is open.
 static void drain(void) {
   atomic_store(&wactive, 1);
   atomic_store(&wdone, 0);
-  drain_parallel(&workers[0]);
+  drain_fn(&workers[0]);
 }
 
 enum { PHASE_MARK = 0, PHASE_SWEEP = 1 };
@@ -451,7 +480,9 @@ static void gc_helper(void *arg) {
 }
 
 static void helpers_init(void) {
-  if (gc_nhelpers >= 0) return;
+  static bool started;  // gc_nhelpers may be 0 from serial collections before
+  if (started) return;
+  started = true;
   bool ok;
   int64_t n = rt_atoi(rt_getenv("MARMOT_GCPROCS"), &ok);
   if (!ok || n < 1) {
@@ -498,7 +529,7 @@ static void mark_parallel(void) {
   atomic_store(&wnidle, 0);
   atomic_store(&wdone, 0);
   if (nh > 0) helpers_start(PHASE_MARK, nh);
-  drain_parallel(&workers[0]);
+  drain_fn(&workers[0]);
   // The collector may return without wdone when it finished alone; helpers
   // that joined after that must see marking as done, or they wait for work
   // forever while helpers_wait waits for them.
@@ -527,7 +558,8 @@ static void mark_roots(void) {
   os_data_segments(scan_data_segment);
   for (int32_t i = 0; i < nroots; i++) gc_scan_range(roots[i].lo, roots[i].hi);
   sched_scan_roots(gc_scan_range);
-  timers_scan_roots(gc_scan_range);
+  void (*ts)(void (*)(uintptr_t, uintptr_t)) = __atomic_load_n(&hook_timers_scan, __ATOMIC_ACQUIRE);
+  if (ts) ts(gc_scan_range);
   regions_scan_roots(gc_scan_range);
   for (uintptr_t i = 0; i < finqlen; i++) mark_ptr(w, finq[i].obj);
   mark_parallel();
@@ -666,7 +698,12 @@ void gc_collect(bool forced) {
   }
   // Helper threads are created before the world stops: pthread_create
   // takes libc locks (malloc) that a thread stopped by signal may hold.
-  helpers_init();
+  void (*hinit)(void) = __atomic_load_n(&helpers_init_fn, __ATOMIC_ACQUIRE);
+  if (hinit) {
+    hinit();
+  } else if (gc_nhelpers < 0) {
+    gc_nhelpers = 0;
+  }
   int64_t t0 = os_nanotime();
   stop_the_world();
   rt_m *m = getm();
@@ -717,6 +754,12 @@ void gc_collect(bool forced) {
 }
 
 RT_API void rt_gc_collect(void) { gc_collect(true); }
+
+void gc_parallel_enable(void) {
+  if (__atomic_load_n(&helpers_init_fn, __ATOMIC_ACQUIRE)) return;
+  __atomic_store_n(&drain_fn, drain_parallel, __ATOMIC_RELEASE);
+  __atomic_store_n(&helpers_init_fn, helpers_init, __ATOMIC_RELEASE);
+}
 
 // Exact counts: allocations still pending in per-P caches are added in with
 // the world stopped (like Go's ReadMemStats).

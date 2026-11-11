@@ -32,7 +32,6 @@ static void rt_init(int argc, char **argv, char **envp) {
   os_init();
   malloc_init();
   sched_init();
-  timer_init();
   gc_init();
 #if RT_OS_LINUX
   if (rt_gpu_prewarm) rt_gpu_prewarm();

@@ -44,6 +44,11 @@ _Atomic int64_t netpoll_last;
 
 static void netpoll_init(void) {
   if (__atomic_load_n(&poll_fd, __ATOMIC_ACQUIRE) >= 0) return;
+  // Hook the poller into the scheduler (first descriptor).
+  __atomic_store_n(&hook_netpoll_break, netpoll_break, __ATOMIC_RELEASE);
+  __atomic_store_n(&hook_netpoll, netpoll, __ATOMIC_RELEASE);
+  __atomic_store_n(&hook_sysmon_start, sysmon_start, __ATOMIC_RELEASE);
+  sysmon_start();
   spin_lock(&init_lock);
   if (poll_fd < 0) {
 #if RT_OS_DARWIN
