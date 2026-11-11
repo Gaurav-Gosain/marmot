@@ -32,6 +32,8 @@ type Toolchain struct {
 	Build func(root, pkg, out string, nocache bool) []string
 	// Clean returns a shell command that makes the next build cold, or "" if none is needed.
 	Clean func(root, work string) string
+	// Env holds extra KEY=VALUE variables for the build command only.
+	Env   []string
 	Flags string // human readable description of the flags, recorded in the results file
 }
 
@@ -93,6 +95,12 @@ func toolchains() []Toolchain {
 		{Name: "marmot-dev", Flags: "marmot build (dev mode, default flags)", Build: marmotMode(false),
 			Clean: func(string, string) string { return "" }},
 		{Name: "marmot-release", Flags: "marmot build -release (default flags until -release exists)", Build: marmotMode(true),
+			Clean: func(string, string) string { return "" }},
+		{Name: "marmot-release-loops", Flags: `marmot build -release with MARMOT_BACKEND_FLAGS="-par -type-alias"`, Build: marmotMode(true),
+			Env:   []string{"MARMOT_BACKEND_FLAGS=-par -type-alias"},
+			Clean: func(string, string) string { return "" }},
+		{Name: "marmot-release-spec", Flags: "marmot build -release with MARMOT_SPEC=all", Build: marmotMode(true),
+			Env:   []string{"MARMOT_SPEC=all"},
 			Clean: func(string, string) string { return "" }},
 		{Name: "marmot-O2", Flags: "marmot build -O 2", Build: marmot("2"),
 			Clean: func(string, string) string { return "" }},
@@ -299,7 +307,7 @@ func measure(p Program, t Toolchain) Result {
 	check(os.MkdirAll(dir, 0o755))
 	out := filepath.Join(dir, p.Name)
 	os.Remove(out)
-	env := append(os.Environ(), "GOCACHE="+filepath.Join(work, "gocache"), "MARMOT_MAX_JOBS=2")
+	env := append(append(os.Environ(), "GOCACHE="+filepath.Join(work, "gocache"), "MARMOT_MAX_JOBS=2"), t.Env...)
 
 	if *sizeOnly {
 		c := exec.Command(t.Build(root, p.Pkg, out, false)[0], t.Build(root, p.Pkg, out, false)[1:]...)

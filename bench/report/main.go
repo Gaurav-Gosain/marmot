@@ -57,6 +57,7 @@ type Meta struct {
 	WarmRuns  int               `json:"warm_build_runs"`
 	ColdRuns  int               `json:"cold_build_runs"`
 	GitRev    string            `json:"git_rev"`
+	Arch      string            `json:"arch"`
 	Hyperfine string            `json:"hyperfine"`
 	Notes     string            `json:"notes"`
 }
@@ -104,6 +105,34 @@ func main() {
 		})
 		paths = m
 	}
+	// Results from different machines are never mixed: each machine gets its own tables,
+	// charts, REPORT and TARGETS files (Apple arm64 has no suffix, others get -linux-ARCH).
+	groups := map[string][]string{}
+	var keys []string
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		check(err)
+		var g File
+		check(json.Unmarshal(data, &g))
+		k := ""
+		if !strings.Contains(g.Meta.OS, "macOS") && g.Meta.Arch != "" {
+			k = "-linux-" + g.Meta.Arch
+		}
+		if _, ok := groups[k]; !ok {
+			keys = append(keys, k)
+		}
+		groups[k] = append(groups[k], p)
+	}
+	for _, k := range keys {
+		sfx = k
+		generate(groups[k])
+	}
+}
+
+// sfx is the per-machine file name suffix.
+var sfx string
+
+func generate(paths []string) {
 	// Several files are merged. A later file replaces earlier rows for the same program and
 	// toolchain. Metadata comes from the first file; notes list every file.
 	var f File
@@ -160,7 +189,7 @@ func main() {
 		}
 		return progs[i] < progs[j]
 	})
-	order := []string{"go", "go-strip", "tinygo-O2", "tinygo-Oz", "marmot-dev", "marmot-release", "marmot-O2", "marmot-Oz"}
+	order := []string{"go", "go-strip", "tinygo-O2", "tinygo-Oz", "marmot-dev", "marmot-release", "marmot-release-loops", "marmot-release-spec", "marmot-O2", "marmot-Oz"}
 	sort.SliceStable(tools, func(i, j int) bool { return rank(order, tools[i]) < rank(order, tools[j]) })
 
 	ms := f64
@@ -279,7 +308,7 @@ func main() {
 	// Per metric tables and charts.
 	for _, m := range metrics {
 		title := strings.SplitN(m.Title, " (", 2)[0]
-		w("## %s\n\n![%s](assets/%s.png)\n\n", title, m.Title, m.Key)
+		w("## %s\n\n![%s](assets/%s%s.png)\n\n", title, m.Title, m.Key, sfx)
 		w("| Program | Tier |")
 		for _, t := range tools {
 			w(" %s |", t)
@@ -305,7 +334,7 @@ func main() {
 		w("\nGeometric mean ratio: %s.\n\n", strings.Join(g, ", "))
 
 		svg := chart(f.Meta, m, progs, tier, get)
-		base := filepath.Join(root, "bench", "assets", m.Key)
+		base := filepath.Join(root, "bench", "assets", m.Key+sfx)
 		check(os.WriteFile(base+".svg", []byte(svg), 0o644))
 		if !*nopng {
 			if err := exec.Command("rsvg-convert", "-o", base+".png", "-b", "white", base+".svg").Run(); err != nil {
@@ -356,7 +385,7 @@ func main() {
 	w("- Warm build repeats the same command with caches populated. Go still links each time.\n")
 	w("- Peak RSS is the median of three `/usr/bin/time -l` runs.\n")
 	w("- TinyGo uses its default scheduler and GC for the host target. Programs that need more of the language than TinyGo supports are listed as failures.\n")
-	check(os.WriteFile(filepath.Join(root, "bench", "REPORT.md"), []byte(md.String()), 0o644))
+	check(os.WriteFile(filepath.Join(root, "bench", "REPORT"+sfx+".md"), []byte(md.String()), 0o644))
 
 	page := "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>marmot benchmarks</title><style>" +
 		"body{font:15px/1.5 -apple-system,Helvetica,Arial,sans-serif;max-width:1000px;margin:0 auto;padding:16px;color:#1b1f24;background:#fff}" +
@@ -365,7 +394,7 @@ func main() {
 		"<h1>marmot benchmarks</h1><p>" + html.EscapeString(fmt.Sprintf("%s. %s. Run %s, label %s.", f.Meta.CPU, f.Meta.Versions["go"], f.Meta.Date, f.Meta.Label)) +
 		" Charts are on white backgrounds. Tables and notes are in REPORT.md.</p>" + htmlSections.String() +
 		"<section><h2>Details</h2><pre>" + html.EscapeString(md.String()) + "</pre></section></body></html>\n"
-	check(os.WriteFile(filepath.Join(root, "bench", "report.html"), []byte(page), 0o644))
+	check(os.WriteFile(filepath.Join(root, "bench", "report"+sfx+".html"), []byte(page), 0o644))
 	writeTargets(f, idx, progs)
 	fmt.Println("wrote bench/REPORT.md, bench/report.html, bench/TARGETS.md, bench/assets/")
 }
@@ -784,7 +813,7 @@ func writeTargets(f File, idx map[string]Result, progs []string) {
 		}
 	}
 	os.MkdirAll(filepath.Join(root, ".work"), 0o755)
-	os.WriteFile(filepath.Join(root, ".work", "slower.tsv"), []byte(slow.String()), 0o644)
+	os.WriteFile(filepath.Join(root, ".work", "slower"+sfx+".tsv"), []byte(slow.String()), 0o644)
 	var fails strings.Builder
 	for _, l := range lines {
 		if r, ok := idx[l.prog+"|"+tool]; ok && r.Status != "ok" {
@@ -795,7 +824,53 @@ func writeTargets(f File, idx map[string]Result, progs []string) {
 			fmt.Fprintf(&fails, "%s\t%s\t%s\n", l.prog, r.Status, msg)
 		}
 	}
-	os.WriteFile(filepath.Join(root, ".work", "failed.tsv"), []byte(fails.String()), 0o644)
+	os.WriteFile(filepath.Join(root, ".work", "failed"+sfx+".tsv"), []byte(fails.String()), 0o644)
+	// Toolchain comparison and best and worst programs.
+	w("\n## Toolchains\n\n| Toolchain | Geomean wall speedup | Geomean CPU speedup | Programs |\n|---|---|---|---|\n")
+	for _, t := range []string{"marmot-dev", "marmot-release", "marmot-release-loops", "marmot-release-spec", "marmot-O2", "tinygo-O2"} {
+		if !seen[t] {
+			continue
+		}
+		ws, cs, wn, cn2 := 0.0, 0.0, 0, 0
+		for _, l := range lines {
+			g, gok := idx[l.prog+"|go"]
+			m, mok := idx[l.prog+"|"+t]
+			if !gok || !mok || g.Run == nil || m.Run == nil || m.Status != "ok" || m.Run.Median <= 0 {
+				continue
+			}
+			ws += math.Log(g.Run.Median / m.Run.Median)
+			wn++
+			if g.Run.CPU > 0 && m.Run.CPU > 0 {
+				cs += math.Log(g.Run.CPU / m.Run.CPU)
+				cn2++
+			}
+		}
+		if wn > 0 {
+			cpuS := "-"
+			if cn2 > 0 {
+				cpuS = fmt.Sprintf("%.2fx", math.Exp(cs/float64(cn2)))
+			}
+			w("| %s | %.2fx | %s | %d |\n", t, math.Exp(ws/float64(wn)), cpuS, wn)
+		}
+	}
+	var ranked []line
+	for _, l := range lines {
+		if l.have {
+			ranked = append(ranked, l)
+		}
+	}
+	sort.Slice(ranked, func(i, j int) bool { return ranked[i].wall > ranked[j].wall })
+	if len(ranked) >= 10 {
+		w("\nBest five (wall speedup, %s):", tool)
+		for _, l := range ranked[:5] {
+			w(" %s %.2fx;", l.prog, l.wall)
+		}
+		w("\n\nWorst five:")
+		for _, l := range ranked[len(ranked)-5:] {
+			w(" %s %.2fx;", l.prog, l.wall)
+		}
+		w("\n")
+	}
 	w("\n## Scoreboard\n\n| Program | Class | Floor | Wall speedup | CPU speedup | Status | Build go / dev / release | Owner | Reason |\n|---|---|---|---|---|---|---|---|---|\n")
 	sort.SliceStable(lines, func(i, j int) bool {
 		if lines[i].class != lines[j].class {
@@ -845,7 +920,7 @@ func writeTargets(f File, idx map[string]Result, progs []string) {
 	if !any {
 		w("None written yet.\n")
 	}
-	check(os.WriteFile(filepath.Join(root, "bench", "TARGETS.md"), []byte(b.String()), 0o644))
+	check(os.WriteFile(filepath.Join(root, "bench", "TARGETS"+sfx+".md"), []byte(b.String()), 0o644))
 	fmt.Printf("scoreboard: geomean %.2fx, met %d/%d, 10x %d, slower %d, no result %d\n",
 		func() float64 {
 			if n == 0 {
