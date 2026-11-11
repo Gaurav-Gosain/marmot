@@ -35,6 +35,10 @@ CFLAGS  ?= -O2
 ALL_CFLAGS := $(CFLAGS_COMMON) $(CFLAGS)
 
 C_SRCS  := $(wildcard src/*.c)
+# Cold code (startup, signals, timers, I/O, OS glue) is built for size.
+COLD    := entry io libcall netpoll os_darwin os_linux signal timer util par
+COLD_OBJS := $(patsubst %,$(OBJ)/%.o,$(COLD))
+COLD_BCS  := $(patsubst %,$(OBJ)/%.bc,$(COLD))
 S_SRCS  := $(wildcard src/*.S)
 C_OBJS  := $(patsubst src/%.c,$(OBJ)/%.o,$(C_SRCS))
 S_OBJS  := $(patsubst src/%.S,$(OBJ)/%.o,$(S_SRCS))
@@ -46,13 +50,13 @@ HDRS    := $(wildcard src/*.h) include/rt.h
 all: $(OUT)/librtcore.a $(OUT)/rtcore.bc
 
 $(OBJ)/%.o: src/%.c $(HDRS) | $(OBJ)
-	$(CC) $(ALL_CFLAGS) -c $< -o $@
+	$(CC) $(ALL_CFLAGS) $(if $(filter $@,$(COLD_OBJS)),-Oz) -c $< -o $@
 
 $(OBJ)/%.o: src/%.S | $(OBJ)
 	$(CC) $(SYSROOT) -c $< -o $@
 
 $(OBJ)/%.bc: src/%.c $(HDRS) | $(OBJ)
-	$(CC) $(ALL_CFLAGS) -emit-llvm -c $< -o $@
+	$(CC) $(ALL_CFLAGS) $(if $(filter $@,$(COLD_BCS)),-Oz) -emit-llvm -c $< -o $@
 
 $(OUT)/librtcore.a: $(C_OBJS) $(S_OBJS) | $(OUT)
 	rm -f $@

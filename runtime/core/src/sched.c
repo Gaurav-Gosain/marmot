@@ -61,13 +61,14 @@ typedef struct gchunk {
   _Atomic uint64_t live[GCHUNK / 64];
 } gchunk;
 #define MAX_GCHUNKS 16384  // 64M goroutines
-static gchunk *gchunks[MAX_GCHUNKS];
+static gchunk **gchunks;  // MAX_GCHUNKS entries, allocated on first use
 static uint32_t nallg;
 
 static void gtable_add(rt_g *g) {
   spin_lock(&sched.glock);
   uint32_t i = nallg;
   if (i / GCHUNK >= MAX_GCHUNKS) rt_throw("too many goroutines");
+  if (!gchunks) gchunks = os_map(MAX_GCHUNKS * sizeof(gchunk *));
   if (i % GCHUNK == 0) gchunks[i / GCHUNK] = persistent_alloc(sizeof(gchunk), 64);
   gchunks[i / GCHUNK]->g[i % GCHUNK] = g;
   g->gidx = i;

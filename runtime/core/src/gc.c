@@ -557,6 +557,35 @@ static void sweep_all(void) {
 
 // ---- collection ----
 
+NOINLINE static void gc_print_trace(uint64_t before, uint64_t live, int64_t t0, int64_t t1,
+                                  int64_t t2, int64_t t3, int64_t t4) {
+  rt_print("gc ");
+  rt_printu(atomic_load(&num_gc));
+  rt_print(": ");
+  rt_printu(before >> 10);
+  rt_print(" -> ");
+  rt_printu(live >> 10);
+  rt_print(" KiB, goal ");
+  rt_printu(next_gc >> 10);
+  rt_print(" KiB, stw ");
+  rt_printu((uint64_t)(t1 - t0) / 1000);
+  rt_print(" us, mark ");
+  rt_printu((uint64_t)(t2 - t1) / 1000);
+  rt_print(" us, sweep ");
+  rt_printu((uint64_t)(t3 - t2) / 1000);
+  rt_print(" us, total ");
+  rt_printu((uint64_t)(t4 - t0) / 1000);
+  rt_print(" us, ");
+  rt_printu((uint64_t)gc_nhelpers + 1);
+  rt_print(" workers, scanned");
+  for (int32_t i = 0; i <= gc_nhelpers; i++) {
+    rt_print(" ");
+    rt_printu(workers[i].nscan);
+    workers[i].nscan = 0;
+  }
+  rt_print("\n");
+  }
+
 void gc_collect(bool forced) {
   uint64_t gen = atomic_load(&num_gc);
   rt_lock(&gc_mu);
@@ -596,33 +625,7 @@ void gc_collect(bool forced) {
   atomic_fetch_add(&num_gc, 1);
   int64_t t4 = os_nanotime();
   pause_total_ns += (uint64_t)(t4 - t0);
-  if (UNLIKELY(gc_trace)) {
-    rt_print("gc ");
-    rt_printu(atomic_load(&num_gc));
-    rt_print(": ");
-    rt_printu(before >> 10);
-    rt_print(" -> ");
-    rt_printu(live >> 10);
-    rt_print(" KiB, goal ");
-    rt_printu(next_gc >> 10);
-    rt_print(" KiB, stw ");
-    rt_printu((uint64_t)(t1 - t0) / 1000);
-    rt_print(" us, mark ");
-    rt_printu((uint64_t)(t2 - t1) / 1000);
-    rt_print(" us, sweep ");
-    rt_printu((uint64_t)(t3 - t2) / 1000);
-    rt_print(" us, total ");
-    rt_printu((uint64_t)(t4 - t0) / 1000);
-    rt_print(" us, ");
-    rt_printu((uint64_t)gc_nhelpers + 1);
-    rt_print(" workers, scanned");
-    for (int32_t i = 0; i <= gc_nhelpers; i++) {
-      rt_print(" ");
-      rt_printu(workers[i].nscan);
-      workers[i].nscan = 0;
-    }
-    rt_print("\n");
-  }
+  if (UNLIKELY(gc_trace)) gc_print_trace(before, live, t0, t1, t2, t3, t4);
   bool wake = false;
   if (queued) {
     spin_lock(&fin_lock);
