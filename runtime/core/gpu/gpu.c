@@ -66,6 +66,21 @@ static CUdevice dev;
 static int sm_count, cc_major, cc_minor, clock_khz;
 static size_t mem_total;
 
+// MARMOT_GPUTRACE=1: one stderr line per expensive step, with its time.
+static int gpu_trace = -1;
+static void trace(const char *what, int64_t t0) {
+  if (gpu_trace < 0) {
+    const char *e = rt_getenv("MARMOT_GPUTRACE");
+    gpu_trace = e && e[0] == '1';
+  }
+  if (!gpu_trace) return;
+  rt_print("gpu: ");
+  rt_print(what);
+  rt_print(" ");
+  rt_printu((uint64_t)(os_nanotime() - t0) / 1000);
+  rt_print(" us\n");
+}
+
 static bool resolve(void *h) {
 #define SYM(field, name)                                       \
   do {                                                         \
@@ -100,11 +115,16 @@ static bool resolve(void *h) {
 static bool gpu_init_locked(void) {
   const char *e = rt_getenv("MARMOT_GPU");
   if (e && e[0] == '0') return false;
+  int64_t t0 = os_nanotime();
   void *h = dlopen("libcuda.so.1", RTLD_NOW | RTLD_LOCAL);
   if (!h) h = dlopen("libcuda.so", RTLD_NOW | RTLD_LOCAL);
   if (!h || !resolve(h)) return false;
+  trace("dlopen", t0);
+  t0 = os_nanotime();
   int n = 0;
   if (cu.Init(0) != 0 || cu.DeviceGetCount(&n) != 0 || n < 1) return false;
+  trace("cuInit", t0);
+  t0 = os_nanotime();
   if (cu.DeviceGet(&dev, 0) != 0) return false;
   cu.DeviceGetAttribute(&sm_count, CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, dev);
   cu.DeviceGetAttribute(&cc_major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, dev);
@@ -112,6 +132,9 @@ static bool gpu_init_locked(void) {
   cu.DeviceGetAttribute(&clock_khz, CU_DEVICE_ATTRIBUTE_CLOCK_RATE, dev);
   cu.DeviceTotalMem(&mem_total, dev);
   if (cu.PrimaryCtxRetain(&ctx, dev) != 0) return false;
+  cu.CtxSetCurrent(ctx);
+  cu.CtxSynchronize();  // forces context creation now, so it is timed here
+  trace("context", t0);
   return true;
 }
 
@@ -155,9 +178,11 @@ RT_API void *rt_gpu_module(const void *image, uintptr_t len) {
     }
   spin_unlock(&gpu_lock);
   CUmodule mod = NULL;
+  int64_t t0 = os_nanotime();
   rt_entersyscall();  // PTX JIT can take milliseconds
   CUresult r = cu.ModuleLoadData(&mod, image);
   rt_exitsyscall();
+  trace("module load (PTX JIT unless cached)", t0);
   if (r != 0) return NULL;
   spin_lock(&gpu_lock);
   if (nmods < 64) mods[nmods++] = (modent){image, mod};
@@ -382,6 +407,7 @@ static double h2d_gbps, d2h_gbps;
 
 static void calibrate(void) {
   if (launch_ns >= 0) return;
+  int64_t tc = os_nanotime();
   void *mod = rt_gpu_module(calib_ptx, sizeof calib_ptx);
   void *f = rt_gpu_function(mod, "marmot_nop");
   int64_t best = INT64_MAX;
@@ -410,6 +436,7 @@ static void calibrate(void) {
   if (d) rt_gpu_free(d, n);
   if (host) os_unmap(host, n);
   launch_ns = best == INT64_MAX ? 1000000 : best;
+  trace("cost model calibration", tc);
 }
 
 RT_API int32_t rt_gpu_info_get(rt_gpu_info *out) {
@@ -536,6 +563,7 @@ RT_API bool rt_gpu_for(const char *ptx, int64_t ptxlen, const char *kname, int64
   void *fn = rt_gpu_function(mod, kname);
   if (!fn) return false;
   bool ok = true;
+  int64_t tp = os_nanotime();
   for (int i = 0; i < nm && ok; i++) {
     uintptr_t len = mr[i].hi - mr[i].lo;
     mr[i].dev = rt_gpu_alloc(len);
@@ -564,6 +592,8 @@ RT_API bool rt_gpu_for(const char *ptx, int64_t ptxlen, const char *kname, int64
     ok = grid <= 0x7fffffffu &&
          cu.LaunchKernel(fn, (unsigned)grid, 1, 1, 256, 1, 1, 0, NULL, params, NULL) == 0;
   }
+  trace("rt_gpu_for copy in + launch", tp);
+  tp = os_nanotime();
   if (!ok) {
     for (int i = 0; i < nm; i++)
       if (mr[i].dev) rt_gpu_free(mr[i].dev, mr[i].hi - mr[i].lo);
@@ -573,6 +603,8 @@ RT_API bool rt_gpu_for(const char *ptx, int64_t ptxlen, const char *kname, int64
   // From here the work is done on the device: failures are fatal, since
   // the CPU path must not run again over partly written memory.
   if (rt_gpu_sync() != 0) rt_throw("GPU kernel failed");
+  trace("rt_gpu_for kernel", tp);
+  tp = os_nanotime();
   for (int i = 0; i < nm; i++) {
     if ((mr[i].flags & 2) &&
         rt_gpu_copy_out((void *)mr[i].lo, mr[i].dev, mr[i].hi - mr[i].lo) != 0)
@@ -590,5 +622,6 @@ RT_API bool rt_gpu_for(const char *ptx, int64_t ptxlen, const char *kname, int64
     }
   }
   rt_gpu_free(dctx, (uintptr_t)ctxsize);
+  trace("rt_gpu_for copy out", tp);
   return true;
 }
