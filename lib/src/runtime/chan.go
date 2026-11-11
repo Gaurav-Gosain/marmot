@@ -430,12 +430,27 @@ func releaseSudog(gp *g, s *sudog) {
 	gp.sudogcache = s
 }
 
-// typedmemmove copies a value of type t from src to dst.
+// typedmemmove copies a value of type t from src to dst. Small values
+// aligned to their size are copied with one load and store instead of a
+// memmove call (channel elements, map elements, reflect values).
 func typedmemmove(t *_type, dst, src unsafe.Pointer) {
 	if dst == src || t.size == 0 {
 		return
 	}
-	memmove(dst, src, t.size)
+	switch {
+	case t.size == 8 && t.align >= 8:
+		*(*uint64)(dst) = *(*uint64)(src)
+	case t.size == 4 && t.align >= 4:
+		*(*uint32)(dst) = *(*uint32)(src)
+	case t.size == 16 && t.align >= 8:
+		*(*[2]uint64)(dst) = *(*[2]uint64)(src)
+	case t.size == 24 && t.align >= 8:
+		*(*[3]uint64)(dst) = *(*[3]uint64)(src)
+	case t.size == 1:
+		*(*uint8)(dst) = *(*uint8)(src)
+	default:
+		memmove(dst, src, t.size)
+	}
 }
 
 // typedmemclr zeroes a value of type t at p.

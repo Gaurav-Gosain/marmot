@@ -52,7 +52,7 @@ func MarmotGetBuf() *[]byte {
 // of Marshal: a copy of b, made the way Marshal makes it.
 func MarmotPutBuf(p *[]byte, b []byte) []byte {
 	out := bytes.Clone(b)
-	if cap(b) <= 1<<20 {
+	if cap(b) <= 64<<20 {
 		*p = b[:0]
 		marmotBufs.Put(p)
 	}
@@ -61,7 +61,7 @@ func MarmotPutBuf(p *[]byte, b []byte) []byte {
 
 // MarmotDropBuf returns the scratch buffer after a failed encoding.
 func MarmotDropBuf(p *[]byte, b []byte) {
-	if cap(b) <= 1<<20 {
+	if cap(b) <= 64<<20 {
 		*p = b[:0]
 		marmotBufs.Put(p)
 	}
