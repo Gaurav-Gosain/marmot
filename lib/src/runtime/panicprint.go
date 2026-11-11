@@ -179,6 +179,11 @@ func printindented(s string) {
 type _panic struct {
 	arg  any
 	link *_panic
+	// sp is a stack address in the frame of the gopanic (or goexit) call
+	// that owns this record. The record itself may be heap allocated, so
+	// recovery compares sp, not the record's address, with frame
+	// addresses.
+	sp uintptr
 	// deferfp is the frame address of the code that calls deferred
 	// functions for this panic. recover compares against it.
 	deferfp uintptr

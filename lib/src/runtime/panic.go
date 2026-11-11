@@ -108,6 +108,7 @@ func gopanic(v any) {
 	gp := getg()
 	var p _panic
 	p.arg = v
+	p.sp = getcallerfp()
 	p.link = gp._panic
 	gp._panic = &p
 	runDefersForPanic(gp, &p)
@@ -141,7 +142,7 @@ func runDefersForPanic(gp *g, p *_panic) {
 // Panics whose gopanic frames are below that frame on the stack are gone.
 func recovery(gp *g, p *_panic, fr *_deferframe) {
 	q := gp._panic
-	for q != nil && uintptr(unsafe.Pointer(q)) < uintptr(unsafe.Pointer(fr)) {
+	for q != nil && q.sp < uintptr(unsafe.Pointer(fr)) {
 		q = q.link
 	}
 	gp._panic = q
@@ -179,6 +180,7 @@ func goexit() {
 	gp := getg()
 	var p _panic
 	p.goexit = true
+	p.sp = getcallerfp()
 	p.link = gp._panic
 	gp._panic = &p
 	for {
