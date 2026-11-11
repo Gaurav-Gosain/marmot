@@ -1,0 +1,23 @@
+A:  0 via A
+B:  3 via A->C->B
+C:  1 via A->C
+D:  8 via A->C->B->D
+E: 11 via A->C->B->D->E
+F: 12 via A->C->B->D->E->F
+G: 14 via A->C->B->D->E->F->G
+H: unreachable
+bfs levels: [0 1 1 2 3 2 3 -1]
+topo: [0 2 1 3 4 5 6 7] true
+topo with cycle: [0 7] false
+scc: [[0] [1 2 3 4 5 6] [7]]
+mst weight: 22 edges: 7
+  B-G 1
+  A-E 2
+  D-F 2
+  C-D 3
+  C-H 4
+  B-F 5
+  E-G 5
+matching: 4
+big: 96987 45 11 1
+dsu components: 1501

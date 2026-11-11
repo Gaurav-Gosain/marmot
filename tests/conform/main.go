@@ -563,18 +563,18 @@ func gitHead(root string) string {
 }
 
 // snapshot copies what the compiler needs (build/bin, build/lib, lib/) into
-// .work/tests/snap-SHA-TIME so a long run is not disturbed by other workers editing the tree.
+// .work/tests/tree-SHA-PID so a long run is not disturbed by other workers editing the tree.
 // It smoke tests the copy with a hello program and removes older snapshots.
 func snapshot(root, sha string) (string, error) {
 	base := filepath.Join(root, ".work", "tests")
 	if err := os.MkdirAll(base, 0o755); err != nil {
 		return "", err
 	}
-	olds, _ := filepath.Glob(filepath.Join(base, "snap-*"))
+	olds, _ := filepath.Glob(filepath.Join(base, "tree-*"))
 	for _, o := range olds {
 		os.RemoveAll(o)
 	}
-	snap := filepath.Join(base, fmt.Sprintf("snap-%s-%d", sha, os.Getpid()))
+	snap := filepath.Join(base, fmt.Sprintf("tree-%s-%d", sha, os.Getpid()))
 	for _, d := range []string{"build/bin", "build/lib", "lib"} {
 		dst := filepath.Join(snap, d)
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {

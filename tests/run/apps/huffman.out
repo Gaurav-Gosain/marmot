@@ -1,0 +1,22 @@
+abracadabra: 11 bytes, 5 symbols, 23 bits (3 bytes), ratio 0.261, avg code length 2.091, roundtrip=true err=<nil>
+  'a' freq=5 code=0
+  'b' freq=2 code=100
+  'c' freq=1 code=101
+  'd' freq=1 code=110
+  'r' freq=2 code=111
+  prefix free: true
+single: 8 bytes, 1 symbols, 8 bits (1 bytes), ratio 0.125, avg code length 1.000, roundtrip=true err=<nil>
+  'a' freq=8 code=0
+  prefix free: true
+empty: empty input
+two: 12 bytes, 2 symbols, 12 bits (2 bytes), ratio 0.125, avg code length 1.000, roundtrip=true err=<nil>
+  'a' freq=6 code=0
+  'b' freq=6 code=1
+  prefix free: true
+pangram: 43 bytes, 27 symbols, 192 bits (24 bytes), ratio 0.558, avg code length 4.465, roundtrip=true err=<nil>
+  prefix free: true
+skewed: 20000 bytes, 18 symbols, 41897 bits (5238 bytes), ratio 0.262, avg code length 2.095, roundtrip=true err=<nil>
+  prefix free: true
+all bytes: 766 bytes, 256 symbols, 6025 bits (754 bytes), ratio 0.983, avg code length 7.866, roundtrip=true err=<nil>
+  prefix free: true
+invalid code at bit 2

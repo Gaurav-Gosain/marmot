@@ -1,0 +1,82 @@
+== FCFS: switches=10
+AAAAAAAABBBBCCCCCCCCCDDDDDEEEEEEEEEEEEFFFGGGGGGGGGGGGGGGHHHHHHIIJJJJJJJJJJ
+id name     arrive burst  start finish  wait  turn
+ 1 init         0     8      0      8     0     8
+ 2 shell        1     4      8     12     7    11
+ 3 cron         2     9     12     21    10    19
+ 4 editor       3     5     21     26    18    23
+ 5 build        4    12     26     38    22    34
+ 6 mail         6     3     38     41    32    35
+ 7 backup       8    15     41     56    33    48
+ 8 web          9     6     56     62    47    53
+ 9 log         20     2     62     64    42    44
+10 db          21    10     64     74    43    53
+avg wait 25.40  avg turnaround 32.80  avg response 25.40  makespan 8
+check: ok
+== SJF: switches=10
+AAAAAAAAFFFBBBBDDDDDIIHHHHHHCCCCCCCCCJJJJJJJJJJEEEEEEEEEEEEGGGGGGGGGGGGGGG
+id name     arrive burst  start finish  wait  turn
+ 1 init         0     8      0      8     0     8
+ 2 shell        1     4     11     15    10    14
+ 3 cron         2     9     28     37    26    35
+ 4 editor       3     5     15     20    12    17
+ 5 build        4    12     47     59    43    55
+ 6 mail         6     3      8     11     2     5
+ 7 backup       8    15     59     74    51    66
+ 8 web          9     6     22     28    13    19
+ 9 log         20     2     20     22     0     2
+10 db          21    10     37     47    16    26
+avg wait 17.30  avg turnaround 24.70  avg response 17.30  makespan 8
+check: ok
+== RR(q=2): switches=38
+AABBCCAADDEEBBFFCCGGAAHHDDEEFCCIIGGJJAAHHDEECCGGJJHHEECGGJJEEGGJJEEGGJJGGG
+id name     arrive burst  start finish  wait  turn
+ 1 init         0     8      0     39    31    39
+ 2 shell        1     4      2     14     9    13
+ 3 cron         2     9      4     55    44    53
+ 4 editor       3     5      8     42    34    39
+ 5 build        4    12     10     67    51    63
+ 6 mail         6     3     14     29    20    23
+ 7 backup       8    15     18     74    51    66
+ 8 web          9     6     22     52    37    43
+ 9 log         20     2     31     33    11    13
+10 db          21    10     35     71    40    50
+avg wait 32.80  avg turnaround 40.20  avg response 7.00  makespan 39
+check: ok
+== RR(q=5): switches=18
+AAAAABBBBCCCCCDDDDDEEEEEAAAFFFGGGGGHHHHHCCCCIIJJJJJEEEEEGGGGGHJJJJJEEGGGGG
+id name     arrive burst  start finish  wait  turn
+ 1 init         0     8      0     27    19    27
+ 2 shell        1     4      5      9     4     8
+ 3 cron         2     9      9     44    33    42
+ 4 editor       3     5     14     19    11    16
+ 5 build        4    12     19     69    53    65
+ 6 mail         6     3     27     30    21    24
+ 7 backup       8    15     30     74    51    66
+ 8 web          9     6     35     62    47    53
+ 9 log         20     2     44     46    24    26
+10 db          21    10     46     67    36    46
+avg wait 29.90  avg turnaround 37.30  avg response 15.50  makespan 27
+check: ok
+== priority+aging: switches=27
+ABBBBDFFFDDADDEHHHHHIIACHEJJJJJJJAJJEJGAAAACEEEEEEEEECCCCCCGCGGGGGGGGGGGGG
+id name     arrive burst  start finish  wait  turn
+ 1 init         0     8      0     43    35    43
+ 2 shell        1     4      1      5     0     4
+ 3 cron         2     9     23     61    50    59
+ 4 editor       3     5      5     14     6    11
+ 5 build        4    12     14     53    37    49
+ 6 mail         6     3      6      9     0     3
+ 7 backup       8    15     38     74    51    66
+ 8 web          9     6     15     25    10    16
+ 9 log         20     2     20     22     0     2
+10 db          21    10     26     38     7    17
+avg wait 19.60  avg turnaround 27.00  avg response 7.40  makespan 43
+check: ok
+best average wait: SJF (17.30)
+t=0 p1 start
+t=1 p2 start
+t=5 p2 done
+t=5 p4 start
+t=6 p6 start
+t=9 p6 done
