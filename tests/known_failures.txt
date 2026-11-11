@@ -10,7 +10,6 @@ goroot/reflectmethod5
 goroot/reflectmethod6
 goroot/reflectmethod7
 goroot/shift3
-run/apps/bignum_calc
 run/std/reflect/kinds_names
 run/std/template/basic
 run/std/template/control_flow
