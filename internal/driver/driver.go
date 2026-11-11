@@ -5,8 +5,6 @@ package driver
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"go/ast"
 	"go/types"
@@ -72,10 +70,9 @@ func llvmTool(name string) string {
 }
 
 type build struct {
-	cfg    Config
-	work   string
-	start  time.Time
-	wpoKey string // whole-program cache key when the backend runs with -wpo
+	cfg   Config
+	work  string
+	start time.Time
 }
 
 func (b *build) haveBackend() bool {
@@ -168,7 +165,7 @@ func Build(cfg Config) (string, error) {
 		var wg sync.WaitGroup
 		sem := make(chan struct{}, runtime.NumCPU())
 		for i := 0; i < n; i++ {
-			if !need(i) || mods[i].Text != "" {
+			if !need(i) || mods[i].Text != "" || mods[i].Path != "" {
 				continue
 			}
 			wg.Add(1)
@@ -203,38 +200,22 @@ func Build(cfg Config) (string, error) {
 	if err := gen(func(i int) bool { return !cacheable(i) }); err != nil {
 		return "", err
 	}
-	var wpoObjs []string
-	if b.wpo() && b.haveBackend() {
-		// One key for the whole program: the backend compiles all modules
-		// together, so either every object is reused or none is.
-		wh := sha256.New()
-		for i := 0; i < n; i++ {
-			if cacheable(i) {
-				fmt.Fprintf(wh, "pkg %s\n", pkgKeys[i])
-			} else {
-				io.WriteString(wh, mods[i].Text)
+	skipped := 0
+	for i := 0; i < len(pkgs); i++ {
+		if cacheable(i) {
+			if path, ok := b.cachedModule(pkgKeys[i]); ok {
+				mods[i] = codegen.Module{Name: pkgs[i].Pkg.Path(), Path: path}
+				skipped++
 			}
 		}
-		b.wpoKey = hex.EncodeToString(wh.Sum(nil))[:32]
-		if objs, ok := b.cachedWPO(b.wpoKey, n); ok && !cfg.NoCache {
-			wpoObjs = objs
-			b.logf("whole program cache hit")
-		} else if err := gen(func(int) bool { return true }); err != nil {
-			return "", err
-		}
-	} else {
-		skipped := 0
-		for i := 0; i < len(pkgs); i++ {
-			if cacheable(i) {
-				if obj, ok := b.cachedPackageObject(pkgKeys[i]); ok {
-					mods[i] = codegen.Module{Name: pkgs[i].Pkg.Path(), ObjKey: obj}
-					skipped++
-				}
-			}
-		}
-		b.logf("codegen skipped for %d unchanged packages", skipped)
-		if err := gen(func(i int) bool { return mods[i].ObjKey == "" }); err != nil {
-			return "", err
+	}
+	b.logf("codegen skipped for %d unchanged packages", skipped)
+	if err := gen(func(i int) bool { return mods[i].Path == "" }); err != nil {
+		return "", err
+	}
+	for i := 0; i < len(pkgs); i++ {
+		if cacheable(i) && mods[i].Path == "" {
+			mods[i].Path = b.saveModule(pkgKeys[i], mods[i].Text)
 		}
 	}
 	b.logf("generated %d modules", len(mods))
@@ -253,24 +234,9 @@ func Build(cfg Config) (string, error) {
 		}
 	}
 
-	var objs []string
-	if wpoObjs != nil {
-		objs = wpoObjs
-	} else {
-		var keys []string
-		objs, keys, err = b.compile(mods, cfg.Emit)
-		if err != nil {
-			return "", err
-		}
-		if b.wpoKey != "" {
-			b.saveWPO(b.wpoKey, keys)
-		} else {
-			for i := range pkgs {
-				if pkgKeys[i] != "" && keys[i] != "" && mods[i].ObjKey == "" {
-					b.savePackageObject(pkgKeys[i], keys[i])
-				}
-			}
-		}
+	objs, err := b.compile(mods, cfg.Emit)
+	if err != nil {
+		return "", err
 	}
 	b.logf("compiled %d objects", len(objs))
 	switch cfg.Emit {
@@ -307,75 +273,38 @@ func defaultOutput(p *packages.Package, emit string) string {
 
 // compile turns modules into object files (or .ll for -emit llvm), reusing
 // cached objects keyed by the MLIR text and the flags.
-func (b *build) compile(mods []codegen.Module, emit string) ([]string, []string, error) {
+func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 	backend := filepath.Join(b.cfg.Root, "build", "bin", "marmot-backend")
-	haveBackend := fileExists(backend) && os.Getenv("MARMOT_NO_BACKEND") == ""
+	haveBackend := b.haveBackend()
 	if b.cfg.Dialect == "go" && !haveBackend {
-		return nil, nil, fmt.Errorf("-dialect=go needs build/bin/marmot-backend")
+		return nil, fmt.Errorf("-dialect=go needs build/bin/marmot-backend")
 	}
 	ext := ".o"
 	if emit == "llvm" {
 		ext = ".ll"
 	}
-	cacheDir := filepath.Join(b.cfg.Root, "build", "cache")
-	os.MkdirAll(cacheDir, 0o755)
 	objs := make([]string, len(mods))
-	keys := make([]string, len(mods))
-	type job struct{ in, out, cached string }
-	var jobs []job
-	wpoKey := ""
-	if haveBackend && b.wpo() {
-		wpoKey = b.wpoKey
-	}
+	ins := make([]string, len(mods))
 	for i, m := range mods {
-		if m.ObjKey != "" {
-			keys[i] = m.ObjKey
-			objs[i] = filepath.Join(cacheDir, m.ObjKey+ext)
-			continue
-		}
-		h := sha256.New()
-		fmt.Fprintf(h, "v1\n%s\n%s\n%v\n%s\n%s\n", b.cfg.OptLevel, emit, haveBackend, b.cfg.Dialect, wpoKey)
-		if haveBackend {
-			if fi, err := os.Stat(backend); err == nil {
-				fmt.Fprintf(h, "%d %d\n", fi.Size(), fi.ModTime().UnixNano())
+		ins[i] = m.Path
+		if m.Text != "" {
+			ins[i] = filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", i))
+			text := m.Text
+			if b.cfg.Work {
+				text = "// " + m.Name + "\n" + text
+			}
+			if err := os.WriteFile(ins[i], []byte(text), 0o644); err != nil {
+				return nil, err
 			}
 		}
-		io.WriteString(h, m.Text)
-		key := hex.EncodeToString(h.Sum(nil))[:32]
-		keys[i] = key
-		cached := filepath.Join(cacheDir, key+ext)
-		in := filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", i))
-		out := filepath.Join(b.work, fmt.Sprintf("m%03d%s", i, ext))
-		if b.cfg.Work {
-			os.WriteFile(in, []byte("// "+m.Name+"\n"+m.Text), 0o644)
-		}
-		if !b.cfg.NoCache && fileExists(cached) {
-			objs[i] = cached
-			continue
-		}
-		if err := os.WriteFile(in, []byte(m.Text), 0o644); err != nil {
-			return nil, nil, err
-		}
-		objs[i] = out
-		jobs = append(jobs, job{in, out, cached})
-	}
-	b.logf("object cache: %d hits, %d misses", len(mods)-len(jobs), len(jobs))
-	if b.cfg.Verbose {
-		for _, j := range jobs {
-			for i, m := range mods {
-				if objs[i] == j.out {
-					b.logf("  compile %s", m.Name)
-				}
-			}
-		}
-	}
-	if len(jobs) == 0 {
-		return objs, keys, nil
+		objs[i] = filepath.Join(b.work, fmt.Sprintf("m%03d%s", i, ext))
 	}
 	if haveBackend {
+		// The backend caches every step (docs/passes.md, "Batch driver and
+		// cache"); it needs all modules for cross-package summaries.
 		var list strings.Builder
-		for _, j := range jobs {
-			fmt.Fprintf(&list, "%s %s\n", j.in, j.out)
+		for i := range mods {
+			fmt.Fprintf(&list, "%s %s\n", ins[i], objs[i])
 		}
 		listFile := filepath.Join(b.work, "jobs.txt")
 		os.WriteFile(listFile, []byte(list.String()), 0o644)
@@ -387,51 +316,47 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, []string,
 		if b.wpo() {
 			args = append(args, "-wpo")
 		}
+		if !b.cfg.NoCache {
+			args = append(args, "-cache-dir", filepath.Join(b.cfg.Root, "build", "cache", "backend"))
+		}
 		if bc := filepath.Join(b.cfg.Root, "build", "lib", "rtcore.bc"); fileExists(bc) {
 			args = append(args, "--rt-bitcode="+bc)
 		}
 		if err := b.run(backend, args...); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-	} else {
-		var wg sync.WaitGroup
-		errs := make([]error, len(jobs))
-		sem := make(chan struct{}, maxJobs())
-		for i, j := range jobs {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
-				ll := strings.TrimSuffix(j.in, ".mlir") + ".ll"
-				if emit == "llvm" {
-					ll = j.out
-				}
-				if err := b.run(llvmTool("mlir-translate"), "--mlir-to-llvmir", j.in, "-o", ll); err != nil {
-					errs[i] = err
-					return
-				}
-				if emit != "llvm" {
-					errs[i] = b.run(llvmTool("clang"), "-c", "-O"+b.cfg.OptLevel, "-Wno-override-module", "-o", j.out, "-x", "ir", ll)
-				}
-			}()
-		}
-		wg.Wait()
-		for _, e := range errs {
-			if e != nil {
-				return nil, nil, e
+		return objs, nil
+	}
+	// Fallback without the backend: mlir-translate and clang per module.
+	var wg sync.WaitGroup
+	errs := make([]error, len(mods))
+	sem := make(chan struct{}, maxJobs())
+	for i := range mods {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			ll := strings.TrimSuffix(objs[i], ext) + ".ll"
+			if emit == "llvm" {
+				ll = objs[i]
 			}
+			if err := b.run(llvmTool("mlir-translate"), "--mlir-to-llvmir", ins[i], "-o", ll); err != nil {
+				errs[i] = err
+				return
+			}
+			if emit != "llvm" {
+				errs[i] = b.run(llvmTool("clang"), "-c", "-O"+b.cfg.OptLevel, "-Wno-override-module", "-o", objs[i], "-x", "ir", ll)
+			}
+		}()
+	}
+	wg.Wait()
+	for _, e := range errs {
+		if e != nil {
+			return nil, e
 		}
 	}
-	for _, j := range jobs {
-		if !b.cfg.NoCache {
-			tmp := j.cached + ".tmp"
-			if copyFile(j.out, tmp) == nil {
-				os.Rename(tmp, j.cached)
-			}
-		}
-	}
-	return objs, keys, nil
+	return objs, nil
 }
 
 func (b *build) link(objs []string, out string) error {

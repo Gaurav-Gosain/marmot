@@ -62,44 +62,30 @@ func MarmotLit(p *pp, s string) { p.buf.writeString(s) }
 func MarmotByte(p *pp, c byte) { p.buf.writeByte(c) }
 
 func MarmotInt(p *pp, v int64, verb rune) {
-	p.arg = nil
-	p.value = reflect.Value{}
 	p.fmtInteger(nil, reflect.Value{}, uint64(v), signed, verb)
 }
 
 func MarmotUint(p *pp, v uint64, verb rune) {
-	p.arg = nil
-	p.value = reflect.Value{}
 	p.fmtInteger(nil, reflect.Value{}, v, unsigned, verb)
 }
 
 func MarmotFloat(p *pp, v float64, size int, verb rune) {
-	p.arg = nil
-	p.value = reflect.Value{}
 	p.fmtFloat(nil, reflect.Value{}, v, size, verb)
 }
 
 func MarmotComplex(p *pp, v complex128, size int, verb rune) {
-	p.arg = nil
-	p.value = reflect.Value{}
 	p.fmtComplex(nil, reflect.Value{}, v, size, verb)
 }
 
 func MarmotString(p *pp, v string, verb rune) {
-	p.arg = nil
-	p.value = reflect.Value{}
 	p.fmtString(nil, reflect.Value{}, v, verb)
 }
 
 func MarmotBool(p *pp, v bool, verb rune) {
-	p.arg = nil
-	p.value = reflect.Value{}
 	p.fmtBool(nil, reflect.Value{}, v, verb)
 }
 
 func MarmotBytes(p *pp, v []byte, verb rune) {
-	p.arg = nil
-	p.value = reflect.Value{}
 	p.fmtBytes(v, verb, "[]byte")
 }
 

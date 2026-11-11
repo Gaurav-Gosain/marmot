@@ -155,53 +155,20 @@ func (b *build) packageKeys(lp *loader.Program, cg *codegen.Program, pkgs []*ssa
 	return out
 }
 
-func (b *build) pkgCacheFile(k string) string {
-	return filepath.Join(b.cfg.Root, "build", "cache", "pkg-"+k)
+// cachedModule returns the cached MLIR file of the package with key k.
+func (b *build) cachedModule(k string) (string, bool) {
+	p := filepath.Join(b.cfg.Root, "build", "cache", "mlir", k+".mlir")
+	return p, fileExists(p)
 }
 
-// cachedPackageObject returns the object key recorded for package key k.
-func (b *build) cachedPackageObject(k string) (string, bool) {
-	data, err := os.ReadFile(b.pkgCacheFile(k))
-	if err != nil {
-		return "", false
+// saveModule stores the MLIR text of the package with key k and returns
+// its path.
+func (b *build) saveModule(k, text string) string {
+	dir := filepath.Join(b.cfg.Root, "build", "cache", "mlir")
+	os.MkdirAll(dir, 0o755)
+	p := filepath.Join(dir, k+".mlir")
+	if os.WriteFile(p+".tmp", []byte(text), 0o644) == nil && os.Rename(p+".tmp", p) == nil {
+		return p
 	}
-	obj := strings.TrimSpace(string(data))
-	if !fileExists(filepath.Join(b.cfg.Root, "build", "cache", obj+".o")) {
-		return "", false
-	}
-	return obj, true
-}
-
-func (b *build) savePackageObject(k, obj string) {
-	tmp := b.pkgCacheFile(k) + ".tmp"
-	if os.WriteFile(tmp, []byte(obj+"\n"), 0o644) == nil {
-		os.Rename(tmp, b.pkgCacheFile(k))
-	}
-}
-
-// cachedWPO returns the objects of a previous whole-program build.
-func (b *build) cachedWPO(k string, n int) ([]string, bool) {
-	data, err := os.ReadFile(filepath.Join(b.cfg.Root, "build", "cache", "wpo-"+k))
-	if err != nil {
-		return nil, false
-	}
-	keys := strings.Fields(string(data))
-	if len(keys) != n {
-		return nil, false
-	}
-	objs := make([]string, n)
-	for i, key := range keys {
-		objs[i] = filepath.Join(b.cfg.Root, "build", "cache", key+".o")
-		if !fileExists(objs[i]) {
-			return nil, false
-		}
-	}
-	return objs, true
-}
-
-func (b *build) saveWPO(k string, keys []string) {
-	p := filepath.Join(b.cfg.Root, "build", "cache", "wpo-"+k)
-	if os.WriteFile(p+".tmp", []byte(strings.Join(keys, "\n")+"\n"), 0o644) == nil {
-		os.Rename(p+".tmp", p)
-	}
+	return ""
 }

@@ -32,9 +32,9 @@ type Options struct {
 type Module struct {
 	Name string // import path, or "marmot:main" for the entry module
 	Text string
-	// ObjKey is set instead of Text when the driver reuses a cached object
-	// for an unchanged package (codegen skipped).
-	ObjKey string
+	// Path is set instead of Text when the driver reuses the cached MLIR
+	// file of an unchanged package (codegen skipped).
+	Path string
 }
 
 // Error is a compile error at a source position.
@@ -75,14 +75,14 @@ type Program struct {
 	keepExported    bool // reflect method lookups: keep all exported methods
 	reflectCall     bool // reflect.Value.Call reachable: emit call adapters
 
-	ifaceTypes  map[string]bool      // canonical names of types that can be in interfaces
-	fmaBlocked  map[token.Pos]bool   // float multiplications under an explicit conversion
+	ifaceTypes map[string]bool    // canonical names of types that can be in interfaces
+	fmaBlocked map[token.Pos]bool // float multiplications under an explicit conversion
 
 	ifaceTypeList []types.Type            // the types of ifaceTypes
 	implCache     map[string][]types.Type // interface -> closed-world implementers
-	mainPath    string               // import path of the main package
-	globalRead  map[*ssa.Global]bool // globals read anywhere in the program
-	varLinkname map[string]bool      // pkgpath.name of variables named in //go:linkname
+	mainPath      string                  // import path of the main package
+	globalRead    map[*ssa.Global]bool    // globals read anywhere in the program
+	varLinkname   map[string]bool         // pkgpath.name of variables named in //go:linkname
 }
 
 type pragma uint32
