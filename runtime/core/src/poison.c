@@ -78,8 +78,10 @@ void poison_free_large(mspan *s) {
 // Region chunk data [data, data+n), header before data.
 void poison_free_chunk(uintptr_t data, uintptr_t n) {
   // The first OS page holds the chunk header (read by the GC's registry
-  // walk): poison it, protect from the next page on.
-  poison_range(data + rt_pagesize, data, n);
+  // walk): it stays accessible and only poisoned; protection starts at the
+  // next page boundary. In this mode region objects start there too
+  // (rt_region_alloc_slow), so every freed object is on a protected page.
+  poison_range(data, data, n);
 }
 
 // World stopped (GC mark): keep every quarantined object marked and check

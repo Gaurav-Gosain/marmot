@@ -183,12 +183,16 @@ NOINLINE void *rt_region_alloc_slow(rt_region *r, uintptr_t size) {
   // goroutine must not be stopped half way through linking a chunk.
   rt_m *m = getm();
   if (m) m->locks++;
-  rchunk *c = chunk_get(size);
+  // MARMOT_POISON: objects start on the chunk's second OS page, so that a
+  // freed chunk's objects are all on pages that become inaccessible (the
+  // first page keeps the header readable).
+  uintptr_t skip = UNLIKELY(rt_poison) ? rt_pagesize - sizeof(rchunk) : 0;
+  rchunk *c = chunk_get(size + skip);
   if (r->chunks) r->chunks->used = r->cur - chunk_data(r->chunks);
   c->used = 0;
   c->next = r->chunks;
   r->chunks = c;
-  r->cur = chunk_data(c) + size;
+  r->cur = chunk_data(c) + skip + size;
   r->end = chunk_data(c) + c->size;
   c->region = r;
   if (m) m->locks--;
