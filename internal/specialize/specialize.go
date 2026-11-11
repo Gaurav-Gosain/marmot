@@ -38,17 +38,42 @@ type Input struct {
 // GenFile is the base name of the file the pass adds to a rewritten package.
 const GenFile = "zz_marmot_spec.go"
 
-// Enabled reports whether the pass runs: in release builds, or when
-// MARMOT_SPEC=1; never when MARMOT_SPEC=0.
-func Enabled(release bool) bool {
-	switch os.Getenv("MARMOT_SPEC") {
-	case "0":
-		return false
-	case "1":
-		return true
+// Features are the specializations, each behind its own switch.
+var Features = []string{"fmt", "jsonenc", "jsondec"}
+
+// releaseDefault lists the features on by default in release builds. A
+// feature joins it only after the full conformance matrix and a fuzz round
+// pass with it forced on (MARMOT_SPEC=name); see docs/specialize.md.
+var releaseDefault = map[string]bool{}
+
+// enabledSet returns the features to run. MARMOT_SPEC selects them: "0"
+// none, "1" or "all" every feature, or a comma list of names. Unset, release
+// builds get releaseDefault and dev builds none.
+func enabledSet(release bool) map[string]bool {
+	v, set := os.LookupEnv("MARMOT_SPEC")
+	on := map[string]bool{}
+	switch {
+	case !set || v == "":
+		if release {
+			for k := range releaseDefault {
+				on[k] = true
+			}
+		}
+	case v == "0":
+	case v == "1" || v == "all":
+		for _, k := range Features {
+			on[k] = true
+		}
+	default:
+		for _, k := range strings.Split(v, ",") {
+			on[strings.TrimSpace(k)] = true
+		}
 	}
-	return release
+	return on
 }
+
+// Enabled reports whether any feature runs.
+func Enabled(release bool) bool { return len(enabledSet(release)) > 0 }
 
 // BeforeSSA rewrites typed syntax of user packages. On return every changed
 // package (and every user package importing one) has fresh Syntax, Types and
@@ -57,7 +82,7 @@ func BeforeSSA(in *Input) error {
 	if !Enabled(in.Release) {
 		return nil
 	}
-	res, err := Rewrite(in.Packages)
+	res, err := RewriteWith(in.Packages, enabledSet(in.Release))
 	if err != nil {
 		return err
 	}
@@ -118,6 +143,15 @@ func isUser(p *packages.Package) bool {
 // Rewrite runs every rewriter over the user packages of pkgs (dependencies
 // first) and type checks what changed.
 func Rewrite(pkgs []*packages.Package) (*Result, error) {
+	on := map[string]bool{}
+	for _, k := range Features {
+		on[k] = true
+	}
+	return RewriteWith(pkgs, on)
+}
+
+// RewriteWith is Rewrite with only the features in on.
+func RewriteWith(pkgs []*packages.Package, on map[string]bool) (*Result, error) {
 	res := &Result{Gen: map[*packages.Package]string{}}
 	byPath := map[string]*packages.Package{}
 	for _, p := range pkgs {
@@ -129,6 +163,7 @@ func Rewrite(pkgs []*packages.Package) (*Result, error) {
 			continue
 		}
 		g := newGen(p)
+		g.on = on
 		for _, f := range p.Syntax {
 			before := g.sites
 			rewriteFmt(g, f)
@@ -263,6 +298,7 @@ type gen struct {
 	tokens  map[string]string // short package name used in decls -> import path
 	json    *jsonEnc
 	jdec    *jsonDec
+	on      map[string]bool // enabled features
 }
 
 func newGen(p *packages.Package) *gen {

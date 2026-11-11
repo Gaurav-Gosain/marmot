@@ -152,9 +152,9 @@ func (je *jsonEnc) value(t types.Type, ptr string, indent string) (string, bool)
 			w("\tb = append(b, \"false\"...)")
 			w("}")
 		case u.Info()&types.IsInteger != 0 && u.Info()&types.IsUnsigned != 0:
-			w("b = strconv.AppendUint(b, uint64(*%s), 10)", ptr)
+			w("b = json.MarmotAppendUint(b, uint64(*%s))", ptr)
 		case u.Info()&types.IsInteger != 0:
-			w("b = strconv.AppendInt(b, int64(*%s), 10)", ptr)
+			w("b = json.MarmotAppendInt(b, int64(*%s))", ptr)
 		case u.Info()&types.IsFloat != 0:
 			bits := 64
 			if u.Kind() == types.Float32 {
@@ -230,11 +230,29 @@ func (je *jsonEnc) value(t types.Type, ptr string, indent string) (string, bool)
 		w("} else if len(*%s) == 0 {", ptr)
 		w("\tb = append(b, \"{}\"...)")
 		w("} else {")
-		w("\tkeys := make([]%s, 0, len(*%s))", ksrc, ptr)
-		w("\tfor k := range *%s {", ptr)
-		w("\t\tkeys = append(keys, k)")
+		// Keys are distinct, so any correct sort gives the order Marshal
+		// uses (slices.Sort). Up to 8 keys sort in a fixed array.
+		w("\tvar ka [8]%s", ksrc)
+		w("\tvar keys []%s", ksrc)
+		w("\tif len(*%s) <= len(ka) {", ptr)
+		w("\t\tn := 0")
+		w("\t\tfor k := range *%s {", ptr)
+		w("\t\t\tj := n")
+		w("\t\t\tfor j > 0 && k < ka[j-1] {")
+		w("\t\t\t\tka[j] = ka[j-1]")
+		w("\t\t\t\tj--")
+		w("\t\t\t}")
+		w("\t\t\tka[j] = k")
+		w("\t\t\tn++")
+		w("\t\t}")
+		w("\t\tkeys = ka[:n]")
+		w("\t} else {")
+		w("\t\tkeys = make([]%s, 0, len(*%s))", ksrc, ptr)
+		w("\t\tfor k := range *%s {", ptr)
+		w("\t\t\tkeys = append(keys, k)")
+		w("\t\t}")
+		w("\t\tslices.Sort(keys)")
 		w("\t}")
-		w("\tslices.Sort(keys)")
 		w("\tb = append(b, '{')")
 		w("\tfor i, k := range keys {")
 		w("\t\tif i > 0 {")
@@ -243,9 +261,13 @@ func (je *jsonEnc) value(t types.Type, ptr string, indent string) (string, bool)
 		w("\t\tb = json.MarmotAppendString(b, string(k))")
 		w("\t\tb = append(b, ':')")
 		w("\t\tev := (*%s)[k]", ptr)
-		w("\t\tif b, ok = %s(b, &ev, d+1); !ok {", enc)
-		w("\t\t\treturn b, false")
-		w("\t\t}")
+		if leaf, ok := je.leaf(u.Elem(), "ev", indent+"\t\t"); ok {
+			b.WriteString(leaf)
+		} else {
+			w("\t\tif b, ok = %s(b, &ev, d+1); !ok {", enc)
+			w("\t\t\treturn b, false")
+			w("\t\t}")
+		}
 		w("\t}")
 		w("\tb = append(b, '}')")
 		w("}")
@@ -316,6 +338,17 @@ func (je *jsonEnc) value(t types.Type, ptr string, indent string) (string, bool)
 	return b.String(), true
 }
 
+// leaf returns statements that append a basic value expression v (no
+// address needed), or false when t is not a basic leaf.
+func (je *jsonEnc) leaf(t types.Type, v string, indent string) (string, bool) {
+	if _, ok := t.Underlying().(*types.Basic); !ok || hasJSONMethods(t) {
+		return "", false
+	}
+	tmp := "(&" + v + ")"
+	code, ok := je.value(t, tmp, indent)
+	return strings.ReplaceAll(code, "*"+tmp, v), ok
+}
+
 // body is the encoder body for *v of type t.
 func (je *jsonEnc) body(t types.Type) (string, bool) {
 	return je.value(t, "v", "\t")
@@ -366,9 +399,9 @@ func rewriteJSON(g *gen, f *ast.File) {
 			return true
 		}
 		switch {
-		case fn.Name() == "Marshal" && len(call.Args) == 1:
+		case fn.Name() == "Marshal" && len(call.Args) == 1 && g.on["jsonenc"]:
 			g.jsonMarshal(call)
-		case fn.Name() == "Unmarshal" && len(call.Args) == 2:
+		case fn.Name() == "Unmarshal" && len(call.Args) == 2 && g.on["jsondec"]:
 			g.jsonUnmarshal(call)
 		}
 		return true

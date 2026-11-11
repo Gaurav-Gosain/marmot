@@ -181,6 +181,9 @@ var fmtFuncs = map[string]bool{
 }
 
 func rewriteFmt(g *gen, f *ast.File) {
+	if !g.on["fmt"] {
+		return
+	}
 	fp := g.pkg.Imports["fmt"]
 	if fp == nil || fp.Types == nil || fp.Types.Scope().Lookup("MarmotNewPrinter") == nil {
 		return // not imported, or the fmt entry points are missing

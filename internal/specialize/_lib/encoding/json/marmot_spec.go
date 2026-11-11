@@ -24,10 +24,53 @@ var marmotV1Flags = jsonflags.Flags{
 	Values:   uint64(jsonflags.DefaultV1Flags),
 }
 
-// MarmotAppendString appends s as a JSON string with v1 escaping.
+// MarmotAppendString appends s as a JSON string with v1 escaping. Strings
+// with no byte that v1 escapes or validates (control characters, quote,
+// backslash, <, >, &, non-ASCII) are copied in bulk; the rest go through
+// jsonwire.AppendQuote.
 func MarmotAppendString(b []byte, s string) []byte {
+	if marmotPlain(s) {
+		b = append(b, '"')
+		b = append(b, s...)
+		return append(b, '"')
+	}
 	b, _ = jsonwire.AppendQuote(b, unsafe.Slice(unsafe.StringData(s), len(s)), &marmotV1Flags)
 	return b
+}
+
+const (
+	marmotLo7  = 0x0101010101010101
+	marmotHi   = 0x8080808080808080
+)
+
+// marmotHasByte reports whether a byte of x equals c (SWAR).
+func marmotHasByte(x uint64, c byte) bool {
+	y := x ^ (marmotLo7 * uint64(c))
+	return (y-marmotLo7)&^y&marmotHi != 0
+}
+
+// marmotPlain reports whether s needs no escaping and no UTF-8 checks.
+func marmotPlain(s string) bool {
+	i := 0
+	for ; i+8 <= len(s); i += 8 {
+		x := uint64(s[i]) | uint64(s[i+1])<<8 | uint64(s[i+2])<<16 | uint64(s[i+3])<<24 |
+			uint64(s[i+4])<<32 | uint64(s[i+5])<<40 | uint64(s[i+6])<<48 | uint64(s[i+7])<<56
+		// Any byte < 0x20 or >= 0x80.
+		if (x-marmotLo7*0x20)&^x&marmotHi != 0 || x&marmotHi != 0 {
+			return false
+		}
+		if marmotHasByte(x, '"') || marmotHasByte(x, '\\') || marmotHasByte(x, '<') ||
+			marmotHasByte(x, '>') || marmotHasByte(x, '&') {
+			return false
+		}
+	}
+	for ; i < len(s); i++ {
+		switch c := s[i]; {
+		case c < 0x20 || c >= 0x80, c == '"', c == '\\', c == '<', c == '>', c == '&':
+			return false
+		}
+	}
+	return true
 }
 
 // MarmotAppendFloat appends f as v1 does; ok is false for NaN and infinities,
@@ -52,7 +95,7 @@ func MarmotGetBuf() *[]byte {
 // of Marshal: a copy of b, made the way Marshal makes it.
 func MarmotPutBuf(p *[]byte, b []byte) []byte {
 	out := bytes.Clone(b)
-	if cap(b) <= 1<<20 {
+	if cap(b) <= 64<<20 {
 		*p = b[:0]
 		marmotBufs.Put(p)
 	}
@@ -61,7 +104,7 @@ func MarmotPutBuf(p *[]byte, b []byte) []byte {
 
 // MarmotDropBuf returns the scratch buffer after a failed encoding.
 func MarmotDropBuf(p *[]byte, b []byte) {
-	if cap(b) <= 1<<20 {
+	if cap(b) <= 64<<20 {
 		*p = b[:0]
 		marmotBufs.Put(p)
 	}
@@ -404,4 +447,48 @@ func (d *MarmotDecoder) KeyStr() (string, bool) {
 		return "", false
 	}
 	return d.intern(k), true
+}
+
+const marmotDigits = "00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899"
+
+// MarmotAppendUint appends the decimal form of u, as strconv.AppendUint(b, u, 10)
+// does, writing the digits in place (no temporary array).
+func MarmotAppendUint(b []byte, u uint64) []byte {
+	n := 1
+	for x := u; x >= 10; x /= 10 {
+		n++
+	}
+	l := len(b)
+	if cap(b)-l < n {
+		b = append(b, make([]byte, n)...)
+	} else {
+		b = b[:l+n]
+	}
+	i := l + n
+	for u >= 100 {
+		q := u / 100
+		r := (u - q*100) * 2
+		i -= 2
+		b[i] = marmotDigits[r]
+		b[i+1] = marmotDigits[r+1]
+		u = q
+	}
+	if u >= 10 {
+		i -= 2
+		b[i] = marmotDigits[u*2]
+		b[i+1] = marmotDigits[u*2+1]
+	} else {
+		i--
+		b[i] = byte('0' + u)
+	}
+	return b
+}
+
+// MarmotAppendInt appends the decimal form of v, as strconv.AppendInt(b, v, 10).
+func MarmotAppendInt(b []byte, v int64) []byte {
+	if v < 0 {
+		b = append(b, '-')
+		return MarmotAppendUint(b, uint64(-v))
+	}
+	return MarmotAppendUint(b, uint64(v))
 }
