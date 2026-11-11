@@ -76,6 +76,34 @@ static void gtable_add(rt_g *g) {
   spin_unlock(&sched.glock);
 }
 
+// Goroutine ids come in blocks of 16 per P, and the count of live user
+// goroutines is kept per P (exits may happen on another P than the start,
+// so single P counts can go negative; the sum is exact). No shared counter
+// is written on spawn or exit.
+static int64_t new_goid(rt_p *p) {
+  if (!p) return atomic_fetch_add(&sched.goidgen, 1) + 1;
+  if (p->goidnext == p->goidend) {
+    p->goidnext = atomic_fetch_add(&sched.goidgen, 16) + 1;
+    p->goidend = p->goidnext + 16;
+  }
+  return p->goidnext++;
+}
+
+static void ngo_add(rt_p *p, int64_t d) {
+  if (p)
+    atomic_store_explicit(&p->ngo, atomic_load_explicit(&p->ngo, memory_order_relaxed) + d,
+                          memory_order_relaxed);
+  else
+    atomic_fetch_add(&sched.ngoroutines, d);
+}
+
+static int64_t count_goroutines(void) {
+  int64_t n = atomic_load(&sched.ngoroutines);
+  int32_t na = atomic_load(&sched.nallp);
+  for (int32_t i = 0; i < na; i++) n += atomic_load_explicit(&sched.allp[i]->ngo, memory_order_relaxed);
+  return n;
+}
+
 static void glive_set(rt_g *g, bool live) {
   gchunk *c = gchunks[g->gidx / GCHUNK];
   uint64_t bit = 1ull << (g->gidx % 64);
@@ -412,7 +440,7 @@ static void checkdead(void) {
   if (sched.runqsize > 0) return;
   if (signal_waiting()) return;  // a signal may still arrive
   if (atomic_load(&netpoll_waiters) > 0) return;  // I/O may still arrive
-  if (sched.main_exited && atomic_load(&sched.ngoroutines) == 0)
+  if (sched.main_exited && count_goroutines() == 0)
     rt_throw("no goroutines (main called runtime.Goexit) - deadlock!");
   rt_throw("all goroutines are asleep - deadlock!");
 }
@@ -697,7 +725,7 @@ static void execute(rt_m *m, rt_g *g) {
 }
 
 static void goexit_final(rt_g *g) {
-  if (!g->system) atomic_fetch_sub(&sched.ngoroutines, 1);
+  if (!g->system) ngo_add(getm()->p, -1);
   if (g == rt_main_g) {
     spin_lock(&sched.lock);
     sched.main_exited = true;
@@ -1012,10 +1040,10 @@ static rt_g *newproc(void (*fn)(void *), void *arg, bool system) {
   g->param = NULL;  // slot is kept from the previous user of this structure
   g->system = system;
   g->preempt = false;
-  g->id = atomic_fetch_add(&sched.goidgen, 1) + 1;
+  g->id = new_goid(p);
   g->sp = NULL;  // context built by execute
-  glive_set(g, true);
-  if (!system) atomic_fetch_add(&sched.ngoroutines, 1);
+  if (!g->slot) glive_set(g, true);  // a kept slot kept the bit set
+  if (!system) ngo_add(p, 1);
   atomic_store_explicit(&g->status, G_RUNNABLE, memory_order_release);
   if (p && atomic_load(&p->status) == P_RUNNING) {
     runqput(p, g, true);
@@ -1115,7 +1143,7 @@ RT_API void **rt_gslot(void) { return &getm()->curg->slot; }
 
 RT_API void **rt_gparam(rt_g *g) { return &g->param; }
 
-RT_API intptr_t rt_numgoroutine(void) { return (intptr_t)atomic_load(&sched.ngoroutines); }
+RT_API intptr_t rt_numgoroutine(void) { return (intptr_t)count_goroutines(); }
 
 RT_API int32_t rt_numcpu(void) { return os_ncpu(); }
 

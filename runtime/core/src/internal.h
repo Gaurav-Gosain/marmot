@@ -221,6 +221,8 @@ struct rt_p {
   _Atomic uint32_t schedtick;
   uint32_t sysmon_schedtick;
   int64_t sysmon_schedwhen;
+  _Atomic int64_t ngo;           // goroutines started minus exited on this P (relaxed, owner writes)
+  int64_t goidnext, goidend;     // cached block of goroutine ids
   rt_g *gfree;                   // local free goroutines (no stacks)
   int32_t ngfree;
   uintptr_t stackcache[32];      // free stacks: mapping base addresses
