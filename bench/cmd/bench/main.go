@@ -299,7 +299,7 @@ func measure(p Program, t Toolchain) Result {
 	check(os.MkdirAll(dir, 0o755))
 	out := filepath.Join(dir, p.Name)
 	os.Remove(out)
-	env := append(os.Environ(), "GOCACHE="+filepath.Join(work, "gocache"))
+	env := append(os.Environ(), "GOCACHE="+filepath.Join(work, "gocache"), "MARMOT_MAX_JOBS=2")
 
 	if *sizeOnly {
 		c := exec.Command(t.Build(root, p.Pkg, out, false)[0], t.Build(root, p.Pkg, out, false)[1:]...)
