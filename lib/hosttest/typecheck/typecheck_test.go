@@ -151,7 +151,7 @@ func TestTypecheckOverlay(t *testing.T) {
 	ctx.GOOS = "darwin"
 	ctx.GOARCH = "arm64"
 	ctx.CgoEnabled = false
-	ctx.BuildTags = []string{"marmot", "purego"}
+	ctx.BuildTags = []string{"marmot", "purego", "math_big_pure_go"}
 	ctx.GOROOT = runtime.GOROOT()
 	im := &overlayImporter{
 		root:  root,
@@ -178,7 +178,7 @@ func TestRtabiLayout(t *testing.T) {
 	fset := token.NewFileSet()
 	ctx := build.Default
 	ctx.GOOS, ctx.GOARCH, ctx.CgoEnabled = "darwin", "arm64", false
-	ctx.BuildTags = []string{"marmot", "purego"}
+	ctx.BuildTags = []string{"marmot", "purego", "math_big_pure_go"}
 	ctx.GOROOT = runtime.GOROOT()
 	im := &overlayImporter{root: root, fset: fset, ctx: ctx, pkgs: map[string]*types.Package{},
 		stock: importer.ForCompiler(fset, "source", nil).(types.ImporterFrom), tmp: t.TempDir()}
