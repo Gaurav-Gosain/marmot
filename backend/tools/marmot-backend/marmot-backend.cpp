@@ -80,7 +80,12 @@ static cl::opt<std::string> cacheDir(
 static cl::opt<bool> noImport("no-import", cl::desc("-wpo without cross-module imports"),
                               cl::cat(cat));
 static cl::opt<bool> noLoops("no-loops", cl::desc("Disable the loop optimizer"), cl::cat(cat));
-static cl::opt<bool> noPar("no-par", cl::desc("Loop optimizer: no parallel-for"), cl::cat(cat));
+static cl::opt<bool> noPar("no-par", cl::desc("Loop optimizer: no parallel-for (the default)"),
+                           cl::cat(cat));
+// Parallel-for is opt-in until the miscompiles in parallelized versioned
+// loops (tests/run/opt/sort_exact, std/exec/run, os.Environ) are fixed.
+static cl::opt<bool> par("par", cl::desc("Loop optimizer: parallel-for (opt-in for now)"),
+                         cl::cat(cat));
 static cl::opt<bool> fastFP("ffast-fp",
                             cl::desc("Loop optimizer: allow reordering floating point "
                                      "reductions (changes results; opt-in)"),
@@ -152,7 +157,7 @@ int main(int argc, char **argv) {
   opts.initOptNone = initOptNone;
   opts.wpoImport = !noImport;
   opts.loops.enable = !noLoops;
-  opts.loops.parallel = !noPar;
+  opts.loops.parallel = par && !noPar;
   opts.loops.fastFP = fastFP;
   opts.loops.remarks = loopsRemarks;
   opts.loops.versioning = !noBCV;

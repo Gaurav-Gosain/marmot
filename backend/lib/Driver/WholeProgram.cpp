@@ -51,7 +51,7 @@ namespace marmot {
 namespace {
 
 // Bump when the meaning of a cache entry changes.
-constexpr const char *kCacheVersion = "marmot-backend-cache-4";
+constexpr const char *kCacheVersion = "marmot-backend-cache-6";
 
 // Largest function, in LLVM instructions, imported into other modules.
 constexpr unsigned kImportLimit = 40;
@@ -622,28 +622,41 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   std::vector<std::map<unsigned, std::set<std::string>>> imports(mods.size());
   // Modules whose (live or imported) code references a name.
   StringMap<std::set<unsigned>> usedBy;
-  for (unsigned i = 0; i < mods.size(); ++i)
+  // The plan is transitive: an imported body's callees are candidates too
+  // (so runtime.slicecopy imported into main brings runtime.memmove along),
+  // up to kImportBudget imported functions per module.
+  constexpr unsigned kImportBudget = 400;
+  for (unsigned i = 0; i < mods.size(); ++i) {
+    SmallVector<const std::string *, 64> work;
     for (const Def &d : mods[i].defs) {
       if (!live.contains(d.qname))
         continue;
       for (const std::string &r : d.refs) {
         usedBy[r].insert(i);
-        if (!opts.wpoImport || opts.optLevel == '0' || !d.isFunc)
-          continue;
-        auto it = defsByName.find(r);
-        if (it == defsByName.end() || it->second.size() != 1)
-          continue;
-        auto [si, sj] = it->second.front();
-        const Def &callee = mods[si].defs[sj];
-        if (si == i || !callee.isFunc || !callee.importable)
-          continue;
-        if (imports[i][si].insert(r).second) {
-          ++stats.imported;
-          for (const std::string &rr : callee.refs)
-            usedBy[rr].insert(i);
-        }
+        if (d.isFunc)
+          work.push_back(&r);
       }
     }
+    unsigned count = 0;
+    while (!work.empty() && opts.wpoImport && opts.optLevel != '0') {
+      const std::string &r = *work.pop_back_val();
+      auto it = defsByName.find(r);
+      if (it == defsByName.end() || it->second.size() != 1)
+        continue;
+      auto [si, sj] = it->second.front();
+      const Def &callee = mods[si].defs[sj];
+      if (si == i || !callee.isFunc || !callee.importable || count >= kImportBudget)
+        continue;
+      if (!imports[i][si].insert(r).second)
+        continue;
+      ++count;
+      ++stats.imported;
+      for (const std::string &rr : callee.refs) {
+        usedBy[rr].insert(i);
+        work.push_back(&rr);
+      }
+    }
+  }
   for (ModuleInfo &m : mods)
     for (const Def &d : m.defs) {
       stats.functions += d.isFunc;
