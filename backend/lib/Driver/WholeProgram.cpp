@@ -16,6 +16,7 @@
 // Rules and cache keys are in docs/passes.md (section "Batch driver").
 #include "marmot/Driver/WholeProgram.h"
 #include "marmot/Dialect/Go/Passes.h"
+#include "marmot/Driver/Pcln.h"
 #include "marmot/Driver/RuntimeBitcode.h"
 #include "marmot/Driver/Watchdog.h"
 
@@ -59,7 +60,7 @@ namespace marmot {
 namespace {
 
 // Bump when the meaning of a cache entry changes.
-constexpr const char *kCacheVersion = "marmot-backend-cache-20";
+constexpr const char *kCacheVersion = "marmot-backend-cache-21";
 
 // Largest function, in LLVM instructions, imported into other modules.
 constexpr unsigned kImportLimit = 40;
@@ -732,6 +733,31 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     perJob[i].add(t);
   };
 
+  // The pc table fragment of an object (docs/pcln.md "Fragments"): OUT.pcln,
+  // cached with the object. A failure only costs the table lines of the
+  // object, so it is a warning.
+  auto fragment = [&](const std::string &out, StringRef obj, const std::string &key) {
+    if (!opts.pclnFragments || opts.prepareOnly || opts.emit != Emit::Obj)
+      return;
+    std::optional<std::string> f =
+        cacheObjects && !key.empty() ? cache.get(key, "pcln") : std::nullopt;
+    if (!f) {
+      std::string text, err;
+      if (!pcln::makeFragment(MemoryBufferRef(obj, out), 3, text, err)) {
+        std::lock_guard<std::mutex> lock(mu);
+        errs << "marmot-backend: warning: " << out << ": no pc table fragment: " << err << "\n";
+        return;
+      }
+      if (cacheObjects && !key.empty())
+        cache.put(key, "pcln", text);
+      f = std::move(text);
+    }
+    if (!writeFile(out + ".pcln", *f)) {
+      std::lock_guard<std::mutex> lock(mu);
+      errs << "marmot-backend: warning: " << out << ".pcln: cannot write\n";
+    }
+  };
+
   // Largest first, so a big module does not start last.
   std::vector<unsigned> order(jobs.size());
   for (unsigned i = 0; i < order.size(); ++i)
@@ -995,6 +1021,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         if (auto obj = cache.get(key, "o")) {
           if (!opts.prepareOnly && !writeFile(m.job.out, *obj))
             es << m.job.out << ": cannot write\n";
+          fragment(m.job.out, *obj, key);
           return;
         }
         // A split module: the list of its group keys (only when splitting).
@@ -1006,9 +1033,11 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
             if (auto obj = cache.get(gk.str(), "o"))
               objs.push_back(std::move(*obj));
           if (objs.size() == keys.size()) {
-            for (unsigned g = 0; g < objs.size() && !opts.prepareOnly; ++g)
+            for (unsigned g = 0; g < objs.size() && !opts.prepareOnly; ++g) {
               if (!writeFile(partPath(i, g), objs[g]))
                 es << partPath(i, g) << ": cannot write\n";
+              fragment(partPath(i, g), objs[g], keys[g].str());
+            }
             writeParts(i, objs.size(), es);
             return;
           }
@@ -1060,9 +1089,11 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       if (!optimizeAndEmit(**mOr, *tm, m.job.in, out, opts, t, es))
         return;
       ++stats.compiled;
-      if (cacheObjects)
-        if (auto obj = MemoryBuffer::getFile(out, false, false))
+      if (auto obj = MemoryBuffer::getFile(out, false, false)) {
+        if (cacheObjects)
           cache.put(key, "o", (*obj)->getBuffer());
+        fragment(out, (*obj)->getBuffer(), key);
+      }
       if (opts.prepareOnly)
         sys::fs::remove(out);
     });
@@ -1090,6 +1121,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
             if (auto obj = cache.get(gp->key, "o")) {
               if (!opts.prepareOnly && !writeFile(out, *obj))
                 es << out << ": cannot write\n";
+              fragment(out, *obj, gp->key);
               done = true;
             }
           if (!done) {
@@ -1101,9 +1133,11 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
               es << name << ": " << (tm ? toString(mOr.takeError()) : err) << "\n";
             } else if (optimizeAndEmit(**mOr, *tm, name, out, opts, t, es)) {
               ++stats.compiled;
-              if (cacheObjects)
-                if (auto obj = MemoryBuffer::getFile(out, false, false))
+              if (auto obj = MemoryBuffer::getFile(out, false, false)) {
+                if (cacheObjects)
                   cache.put(gp->key, "o", (*obj)->getBuffer());
+                fragment(out, (*obj)->getBuffer(), gp->key);
+              }
             }
             if (opts.prepareOnly)
               sys::fs::remove(out);
@@ -1355,6 +1389,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       if (auto obj = cache.get(key, "o")) {
         if (!writeFile(info.job.out, *obj))
           es << info.job.out << ": cannot write\n";
+        fragment(info.job.out, *obj, key);
         internalized += internal[i].size();
         t.link += msSince(t0);
         return;
@@ -1514,9 +1549,11 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     if (!optimizeAndEmit(*m, *tm, info.job.in, info.job.out, opts, t, es))
       return;
     ++stats.compiled;
-    if (cacheObjects)
-      if (auto obj = MemoryBuffer::getFile(info.job.out, false, false))
+    if (auto obj = MemoryBuffer::getFile(info.job.out, false, false)) {
+      if (cacheObjects)
         cache.put(key, "o", (*obj)->getBuffer());
+      fragment(info.job.out, (*obj)->getBuffer(), key);
+    }
   });
   stats.internalized = internalized;
   stats.cacheHits = cache.hits;

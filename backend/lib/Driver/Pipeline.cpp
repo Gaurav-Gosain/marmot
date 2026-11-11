@@ -353,8 +353,16 @@ ParsedModulePtr parseFile(const std::string &input, const CompileOptions &opts,
     };
     // Block arguments (phis) need no location.
     mlir::Location none = mlir::UnknownLoc::get(pm->ctx.get());
+    // The module's own location names the DWARF compile unit: it needs a
+    // directory (ld writes no debug map for a unit without one, and dsymutil
+    // then finds no DWARF), and must not be the temporary path.
+    if (frontendLocs)
+      pm->module->getOperation()->setLoc(
+          mlir::FileLineColLoc::get(pm->ctx.get(), "/marmot/module.mlir", 1, 0));
     if (frontendLocs)
       pm->module->walk([&](mlir::Operation *op) {
+        if (op == pm->module->getOperation())
+          return;
         if (self(op->getLoc()))
           op->setLoc(unknown);
         for (mlir::Region &r : op->getRegions())

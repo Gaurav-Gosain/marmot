@@ -36,6 +36,8 @@ struct CompileOptions {
   // Dev batch: split a module above this many instructions into groups
   // compiled in parallel (0: never). See docs/passes.md "Large modules".
   unsigned splitInstrs = 0;
+  // Batch: write a pc table fragment OUT.pcln next to each object (docs/pcln.md).
+  bool pclnFragments = false;
   bool stringsNoCopy = false; // go-strings rule S3 (off until the matrix passes with it)
   bool wpoPruneTypes = true;   // -wpo: drop reflection tables nobody can read
   bool wpoClosedWorld = true;  // -wpo: devirtualized indirect calls lose their fallback

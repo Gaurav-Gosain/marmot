@@ -3,6 +3,12 @@
 // RUN: %backend -O2 -emit=llvm -o - %s | %FileCheck %s
 // RUN: %backend -O2 -o %t.o %s
 // RUN: %llvm-dwarfdump --debug-line %t.o | %FileCheck %s --check-prefix=LINES
+// The compile unit has a stable name with a directory (ld writes no debug map
+// for a unit without one; dsymutil then finds no DWARF and the pc table is empty).
+// RUN: %llvm-dwarfdump --debug-info %t.o | %FileCheck %s --check-prefix=CU
+// CU: DW_TAG_compile_unit
+// CU: DW_AT_name ("module.mlir")
+// CU: DW_AT_comp_dir ("/marmot")
 // RUN: %backend -O2 -g 0 -emit=llvm -o - %s | %FileCheck %s --check-prefix=NONE
 // CHECK: define {{.*}}@{{"?}}main.add{{"?}}({{.*}}!dbg ![[SP:[0-9]+]]
 // CHECK: !DICompileUnit({{.*}}emissionKind: LineTablesOnly

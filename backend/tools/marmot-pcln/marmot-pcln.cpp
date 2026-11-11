@@ -1,26 +1,35 @@
-// marmot-pcln: builds the compact pc table (docs/pcln.md) from the DWARF
-// line tables of a linked program: the binary itself (ELF) or its dSYM
-// (Mach-O; run dsymutil first). The runtime uses the table for tracebacks,
-// runtime.Caller and FuncForPC, without a DWARF parser.
+// marmot-pcln: builds the compact pc table (docs/pcln.md). The runtime uses
+// the table for tracebacks, runtime.Caller and FuncForPC, without a DWARF
+// parser.
 //
+// From DWARF (the linked binary on ELF, its dSYM on Mach-O):
 //   marmot-pcln -o table.bin [-base-from BINARY] DWARF_FILE
-#include "llvm/DebugInfo/DWARF/DWARFContext.h"
+// From the fragments the backend writes next to each object (no dSYM, no
+// relink):
+//   marmot-pcln -frags LIST -estimate [-extra-objects LIST]  prints an upper bound
+//                                                            of the table size
+//   marmot-pcln -frags LIST -patch BINARY    writes the table into BINARY's
+//                                            __TEXT,__marmot_pcln placeholder
+//   marmot-pcln -frags LIST -binary BINARY -o table.bin
+#include "marmot/Driver/Pcln.h"
+
+#include "llvm/ADT/StringMap.h"
+#include "llvm/Object/Archive.h"
 #include "llvm/Object/MachO.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstring>
-#include <functional>
-#include <map>
 
 using namespace llvm;
 using namespace llvm::object;
+using namespace marmot;
 
-static cl::opt<std::string> input(cl::Positional, cl::desc("<binary or dSYM DWARF file>"),
-                                  cl::Required);
-static cl::opt<std::string> output("o", cl::desc("Output table"), cl::Required);
+static cl::opt<std::string> input(cl::Positional, cl::desc("<binary or dSYM DWARF file>"));
+static cl::opt<std::string> output("o", cl::desc("Output table"));
 static cl::opt<std::string> mainPkg(
     "main-pkg", cl::desc("Package path of the main package; its functions are named main.X, as gc "
                          "names them"));
@@ -29,48 +38,21 @@ static cl::opt<unsigned> version("table-version",
                                  cl::init(2));
 static cl::opt<std::string> baseFrom(
     "base-from", cl::desc("Binary whose image base the table is relative to (default: input)"));
+static cl::opt<std::string> fragsList("frags",
+                                      cl::desc("File listing fragment files, one per line"));
+static cl::opt<bool> estimate("estimate", cl::desc("With -frags: print an upper bound of the "
+                                                    "table size for any link of these objects"));
+static cl::opt<std::string> extraObjects(
+    "extra-objects",
+    cl::desc("With -estimate: file listing objects and archives without fragments (their "
+             "text symbols get name-only entries)"));
+static cl::opt<std::string> patch("patch", cl::desc("With -frags: write the table into this "
+                                                     "linked Mach-O binary"));
+static cl::opt<std::string> binaryOpt("binary",
+                                      cl::desc("With -frags -o: the linked binary"));
 
 namespace {
 
-// Image base: the address pcs are stored relative to. Mach-O: the __TEXT
-// segment address; ELF: the lowest loadable segment (0 for PIE).
-uint64_t imageBase(const ObjectFile &obj) {
-  if (auto *m = dyn_cast<MachOObjectFile>(&obj)) {
-    for (const auto &lc : m->load_commands())
-      if (lc.C.cmd == MachO::LC_SEGMENT_64) {
-        auto seg = m->getSegment64LoadCommand(lc);
-        if (StringRef(seg.segname) == "__TEXT")
-          return seg.vmaddr;
-      }
-    return 0;
-  }
-  uint64_t base = UINT64_MAX;
-  for (const SectionRef &s : obj.sections())
-    if (s.isText() || s.isData() || s.isBSS())
-      base = std::min(base, s.getAddress());
-  return base == UINT64_MAX ? 0 : base & ~uint64_t(0xfff);
-}
-
-void uvarint(std::string &out, uint64_t v) {
-  while (v >= 0x80) {
-    out.push_back(char(v | 0x80));
-    v >>= 7;
-  }
-  out.push_back(char(v));
-}
-void svarint(std::string &out, int64_t v) { uvarint(out, (uint64_t(v) << 1) ^ uint64_t(v >> 63)); }
-void u32(std::string &out, uint32_t v) {
-  for (int i = 0; i < 4; ++i)
-    out.push_back(char(v >> (8 * i)));
-}
-void u64(std::string &out, uint64_t v) {
-  for (int i = 0; i < 8; ++i)
-    out.push_back(char(v >> (8 * i)));
-}
-
-// "PKG.f" -> "main.f" for the main package, also inside type arguments
-// ("pkg.F[PKG.T]"): every occurrence that starts the string or follows a
-// character that cannot be part of a package path.
 std::string renameMain(const std::string &name) {
   if (mainPkg.empty() || mainPkg == "main")
     return name;
@@ -88,50 +70,161 @@ std::string renameMain(const std::string &name) {
   return out;
 }
 
-// Text symbols of a binary, as address -> (name, end of its section),
-// Mach-O names without the leading underscore.
-void textSymbols(const ObjectFile &obj,
-                 std::map<uint64_t, std::pair<std::string, uint64_t>> &out) {
+int fail(const Twine &msg) {
+  errs() << "marmot-pcln: " << msg << "\n";
+  return 1;
+}
+
+bool readList(const std::string &path, std::vector<std::string> &out) {
+  auto buf = MemoryBuffer::getFile(path);
+  if (!buf)
+    return false;
+  SmallVector<StringRef, 0> lines;
+  (*buf)->getBuffer().split(lines, '\n', -1, false);
+  for (StringRef l : lines)
+    if (!l.trim().empty())
+      out.push_back(l.trim().str());
+  return true;
+}
+
+uint32_t quantumOf(const ObjectFile &obj) { return obj.getArch() == Triple::aarch64 ? 4 : 1; }
+
+// Text symbol name -> address; names defined twice (local symbols of two
+// objects) map to 0, their functions get no entry.
+void symbolAddresses(const ObjectFile &obj, StringMap<uint64_t> &out) {
   bool macho = isa<MachOObjectFile>(&obj);
   for (const SymbolRef &sym : obj.symbols()) {
     auto type = sym.getType();
     auto addr = sym.getAddress();
     auto name = sym.getName();
-    auto sec = sym.getSection();
-    if (!type || !addr || !name || !sec) {
+    if (!type || !addr || !name) {
       consumeError(type.takeError());
       consumeError(addr.takeError());
       consumeError(name.takeError());
-      consumeError(sec.takeError());
       continue;
     }
-    if (*type != SymbolRef::ST_Function || *sec == obj.section_end() || !(*sec)->isText())
+    if (*type != SymbolRef::ST_Function)
       continue;
     StringRef n = *name;
     if (macho && n.starts_with("_"))
       n = n.drop_front();
-    if (n.empty() || n.starts_with("ltmp") || n.starts_with("l_") || n.starts_with(".L"))
-      continue;
-    out.try_emplace(*addr, n.str(), (*sec)->getAddress() + (*sec)->getSize());
+    auto [it, fresh] = out.try_emplace(n, *addr);
+    if (!fresh && it->second != *addr)
+      it->second = 0;
   }
 }
 
-// An inlined call: the callee's name, the call site, and the code ranges of
-// the inlined body (DW_TAG_inlined_subroutine).
-struct Inline {
-  int parent; // -1: the function itself
-  unsigned depth;
-  std::string name;
-  uint32_t callFile, callLine;
-  std::vector<std::pair<uint64_t, uint64_t>> ranges;
-};
-
-struct Func {
-  uint64_t lo, hi;
-  std::string name;
-  std::vector<Inline> inl;
-  std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> rows; // pc, line, file index
-};
+int fromFragments() {
+  std::vector<std::string> frags;
+  if (!readList(fragsList, frags))
+    return fail(fragsList + ": cannot read");
+  pcln::Table t;
+  std::string err;
+  if (estimate) {
+    // Every function present, at made-up addresses: function records and
+    // line programs do not depend on the layout, so the real table is not
+    // larger (dead stripping only removes functions).
+    uint64_t next = 0x1000;
+    std::vector<std::string> names;
+    for (const std::string &f : frags) {
+      auto buf = MemoryBuffer::getFile(f);
+      if (!buf)
+        return fail(f + ": cannot read");
+      if (!pcln::addFragment(
+              (*buf)->getBuffer(),
+              [&](StringRef) {
+                next += 0x10000;
+                return next;
+              },
+              t, err))
+        return fail(f + ": " + err);
+    }
+    std::vector<std::string> extra;
+    if (!extraObjects.empty() && !readList(extraObjects, extra))
+      return fail(extraObjects + ": cannot read");
+    for (const std::string &path : extra) {
+      auto buf = MemoryBuffer::getFile(path, false, false);
+      if (!buf)
+        return fail(path + ": cannot read");
+      auto addSyms = [&](const ObjectFile &o) {
+        for (const SymbolRef &sym : o.symbols()) {
+          auto type = sym.getType();
+          auto name = sym.getName();
+          if (!type || !name) {
+            consumeError(type.takeError());
+            consumeError(name.takeError());
+            continue;
+          }
+          if (*type != SymbolRef::ST_Function)
+            continue;
+          next += 0x10000;
+          pcln::Func &f = t.funcs[next];
+          f.lo = next;
+          f.hi = next + 4;
+          f.name = name->str();
+        }
+      };
+      auto bin = createBinary((*buf)->getMemBufferRef());
+      if (!bin) {
+        consumeError(bin.takeError());
+        continue;
+      }
+      if (auto *o = dyn_cast<ObjectFile>(bin->get())) {
+        addSyms(*o);
+      } else if (auto *a = dyn_cast<Archive>(bin->get())) {
+        Error e = Error::success();
+        for (auto &c : a->children(e)) {
+          auto cb = c.getAsBinary();
+          if (!cb) {
+            consumeError(cb.takeError());
+            continue;
+          }
+          if (auto *o = dyn_cast<ObjectFile>(cb->get()))
+            addSyms(*o);
+        }
+        consumeError(std::move(e));
+      }
+    }
+    std::string table = pcln::encode(t, 0, 1, version, renameMain);
+    outs() << table.size() << "\n";
+    return 0;
+  }
+  std::string binPath = patch.empty() ? binaryOpt : patch;
+  if (binPath.empty())
+    return fail("-frags needs -estimate, -patch or -binary");
+  auto binOr = ObjectFile::createObjectFile(binPath);
+  if (!binOr)
+    return fail(binPath + ": " + toString(binOr.takeError()));
+  const ObjectFile &bin = *binOr->getBinary();
+  StringMap<uint64_t> addrs;
+  symbolAddresses(bin, addrs);
+  auto lookup = [&](StringRef n) {
+    auto it = addrs.find(n);
+    return it == addrs.end() ? uint64_t(0) : it->second;
+  };
+  for (const std::string &f : frags) {
+    auto buf = MemoryBuffer::getFile(f);
+    if (!buf)
+      return fail(f + ": cannot read");
+    if (!pcln::addFragment((*buf)->getBuffer(), lookup, t, err))
+      return fail(f + ": " + err);
+  }
+  pcln::addTextSymbols(bin, t);
+  std::string table = pcln::encode(t, pcln::imageBase(bin), quantumOf(bin), version, renameMain);
+  if (!patch.empty()) {
+    if (!pcln::patchMachO(patch, table, err))
+      return fail(err);
+  } else {
+    std::error_code ec;
+    raw_fd_ostream os(output, ec);
+    if (ec)
+      return fail(output + ": " + ec.message());
+    os << table;
+  }
+  errs() << "marmot-pcln: " << t.funcs.size() << " functions, " << t.files.size() << " files, "
+         << table.size() << " bytes\n";
+  return 0;
+}
 
 } // namespace
 
@@ -140,322 +233,37 @@ int main(int argc, char **argv) {
   cl::ParseCommandLineOptions(argc, argv, "marmot pc table builder\n");
   if (const char *v = getenv("MARMOT_PCLN_VERSION"); v && !version.getNumOccurrences())
     version = atoi(v);
+  if (!fragsList.empty())
+    return fromFragments();
+  if (input.empty() || output.empty())
+    return fail("usage: marmot-pcln -o table.bin [-base-from BINARY] DWARF_FILE");
   auto objOr = ObjectFile::createObjectFile(input);
-  if (!objOr) {
-    errs() << "marmot-pcln: " << input << ": " << toString(objOr.takeError()) << "\n";
-    return 1;
-  }
+  if (!objOr)
+    return fail(input + ": " + toString(objOr.takeError()));
   const ObjectFile &obj = *objOr->getBinary();
-  uint64_t base = imageBase(obj);
+  uint64_t base = pcln::imageBase(obj);
+  OwningBinary<ObjectFile> baseBin;
   if (!baseFrom.empty()) {
     auto b = ObjectFile::createObjectFile(baseFrom);
-    if (!b) {
-      errs() << "marmot-pcln: " << baseFrom << ": " << toString(b.takeError()) << "\n";
-      return 1;
-    }
-    base = imageBase(*b->getBinary());
+    if (!b)
+      return fail(baseFrom + ": " + toString(b.takeError()));
+    baseBin = std::move(*b);
+    base = pcln::imageBase(*baseBin.getBinary());
   }
-  std::unique_ptr<DWARFContext> dwarf = DWARFContext::create(obj);
-
-  std::map<uint64_t, Func> funcs; // by low pc
-  std::map<std::string, uint32_t> fileIndex;
-  std::vector<std::string> files;
-  auto fileId = [&](const std::string &f) {
-    auto [it, fresh] = fileIndex.try_emplace(f, files.size());
-    if (fresh)
-      files.push_back(f);
-    return it->second;
-  };
-
-  for (const auto &cu : dwarf->compile_units()) {
-    const DWARFDebugLine::LineTable *lt = dwarf->getLineTableForUnit(cu.get());
-    if (!lt)
-      continue;
-    // Subprograms: names and ranges.
-    for (const auto &entry : cu->dies()) {
-      DWARFDie die(cu.get(), &entry);
-      if (die.getTag() != dwarf::DW_TAG_subprogram)
-        continue;
-      uint64_t lo, hi, idx;
-      if (!die.getLowAndHighPC(lo, hi, idx) || hi <= lo)
-        continue;
-      const char *name = die.getName(DINameKind::LinkageName);
-      if (!name)
-        name = die.getName(DINameKind::ShortName);
-      Func &f = funcs[lo];
-      f.lo = lo;
-      f.hi = hi;
-      f.name = name ? name : "?";
-      // Inlined calls, at any depth (also inside lexical blocks).
-      std::function<void(DWARFDie, int, unsigned)> walk = [&](DWARFDie d, int parent,
-                                                                unsigned depth) {
-        for (DWARFDie c : d.children()) {
-          int here = parent;
-          unsigned cdepth = depth;
-          if (c.getTag() == dwarf::DW_TAG_inlined_subroutine) {
-            Inline in;
-            in.parent = parent;
-            in.depth = cdepth = depth + 1;
-            const char *n = c.getName(DINameKind::LinkageName);
-            if (!n)
-              n = c.getName(DINameKind::ShortName);
-            in.name = n ? n : "?";
-            uint32_t cf = 0, cl = 0, cc = 0, cd = 0;
-            c.getCallerFrame(cf, cl, cc, cd);
-            std::string fname;
-            if (cf && lt->getFileNameByIndex(
-                          cf, cu->getCompilationDir(),
-                          DILineInfoSpecifier::FileLineInfoKind::AbsoluteFilePath, fname))
-              in.callFile = fileId(fname);
-            else
-              in.callFile = 0;
-            in.callLine = cl;
-            if (auto rs = c.getAddressRanges()) {
-              for (auto &r : *rs)
-                if (r.HighPC > r.LowPC)
-                  in.ranges.push_back({r.LowPC, r.HighPC});
-            } else {
-              consumeError(rs.takeError());
-            }
-            here = f.inl.size();
-            f.inl.push_back(std::move(in));
-          }
-          walk(c, here, cdepth);
-        }
-      };
-      if (version >= 3)
-        walk(die, -1, 0);
-    }
-    for (const auto &row : lt->Rows) {
-      if (row.EndSequence || row.Line == 0)
-        continue;
-      auto it = funcs.upper_bound(row.Address.Address);
-      if (it == funcs.begin())
-        continue;
-      --it;
-      if (row.Address.Address >= it->second.hi)
-        continue;
-      std::string fname;
-      lt->getFileNameByIndex(row.File, cu->getCompilationDir(),
-                             DILineInfoSpecifier::FileLineInfoKind::AbsoluteFilePath, fname);
-      it->second.rows.push_back({row.Address.Address, row.Line, fileId(fname)});
-    }
-  }
-
+  pcln::Table t;
+  pcln::readDwarf(obj, version, t);
   // Every other text symbol (C runtime, assembly) gets an entry with a name
   // and no lines, so that the range of the Go function before it ends there.
-  // Symbols inside a function with DWARF ranges are labels, not functions.
-  {
-    std::map<uint64_t, std::pair<std::string, uint64_t>> syms;
-    textSymbols(obj, syms);
-    if (!baseFrom.empty())
-      if (auto b = ObjectFile::createObjectFile(baseFrom))
-        textSymbols(*b->getBinary(), syms);
-    std::vector<uint64_t> add;
-    for (auto &[addr, sym] : syms) {
-      auto it = funcs.upper_bound(addr);
-      if (it == funcs.begin() || std::prev(it)->second.hi <= addr)
-        add.push_back(addr); // not inside (or at the start of) a DWARF function
-    }
-    for (uint64_t addr : add) {
-      auto &sym = syms[addr];
-      Func &f = funcs[addr];
-      f.lo = addr;
-      f.hi = sym.second; // only for the end of the table; lookups stop at the next start
-      f.name = sym.first;
-    }
-  }
-  for (auto &[lo, f] : funcs)
-    f.name = renameMain(f.name);
-
-  // Version 2 (docs/pcln.md). Arm64 instructions are 4 bytes, so pc deltas
-  // are stored in instructions there.
-  uint32_t quantum = obj.getArch() == Triple::aarch64 ? 4 : 1;
-  std::string strs;
-  std::map<std::string, uint32_t> strOff;
-  auto addStr = [&](const std::string &s) {
-    auto [it, fresh] = strOff.try_emplace(s, strs.size());
-    if (fresh) {
-      strs += s;
-      strs.push_back('\0');
-    }
-    return it->second;
-  };
-  // Prefix tables: directories of files, package paths of functions. A
-  // file is uvarint dir + base name; a function name uvarint pkg + rest.
-  std::vector<std::string> dirs, pkgs;
-  std::map<std::string, uint32_t> dirIdx, pkgIdx;
-  auto prefixed = [&](const std::string &full, bool isFunc) {
-    size_t cut;
-    if (isFunc) {
-      size_t slash = full.rfind('/', full.find('('));
-      size_t dot = full.find('.', slash == std::string::npos ? 0 : slash + 1);
-      cut = dot == std::string::npos ? 0 : dot + 1;
-    } else {
-      size_t slash = full.rfind('/');
-      cut = slash == std::string::npos ? 0 : slash + 1;
-    }
-    std::string head = full.substr(0, cut);
-    auto &idx = isFunc ? pkgIdx : dirIdx;
-    auto &list = isFunc ? pkgs : dirs;
-    auto [it, fresh] = idx.try_emplace(head, list.size());
-    if (fresh)
-      list.push_back(head);
-    std::string rec;
-    uvarint(rec, it->second + 1); // never a zero byte: records are NUL terminated
-    rec += full.substr(cut);
-    return addStr(rec);
-  };
-  std::vector<uint32_t> fileRec;
-  for (const std::string &f : files)
-    fileRec.push_back(prefixed(f, false));
-
-  std::string ftab, lines, inlIdx, inl;
-  uint64_t textEnd = 0;
-  uint32_t ninl = 0, funcIndex = 0;
-  for (auto &[lo, f] : funcs) {
-    // Inline tree (version 3): nodes, then pc ranges mapped to the innermost
-    // node that covers them.
-    if (!f.inl.empty()) {
-      std::vector<std::tuple<uint64_t, uint64_t, unsigned>> segs; // [lo, hi) -> node + 1
-      std::vector<uint64_t> cuts;
-      for (auto &in : f.inl)
-        for (auto &[a, b] : in.ranges)
-          cuts.push_back(a), cuts.push_back(b);
-      llvm::sort(cuts);
-      cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
-      for (size_t c = 0; c + 1 < cuts.size(); ++c) {
-        uint64_t a = cuts[c], b = cuts[c + 1];
-        int best = -1;
-        for (size_t k = 0; k < f.inl.size(); ++k)
-          for (auto &[ra, rb] : f.inl[k].ranges)
-            if (ra <= a && b <= rb && (best < 0 || f.inl[k].depth > f.inl[best].depth))
-              best = k;
-        if (best < 0)
-          continue;
-        if (!segs.empty() && std::get<1>(segs.back()) == a && std::get<2>(segs.back()) == best + 1)
-          std::get<1>(segs.back()) = b;
-        else
-          segs.push_back({a, b, best + 1});
-      }
-      // A call site without DW_AT_call_line (LLVM merged call locations):
-      // use the last line of the parent before the inlined code starts.
-      std::stable_sort(f.rows.begin(), f.rows.end());
-      auto nodeAt = [&](uint64_t pc) {
-        for (auto &[a, b, node] : segs)
-          if (a <= pc && pc < b)
-            return int(node) - 1;
-        return -1;
-      };
-      for (size_t k = 0; k < f.inl.size(); ++k) {
-        Inline &in = f.inl[k];
-        if (in.callLine || in.ranges.empty())
-          continue;
-        uint64_t start = std::min_element(in.ranges.begin(), in.ranges.end())->first;
-        for (auto r = f.rows.rbegin(); r != f.rows.rend(); ++r)
-          if (std::get<0>(*r) < start && nodeAt(std::get<0>(*r)) == in.parent) {
-            in.callLine = std::get<1>(*r);
-            in.callFile = std::get<2>(*r);
-            break;
-          }
-      }
-      u32(inlIdx, funcIndex);
-      u32(inlIdx, inl.size());
-      ++ninl;
-      uvarint(inl, f.inl.size());
-      for (auto &in : f.inl) {
-        uvarint(inl, in.parent + 1);
-        uvarint(inl, prefixed(renameMain(in.name), true));
-        uvarint(inl, in.callFile);
-        uvarint(inl, in.callLine);
-      }
-      uvarint(inl, segs.size());
-      uint64_t at = f.lo;
-      for (auto &[a, b, node] : segs) {
-        uvarint(inl, (a - at) / quantum);
-        uvarint(inl, (b - a) / quantum);
-        uvarint(inl, node);
-        at = b;
-      }
-    }
-    ++funcIndex;
-    std::stable_sort(f.rows.begin(), f.rows.end());
-    // Only rows that change the line or the file (DWARF also has rows for
-    // columns and statement flags).
-    std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> rows;
-    for (auto &r : f.rows)
-      if (rows.empty() || std::get<1>(rows.back()) != std::get<1>(r) ||
-          std::get<2>(rows.back()) != std::get<2>(r))
-        rows.push_back(r);
-    uint32_t lineOff = lines.size();
-    uint32_t entryLine = rows.empty() ? 0 : std::get<1>(rows.front());
-    uint32_t entryFile = rows.empty() ? 0 : std::get<2>(rows.front());
-    uvarint(lines, rows.empty() ? 0 : rows.size() - 1);
-    uvarint(lines, entryLine);
-    uvarint(lines, entryFile);
-    uint64_t pc = rows.empty() ? f.lo : std::get<0>(rows.front());
-    int64_t line = entryLine;
-    uint32_t file = entryFile;
-    for (size_t r = 1; r < rows.size(); ++r) {
-      auto &[rpc, rline, rfile] = rows[r];
-      uvarint(lines, (rpc - pc) / quantum);
-      int64_t delta = int64_t(rline) - line;
-      bool fileChange = rfile != file;
-      svarint(lines, delta * 2 + (fileChange ? 1 : 0));
-      if (fileChange)
-        uvarint(lines, rfile);
-      pc = rpc;
-      line = rline;
-      file = rfile;
-    }
-    u32(ftab, uint32_t(f.lo - base));
-    u32(ftab, prefixed(f.name, true));
-    u32(ftab, lineOff);
-    textEnd = std::max(textEnd, f.hi - base);
-  }
-  std::string fileTab, dirTab, pkgTab;
-  for (uint32_t o : fileRec)
-    u32(fileTab, o);
-  for (const std::string &d : dirs)
-    u32(dirTab, addStr(d));
-  for (const std::string &p : pkgs)
-    u32(pkgTab, addStr(p));
-
-  const uint32_t hdr = 8 + 4 * (version >= 3 ? 16 : 13);
-  uint32_t funcOff = hdr, fileOff = funcOff + ftab.size(), dirOff = fileOff + fileTab.size(),
-           pkgOff = dirOff + dirTab.size(), lineOff = pkgOff + pkgTab.size(),
-           inlIdxOff = lineOff + lines.size(), inlOff = inlIdxOff + inlIdx.size(),
-           strOff2 = inlOff + inl.size();
-  std::string table = "MRMTPCLN";
-  u32(table, version >= 3 ? 3 : 2);
-  u32(table, funcs.size());
-  u32(table, files.size());
-  u32(table, dirs.size());
-  u32(table, pkgs.size());
-  u32(table, quantum);
-  u32(table, uint32_t(textEnd));
-  u32(table, funcOff);
-  u32(table, fileOff);
-  u32(table, dirOff);
-  u32(table, pkgOff);
-  u32(table, lineOff);
-  u32(table, strOff2);
-  if (version >= 3) {
-    u32(table, ninl);
-    u32(table, inlIdxOff);
-    u32(table, inlOff);
-  }
-  table += ftab + fileTab + dirTab + pkgTab + lines + inlIdx + inl + strs;
-
+  pcln::addTextSymbols(obj, t);
+  if (baseBin.getBinary())
+    pcln::addTextSymbols(*baseBin.getBinary(), t);
+  std::string table = pcln::encode(t, base, quantumOf(obj), version, renameMain);
   std::error_code ec;
   raw_fd_ostream os(output, ec);
-  if (ec) {
-    errs() << "marmot-pcln: " << output << ": " << ec.message() << "\n";
-    return 1;
-  }
+  if (ec)
+    return fail(output + ": " + ec.message());
   os << table;
-  errs() << "marmot-pcln: " << funcs.size() << " functions, " << files.size() << " files, "
-         << table.size() << " bytes (functions " << ftab.size() << ", lines " << lines.size()
-         << ", inline " << inlIdx.size() + inl.size() << ", strings " << strs.size() << ")\n";
+  errs() << "marmot-pcln: " << t.funcs.size() << " functions, " << t.files.size() << " files, "
+         << table.size() << " bytes\n";
   return 0;
 }
