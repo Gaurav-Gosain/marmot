@@ -4,6 +4,7 @@
 
 #include "marmot/Driver/Pipeline.h"
 
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,7 @@ struct WpoStats {
   unsigned functions = 0, liveFunctions = 0, internalized = 0, imported = 0;
   unsigned escapeRounds = 0, noEscapeParams = 0;
   unsigned cacheHits = 0, cacheMisses = 0;
+  std::atomic<unsigned> devirtualized{0};
 };
 
 // Compiles a batch: escape summaries are propagated across modules, then

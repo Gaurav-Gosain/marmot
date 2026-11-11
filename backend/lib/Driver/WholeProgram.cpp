@@ -37,6 +37,9 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/xxhash.h"
 #include "llvm/Target/TargetMachine.h"
+#include "llvm/Transforms/Utils/CallPromotionUtils.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/MDBuilder.h"
 
 #include <atomic>
 #include <chrono>
@@ -51,7 +54,7 @@ namespace marmot {
 namespace {
 
 // Bump when the meaning of a cache entry changes.
-constexpr const char *kCacheVersion = "marmot-backend-cache-9";
+constexpr const char *kCacheVersion = "marmot-backend-cache-11";
 
 // Largest function, in LLVM instructions, imported into other modules.
 constexpr unsigned kImportLimit = 40;
@@ -135,6 +138,8 @@ struct ModuleInfo {
   std::string bitcode;
   std::vector<Def> defs;
   std::vector<std::string> extraRoots; // from appending globals (llvm.used, ctors)
+  // Functions whose address the module takes, with their LLVM type.
+  std::vector<std::pair<std::string, std::string>> addrTaken;
   bool ok = false;
 };
 
@@ -189,6 +194,13 @@ void refsOf(const GlobalValue &gv, SmallPtrSetImpl<const GlobalValue *> &out) {
   }
 }
 
+std::string typeString(Type *t) {
+  std::string out;
+  raw_string_ostream os(out);
+  t->print(os);
+  return out;
+}
+
 // Reference summary in cache form: "D\t<flags>\t<qname>" then "R\t<ref>"
 // lines; "X\t<root>" for appending-global roots. Names hold no tabs or
 // newlines.
@@ -228,6 +240,17 @@ std::string summarize(Module &m) {
     add(v);
   for (GlobalAlias &a : m.aliases())
     add(a);
+  // Address-taken functions: any use other than as the callee of a call.
+  for (Function &f : m) {
+    if (f.isIntrinsic())
+      continue;
+    bool taken = llvm::any_of(f.uses(), [](const Use &u) {
+      auto *cb = dyn_cast<CallBase>(u.getUser());
+      return !cb || !cb->isCallee(&u);
+    });
+    if (taken)
+      os << "A\t" << qualifyRaw(f) << "\t" << typeString(f.getFunctionType()) << "\n";
+  }
   return out;
 }
 
@@ -249,6 +272,9 @@ void loadSummary(StringRef text, unsigned idx, ModuleInfo &info) {
       info.defs.back().refs.push_back(localize(rest, idx));
     } else if (tag == "X") {
       info.extraRoots.push_back(localize(rest, idx));
+    } else if (tag == "A") {
+      auto [name, type] = rest.split('\t');
+      info.addrTaken.push_back({localize(name, idx), type.str()});
     }
   }
 }
@@ -272,7 +298,7 @@ std::string fingerprint(const CompileOptions &opts) {
   os << kCacheVersion << "|O" << opts.optLevel << "|" << int(opts.emit) << "|"
      << opts.triple << "|" << opts.cpu << "|" << opts.features << "|"
      << opts.strings << opts.devirt << opts.escape << opts.bce << opts.openDefers
-     << opts.initOptNone << opts.wpoImport << "|loops" << opts.loops.enable
+     << opts.initOptNone << opts.wpoImport << opts.wpoClosedWorld << "|loops" << opts.loops.enable
      << opts.loops.parallel << opts.loops.fastFP << opts.loops.remarks
      << opts.loops.versioning << opts.loops.typeAlias << "|";
   if (opts.rtBitcode)
@@ -673,6 +699,26 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         for (const std::string &r : d.refs)
           shared.insert(r);
 
+  // Indirect call candidates: address-taken functions by LLVM type.
+  std::map<std::string, std::set<std::string>> byType;
+  for (ModuleInfo &m : mods)
+    for (auto &[name, type] : m.addrTaken)
+      byType[type].insert(name);
+  std::string byTypeKey;
+  for (auto &[type, names] : byType) {
+    byTypeKey += type + ":";
+    for (const std::string &n : names)
+      byTypeKey += n + ",";
+    byTypeKey += "\n";
+  }
+  byTypeKey = hashHex(byTypeKey);
+  // An address-taken function is called directly from other modules after
+  // promotion, so it must stay global.
+  for (auto &[type, names] : byType)
+    if (names.size() <= 2)
+      for (const std::string &n : names)
+        shared.insert(n);
+
   // Functions each module internalizes: live, external, defined only there,
   // used by no other module, not referenced by copyable definitions, not
   // roots.
@@ -705,7 +751,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     // it internalizes, and the bitcode of every module it imports from.
     std::string key;
     if (cacheObjects) {
-      std::string k = info.keyB + "|wpo|";
+      std::string k = info.keyB + "|wpo|" + byTypeKey + "|";
       std::vector<std::string> liveDefs;
       for (const Def &d : info.defs)
         if (live.contains(d.qname))
@@ -822,6 +868,67 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       for (const std::string &n : names)
         if (Function *f = m->getFunction(n); f && !f->isDeclaration())
           f->setLinkage(GlobalValue::AvailableExternallyLinkage);
+    }
+    // Guarded devirtualization of indirect calls (func values, interface
+    // methods): when at most two address-taken functions in the program have
+    // the call's type, call them directly behind a pointer compare; the
+    // original indirect call stays on the fallback path.
+    if (opts.optLevel != '0') {
+      SmallVector<CallBase *, 64> indirect;
+      for (Function &f : *m)
+        if (!f.isDeclaration())
+          for (BasicBlock &bb : f)
+            for (Instruction &inst : bb)
+              if (auto *cb = dyn_cast<CallBase>(&inst);
+                  cb && cb->isIndirectCall() && !cb->isInlineAsm())
+                indirect.push_back(cb);
+      for (CallBase *cb : indirect) {
+        auto it = byType.find(typeString(cb->getFunctionType()));
+        if (it == byType.end() || it->second.size() > 2)
+          continue;
+        SmallVector<Function *, 2> targets;
+        for (const std::string &q : it->second) {
+          StringRef name = q;
+          if (name.contains(':')) { // local symbol: only from its own module
+            auto [mod, local] = name.split(':');
+            if (mod != std::to_string(i))
+              break;
+            name = local;
+          }
+          Function *f = m->getFunction(name);
+          if (!f)
+            f = Function::Create(cb->getFunctionType(), GlobalValue::ExternalLinkage, name,
+                                 m.get());
+          if (f->getFunctionType() != cb->getFunctionType())
+            break;
+          targets.push_back(f);
+        }
+        if (targets.size() != it->second.size())
+          continue;
+        CallBase *cur = cb;
+        unsigned promoted = 0;
+        for (Function *f : targets) {
+          if (!isLegalToPromote(*cur, f))
+            break;
+          MDNode *w = MDBuilder(ctx).createBranchWeights(1000, 1);
+          promoteCallWithIfThenElse(*cur, f, w);
+          ++promoted;
+          ++stats.devirtualized;
+          // promoteCallWithIfThenElse leaves cur as the indirect fallback.
+        }
+        // Closed world: every Go func value and itab entry points at an
+        // address-taken function of the program, so with all candidates
+        // promoted the fallback cannot run. A trap there (instead of the
+        // indirect call) frees the hot path from an unknown call that
+        // clobbers memory; if the assumption were ever wrong it fails loudly.
+        if (promoted == targets.size() && opts.wpoClosedWorld) {
+          IRBuilder<> ib(cur);
+          ib.CreateIntrinsic(Intrinsic::trap, ArrayRef<Type *>{}, ArrayRef<Value *>{});
+          if (!cur->getType()->isVoidTy())
+            cur->replaceAllUsesWith(PoisonValue::get(cur->getType()));
+          cur->eraseFromParent();
+        }
+      }
     }
     t.link += msSince(t0);
     if (!optimizeAndEmit(*m, *tm, info.job.in, info.job.out, opts, t, es))

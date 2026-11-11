@@ -32,6 +32,7 @@ struct CompileOptions {
   bool singleThreaded = false; // disable MLIR context threading (batch mode)
   bool initOptNone = true;     // compile package init functions with optnone
   bool wpoImport = true;       // -wpo: import small functions across modules
+  bool wpoClosedWorld = true;  // -wpo: devirtualized indirect calls lose their fallback
   loops::Options loops;        // loop optimizer (owner: loops), -O2 and -O3
   bool devirt = true;          // go-devirt at -O1 and up
   bool strings = true;         // go-strings at -O1 and up

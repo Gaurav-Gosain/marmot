@@ -77,6 +77,9 @@ static cl::opt<bool> wpo("wpo",
 static cl::opt<std::string> cacheDir(
     "cache-dir", cl::desc("Batch mode: cache directory for summaries, bitcode and objects"),
     cl::value_desc("dir"), cl::cat(cat));
+static cl::opt<bool> noClosedWorld(
+    "no-closed-world",
+    cl::desc("-wpo: keep the indirect fallback of devirtualized calls"), cl::cat(cat));
 static cl::opt<bool> noImport("no-import", cl::desc("-wpo without cross-module imports"),
                               cl::cat(cat));
 static cl::opt<bool> noLoops("no-loops", cl::desc("Disable the loop optimizer"), cl::cat(cat));
@@ -156,6 +159,7 @@ int main(int argc, char **argv) {
   opts.verifyEach = verifyEach;
   opts.initOptNone = initOptNone;
   opts.wpoImport = !noImport;
+  opts.wpoClosedWorld = !noClosedWorld;
   opts.loops.enable = !noLoops;
   opts.loops.parallel = par && !noPar;
   opts.loops.fastFP = fastFP;
@@ -245,9 +249,11 @@ int main(int argc, char **argv) {
     ok = marmot::compileWholeProgram(wjobs, o, n, wpo, cacheDir, total, st, errs());
     if (opts.timePhases)
       errs() << format("batch: %u functions, %u live, %u internalized, %u imported, "
-                       "%u no-escape params after %u escape rounds, cache %u hits %u misses\n",
+                       "%u no-escape params after %u escape rounds, %u calls devirtualized, "
+                       "cache %u hits %u misses\n",
                        st.functions, st.liveFunctions, st.internalized, st.imported,
-                       st.noEscapeParams, st.escapeRounds, st.cacheHits, st.cacheMisses);
+                       st.noEscapeParams, st.escapeRounds, st.devirtualized.load(),
+                       st.cacheHits, st.cacheMisses);
   } else if (work.size() == 1) {
     runJob(work[0], false);
   } else {
