@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -192,7 +193,8 @@ func (b *build) saveModule(k, text string) string {
 func writeNoFlags(w io.Writer) {
 	var kv []string
 	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "MARMOT_NO_") {
+		k, _, _ := strings.Cut(e, "=")
+		if strings.HasPrefix(e, "MARMOT_NO_") || slices.Contains(codegen.LifetimeEnv, k) {
 			kv = append(kv, e)
 		}
 	}

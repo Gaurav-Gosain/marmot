@@ -45,6 +45,7 @@ type funcGen struct {
 	reuseAppend       map[ssa.Instruction]bool          // appends whose old array can be freed on growth
 	reuseNow          bool
 	appendElems       map[*ssa.Slice][]ssa.Value // append(s, a, b): elements by varargs slice
+	appendMake        map[*ssa.MakeSlice]bool    // append(s, make([]T, n)...): no temporary
 	skipInstr         map[ssa.Instruction]bool   // instructions folded into others
 	forceUnsafe       bool                       // the access goes through a locally punned pointer
 	implicitRunDefers bool
@@ -170,6 +171,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 	}
 
 	f.findAppendElems()
+	f.findAppendMake()
 	f.stackOK = f.m.p.stackAllocs(fn)
 	f.findRegionCalls()
 	f.findFrameRegionCalls()
@@ -589,6 +591,9 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 		if bs, ok := v.X.Type().Underlying().(*types.Slice); ok && isString(v.Type()) && !isRuneElem(bs.Elem()) && tempString(v) {
 			x := f.value(v.X)
 			f.vals[v] = f.makeString(f.extractRaw(x, tSlice, 0), f.extractRaw(x, tSlice, 1)) // no copy
+			break
+		}
+		if f.stackConvert(v) {
 			break
 		}
 		f.vals[v] = f.convert(f.value(v.X), v.X.Type(), v.Type())

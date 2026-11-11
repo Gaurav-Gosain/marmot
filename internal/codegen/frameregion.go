@@ -121,7 +121,7 @@ func (p *Program) deepParamEscapes(fn *ssa.Function, i int) bool {
 
 // regionParam reports whether fn is region-parametric in parameter i.
 func (p *Program) regionParam(fn *ssa.Function, i int) bool {
-	if os.Getenv("MARMOT_NO_REGIONS") != "" || len(fn.Blocks) == 0 || fn.Recover != nil || len(fn.FreeVars) > 0 || i >= len(fn.Params) {
+	if !optFrameRegions || len(fn.Blocks) == 0 || fn.Recover != nil || len(fn.FreeVars) > 0 || i >= len(fn.Params) {
 		return false
 	}
 	k := escKey{fn, -100 - i}
@@ -280,7 +280,7 @@ func frameRoot(a ssa.Value) *ssa.Alloc {
 
 // findFrameRegionCalls picks calls that allocate into the frame region.
 func (f *funcGen) findFrameRegionCalls() {
-	if f.region != "" || os.Getenv("MARMOT_NO_REGIONS") != "" {
+	if f.region != "" || !optFrameRegions {
 		return
 	}
 	p := f.m.p

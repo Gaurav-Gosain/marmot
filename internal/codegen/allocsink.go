@@ -2,7 +2,6 @@ package codegen
 
 import (
 	"go/constant"
-	"os"
 
 	"golang.org/x/tools/go/ssa"
 )
@@ -16,13 +15,13 @@ import (
 // operand still dominates the new position because D is dominated by B.
 
 func (f *funcGen) sinkAllocs() {
-	if os.Getenv("MARMOT_NO_ALLOCSINK") != "" || f.frame != "" || f.open != nil || len(f.fn.Blocks) < 2 {
+	if !optAllocSink || f.frame != "" || f.open != nil || len(f.fn.Blocks) < 2 {
 		return
 	}
 	for _, b := range f.fn.Blocks {
 		for _, instr := range b.Instrs {
 			v, ok := instr.(ssa.Value)
-			if !ok || !f.sinkableAlloc(instr) || f.sunk[instr] {
+			if !ok || !f.sinkableAlloc(instr) || f.sunk[instr] || f.skipInstr[instr] {
 				continue
 			}
 			d := f.useDominator(v, b)

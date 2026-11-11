@@ -26,7 +26,7 @@ import (
 func (f *funcGen) findReusableAppends() {
 	// Off by default until verify signs the rule off (a use-after-free was
 	// found 2026-11-12); MARMOT_REUSE=1 turns it on.
-	if os.Getenv("MARMOT_REUSE") != "1" || os.Getenv("MARMOT_NO_REUSE") != "" {
+	if !optReuse || os.Getenv("MARMOT_NO_REUSE") != "" {
 		return
 	}
 	for _, b := range f.fn.Blocks {

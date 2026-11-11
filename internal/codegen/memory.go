@@ -245,6 +245,9 @@ func (f *funcGen) makeSlice(v *ssa.MakeSlice) {
 	if isSigned(v.Len.Type()) || isSigned(v.Cap.Type()) || true {
 		// makeslice checks len and cap (negative, len > cap, too large).
 	}
+	if f.stackMakeSlice(v, l, c) {
+		return
+	}
 	if f.goOps() {
 		f.vals[v] = f.op("go.make_slice %s, %s(%s, %s) : i64", mlir.Symbol(f.m.typeDescSym(st.Elem())), f.tm.memType(st.Elem()), l, c)
 		return
@@ -353,6 +356,9 @@ func (f *funcGen) append(sv, tv ssa.Value) string {
 	if sl, ok := tv.(*ssa.Slice); ok && f.appendElems[sl] != nil {
 		return f.appendValues(sv, f.appendElems[sl])
 	}
+	if ms, ok := tv.(*ssa.MakeSlice); ok && f.appendMake[ms] {
+		return f.appendZeros(sv, ms.Len)
+	}
 	s := f.value(sv)
 	t := f.value(tv)
 	st := sv.Type().Underlying().(*types.Slice)
@@ -422,6 +428,78 @@ func (f *funcGen) appendValues(sv ssa.Value, elems []ssa.Value) string {
 			idx = f.op("llvm.add %s, %s : i64", l, f.constInt(int64(i), mlir.I64))
 		}
 		f.store(v, f.gepDyn(np, mt, idx), et)
+	}
+	return f.build(tSlice, np, newLen, nc)
+}
+
+// findAppendMake finds append(s, make([]T, n)...) whose make has no other
+// use: gc extends s by n zeroed elements without the temporary slice.
+func (f *funcGen) findAppendMake() {
+	for _, b := range f.fn.Blocks {
+		for _, instr := range b.Instrs {
+			c, ok := instr.(*ssa.Call)
+			if !ok || len(c.Call.Args) != 2 {
+				continue
+			}
+			if bi, ok := c.Call.Value.(*ssa.Builtin); !ok || bi.Name() != "append" {
+				continue
+			}
+			ms, ok := c.Call.Args[1].(*ssa.MakeSlice)
+			if !ok || ms.Cap != ms.Len || ms.Block() != b {
+				continue
+			}
+			only := true
+			for _, r := range *ms.Referrers() {
+				if _, dbg := r.(*ssa.DebugRef); !dbg && r != instr {
+					only = false
+				}
+			}
+			if !only {
+				continue
+			}
+			if f.appendMake == nil {
+				f.appendMake = map[*ssa.MakeSlice]bool{}
+			}
+			if f.skipInstr == nil {
+				f.skipInstr = map[ssa.Instruction]bool{}
+			}
+			f.appendMake[ms] = true
+			f.skipInstr[ms] = true
+		}
+	}
+}
+
+// appendZeros extends s by n zero elements (append(s, make([]T, n)...)).
+func (f *funcGen) appendZeros(sv, nv ssa.Value) string {
+	s := f.value(sv)
+	et := sv.Type().Underlying().(*types.Slice).Elem()
+	es := f.m.p.opts.Sizes.Sizeof(et)
+	n := f.toInt64(f.value(nv), nv.Type())
+	// make([]T, n) panics for a negative n before append runs.
+	neg := f.op("llvm.icmp \"slt\" %s, %s : i64", n, f.constInt(0, mlir.I64))
+	bad, ok := f.newBlock(), f.newBlock()
+	f.emit("llvm.cond_br %s weights([1, 1000]), %s, %s", neg, bad, ok)
+	f.b.WriteString("  " + bad + ":\n")
+	f.rtcall("panicmakeslicelen")
+	f.emit("llvm.unreachable")
+	f.b.WriteString("  " + ok + ":\n")
+	p := f.extractRaw(s, tSlice, 0)
+	l := f.extractRaw(s, tSlice, 1)
+	c := f.extractRaw(s, tSlice, 2)
+	newLen := f.op("llvm.add %s, %s : i64", l, n)
+	grow := f.op("llvm.icmp \"ugt\" %s, %s : i64", newLen, c)
+	growB, done := f.newBlock(), f.newBlock()
+	f.emit("llvm.cond_br %s weights([1, 100]), %s, %s(%s, %s : !llvm.ptr, i64)", grow, growB, done, p, c)
+	f.b.WriteString("  " + growB + ":\n")
+	g := f.rtcall("growslice", f.typeDesc(et), p, l, c, newLen)
+	f.emit("llvm.br %s(%s, %s : !llvm.ptr, i64)", done, f.extractRaw(g, tSlice, 0), f.extractRaw(g, tSlice, 2))
+	np, nc := f.newVal(), f.newVal()
+	f.b.WriteString("  " + done + "(" + np + ": !llvm.ptr, " + nc + ": i64):\n")
+	if es > 0 {
+		dst := f.gepDyn(np, f.tm.memType(et), l)
+		size := f.op("llvm.mul %s, %s : i64", n, f.constInt(es, mlir.I64))
+		zero := f.constInt(0, mlir.I8)
+		f.emit("\"llvm.intr.memset\"(%s, %s, %s) <{isVolatile = false}> : (!llvm.ptr, i8, i64) -> ()", dst, zero, size)
 	}
 	return f.build(tSlice, np, newLen, nc)
 }

@@ -32,7 +32,8 @@ type escapeState struct {
 // paramEscapes reports whether parameter i of fn may escape fn.
 func (p *Program) paramEscapes(fn *ssa.Function, i int) bool {
 	if len(fn.Blocks) == 0 {
-		return true // body-less: unknown
+		// Body-less (assembly or the C core): unknown unless //go:noescape.
+		return !optEscapeExt || p.pragmas[fn]&pragmaNoescape == 0
 	}
 	if i >= len(fn.Params) {
 		return true
@@ -40,9 +41,35 @@ func (p *Program) paramEscapes(fn *ssa.Function, i int) bool {
 	return p.summary(escKey{fn, i}, fn.Params[i])
 }
 
+// paramToResult reports whether parameter i of fn leaves fn only through
+// its results (gc's "leaking param content to result").
+func (p *Program) paramToResult(fn *ssa.Function, i int) bool {
+	if len(fn.Blocks) == 0 || i >= len(fn.Params) {
+		return false
+	}
+	k := escKey{fn, -1000 - i}
+	p.escMu.Lock()
+	if r, ok := p.esc.done[k]; ok {
+		p.escMu.Unlock()
+		return !r
+	}
+	if p.esc.running[k] {
+		p.escMu.Unlock()
+		return false
+	}
+	p.esc.running[k] = true
+	p.escMu.Unlock()
+	r := p.escapesF(fn.Params[i], map[ssa.Value]bool{}, false, true)
+	p.escMu.Lock()
+	delete(p.esc.running, k)
+	p.esc.done[k] = r
+	p.escMu.Unlock()
+	return !r
+}
+
 // freeVarEscapes reports whether free variable i of closure fn may escape.
 func (p *Program) freeVarEscapes(fn *ssa.Function, i int) bool {
-	if i >= len(fn.FreeVars) {
+	if !optEscSummary || i >= len(fn.FreeVars) {
 		return true
 	}
 	return p.summary(escKey{fn, -1 - i}, fn.FreeVars[i])
@@ -75,6 +102,12 @@ func (p *Program) summary(k escKey, v ssa.Value) bool {
 // escapes reports whether pointer value v (or a value derived from it) may
 // outlive the function. noPhi makes flow into a phi count as escaping.
 func (p *Program) escapes(v ssa.Value, seen map[ssa.Value]bool, noPhi bool) bool {
+	return p.escapesF(v, seen, noPhi, false)
+}
+
+// escapesF is escapes; with ret, returning v (or a value derived from it)
+// from its function does not count as escaping.
+func (p *Program) escapesF(v ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool) bool {
 	if seen[v] {
 		return false
 	}
@@ -95,28 +128,66 @@ func (p *Program) escapes(v ssa.Value, seen map[ssa.Value]bool, noPhi bool) bool
 			if x.Val == v {
 				return true // v itself is written to memory
 			}
-		case *ssa.FieldAddr, *ssa.IndexAddr, *ssa.Slice, *ssa.ChangeType, *ssa.Field, *ssa.Index,
-			*ssa.Extract, *ssa.SliceToArrayPointer:
-			if p.escapes(x.(ssa.Value), seen, noPhi) {
+		case *ssa.Field, *ssa.Index, *ssa.Extract:
+			// A value read out of v holds no reference to v's memory unless
+			// it has pointers itself.
+			if optEscapeExt && len(ptrWords(x.(ssa.Value).Type(), p.opts.Sizes)) == 0 {
+				continue
+			}
+			if p.escapesF(x.(ssa.Value), seen, noPhi, ret) {
+				return true
+			}
+		case *ssa.FieldAddr, *ssa.IndexAddr, *ssa.Slice, *ssa.ChangeType, *ssa.SliceToArrayPointer:
+			if p.escapesF(x.(ssa.Value), seen, noPhi, ret) {
 				return true
 			}
 		case *ssa.Convert:
 			// Pointer <-> unsafe.Pointer conversions keep the pointer;
-			// unsafe.Pointer -> uintptr loses track of it.
+			// unsafe.Pointer -> uintptr loses track of it. Conversions
+			// between strings and byte or rune slices copy.
+			if optEscapeExt && (isString(v.Type()) || isString(x.Type())) {
+				continue
+			}
+			if optEscapeExt && len(ptrWords(v.Type(), p.opts.Sizes)) == 0 {
+				continue // a number converted to a number
+			}
 			if !isPtrRepr(x.Type()) {
+				if optEscapeExt && isInteger(x.Type()) && uintOnly(x, 0) {
+					continue // an address used only as a number (overlap checks)
+				}
 				return true
 			}
-			if p.escapes(x, seen, noPhi) {
+			if p.escapesF(x, seen, noPhi, ret) {
 				return true
+			}
+		case *ssa.Range:
+			// Ranging over a string yields runes (Next copies them out).
+			if !optEscapeExt || !isString(v.Type()) {
+				return true
+			}
+		case *ssa.Return:
+			if !ret {
+				return true
+			}
+		case *ssa.Lookup:
+			// Looking up a key (or in a map) does not keep the key; a
+			// string lookup result aliases v only if v is the string.
+			if !optEscapeExt {
+				return true
+			}
+			if x.X == v && isString(v.Type()) {
+				if len(ptrWords(x.Type(), p.opts.Sizes)) > 0 && p.escapesF(x, seen, noPhi, ret) {
+					return true
+				}
 			}
 		case *ssa.Phi:
-			if noPhi || p.escapes(x, seen, noPhi) {
+			if noPhi || p.escapesF(x, seen, noPhi, ret) {
 				return true
 			}
 		case *ssa.BinOp:
 			// Comparisons do not leak.
 		case *ssa.Call:
-			if p.callLeaks(&x.Call, v, x) {
+			if p.callLeaksF(&x.Call, v, x, seen, noPhi, ret) {
 				return true
 			}
 		case *ssa.Defer:
@@ -142,7 +213,7 @@ func (p *Program) escapes(v ssa.Value, seen map[ssa.Value]bool, noPhi bool) bool
 			}
 			// Captured by value: only a copy of the contents goes into the
 			// closure. By reference: the closure must not escape either.
-			if byRef && p.escapes(x, seen, noPhi) {
+			if byRef && p.escapesF(x, seen, noPhi, ret) {
 				return true
 			}
 		default:
@@ -157,6 +228,12 @@ func (p *Program) escapes(v ssa.Value, seen map[ssa.Value]bool, noPhi bool) bool
 // callLeaks reports whether passing v to call c may leak it. res is the
 // call's value (its result may carry v back), or nil for defer.
 func (p *Program) callLeaks(c *ssa.CallCommon, v ssa.Value, res ssa.Value) bool {
+	return p.callLeaksF(c, v, res, map[ssa.Value]bool{}, false, false)
+}
+
+// callLeaksF reports whether passing v to call c may let it escape; res is
+// the call's value (nil for go and defer).
+func (p *Program) callLeaksF(c *ssa.CallCommon, v ssa.Value, res ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool) bool {
 	if c.IsInvoke() {
 		return true
 	}
@@ -169,23 +246,50 @@ func (p *Program) callLeaks(c *ssa.CallCommon, v ssa.Value, res ssa.Value) bool 
 		case "len", "cap", "print", "println", "copy", "ssa:wrapnilchk", "min", "max", "clear":
 			// ssa:wrapnilchk returns its argument.
 			if fn.Name() == "ssa:wrapnilchk" && res != nil {
-				return p.escapes(res, map[ssa.Value]bool{}, false)
+				return p.escapesF(res, seen, noPhi, ret)
 			}
 			return false
+		case "append":
+			// The result may share s's array; appended elements are copied.
+			if !optEscapeExt {
+				return true
+			}
+			if len(c.Args) > 0 && c.Args[0] != v {
+				if _, isSlice := v.Type().Underlying().(*types.Slice); isSlice || isString(v.Type()) {
+					return false
+				}
+				return true
+			}
+			fallthrough
+		case "SliceData", "StringData", "String", "Slice", "Add":
+			// unsafe: the result points into v.
+			if res == nil || !optEscapeExt {
+				return true
+			}
+			return p.escapesF(res, seen, noPhi, ret)
 		}
 		return true
 	case *ssa.Function:
-		if fn.Signature.Variadic() {
+		if !optEscapeExt && fn.Signature.Variadic() {
 			return true
 		}
+		if !summaryAllowed(v, fn) {
+			return true
+		}
+		toResult := false
 		for i, a := range c.Args {
 			if a == v && p.paramEscapes(fn, i) {
-				return true
+				// Leaking only through fn's results: then v escapes iff
+				// the call's value does.
+				if res == nil || !optEscapeExt || !p.paramToResult(fn, i) {
+					return true
+				}
+				toResult = true
 			}
 		}
-		// The result may alias the argument (func f(p *T) *T { return p }):
-		// returning counts as escaping in the summary, so a non-escaping
-		// parameter cannot come back.
+		if toResult {
+			return p.escapesF(res, seen, noPhi, ret)
+		}
 		return false
 	}
 	return true
@@ -312,6 +416,35 @@ func allocSettled(mc *ssa.MakeClosure, b ssa.Value) bool {
 		case *ssa.MakeClosure:
 			// Also captured by another closure: that one could write it.
 			if x != mc {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// uintOnly reports whether integer value v (an address converted to
+// uintptr) is only compared or combined into other such integers, and
+// never converted back to a pointer, stored, passed or returned.
+func uintOnly(v ssa.Value, depth int) bool {
+	if depth > 8 {
+		return false
+	}
+	for _, r := range *v.Referrers() {
+		switch x := r.(type) {
+		case *ssa.DebugRef:
+		case *ssa.BinOp:
+			switch x.Op {
+			case token.EQL, token.NEQ, token.LSS, token.LEQ, token.GTR, token.GEQ:
+			default:
+				if !uintOnly(x, depth+1) {
+					return false
+				}
+			}
+		case *ssa.Convert:
+			if !isInteger(x.Type()) || !uintOnly(x, depth+1) {
 				return false
 			}
 		default:

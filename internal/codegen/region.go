@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
-	"os"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
 	"golang.org/x/tools/go/ssa"
@@ -35,7 +34,7 @@ type regionState struct {
 
 // regionCloneable reports whether fn is region cloneable.
 func (p *Program) regionCloneable(fn *ssa.Function) bool {
-	if os.Getenv("MARMOT_NO_REGIONS") != "" || len(fn.Blocks) == 0 || fn.Recover != nil || len(fn.FreeVars) > 0 {
+	if !optRegions || len(fn.Blocks) == 0 || fn.Recover != nil || len(fn.FreeVars) > 0 {
 		return false
 	}
 	p.escMu.Lock()

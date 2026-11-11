@@ -167,6 +167,7 @@ func (b *build) run1() (string, error) {
 			return cfg.Output, nil
 		}
 	}
+	b.logf("lifetime transforms on: %s", codegen.LifetimeSummary())
 	if err := acquireSlot(b.logf); err != nil {
 		return "", err
 	}
