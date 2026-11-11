@@ -88,7 +88,7 @@ func selectgo(cases *scase, ncases int, block bool) (chosen int, recvOK bool) {
 			cas.elem = nil // allow GC
 			continue
 		}
-		j := cheaprandn(uint32(len(pollorder) + 1))
+		j := gp.cheaprandn(uint32(len(pollorder) + 1))
 		pollorder = pollorder[:len(pollorder)+1]
 		pollorder[len(pollorder)-1] = pollorder[j]
 		pollorder[j] = uint16(i)

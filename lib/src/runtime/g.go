@@ -68,10 +68,19 @@ type sudog struct {
 // cheaprand returns a pseudo random number from the per-goroutine state
 // (wyrand).
 func cheaprand() uint32 {
-	gp := getg()
+	return getg().cheaprand()
+}
+
+// cheaprand is the generator step on a known goroutine (no getg).
+func (gp *g) cheaprand() uint32 {
 	gp.rand += 0xa0761d6478bd642f
 	hi, lo := mul64(gp.rand, gp.rand^0xe7037ed1a0b428db)
 	return uint32(hi ^ lo)
+}
+
+// cheaprandn returns a number in [0, n) from gp's generator.
+func (gp *g) cheaprandn(n uint32) uint32 {
+	return uint32((uint64(gp.cheaprand()) * uint64(n)) >> 32)
 }
 
 func cheaprand64() uint64 {

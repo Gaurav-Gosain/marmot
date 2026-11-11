@@ -453,7 +453,20 @@ func typedmemmove(t *_type, dst, src unsafe.Pointer) {
 	}
 }
 
-// typedmemclr zeroes a value of type t at p.
+// typedmemclr zeroes a value of type t at p, with plain stores for small
+// aligned values.
 func typedmemclr(t *_type, p unsafe.Pointer) {
-	memclrNoHeapPointers(p, t.size)
+	switch {
+	case t.size == 0:
+	case t.size == 8 && t.align >= 8:
+		*(*uint64)(p) = 0
+	case t.size == 4 && t.align >= 4:
+		*(*uint32)(p) = 0
+	case t.size == 16 && t.align >= 8:
+		*(*[2]uint64)(p) = [2]uint64{}
+	case t.size == 1:
+		*(*uint8)(p) = 0
+	default:
+		memclrNoHeapPointers(p, t.size)
+	}
 }

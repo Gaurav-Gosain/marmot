@@ -119,6 +119,7 @@ type MarmotDecoder struct {
 	pos   int
 	depth int
 	cache *[256]string // interned short strings, as the general path keeps
+	arena []byte       // block the decoded strings are carved from
 }
 
 var marmotCaches = sync.Pool{New: func() any { return new([256]string) }}
@@ -143,7 +144,10 @@ func (d *MarmotDecoder) Release() {
 func (d *MarmotDecoder) intern(b []byte) string {
 	c := d.cache
 	if c == nil || len(b) < 2 || len(b) > 256 {
-		return string(b)
+		if c == nil {
+			return string(b)
+		}
+		return d.alloc(b)
 	}
 	var h uint32
 	switch {
@@ -164,9 +168,27 @@ func (d *MarmotDecoder) intern(b []byte) string {
 	if s := (*c)[i]; s == string(b) {
 		return s
 	}
-	s := string(b)
+	s := d.alloc(b)
 	(*c)[i] = s
 	return s
+}
+
+// alloc returns a string with the bytes of b, carved from a block shared
+// by the strings of this decoder (strings are immutable, so sharing the
+// block cannot be observed).
+func (d *MarmotDecoder) alloc(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	if len(b) > 1024 {
+		return string(b)
+	}
+	if cap(d.arena)-len(d.arena) < len(b) {
+		d.arena = make([]byte, 0, 32<<10)
+	}
+	n := len(d.arena)
+	d.arena = append(d.arena, b...)
+	return unsafe.String(&d.arena[n], len(b))
 }
 
 func marmotHash64(lo, hi uint32) uint32 {
@@ -248,7 +270,16 @@ func (d *MarmotDecoder) Bytes() ([]byte, bool) {
 	if d.pos >= len(d.buf) || d.buf[d.pos] != '"' {
 		return nil, false
 	}
-	for i := d.pos + 1; i < len(d.buf); i++ {
+	i := d.pos + 1
+	// Eight bytes at a time while no byte is a quote, a backslash, a
+	// control character or non-ASCII.
+	for ; i+8 <= len(d.buf); i += 8 {
+		x := binary.LittleEndian.Uint64(d.buf[i:])
+		if (x-marmotLo7*0x20)&^x&marmotHi != 0 || x&marmotHi != 0 || marmotHasByte(x, '"') || marmotHasByte(x, '\\') {
+			break
+		}
+	}
+	for ; i < len(d.buf); i++ {
 		c := d.buf[i]
 		if c == '"' {
 			s := d.buf[d.pos+1 : i]
