@@ -24,7 +24,8 @@
 //	exit(code int32)
 //	nanotime() int64
 //	atomicLoad32, atomicStore32, atomicCas32, atomicXadd32, atomicXadd64,
-//	atomicLoadp, atomicStorep
+//	atomicLoadp, atomicStorep, atomicLoad64, atomicStore64, atomicCas64,
+//	atomicOr64, procyield(n int32)
 //	hashBytes(p unsafe.Pointer, n uintptr, seed uintptr) uintptr
 //
 // Compiled only by marmot.
@@ -213,6 +214,10 @@ func atomicStore32(p *uint32, v uint32)                { atomic.Store(p, v) }
 func atomicCas32(p *uint32, old, new uint32) bool      { return atomic.Cas(p, old, new) }
 func atomicLoadp(p *unsafe.Pointer) unsafe.Pointer     { return atomic.Loadp(unsafe.Pointer(p)) }
 func atomicStorep(p *unsafe.Pointer, v unsafe.Pointer) { atomic.StorepNoWB(unsafe.Pointer(p), v) }
+func atomicLoad64(p *uint64) uint64                    { return atomic.Load64(p) }
+func atomicStore64(p *uint64, v uint64)                { atomic.Store64(p, v) }
+func atomicCas64(p *uint64, old, new uint64) bool      { return atomic.Cas64(p, old, new) }
+func atomicOr64(p *uint64, v uint64)                   { atomic.Or64(p, v) }
 func atomicXadd32(p *uint32, d int32) uint32           { return atomic.Xadd(p, d) }
 func atomicXadd64(p *uint64, d int64) uint64           { return atomic.Xadd64(p, d) }
 
@@ -223,3 +228,6 @@ func rt_hash_bytes(p unsafe.Pointer, n int, seed uint64) uint64
 func hashBytes(p unsafe.Pointer, n uintptr, seed uintptr) uintptr {
 	return uintptr(rt_hash_bytes(p, int(n), uint64(seed^hashkey)))
 }
+
+// procyield executes n CPU pause hints.
+func procyield(n int32) { rt_procyield(n) }

@@ -101,3 +101,31 @@ func Compare(a, b []byte) int {
 func CompareString(a, b string) int {
 	return int(rt_compare(stringData(a), len(a), stringData(b), len(b)))
 }
+
+//go:linkname rt_last_index rt_last_index
+func rt_last_index(p unsafe.Pointer, n int, sep unsafe.Pointer, m int) int
+
+//go:linkname rt_count_substr rt_count_substr
+func rt_count_substr(p unsafe.Pointer, n int, sep unsafe.Pointer, m int) int
+
+// MarmotLastIndexString returns the index of the last instance of sep in
+// s, or -1 (len(s) if sep is empty), as strings.LastIndex.
+func MarmotLastIndexString(s, sep string) int {
+	return rt_last_index(stringData(s), len(s), stringData(sep), len(sep))
+}
+
+// MarmotLastIndex is MarmotLastIndexString for byte slices.
+func MarmotLastIndex(s, sep []byte) int {
+	return rt_last_index(sliceData(s), len(s), sliceData(sep), len(sep))
+}
+
+// MarmotCountString counts non-overlapping instances of sep (len(sep) >= 1)
+// in s, as strings.Count.
+func MarmotCountString(s, sep string) int {
+	return rt_count_substr(stringData(s), len(s), stringData(sep), len(sep))
+}
+
+// MarmotCount is MarmotCountString for byte slices.
+func MarmotCount(s, sep []byte) int {
+	return rt_count_substr(sliceData(s), len(s), sliceData(sep), len(sep))
+}
