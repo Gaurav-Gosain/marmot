@@ -142,3 +142,22 @@ func proc_regionfilename(pid int, address uint64, buf *byte, buflen int64) int32
 	args := [4]uintptr{uintptr(pid), uintptr(address), uintptr(unsafe.Pointer(buf)), uintptr(buflen)}
 	return int32(rt_libcall(unsafe.Pointer(abi.FuncPCABI0(libc_proc_regionfilename_trampoline)), unsafe.Pointer(&args[0]), 4, 4, &e))
 }
+
+// gostring converts a NUL terminated C string for internal/syscall/unix.
+//
+//go:linkname unix_gostring internal/syscall/unix.gostring
+func unix_gostring(p *byte) string { return cstring(unsafe.Pointer(p)) }
+
+// crypto_x509_syscall calls CoreFoundation and Security.framework for
+// crypto/x509/internal/macos. f1 goes in the first floating point argument
+// register (CFDateCreate takes a double).
+//
+//go:linkname crypto_x509_syscall crypto/x509/internal/macos.syscall
+func crypto_x509_syscall(fn, a1, a2, a3, a4, a5 uintptr, f1 float64) uintptr {
+	args := [5]uintptr{a1, a2, a3, a4, a5}
+	var e int32
+	return uintptr(rt_libcall_f64(unsafe.Pointer(fn), unsafe.Pointer(&args[0]), f1, &e))
+}
+
+//go:linkname rt_libcall_f64 rt_libcall_f64
+func rt_libcall_f64(fn unsafe.Pointer, args unsafe.Pointer, f0 float64, err *int32) int
