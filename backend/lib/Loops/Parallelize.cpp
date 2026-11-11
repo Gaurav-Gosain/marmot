@@ -279,6 +279,7 @@ private:
   bool analyzeBody(Loop *L, Plan &P, std::vector<Access> &accs);
   bool analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs);
   bool rowAccess(Loop *L, Plan &P, Access &a);
+  bool interleaved(Loop *L, Plan &P, Access &x, Access &y);
   bool decompose(const SCEV *S, Loop *L, const SCEV *&coef, const SCEV *&lo,
                  const SCEV *&hi);
   bool liveOuts(Loop *L, Plan &P);
@@ -689,7 +690,12 @@ bool Parallelizer::analyzeBody(Loop *L, Plan &P, std::vector<Access> &accs) {
 
 bool Parallelizer::decompose(const SCEV *S, Loop *L, const SCEV *&coef, const SCEV *&lo,
                              const SCEV *&hi) {
-  return decomposeAffine(SE, S, L, coef, lo, hi, nullptr);
+  // In the probe for versioning, inner loops still have their check exits;
+  // their latch counts are what the fast copy will run.
+  SmallVector<const SCEVPredicate *, 2> preds;
+  if (!decomposeAffine(SE, S, L, coef, lo, hi, nullptr, ignoreExits, ignoreExits ? &preds : nullptr))
+    return false;
+  return preds.empty();
 }
 
 // Rule P, memory part: different iterations touch disjoint bytes of every
@@ -787,6 +793,45 @@ bool Parallelizer::rowAccess(Loop *L, Plan &P, Access &a) {
   return true;
 }
 
+// Rule P condition 5, strided form: x and y are base + c*k + s + t*j with
+// one inner recurrence j (step t, the same for both). All of L's iterations
+// fit in one stride of j when W = c*btc + |sx - sy| + size <= t, so two
+// accesses can only meet for the same j; there they meet only for the same k
+// when sx == sy and c >= size. (transpose: b[j*n+i] over i.)
+bool Parallelizer::interleaved(Loop *L, Plan &P, Access &x, Access &y) {
+  auto parts = [&](Access &a, const SCEV *&start, const SCEV *&step) {
+    const SCEV *off = SE.getMinusSCEV(SE.getSCEV(a.ptr), SE.getPointerBase(SE.getSCEV(a.ptr)));
+    const SCEV *c, *lo, *hi;
+    SmallVector<Term, 2> terms;
+    if (isa<SCEVCouldNotCompute>(off) ||
+        !decomposeAffine(SE, off, L, c, lo, hi, &terms, ignoreExits) || terms.size() != 1 ||
+        !SE.isKnownPositive(terms[0].step))
+      return false;
+    start = lo; // the inner term only widens hi
+    step = terms[0].step;
+    return true;
+  };
+  const SCEV *sx, *tx, *sy, *ty;
+  if (!parts(x, sx, tx) || !parts(y, sy, ty) || tx != ty)
+    return false;
+  if (sx != sy || !SE.isKnownPositive(x.coef))
+    return false;
+  uint64_t size = std::max(x.size, y.size);
+  if (auto *cc = dyn_cast<SCEVConstant>(x.coef))
+    if (cc->getAPInt().ult(size))
+      return false;
+  Type *ty2 = x.coef->getType();
+  const SCEV *W = SE.getAddExpr(SE.getMulExpr(x.coef, SE.getTruncateOrZeroExtend(tripBtc, ty2)),
+                                SE.getConstant(ty2, size));
+  if (SE.isKnownPredicate(ICmpInst::ICMP_SLE, W, tx))
+    return true;
+  if (auto *d = dyn_cast<SCEVConstant>(SE.getMinusSCEV(tx, W)))
+    if (d->getAPInt().isNegative())
+      return false;
+  P.leChecks.push_back({W, tx});
+  return true;
+}
+
 // Rule P, memory part: different iterations touch disjoint bytes of every
 // object some iteration writes.
 bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
@@ -814,8 +859,11 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
   for (Access &a : accs)
     if (a.store && !a.affine && a.family < 0) {
       softMemReject = true;
+      std::string t;
+      raw_string_ostream os(t);
+      SE.getSCEV(a.ptr)->print(os);
       return reject("store address is not affine in the loop's induction "
-                    "or its base pointer changes in the loop");
+                    "or its base pointer changes in the loop [" + t + "]");
     }
   for (Family &f : P.families)
     if (f.written && !f.perIter)
@@ -832,6 +880,8 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
         continue;
       if (y.coef != x.coef)
         return reject("accesses to one object advance at different rates");
+      if (interleaved(L, P, x, y))
+        continue;
       const SCEV *c = x.coef;
       if (SE.isKnownNegative(c))
         c = SE.getNegativeSCEV(c);

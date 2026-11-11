@@ -299,6 +299,19 @@ func escape(out []int32, w, h int) int {
 	return inside
 }
 
+// Strided writes (Rule P condition 5, strided form): column i of b over rows
+// j, row stride 900. With w <= 900 the columns are disjoint (a run time check
+// on w); with w = 950 columns 900..949 overlap the next row's first columns,
+// the check fails and the serial loop runs.
+//go:noinline
+func transposeInto(b, a []int64, w int) {
+	for i := 0; i < w; i++ {
+		for j := 0; j < 700; j++ {
+			b[j*900+i] = a[i*700+j] + int64(i)
+		}
+	}
+}
+
 func main() {
 	a := make([]int64, n)
 	fill(a, 42)
@@ -400,4 +413,17 @@ func main() {
 		h = h*1000003 + uint64(uint32(v))
 	}
 	println("escape", in, h, eo[0], eo[403*105+201])
+
+	ta := make([]int64, 950*700)
+	for i := range ta {
+		ta[i] = int64(i*7%1000) - 300
+	}
+	tb := make([]int64, 700*900+100)
+	transposeInto(tb, ta, 900)
+	println("transpose", sum(tb), tb[5*900+7], tb[699*900+899])
+	for i := range tb {
+		tb[i] = 0
+	}
+	transposeInto(tb, ta, 950)
+	println("transpose-overlap", sum(tb), tb[5*900+7], tb[699*900+949])
 }
