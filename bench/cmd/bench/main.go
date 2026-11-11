@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -158,7 +159,7 @@ type File struct {
 var (
 	root       string
 	work       string
-	runRuns    = flag.Int("runs", 10, "run time samples per program (hyperfine)")
+	runRuns    = flag.Int("runs", 10, "run time samples per program ")
 	warmRuns   = flag.Int("warm-runs", 5, "warm build samples")
 	coldRuns   = flag.Int("cold-runs", 3, "cold build samples")
 	programs   = flag.String("programs", "", "comma separated program names (default: all)")
@@ -208,6 +209,7 @@ func main() {
 		return
 	}
 
+	lockBenchmarks()
 	usesMarmot := false
 	for _, t := range tcl {
 		if strings.HasPrefix(t.Name, "marmot") {
@@ -317,7 +319,7 @@ func measure(p Program, t Toolchain) Result {
 	if !*skipCold {
 		clean := t.Clean(root, work)
 		argv := t.Build(root, p.Pkg, out, true)
-		if st, err := hyperfineBuild(argv, clean, *coldRuns, 0, env); err != nil {
+		if st, err := timeBuild(argv, clean, *coldRuns, 0, env); err != nil {
 			r.Status, r.Error = "build_failed", trunc(err.Error())
 			return r
 		} else {
@@ -326,7 +328,7 @@ func measure(p Program, t Toolchain) Result {
 	}
 	// Warm build. One warmup populates the caches.
 	argv := t.Build(root, p.Pkg, out, false)
-	st, err := hyperfineBuild(argv, "", *warmRuns, 1, env)
+	st, err := timeBuild(argv, "", *warmRuns, 1, env)
 	if err != nil {
 		r.Status, r.Error = "build_failed", trunc(err.Error())
 		return r
@@ -354,11 +356,13 @@ func measure(p Program, t Toolchain) Result {
 		return r
 	}
 
-	if r.Run, err = hyperfineRun(out, *runRuns); err != nil {
+	var rss []int64
+	r.Run, rss, err = timeRuns(func() *exec.Cmd { return exec.Command(out) }, "", *runRuns, 1, os.Environ(), time.Duration(*timeoutSec)*time.Second)
+	if err != nil {
 		r.Status, r.Error = "run_failed", trunc(err.Error())
 		return r
 	}
-	r.RSS = peakRSS(out)
+	r.RSS = medianInt(rss)
 	r.Status = "ok"
 	return r
 }
@@ -375,72 +379,94 @@ func runOnce(bin string) (string, error) {
 	return so.String() + se.String(), err
 }
 
-func hyperfineBuild(argv []string, clean string, runs, warmup int, env []string) (*Stat, error) {
-	// First do one plain build to surface errors with readable output.
-	c := exec.Command(argv[0], argv[1:]...)
-	c.Dir, c.Env = root, env
-	if clean != "" {
-		cc := exec.Command("sh", "-c", clean)
-		cc.Dir, cc.Env = root, env
-		runGroup(cc, 2*time.Minute)
-	}
-	if out, err := runGroup(c, 10*time.Minute); err != nil {
-		return nil, fmt.Errorf("%v: %s", err, out)
-	}
-	args := []string{"--runs", strconv.Itoa(runs), "--warmup", strconv.Itoa(warmup), "--style", "none", "-N"}
-	if clean != "" {
-		args = append(args, "--prepare", clean)
-	}
-	return hyperfine(args, shellJoin(argv), env, root)
-}
-
-func hyperfineRun(bin string, runs int) (*Stat, error) {
-	return hyperfine([]string{"--runs", strconv.Itoa(runs), "--warmup", "1", "--style", "none", "-N", "--output=null"}, bin, os.Environ(), root)
-}
-
-func hyperfine(args []string, command string, env []string, dir string) (*Stat, error) {
-	tmp := filepath.Join(work, "hf.json")
-	os.Remove(tmp)
-	args = append(args, "--export-json", tmp, command)
-	c := exec.Command("hyperfine", args...)
-	c.Dir, c.Env = dir, env
-	// Generous bound: the longest legitimate hyperfine call is a few minutes.
-	if out, err := runGroup(c, 15*time.Minute); err != nil {
-		return nil, fmt.Errorf("hyperfine: %v: %s", err, out)
-	}
-	data, err := os.ReadFile(tmp)
-	if err != nil {
-		return nil, err
-	}
-	// hyperfine 2.x schema: results[0].summary.time_wall_clock.
-	var doc struct {
-		Results []struct {
-			Summary struct {
-				Wall struct {
-					Count                     int
-					Mean, Stddev, Median, Min float64
-				} `json:"time_wall_clock"`
-				CPU struct{ Median float64 } `json:"time_cpu"`
+// timeRuns runs a command warmup+runs times and summarizes the measured runs. Timing is done
+// here, with no external tools: wall time from the clock, CPU time and peak RSS from the child's
+// rusage. prepare, if not empty, is a shell command run before every run (not timed). The command
+// runs in its own process group with a timeout. rss holds the peak RSS in bytes of each run.
+func timeRuns(mk func() *exec.Cmd, prepare string, runs, warmup int, env []string, timeout time.Duration) (st *Stat, rss []int64, err error) {
+	var wall, cpu []float64
+	for i := 0; i < warmup+runs; i++ {
+		if prepare != "" {
+			cc := exec.Command("sh", "-c", prepare)
+			cc.Dir, cc.Env = root, env
+			runGroup(cc, 2*time.Minute)
+		}
+		c := mk()
+		c.Dir, c.Env = root, env
+		t0 := time.Now()
+		out, err := runGroup(c, timeout)
+		d := time.Since(t0)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%v: %s", err, trunc(string(out)))
+		}
+		if i < warmup {
+			continue
+		}
+		wall = append(wall, float64(d)/float64(time.Millisecond))
+		if ps := c.ProcessState; ps != nil {
+			cpu = append(cpu, float64(ps.UserTime()+ps.SystemTime())/float64(time.Millisecond))
+			if ru, ok := ps.SysUsage().(*syscall.Rusage); ok {
+				// Maxrss is in bytes on darwin and in kilobytes on linux.
+				n := int64(ru.Maxrss)
+				if runtime.GOOS != "darwin" {
+					n *= 1024
+				}
+				rss = append(rss, n)
 			}
 		}
 	}
-	if err := json.Unmarshal(data, &doc); err != nil || len(doc.Results) == 0 || doc.Results[0].Summary.Wall.Count == 0 {
-		return nil, fmt.Errorf("bad hyperfine output")
-	}
-	h := doc.Results[0].Summary.Wall
-	return &Stat{Min: h.Min * 1000, Median: h.Median * 1000, Mean: h.Mean * 1000, Stddev: h.Stddev * 1000, Runs: h.Count,
-		CPU: doc.Results[0].Summary.CPU.Median * 1000}, nil
+	st = summarize(wall)
+	st.CPU = median(cpu)
+	return st, rss, nil
 }
 
-func shellJoin(argv []string) string {
-	var q []string
-	for _, a := range argv {
-		if strings.ContainsAny(a, " \t\"'") {
-			a = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
-		}
-		q = append(q, a)
+func summarize(v []float64) *Stat {
+	s := &Stat{Runs: len(v)}
+	if len(v) == 0 {
+		return s
 	}
-	return strings.Join(q, " ")
+	x := append([]float64(nil), v...)
+	sort.Float64s(x)
+	s.Min, s.Median = x[0], median(x)
+	sum := 0.0
+	for _, e := range x {
+		sum += e
+	}
+	s.Mean = sum / float64(len(x))
+	if len(x) > 1 {
+		var sq float64
+		for _, e := range x {
+			sq += (e - s.Mean) * (e - s.Mean)
+		}
+		s.Stddev = math.Sqrt(sq / float64(len(x)-1))
+	}
+	return s
+}
+
+func median(v []float64) float64 {
+	if len(v) == 0 {
+		return 0
+	}
+	x := append([]float64(nil), v...)
+	sort.Float64s(x)
+	if len(x)%2 == 1 {
+		return x[len(x)/2]
+	}
+	return (x[len(x)/2-1] + x[len(x)/2]) / 2
+}
+
+func medianInt(v []int64) int64 {
+	if len(v) == 0 {
+		return 0
+	}
+	x := append([]int64(nil), v...)
+	sort.Slice(x, func(i, j int) bool { return x[i] < x[j] })
+	return x[len(x)/2]
+}
+
+func timeBuild(argv []string, clean string, runs, warmup int, env []string) (*Stat, error) {
+	st, _, err := timeRuns(func() *exec.Cmd { return exec.Command(argv[0], argv[1:]...) }, clean, runs, warmup, env, 10*time.Minute)
+	return st, err
 }
 
 func strippedSize(bin string) int64 {
@@ -458,28 +484,6 @@ func strippedSize(bin string) int64 {
 		return 0
 	}
 	return fi.Size()
-}
-
-var rssRe = regexp.MustCompile(`(\d+)\s+maximum resident set size`)
-
-// peakRSS returns the median of three /usr/bin/time -l measurements, in bytes.
-func peakRSS(bin string) int64 {
-	var v []int64
-	for i := 0; i < 3; i++ {
-		var se bytes.Buffer
-		c := exec.Command("/usr/bin/time", "-l", bin)
-		c.Stderr = &se
-		runGroup(c, time.Duration(*timeoutSec)*time.Second)
-		if m := rssRe.FindSubmatch(se.Bytes()); m != nil {
-			n, _ := strconv.ParseInt(string(m[1]), 10, 64)
-			v = append(v, n)
-		}
-	}
-	if len(v) == 0 {
-		return 0
-	}
-	sort.Slice(v, func(i, j int) bool { return v[i] < v[j] })
-	return v[len(v)/2]
 }
 
 func updateExpected(progs []Program) {
@@ -514,15 +518,26 @@ func collectMeta(tcl []Toolchain) Meta {
 	if *skipCold {
 		m.ColdRuns = 0
 	}
-	m.CPU = sh("sysctl", "-n", "machdep.cpu.brand_string")
-	m.MemBytes, _ = strconv.ParseInt(sh("sysctl", "-n", "hw.memsize"), 10, 64)
-	m.OS = sh("sw_vers", "-productName") + " " + sh("sw_vers", "-productVersion")
-	m.LoadAvg = sh("sysctl", "-n", "vm.loadavg")
+	if runtime.GOOS == "darwin" {
+		m.CPU = sh("sysctl", "-n", "machdep.cpu.brand_string")
+		m.MemBytes, _ = strconv.ParseInt(sh("sysctl", "-n", "hw.memsize"), 10, 64)
+		m.OS = sh("sw_vers", "-productName") + " " + sh("sw_vers", "-productVersion")
+		m.LoadAvg = sh("sysctl", "-n", "vm.loadavg")
+	} else {
+		m.CPU = procField("/proc/cpuinfo", "model name")
+		if kb, err := strconv.ParseInt(strings.Fields(procField("/proc/meminfo", "MemTotal"))[0], 10, 64); err == nil {
+			m.MemBytes = kb * 1024
+		}
+		m.OS = strings.Trim(procField("/etc/os-release", "PRETTY_NAME"), `"`) + " " + sh("uname", "-r")
+		if b, err := os.ReadFile("/proc/loadavg"); err == nil {
+			m.LoadAvg = strings.TrimSpace(string(b))
+		}
+	}
 	m.GitRev = sh("git", "-C", root, "rev-parse", "--short", "HEAD")
 	if snapDir != "" {
 		m.GitRev += " (snapshot " + filepath.Base(snapDir) + ")"
 	}
-	m.Hyperfine = sh("hyperfine", "--version")
+	m.Hyperfine = "built-in timer: wall clock, rusage CPU time and Maxrss, no external tools"
 	m.Versions["go"] = sh("go", "version")
 	m.Versions["tinygo"] = sh("tinygo", "version")
 	if v := sh(marmotBin(root), "version"); v != "" {
@@ -652,4 +667,35 @@ func makeSnapshot() {
 		check(fmt.Errorf("snapshot smoke run failed: %v got %q", err, got))
 	}
 	os.Remove(out)
+}
+
+// procField returns the value of the first "key: value" or "key=value" line in a file.
+func procField(path, key string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(l, key) {
+			if i := strings.IndexAny(l, ":="); i >= 0 {
+				return strings.TrimSpace(l[i+1:])
+			}
+		}
+	}
+	return ""
+}
+
+var lockFile *os.File
+
+// lockBenchmarks takes an exclusive lock so only one benchmark run times at a time on this
+// checkout, whoever started it. A second runner waits and says so.
+func lockBenchmarks() {
+	check(os.MkdirAll(filepath.Join(root, ".work"), 0o755))
+	f, err := os.OpenFile(filepath.Join(root, ".work", "bench.lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	check(err)
+	if syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+		fmt.Fprintln(os.Stderr, "another benchmark run holds .work/bench.lock; waiting")
+		check(syscall.Flock(int(f.Fd()), syscall.LOCK_EX))
+	}
+	lockFile = f // held until the process exits
 }
