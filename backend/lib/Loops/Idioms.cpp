@@ -325,7 +325,12 @@ bool IdiomPass::scan(Function &F, Loop *L, ScalarEvolution &SE, LoopInfo &LI, Do
   Value *n = exp.expandCodeFor(btc, i64, at);
   IRBuilder<> b(at);
   n = b.CreateAdd(n, ConstantInt::get(i64, 1), "scan.n");
-  Value *size = b.CreateUDiv(n, ConstantInt::get(i64, ScanBlocks), "scan.size");
+  // max(n/64, 1): known positive, so Rule P can prove the block windows of
+  // pass 2 disjoint (n/64 may be 0 as far as ScalarEvolution knows; then the
+  // original loop runs anyway).
+  Value *size = b.CreateBinaryIntrinsic(Intrinsic::umax,
+                                        b.CreateUDiv(n, ConstantInt::get(i64, ScanBlocks)),
+                                        ConstantInt::get(i64, 1), nullptr, "scan.size");
   Value *big = b.CreateICmpUGE(size, ConstantInt::get(i64, MinScanBlock), "scan.big");
   Value *r0 = r->getIncomingValueForBlock(pre);
   IRBuilder<> eb(&*F.getEntryBlock().getFirstInsertionPt());

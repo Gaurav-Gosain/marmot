@@ -6,7 +6,10 @@
 
 // REMARK: loops: sum: {{.*}}parallel, 1 reductions, 0 run time checks
 // REMARK: loops: scale: {{.*}}parallel, 0 reductions, 1 run time checks
-// REMARK: loops: prefix: {{.*}}not parallel: accesses of neighbouring iterations overlap
+// REMARK: loops: prefix: scan loop split into parallel blocks
+// REMARK: loops: prefix: loop scan.p1{{.*}}parallel, 0 reductions
+// REMARK: loops: prefix: loop scan.p2{{.*}}parallel, 0 reductions
+// REMARK: loops: recur: {{.*}}not parallel
 // REMARK: loops: fsum: {{.*}}not parallel: {{.*}}floating point reduction
 // REMARK: loops: search: {{.*}}not parallel: more than one exit
 // REMARK: loops: callsout: {{.*}}not parallel: call to ext
@@ -63,7 +66,7 @@ module {
     llvm.return
   }
 
-  // p[i] += p[i-1]: loop carried.
+  // p[i] += p[i-1]: a scan (Rule D), split into parallel blocks.
   llvm.func @prefix(%p: !llvm.ptr, %n: i64) {
     %c1 = llvm.mlir.constant(1 : i64) : i64
     %z = llvm.icmp "sgt" %n, %c1 : i64
@@ -75,6 +78,29 @@ module {
     %b = llvm.getelementptr %p[%i] : (!llvm.ptr, i64) -> !llvm.ptr, i64
     %u = llvm.load %b : !llvm.ptr -> i64
     %s = llvm.add %u, %v : i64
+    llvm.store %s, %b : i64, !llvm.ptr
+    %i2 = llvm.add %i, %c1 : i64
+    %c = llvm.icmp "slt" %i2, %n : i64
+    llvm.cond_br %c, ^loop(%i2 : i64), ^done
+  ^done:
+    llvm.return
+  }
+
+  // p[i] = 3*p[i-1] + p[i]: loop carried, not a scan (the accumulator is
+  // multiplied), so nothing happens.
+  llvm.func @recur(%p: !llvm.ptr, %n: i64) {
+    %c1 = llvm.mlir.constant(1 : i64) : i64
+    %c3 = llvm.mlir.constant(3 : i64) : i64
+    %z = llvm.icmp "sgt" %n, %c1 : i64
+    llvm.cond_br %z, ^loop(%c1 : i64), ^done
+  ^loop(%i: i64):
+    %im = llvm.sub %i, %c1 : i64
+    %a = llvm.getelementptr %p[%im] : (!llvm.ptr, i64) -> !llvm.ptr, i64
+    %v = llvm.load %a : !llvm.ptr -> i64
+    %v3 = llvm.mul %v, %c3 : i64
+    %b = llvm.getelementptr %p[%i] : (!llvm.ptr, i64) -> !llvm.ptr, i64
+    %u = llvm.load %b : !llvm.ptr -> i64
+    %s = llvm.add %u, %v3 : i64
     llvm.store %s, %b : i64, !llvm.ptr
     %i2 = llvm.add %i, %c1 : i64
     %c = llvm.icmp "slt" %i2, %n : i64
