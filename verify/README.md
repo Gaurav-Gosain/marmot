@@ -28,11 +28,12 @@ Tools:
 | P | Rule P clause 5 (independence) | iterations as lists of steps with read and write sets (`RuleP.lean`) | every interleaving of the iterations' steps ends with the sequential loop's memory; same-base windows with the clause 5 inequalities are disjoint | Lean (`schedule_eq`, `windows_disjoint`) | none yet |
 | R | Rule P clause 3 (reductions) | folds over lists (`RuleR.lean`) | chunk partials from the identity combined in any order give the serial result, for add, sub, xor, or, and, smin, smax, umin, umax on words; binary64 add is not associative | Lean (`split_eq`, `*_ok`); the float fact by `native_decide` (trusts Lean's compiler and the FPU) | none |
 | Escape | go-escape use rules (docs/passes.md) | provenance semantics: each instruction kind of the use table, any execution path (`Escape.lean`) | if the taint closure reaches no store value, sink or non-noescape call, no memory cell and no sink ever holds the allocation's address | Lean (`no_escape`) | none; the go.noescape callee contract is assumed; the cycle (slot reuse) rule and size limits are not proved |
+| Defer | open-coded defers (docs/frontend-passes.md) | paths in an acyclic region with a topological numbering; the runner as single steps over a pending bitmask (`Defer.lean`) | defers along any path have increasing numbers (descending = LIFO); under any interruptions the runner makes exactly the pending calls, each once, highest first | Lean (`path_increasing`, `runner_order`, `runner_once`) | none; the reverse postorder numbering and the runtime's re-entry on panic/Goexit are assumed |
 | Poly | Rule P clause 2 (polynomial inductions) | Nat and Int arithmetic (`Poly.lean`) | closed form equals the serial recurrence; halving in 64 bits is exact mod 2^N; halving after truncating to N bits is wrong | Lean | the counterexample reproduces on real output: `testdata/progs/polyinduct16.go` |
 
 Not proved yet: N1 (it is a fact about the runtime and LLVM: allocation results, `alloca`
 and global addresses are never null), Rule P rows and run time range checks, Rule V loaded
-bounds, Rules I, T, M, loop-jam, the escape cycle rule, regions, open-coded defers, the runtime
+bounds, Rules I, T, M, loop-jam, the escape cycle rule, regions, the runtime
 models. See docs/verify.md for the order of work.
 
 ## Certificate checking (go-bce)
