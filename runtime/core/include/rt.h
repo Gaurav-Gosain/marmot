@@ -259,6 +259,12 @@ intptr_t rt_hex_decode(uint8_t *dst, const void *src, intptr_t n);
 // used. The caller handles tails, padding and error reporting.
 intptr_t rt_base64_encode(uint8_t *dst, const void *src, intptr_t n, int32_t url);
 intptr_t rt_base64_decode(uint8_t *dst, const void *src, intptr_t n, int32_t url);
+// JSON scans: rt_json_plain returns the index of the first byte that
+// encoding/json escapes in HTML-safe mode (< 0x20, quote, backslash, <, >,
+// &, or >= 0x80 for the UTF-8 and U+2028/9 checks), rt_json_string_scan the
+// first quote, backslash or control byte; n if none.
+intptr_t rt_json_plain(const void *p, intptr_t n);
+intptr_t rt_json_string_scan(const void *p, intptr_t n);
 // wyhash (final v4): fast, good distribution, not a cryptographic hash.
 uint64_t rt_hash_bytes(const void *p, intptr_t n, uint64_t seed);
 uint64_t rt_hash_u64(uint64_t x, uint64_t seed);

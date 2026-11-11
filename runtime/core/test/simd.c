@@ -169,6 +169,21 @@ void marmot_main(void) {
     CHECK(got == want);
     CHECK(memcmp(dec, raw, (size_t)(got / 4 * 3)) == 0);
   }
+  // JSON scans against byte loops.
+  for (int iter = 0; iter < 20000; iter++) {
+    uint8_t b[100];
+    intptr_t n = (intptr_t)(rnd() % 100);
+    for (intptr_t i = 0; i < n; i++) b[i] = (uint8_t)('a' + rnd() % 26);
+    if (n && iter % 4) b[rnd() % (uint64_t)n] = (uint8_t)"\"\\<>&\x01\x1f\x80\xff "[rnd() % 11];
+    intptr_t w1 = n, w2 = n;
+    for (intptr_t i = 0; i < n; i++) {
+      uint8_t c = b[i];
+      if (w1 == n && (c < 0x20 || c >= 0x80 || c == '"' || c == '\\' || c == '<' || c == '>' || c == '&')) w1 = i;
+      if (w2 == n && (c < 0x20 || c == '"' || c == '\\')) w2 = i;
+    }
+    CHECK(rt_json_plain(b, n) == w1);
+    CHECK(rt_json_string_scan(b, n) == w2);
+  }
   // Valid multibyte text.
   const char *txt = "h\xc3\xa9llo w\xc3\xb6rld \xe4\xb8\x96\xe7\x95\x8c \xf0\x9f\x98\x80 end";
   intptr_t tn = (intptr_t)strlen(txt);

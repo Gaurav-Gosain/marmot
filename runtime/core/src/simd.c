@@ -677,3 +677,64 @@ RT_API intptr_t rt_base64_decode(uint8_t *dst, const void *src, intptr_t n, int3
   }
   return i;
 }
+
+// ---- JSON scans ----
+
+#if RT_NEON
+// 0xFF lanes for bytes encoding/json must escape (HTML-safe mode).
+INLINE uint8x16_t json_escape_lanes(uint8x16_t v) {
+  uint8x16_t m = vorrq_u8(vcltq_u8(v, vdupq_n_u8(0x20)), vcgeq_u8(v, vdupq_n_u8(0x80)));
+  m = vorrq_u8(m, vceqq_u8(v, vdupq_n_u8('"')));
+  m = vorrq_u8(m, vceqq_u8(v, vdupq_n_u8('\\')));
+  m = vorrq_u8(m, vceqq_u8(v, vdupq_n_u8('<')));
+  m = vorrq_u8(m, vceqq_u8(v, vdupq_n_u8('>')));
+  return vorrq_u8(m, vceqq_u8(v, vdupq_n_u8('&')));
+}
+
+INLINE uint8x16_t json_special_lanes(uint8x16_t v) {
+  uint8x16_t m = vcltq_u8(v, vdupq_n_u8(0x20));
+  m = vorrq_u8(m, vceqq_u8(v, vdupq_n_u8('"')));
+  return vorrq_u8(m, vceqq_u8(v, vdupq_n_u8('\\')));
+}
+
+INLINE uint64_t lane_mask(uint8x16_t m) {
+  return vget_lane_u64(vreinterpret_u64_u8(vshrn_n_u16(vreinterpretq_u16_u8(m), 4)), 0);
+}
+#endif
+
+INLINE int json_escape_byte(uint8_t c) {
+  return c < 0x20 || c >= 0x80 || c == '"' || c == '\\' || c == '<' || c == '>' || c == '&';
+}
+
+// Index of the first byte of p[0:n] that encoding/json would escape in
+// HTML-safe mode (< 0x20, quote, backslash, <, >, &, or any byte >= 0x80,
+// which needs the UTF-8 and U+2028/U+2029 checks), or n if none.
+RT_API intptr_t rt_json_plain(const void *s, intptr_t n) {
+  bp p = s;
+  intptr_t i = 0;
+#if RT_NEON
+  for (; i + 16 <= n; i += 16) {
+    uint64_t m = lane_mask(json_escape_lanes(vld1q_u8(p + i)));
+    if (m) return i + (intptr_t)(__builtin_ctzll(m) >> 2);
+  }
+#endif
+  for (; i < n; i++)
+    if (json_escape_byte(p[i])) return i;
+  return n;
+}
+
+// Index of the first quote, backslash or control byte (< 0x20) in p[0:n],
+// or n: the end of the plain part of a JSON string being decoded.
+RT_API intptr_t rt_json_string_scan(const void *s, intptr_t n) {
+  bp p = s;
+  intptr_t i = 0;
+#if RT_NEON
+  for (; i + 16 <= n; i += 16) {
+    uint64_t m = lane_mask(json_special_lanes(vld1q_u8(p + i)));
+    if (m) return i + (intptr_t)(__builtin_ctzll(m) >> 2);
+  }
+#endif
+  for (; i < n; i++)
+    if (p[i] < 0x20 || p[i] == '"' || p[i] == '\\') return i;
+  return n;
+}
