@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"go/token"
+	"strings"
 	"go/types"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
@@ -52,21 +53,41 @@ func (f *funcGen) index64(v ssa.Value) string {
 	return f.toInt64(f.value(v), v.Type())
 }
 
+// elemAddr returns &base[i] for elements of Go type et after checking
+// 0 <= i < n. idx is the SSA index (for constant folding and signedness).
+func (f *funcGen) elemAddr(base, n string, nconst int64, et types.Type, idx ssa.Value) string {
+	i := f.index64(idx)
+	mt := f.tm.memType(et)
+	if c, ok := idx.(*ssa.Const); ok && c.Value != nil && nconst >= 0 {
+		if k := c.Int64(); k >= 0 && k < nconst {
+			return f.gepDyn(base, mt, i) // statically in range
+		}
+	}
+	if f.goOps() {
+		uns := ""
+		if !isSigned(idx.Type()) {
+			uns = " unsigned"
+		}
+		return f.op("go.index %s[%s] len %s, %s%s : i64", base, i, n, mt, uns)
+	}
+	f.boundsCheck(i, n, isSigned(idx.Type()))
+	return f.gepDyn(base, mt, i)
+}
+
 func (f *funcGen) indexAddr(v *ssa.IndexAddr) {
 	x := f.value(v.X)
-	i := f.index64(v.Index)
 	switch u := v.X.Type().Underlying().(type) {
 	case *types.Pointer: // *[N]T
 		at := u.Elem().Underlying().(*types.Array)
-		f.nilCheck(x)
+		if needsNilCheck(v.X) {
+			f.nilCheck(x)
+		}
 		n := f.constInt(at.Len(), mlir.I64)
-		f.boundsCheck(i, n, isSigned(v.Index.Type()))
-		f.vals[v] = f.gepDyn(x, f.tm.memType(at.Elem()), i)
+		f.vals[v] = f.elemAddr(x, n, at.Len(), at.Elem(), v.Index)
 	case *types.Slice:
 		p := f.extractRaw(x, tSlice, 0)
 		n := f.extractRaw(x, tSlice, 1)
-		f.boundsCheck(i, n, isSigned(v.Index.Type()))
-		f.vals[v] = f.gepDyn(p, f.tm.memType(u.Elem()), i)
+		f.vals[v] = f.elemAddr(p, n, -1, u.Elem(), v.Index)
 	default:
 		f.fail(v.Pos(), "IndexAddr on %v", v.X.Type())
 	}
@@ -76,19 +97,15 @@ func (f *funcGen) index(v *ssa.Index) {
 	x := f.value(v.X)
 	switch u := v.X.Type().Underlying().(type) {
 	case *types.Basic: // string
-		i := f.index64(v.Index)
 		p := f.extractRaw(x, tString, 0)
 		n := f.extractRaw(x, tString, 1)
-		f.boundsCheck(i, n, isSigned(v.Index.Type()))
-		bp := f.gepDyn(p, mlir.I8, i)
+		bp := f.elemAddr(p, n, -1, types.Typ[types.Uint8], v.Index)
 		f.vals[v] = f.op("llvm.load %s : !llvm.ptr -> i8", bp)
 	case *types.Array:
 		at := f.tm.memType(v.X.Type())
 		if f.tm.isBig(v.X.Type()) {
-			i := f.index64(v.Index)
 			n := f.constInt(u.Len(), mlir.I64)
-			f.boundsCheck(i, n, isSigned(v.Index.Type()))
-			f.vals[v] = f.load(f.gepDyn(x, f.tm.memType(u.Elem()), i), u.Elem())
+			f.vals[v] = f.load(f.elemAddr(x, n, u.Len(), u.Elem(), v.Index), u.Elem())
 			return
 		}
 		if c, ok := v.Index.(*ssa.Const); ok && c.Value != nil {
@@ -99,11 +116,9 @@ func (f *funcGen) index(v *ssa.Index) {
 			f.vals[v] = f.extract(x, at, int(i), u.Elem())
 			return
 		}
-		i := f.index64(v.Index)
 		n := f.constInt(u.Len(), mlir.I64)
-		f.boundsCheck(i, n, isSigned(v.Index.Type()))
 		slot := f.spill(x, v.X.Type())
-		f.vals[v] = f.load(f.gepDyn(slot, f.tm.memType(u.Elem()), i), u.Elem())
+		f.vals[v] = f.load(f.elemAddr(slot, n, u.Len(), u.Elem(), v.Index), u.Elem())
 	default:
 		f.fail(v.Pos(), "Index on %v", v.X.Type())
 	}
@@ -129,7 +144,9 @@ func (f *funcGen) slice(v *ssa.Slice) {
 		elem = u.Elem()
 	case *types.Pointer:
 		at := u.Elem().Underlying().(*types.Array)
-		f.nilCheck(x)
+		if needsNilCheck(v.X) {
+			f.nilCheck(x)
+		}
 		base = x
 		length = f.constInt(at.Len(), mlir.I64)
 		capacity = length
@@ -148,6 +165,34 @@ func (f *funcGen) slice(v *ssa.Slice) {
 	mx := capacity
 	if v.Max != nil {
 		mx = f.index64(v.Max)
+	}
+	if f.goOps() {
+		allUnsigned := true
+		for _, x := range []ssa.Value{v.Low, v.High, v.Max} {
+			if x != nil && isSigned(x.Type()) {
+				allUnsigned = false
+			}
+		}
+		flags := ""
+		if _, isPtr := v.X.Type().Underlying().(*types.Pointer); isPtr {
+			flags += " len_bound"
+		}
+		if allUnsigned {
+			flags += " unsigned"
+		}
+		idx := lo + " : " + hi
+		if v.Max != nil {
+			idx += " : " + mx
+		}
+		rt := tSlice
+		et := f.tm.memType(elem)
+		if isStr {
+			rt = tString
+			et = mlir.I8
+			flags = strings.Replace(flags, " len_bound", "", 1)
+		}
+		f.vals[v] = f.op("go.slice %s[%s] cap %s, %s%s : i64 -> %s", base, idx, capacity, et, flags, rt)
+		return
 	}
 	// 0 <= lo <= hi <= max <= cap, unsigned compares, checked in the order
 	// gc checks them so the panic message matches.

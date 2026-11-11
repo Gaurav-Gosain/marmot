@@ -607,6 +607,10 @@ func needsNilCheck(addr ssa.Value) bool {
 }
 
 func (f *funcGen) nilCheck(p string) {
+	if f.goOps() {
+		f.emit("go.nil_check %s", p)
+		return
+	}
 	n := f.null()
 	c := f.op("llvm.icmp \"eq\" %s, %s : !llvm.ptr", p, n)
 	f.branchCold(c, func() {
