@@ -23,7 +23,7 @@ import (
 // the update, with nothing observable in between.
 
 func (f *funcGen) findMapFusions() {
-	if os.Getenv("MARMOT_NO_MAPFUSE") != "" {
+	if !optMapFuse || os.Getenv("MARMOT_NO_MAPFUSE") != "" {
 		return
 	}
 	for _, b := range f.fn.Blocks {

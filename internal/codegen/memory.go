@@ -435,6 +435,9 @@ func (f *funcGen) appendValues(sv ssa.Value, elems []ssa.Value) string {
 // findAppendMake finds append(s, make([]T, n)...) whose make has no other
 // use: gc extends s by n zeroed elements without the temporary slice.
 func (f *funcGen) findAppendMake() {
+	if !optAppendMake {
+		return
+	}
 	for _, b := range f.fn.Blocks {
 		for _, instr := range b.Instrs {
 			c, ok := instr.(*ssa.Call)

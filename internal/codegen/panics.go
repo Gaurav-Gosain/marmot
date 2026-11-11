@@ -129,8 +129,9 @@ func (p *Program) instrMayPanic(instr ssa.Instruction, known map[ssa.Value]bool)
 			}
 			return isSigned(x.Y.Type())
 		case token.EQL, token.NEQ:
-			// Comparing interfaces holding uncomparable types panics.
-			return types.IsInterface(x.X.Type())
+			// Comparing interfaces holding uncomparable types panics, also
+			// inside structs and arrays (spec audit defer_cmp_iface).
+			return containsInterface(x.X.Type(), 0)
 		}
 		return false
 	case *ssa.IndexAddr:
@@ -169,6 +170,9 @@ func (p *Program) instrMayPanic(instr ssa.Instruction, known map[ssa.Value]bool)
 // deferRecordNeeded reports whether an open-coded defer frame needs its
 // _defer record: something may panic while a deferred call is pending.
 func (p *Program) deferRecordNeeded(fn *ssa.Function, od *openDefers) bool {
+	if !optDeferElide {
+		return true
+	}
 	known := map[ssa.Value]bool{}
 	// Any instruction of the function may run while a defer is pending
 	// (conservative: also those before the first defer).
@@ -222,3 +226,28 @@ func (p *Program) deferRecordNeeded(fn *ssa.Function, od *openDefers) bool {
 }
 
 var _ = fmt.Sprint
+
+// containsInterface reports whether comparing values of type t can reach an
+// interface comparison (struct fields and array elements, recursively;
+// type parameters count).
+func containsInterface(t types.Type, depth int) bool {
+	if depth > 16 {
+		return true
+	}
+	switch u := t.Underlying().(type) {
+	case *types.Interface:
+		return true
+	case *types.Struct:
+		for i := 0; i < u.NumFields(); i++ {
+			if containsInterface(u.Field(i).Type(), depth+1) {
+				return true
+			}
+		}
+	case *types.Array:
+		return containsInterface(u.Elem(), depth+1)
+	}
+	if _, ok := t.(*types.TypeParam); ok {
+		return true
+	}
+	return false
+}
