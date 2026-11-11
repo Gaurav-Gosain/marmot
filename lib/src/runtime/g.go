@@ -42,6 +42,8 @@ type g struct {
 	// FIPS 140 service indicator and bypass flag (crypto packages).
 	fipsIndicator  uint8
 	fipsOnlyBypass bool
+	// labels is the runtime/pprof label set of this goroutine.
+	labels unsafe.Pointer
 }
 
 // sudog is a goroutine waiting on a channel.

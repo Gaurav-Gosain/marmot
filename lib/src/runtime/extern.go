@@ -118,8 +118,44 @@ func Caller(skip int) (pc uintptr, file string, line int, ok bool) {
 }
 
 // Callers fills pc with the return program counters of function
-// invocations; marmot records none.
-func Callers(skip int, pc []uintptr) int { return 0 }
+// invocations on the calling goroutine's stack, found by walking the
+// frame record chain. skip 0 and 1 both start at the caller of Callers
+// (marmot has no pc for Callers itself). The pcs carry no symbol
+// information yet: CallersFrames reports them without function names.
+//
+//go:noinline
+func Callers(skip int, pc []uintptr) int {
+	if skip > 0 {
+		skip--
+	}
+	return callers(getcallerfp(), skip, pc)
+}
+
+// callers walks the frame records from fp, skips skip frames and stores
+// the return addresses in pc. The walk stops at a zero or non-increasing
+// frame pointer (the base of a goroutine or thread stack).
+func callers(fp uintptr, skip int, pc []uintptr) int {
+	n := 0
+	for fp != 0 && n < len(pc) {
+		next := *(*uintptr)(unsafe.Pointer(fp))
+		ret := *(*uintptr)(unsafe.Pointer(fp + goarch.PtrSize))
+		if ret == 0 {
+			break
+		}
+		if skip > 0 {
+			skip--
+		} else {
+			pc[n] = ret
+			n++
+		}
+		if next <= fp || next-fp > 1<<24 {
+			break
+		}
+		fp = next
+	}
+	return n
+}
+
 
 // Func represents a function in the running binary.
 type Func struct {

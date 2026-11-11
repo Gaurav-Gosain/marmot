@@ -107,3 +107,38 @@ func fcntl(fd, cmd, arg int32) (ret int32, errno int32) {
 	}
 	return int32(r), 0
 }
+
+// Virtual memory mappings for runtime/pprof (the mapping section of a
+// profile).
+
+func libc_mach_task_self_trampoline()
+func libc_mach_vm_region_trampoline()
+func libc_proc_regionfilename_trampoline()
+
+//go:cgo_import_dynamic libc_mach_task_self mach_task_self "/usr/lib/libSystem.B.dylib"
+//go:cgo_import_dynamic libc_mach_vm_region mach_vm_region "/usr/lib/libSystem.B.dylib"
+//go:cgo_import_dynamic libc_proc_regionfilename proc_regionfilename "/usr/lib/libSystem.B.dylib"
+
+//go:linkname mach_vm_region runtime/pprof.mach_vm_region
+func mach_vm_region(address, region_size *uint64, info unsafe.Pointer) int32 {
+	const (
+		vmRegionBasicInfo64      = 9
+		vmRegionBasicInfoCount64 = 9
+	)
+	var e int32
+	task := rt_libcall(unsafe.Pointer(abi.FuncPCABI0(libc_mach_task_self_trampoline)), nil, 0, 0, &e)
+	count := uint32(vmRegionBasicInfoCount64)
+	var objectName uint32
+	args := [7]uintptr{
+		uintptr(task), uintptr(unsafe.Pointer(address)), uintptr(unsafe.Pointer(region_size)),
+		vmRegionBasicInfo64, uintptr(info), uintptr(unsafe.Pointer(&count)), uintptr(unsafe.Pointer(&objectName)),
+	}
+	return int32(rt_libcall(unsafe.Pointer(abi.FuncPCABI0(libc_mach_vm_region_trampoline)), unsafe.Pointer(&args[0]), 7, 7, &e))
+}
+
+//go:linkname proc_regionfilename runtime/pprof.proc_regionfilename
+func proc_regionfilename(pid int, address uint64, buf *byte, buflen int64) int32 {
+	var e int32
+	args := [4]uintptr{uintptr(pid), uintptr(address), uintptr(unsafe.Pointer(buf)), uintptr(buflen)}
+	return int32(rt_libcall(unsafe.Pointer(abi.FuncPCABI0(libc_proc_regionfilename_trampoline)), unsafe.Pointer(&args[0]), 4, 4, &e))
+}
