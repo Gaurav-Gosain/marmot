@@ -348,6 +348,38 @@ func countAndMark(b []byte, c byte) int {
 	return n
 }
 
+// Reduction arrays (Rule P condition 5, privatized): each chunk counts into
+// a private zeroed copy, merged with atomic adds.
+//go:noinline
+func histo(b []byte) [256]int {
+	var h [256]int
+	for _, x := range b {
+		h[x]++
+	}
+	return h
+}
+
+var ghist [64]int32
+
+//go:noinline
+func histoGlobal(b []byte) {
+	for i := range b {
+		ghist[b[i]&63] += int32(i & 3)
+	}
+}
+
+// Not privatizable: the array is also read at another index in the loop.
+//go:noinline
+func histoPeek(b []byte) (int, [16]int) {
+	var h [16]int
+	peek := 0
+	for _, x := range b {
+		h[x&15]++
+		peek += h[0]
+	}
+	return peek, h
+}
+
 func main() {
 	a := make([]int64, n)
 	fill(a, 42)
@@ -467,5 +499,16 @@ func main() {
 	}
 	println("bytecount", countEq(bb, 3, 5), countEq(bb[17:99999], 200, 0), countNe(bb, 9), countEq(bb[:0], 1, 7))
 	println("countmark", countAndMark(bb, 3), countEq(bb, 3, 0), countEq(bb, 4, 0))
+	hb := make([]byte, 3000017)
+	for i := range hb {
+		hb[i] = byte(i*13 + i/7)
+	}
+	hh := histo(hb)
+	println("histo", hh[0], hh[17], hh[255])
+	histoGlobal(hb)
+	histoGlobal(hb[5:])
+	println("histoglobal", ghist[0], ghist[33], ghist[63])
+	pk, ph := histoPeek(hb[:200000])
+	println("histopeek", pk, ph[3])
 	println("transpose-overlap", sum(tb), tb[5*900+7], tb[699*900+949])
 }

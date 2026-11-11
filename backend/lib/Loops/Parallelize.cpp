@@ -31,6 +31,7 @@
 #include "llvm/Analysis/MemoryLocation.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Verifier.h"
@@ -106,6 +107,7 @@ struct Access {
   const SCEV *coef = nullptr, *lo = nullptr, *hi = nullptr;
   uint64_t size = 0;
   int family = -1; // row access: index into Plan::families
+  int priv = -1;   // access to a privatized reduction array (Plan::privs)
 };
 
 // Rows reached through one row pointer load `p = load(table + slot)`, with
@@ -160,6 +162,16 @@ struct Plan {
   };
   std::vector<GpuRange> gpuRanges;
   bool gpuOK = false;
+  // Reduction arrays (hist[b]++): an alloca or global of `bytes` bytes
+  // whose only accesses in L are `x = x + v` on elements of type elem. Each
+  // chunk works on a zeroed private copy and adds it into the object at the
+  // end with atomic adds.
+  struct Private {
+    Value *object;
+    uint64_t bytes;
+    IntegerType *elem;
+  };
+  std::vector<Private> privs;
 };
 
 const char *kindName(RedKind k) {
@@ -279,6 +291,7 @@ private:
   bool analyzeBody(Loop *L, Plan &P, std::vector<Access> &accs);
   bool analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs);
   bool rowAccess(Loop *L, Plan &P, Access &a);
+  void privatize(Loop *L, Plan &P, std::vector<Access> &accs);
   bool interleaved(Loop *L, Plan &P, Access &x, Access &y);
   bool decompose(const SCEV *S, Loop *L, const SCEV *&coef, const SCEV *&lo,
                  const SCEV *&hi);
@@ -832,6 +845,103 @@ bool Parallelizer::interleaved(Loop *L, Plan &P, Access &x, Access &y) {
   return true;
 }
 
+// Rule P condition 5, reduction arrays: an alloca or global (at most
+// MaxPrivateBytes) whose every access in L is a load/store pair on one
+// address computing x + v (or x - v) on one integer type, at offsets that are
+// multiples of its size, and that alias analysis separates from every other
+// access in L. Integer addition wraps and commutes, so chunks may count into
+// private zeroed copies and add them into the object in any order.
+constexpr uint64_t MaxPrivateBytes = 16384;
+
+void Parallelizer::privatize(Loop *L, Plan &P, std::vector<Access> &accs) {
+  for (Access &st : accs) {
+    if (!st.store || st.affine || st.priv >= 0)
+      continue;
+    auto *si = cast<StoreInst>(st.inst);
+    Value *obj = getUnderlyingObject(si->getPointerOperand());
+    uint64_t bytes = 0;
+    if (auto *ai = dyn_cast<AllocaInst>(obj)) {
+      std::optional<TypeSize> sz = ai->getAllocationSize(DL);
+      if (!ai->isStaticAlloca() || !sz || sz->isScalable())
+        continue;
+      bytes = sz->getFixedValue();
+    } else if (auto *gv = dyn_cast<GlobalVariable>(obj)) {
+      if (gv->isConstant() || !gv->hasInitializer())
+        continue;
+      bytes = DL.getTypeAllocSize(gv->getValueType());
+    } else {
+      continue;
+    }
+    if (bytes == 0 || bytes > MaxPrivateBytes || L->contains(dyn_cast<Instruction>(obj)))
+      continue;
+    // Every access to obj in L: a pair x = load p; store p, x +/- v.
+    auto *ity = dyn_cast<IntegerType>(si->getValueOperand()->getType());
+    if (!ity || bytes % (ity->getBitWidth() / 8) != 0)
+      continue;
+    uint64_t esz = ity->getBitWidth() / 8;
+    bool ok = true;
+    SmallVector<Access *, 4> mine;
+    for (Access &a : accs) {
+      if (getUnderlyingObject(a.ptr) != obj)
+        continue;
+      mine.push_back(&a);
+      if (a.inst->getType() != ity && (!a.store || cast<StoreInst>(a.inst)->getValueOperand()->getType() != ity))
+        ok = false;
+      if (a.store) {
+        auto *s2 = cast<StoreInst>(a.inst);
+        Value *v = s2->getValueOperand();
+        auto *bo = dyn_cast<BinaryOperator>(v);
+        LoadInst *ld = nullptr;
+        if (bo && (bo->getOpcode() == Instruction::Add || bo->getOpcode() == Instruction::Sub)) {
+          ld = dyn_cast<LoadInst>(bo->getOperand(0));
+          if (!ld && bo->getOpcode() == Instruction::Add)
+            ld = dyn_cast<LoadInst>(bo->getOperand(1));
+        }
+        if (!ld || ld->getPointerOperand() != s2->getPointerOperand() || !ld->isSimple() ||
+            !ld->hasOneUse())
+          ok = false;
+      } else {
+        // The load must feed exactly the store's update.
+        auto *ld = cast<LoadInst>(a.inst);
+        bool feeds = ld->hasOneUse();
+        if (feeds) {
+          auto *bo = dyn_cast<BinaryOperator>(*ld->user_begin());
+          feeds = bo && bo->hasOneUse() && isa<StoreInst>(*bo->user_begin()) &&
+                  cast<StoreInst>(*bo->user_begin())->getPointerOperand() == ld->getPointerOperand();
+        }
+        ok &= feeds;
+      }
+      // Element aligned offsets.
+      const SCEV *off = SE.getMinusSCEV(SE.getSCEV(a.ptr), SE.getSCEV(obj));
+      if (isa<SCEVCouldNotCompute>(off) || SE.getConstantMultiple(off).urem(esz) != 0)
+        ok = false;
+    }
+    if (!ok)
+      continue;
+    // Separate from every other access in L.
+    // Every access to obj has the same type, so its type class metadata
+    // describes all of them.
+    MemoryLocation oloc(obj, LocationSize::precise(bytes), si->getAAMetadata());
+    for (Access &a : accs) {
+      if (is_contained(mine, &a))
+        continue;
+      if (!AA.isNoAlias(oloc, MemoryLocation::getBeforeOrAfter(a.ptr, a.inst->getAAMetadata())))
+        ok = false;
+    }
+    for (BasicBlock *bb : L->blocks())
+      for (Instruction &I : *bb)
+        if (auto *cb = dyn_cast<CallBase>(&I))
+          if (isModOrRefSet(AA.getModRefInfo(cb, oloc)))
+            ok = false;
+    if (!ok)
+      continue;
+    int idx = int(P.privs.size());
+    P.privs.push_back({obj, bytes, ity});
+    for (Access *a : mine)
+      a->priv = idx;
+  }
+}
+
 // Rule P, memory part: different iterations touch disjoint bytes of every
 // object some iteration writes.
 bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
@@ -853,11 +963,12 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
     if (isa<SCEVCouldNotCompute>(a.base))
       a.affine = false;
   }
+  privatize(L, P, accs);
   for (Access &a : accs)
-    if (!a.affine)
+    if (!a.affine && a.priv < 0)
       rowAccess(L, P, a);
   for (Access &a : accs)
-    if (a.store && !a.affine && a.family < 0) {
+    if (a.store && !a.affine && a.family < 0 && a.priv < 0) {
       softMemReject = true;
       std::string t;
       raw_string_ostream os(t);
@@ -930,6 +1041,8 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
   };
   std::vector<Unit> units;
   for (Access &a : accs) {
+    if (a.priv >= 0)
+      continue; // private per chunk; disjoint from everything else (checked)
     if (a.family >= 0) {
       Unit *u = nullptr;
       for (Unit &uu : units)
@@ -1122,6 +1235,18 @@ Function *Parallelizer::outline(Plan &P, StructType *ctxTy) {
     Value *addr = b.CreateStructGEP(ctxTy, ctx, i);
     vmap[v] = b.CreateLoad(v->getType(), addr, v->getName() + ".in");
   }
+  // Reduction arrays: the chunk counts into a zeroed private copy.
+  SmallVector<std::pair<Value *, Value *>, 2> privPairs; // shared, private
+  for (Plan::Private &pv : P.privs) {
+    auto it = vmap.find(pv.object);
+    Value *shared = it != vmap.end() ? static_cast<Value *>(it->second) : pv.object;
+    AllocaInst *priv = b.CreateAlloca(ArrayType::get(b.getInt8Ty(), pv.bytes), nullptr,
+                                      pv.object->getName() + ".priv");
+    priv->setAlignment(Align(16));
+    b.CreateMemSet(priv, b.getInt8(0), pv.bytes, Align(16));
+    vmap[pv.object] = priv;
+    privPairs.push_back({shared, priv});
+  }
   vmap[L->getLoopPreheader()] = entry;
   vmap[L->getExitBlock()] = exit;
   SmallVector<BasicBlock *, 16> blocks;
@@ -1235,8 +1360,35 @@ Function *Parallelizer::outline(Plan &P, StructType *ctxTy) {
   if (!L->getSubLoops().empty())
     nbr->setMetadata("marmot.jam", MDNode::get(C, {}));
 
+  // Add the private reduction arrays into the shared objects.
+  BasicBlock *tail = exit;
+  for (size_t pi = 0; pi < privPairs.size(); pi++) {
+    Plan::Private &pv = P.privs[pi];
+    Value *shared = privPairs[pi].first, *priv = privPairs[pi].second;
+    uint64_t n = pv.bytes / (pv.elem->getBitWidth() / 8);
+    BasicBlock *loop = BasicBlock::Create(C, "priv.add", body);
+    BasicBlock *put = BasicBlock::Create(C, "priv.put", body);
+    BasicBlock *next = BasicBlock::Create(C, "priv.next", body);
+    BasicBlock *done = BasicBlock::Create(C, "priv.done", body);
+    IRBuilder<> tb(tail);
+    tb.CreateBr(loop);
+    IRBuilder<> lb2(loop);
+    PHINode *e = lb2.CreatePHI(i64, 2, "e");
+    e->addIncoming(ConstantInt::get(i64, 0), tail);
+    Value *v = lb2.CreateLoad(pv.elem, lb2.CreateGEP(pv.elem, priv, e));
+    lb2.CreateCondBr(lb2.CreateICmpNE(v, ConstantInt::get(pv.elem, 0)), put, next);
+    IRBuilder<> pb2(put);
+    pb2.CreateAtomicRMW(AtomicRMWInst::Add, pb2.CreateGEP(pv.elem, shared, e), v, MaybeAlign(),
+                        AtomicOrdering::Monotonic);
+    pb2.CreateBr(next);
+    IRBuilder<> nb(next);
+    Value *e2 = nb.CreateAdd(e, ConstantInt::get(i64, 1));
+    e->addIncoming(e2, next);
+    nb.CreateCondBr(nb.CreateICmpNE(e2, ConstantInt::get(i64, n)), loop, done);
+    tail = done;
+  }
   // Combine partial reductions.
-  IRBuilder<> eb(exit);
+  IRBuilder<> eb(tail);
   for (unsigned i = 0; i < P.reds.size(); i++) {
     Reduction &R = P.reds[i];
     Value *part = vmap[R.next];
@@ -1394,7 +1546,8 @@ void Parallelizer::transform(Plan &P) {
   Value *btc = exp.expandCodeFor(SE.getBackedgeTakenCount(L), nullptr, at);
   IRBuilder<> b(at);
   Value *tc = b.CreateAdd(b.CreateZExtOrTrunc(btc, i64), ConstantInt::get(i64, 1), "par.tc");
-  bool innermost = L->getSubLoops().empty();
+  // Innermost loops with reduction arrays scatter; they do not vectorize.
+  bool innermost = L->getSubLoops().empty() && P.privs.empty();
   uint64_t minWork = innermost ? MinParallelWorkInner : MinParallelWork;
   uint64_t minIters = std::max<uint64_t>(2, (minWork + P.costPerIter - 1) / P.costPerIter);
   if (ForcePar)
@@ -1436,10 +1589,13 @@ void Parallelizer::transform(Plan &P) {
   uint64_t grainIters = std::max<uint64_t>(1, (grainWork + P.costPerIter - 1) / P.costPerIter);
   if (ForcePar)
     grainIters = 1;
+  // Chunks with private reduction arrays pay a clear and a merge each: about
+  // one chunk per core (tc/12), not 64.
+  Value *share = P.privs.empty() ? b.CreateLShr(tc, 6) : b.CreateUDiv(tc, ConstantInt::get(i64, 12));
   Value *grain = ForcePar ? static_cast<Value *>(ConstantInt::get(i64, 1))
                           : b.CreateBinaryIntrinsic(Intrinsic::umax,
-                                                    ConstantInt::get(i64, grainIters),
-                                                    b.CreateLShr(tc, 6), nullptr, "par.grain");
+                                                    ConstantInt::get(i64, grainIters), share,
+                                                    nullptr, "par.grain");
 
   BasicBlock *par = BasicBlock::Create(C, "par.run", &F, header);
   b.CreateCondBr(cond, par, header);
