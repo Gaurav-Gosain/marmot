@@ -487,6 +487,7 @@ static void mark_roots(void) {
   for (int32_t i = 0; i < nroots; i++) gc_scan_range(roots[i].lo, roots[i].hi);
   sched_scan_roots(gc_scan_range);
   timers_scan_roots(gc_scan_range);
+  regions_scan_roots(gc_scan_range);
   for (uintptr_t i = 0; i < finqlen; i++) mark_ptr(w, finq[i].obj);
   mark_parallel();
 }

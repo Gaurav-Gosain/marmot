@@ -91,6 +91,11 @@ void rt_gosched(void);
 void rt_park(void (*unlock)(void *), void *lock);
 // Make a parked goroutine runnable. Safe from any thread.
 void rt_ready(rt_g *g);
+// Ready target and park the caller, running target next on this thread with
+// no queueing or wakeup (direct handoff, for unbuffered channels and
+// similar rendezvous). target must be parked, as for rt_ready; unlock/lock
+// as for rt_park.
+void rt_handoff(rt_g *target, void (*unlock)(void *), void *lock);
 // End the current goroutine (runtime.Goexit after defers have run).
 void rt_goexit(void) __attribute__((noreturn));
 // Per-goroutine slot for the Go runtime (defer chain, panic state). The slot
@@ -115,6 +120,19 @@ int32_t rt_numcpu(void);
 // body must not panic. Nested calls are fine.
 void rt_parallel_for(int64_t n, int64_t grain, void (*body)(void *ctx, int64_t lo, int64_t hi),
                      void *ctx);
+
+// ---- Regions ----
+//
+// Bump allocation for objects the compiler proves dead when the region is
+// freed. rt_region_alloc returns zeroed, 16-byte aligned memory; its fast
+// path is a pointer bump (inlinable). Region memory is scanned as a GC root
+// (conservatively) while the region lives, so region objects may point to
+// heap objects; heap objects and globals must never point into a region.
+// A region belongs to one goroutine at a time.
+typedef struct rt_region rt_region;
+rt_region *rt_region_new(void);
+void *rt_region_alloc(rt_region *r, uintptr_t size);
+void rt_region_free(rt_region *r);
 
 // ---- Locks (for the Go runtime's own data structures) ----
 

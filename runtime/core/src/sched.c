@@ -726,7 +726,18 @@ static rt_g *stealwork(rt_m *m) {
 static rt_g *findrunnable(rt_m *m) {
   rt_g *g;
   if (!m->p) goto stop;
+  if (m->handoff_g && !atomic_load(&sched.gcwaiting)) {
+    g = m->handoff_g;
+    m->handoff_g = NULL;
+    goto found;
+  }
 top:
+  if (m->handoff_g) {
+    // A stop the world is pending: queue the handoff target normally.
+    g = m->handoff_g;
+    m->handoff_g = NULL;
+    runqput(m->p, g, true);
+  }
   if (atomic_load(&sched.gcwaiting)) {
     sched_stop_self(NULL, 0);
     goto top;
@@ -912,6 +923,16 @@ static void schedule_loop(rt_m *m) {
         goexit_final(g);
         if (m->p) gfput(m->p, g);
         break;
+      case REQ_HANDOFF: {
+        void (*f)(void *) = m->unlockf;
+        void *arg = m->unlockarg;
+        m->unlockf = NULL;
+        m->unlockarg = NULL;
+        atomic_store_explicit(&g->status, G_WAITING, memory_order_release);
+        if (f) f(arg);
+        // m->handoff_g runs next (findrunnable takes it first).
+        break;
+      }
       case REQ_EXITSYSCALL:
         atomic_store(&g->status, G_RUNNABLE);
         spin_lock(&sched.lock);
@@ -975,6 +996,18 @@ RT_API void rt_park(void (*unlock)(void *), void *lock) {
   m->unlockf = unlock;
   m->unlockarg = lock;
   mcall(REQ_PARK);
+  rt_safepoint();
+}
+
+RT_API void rt_handoff(rt_g *target, void (*unlock)(void *), void *lock) {
+  uint32_t s = G_WAITING;
+  if (!atomic_compare_exchange_strong(&target->status, &s, G_RUNNABLE))
+    rt_throw("rt_handoff: goroutine is not waiting");
+  rt_m *m = getm();
+  m->handoff_g = target;
+  m->unlockf = unlock;
+  m->unlockarg = lock;
+  mcall(REQ_HANDOFF);
   rt_safepoint();
 }
 

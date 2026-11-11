@@ -186,6 +186,7 @@ enum {
   REQ_GOSCHED,
   REQ_EXIT,
   REQ_EXITSYSCALL,  // exitsyscall found no P: queue the goroutine globally
+  REQ_HANDOFF,      // park and run m->handoff_g next on this M
 };
 
 enum {
@@ -234,6 +235,7 @@ struct rt_m {
   note park;
   // Scheduling request from curg.
   int32_t req;
+  rt_g *handoff_g;          // REQ_HANDOFF target, then the next goroutine to run
   void (*unlockf)(void *);
   void *unlockarg;
   // Stop-the-world state.
@@ -357,6 +359,9 @@ void itimer_start(rt_timer *t, int64_t when, void (*fn)(void *), void *arg);
 bool itimer_stop(rt_timer *t);  // true if stopped before firing
 // Called by timer code after adding a timer that fires at when.
 void sched_timer_added(int64_t when);
+
+// ---- Regions (region.c) ----
+void regions_scan_roots(void (*scan)(uintptr_t lo, uintptr_t hi));
 
 // ---- Memory (malloc.c, gc.c) ----
 

@@ -23,6 +23,17 @@ static node *build(int d) {
 
 static long check(node *n) { return n->l ? 1 + check(n->l) + check(n->r) : 1; }
 
+// The same trees in a region per iteration, as escape analysis with regions
+// would compile `c += build(d).check()`.
+static node *build_r(rt_region *rg, int d) {
+  node *n = rt_region_alloc(rg, sizeof(node));
+  if (d > 0) {
+    n->l = build_r(rg, d - 1);
+    n->r = build_r(rg, d - 1);
+  }
+  return n;
+}
+
 void marmot_main(void) {
   int max = 19;
   int64_t t0 = rt_nanotime();
@@ -40,5 +51,20 @@ void marmot_main(void) {
   rt_gc_stats(&st);
   printf("bintrees: %.3f s wall, %.3f s cpu, %lld GCs, pause total %.1f ms, check %ld %ld\n", (t1 - t0) / 1e9, cpu_s() - c0,
          (long long)st.num_gc, st.pause_total_ns / 1e6, check(lng), total);
+  t0 = rt_nanotime();
+  c0 = cpu_s();
+  total = 0;
+  for (int d = 4; d <= max; d += 4) {
+    int iters = 1 << (max - d + 4);
+    long c = 0;
+    for (int i = 0; i < iters; i++) {
+      rt_region *rg = rt_region_new();
+      c += check(build_r(rg, d));
+      rt_region_free(rg);
+    }
+    total += c;
+  }
+  t1 = rt_nanotime();
+  printf("bintrees with regions: %.3f s wall, %.3f s cpu, check %ld\n", (t1 - t0) / 1e9, cpu_s() - c0, total);
   fflush(stdout);
 }
