@@ -123,6 +123,12 @@ type uncommontype struct {
 	// reflect.PointerTo use it so that their results have the canonical
 	// descriptor.
 	ptrToThis *_type
+	// tfns, parallel to methods, holds for each method a func-value
+	// wrapper for reflect: it is called like a closure whose object is
+	// {tfn, recv} (recv is the interface data word) and calls
+	// ifn(recv, args...). tfns or any entry may be nil when the program
+	// cannot call methods through reflect.
+	tfns *unsafe.Pointer
 }
 
 // method is one entry of a method set.
@@ -138,11 +144,6 @@ type method struct {
 	// the method parameters. It takes no hidden closure parameter. nil if
 	// the compiler proved the method is never called through an interface.
 	ifn unsafe.Pointer
-	// tfn is a func-value wrapper for the method, for reflect: it is
-	// called like a closure whose object is {tfn, recv} (recv is the
-	// interface data word) and calls ifn(recv, args...). nil when the
-	// program cannot call methods through reflect.
-	tfn unsafe.Pointer
 }
 
 // ptrtype describes *elem.

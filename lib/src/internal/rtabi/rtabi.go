@@ -67,6 +67,15 @@ type UncommonType struct {
 	Mcount    uint32
 	Xcount    uint32
 	PtrToThis *Type
+	Tfns      *unsafe.Pointer
+}
+
+// Tfn returns the reflect wrapper of method i, or nil.
+func (u *UncommonType) Tfn(i int) unsafe.Pointer {
+	if u.Tfns == nil {
+		return nil
+	}
+	return *(*unsafe.Pointer)(unsafe.Add(unsafe.Pointer(u.Tfns), uintptr(i)*unsafe.Sizeof(uintptr(0))))
 }
 
 // Method is runtime.method.
@@ -74,7 +83,6 @@ type Method struct {
 	Name string
 	Mtyp *Type
 	Ifn  unsafe.Pointer
-	Tfn  unsafe.Pointer
 }
 
 // PtrType is runtime.ptrtype.
