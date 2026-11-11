@@ -96,6 +96,44 @@ func selectgo(cases *scase, ncases int, block bool) (chosen int, recvOK bool) {
 	norder := len(pollorder)
 	lockorder = lockorder[:norder]
 
+	// Lock-free pass over the leading buffered cases in poll order: their
+	// rings need no channel lock, so a ready one completes without
+	// sorting or locking anything. The pass stops at the first unbuffered
+	// case, which the locked passes below handle, so the choice among
+	// ready cases still follows the random poll order.
+	for _, casei := range pollorder {
+		casi := int(casei)
+		cas := cases.at(casi)
+		c := cas.c
+		if c.dataqsiz == 0 {
+			break
+		}
+		if cas.send {
+			switch c.ringPush(cas.elem) {
+			case ringClosed:
+				panic(plainError("send on closed channel"))
+			case ringOK:
+				if atomicLoad32(&c.recvq.n) != 0 {
+					c.notifyOne(&c.recvq)
+				}
+				return casi, false
+			}
+			continue
+		}
+		if c.ringPop(cas.elem) {
+			if atomicLoad32(&c.sendq.n) != 0 {
+				c.notifyOne(&c.sendq)
+			}
+			return casi, true
+		}
+		if c.ringClosedDrained() {
+			if cas.elem != nil {
+				typedmemclr(c.elemtype, cas.elem)
+			}
+			return casi, false
+		}
+	}
+
 	// Sort the cases by channel address with a heap sort, so that
 	// concurrent selects lock channels in the same order.
 	for i := range lockorder {
