@@ -5,7 +5,7 @@ import Base
 law LE:
   for +a: Nat
   for +b: Nat
-  Type
+  Data
 
 def LE(a, b):
   match a b:
@@ -20,10 +20,40 @@ def LE(a, b):
 law LT:
   for +a: Nat
   for +b: Nat
-  Type
+  Data
 
 def LT(a, b):
   LE(1n+a, b)
+
+def bdisc(b: Bool) -> Type:
+  match b:
+    case True{}:
+      Empty
+    case False{}:
+      Unit
+
+law ft:
+  for e: {False{} == True{} : Bool}
+  Empty
+
+def ft(e):
+  %e : bdisc(_)
+  Unit{}
+
+law tf:
+  for e: {True{} == False{} : Bool}
+  Empty
+
+def tf(e):
+  ft(Equal.sym(Bool, True{}, False{}, e))
+
+law lt_zero:
+  for +a: Nat
+  for h: LT(a, 0n)
+  Empty
+
+def lt_zero(a, h):
+  h
 
 law le_refl:
   for +a: Nat
@@ -142,7 +172,7 @@ def lt_irrefl(a, h):
 law lt_or_ge:
   for +a: Nat
   for +b: Nat
-  Either<&1, &1, LT(a, b), LE(b, a)>
+  Either<&2, &2, LT(a, b), LE(b, a)>
 
 def lt_or_ge(a, b):
   match a b:
@@ -152,3 +182,59 @@ def lt_or_ge(a, b):
       Inl{Unit{}}
     case 1n+x 1n+y:
       lt_or_ge(x, y)
+
+# Bool comparison a < b
+def ltb(a: Nat, b: Nat) -> Bool:
+  match a b:
+    case _ 0n:
+      False{}
+    case 0n 1n+y:
+      True{}
+    case 1n+x 1n+y:
+      ltb(x, y)
+
+law ltb_lt:
+  for +a: Nat
+  for +b: Nat
+  for e: {ltb(a, b) == True{} : Bool}
+  LT(a, b)
+
+def ltb_lt(a, b, e):
+  match a b:
+    case _ 0n:
+      Empty.absurd(LT(a, 0n), ft(e))
+    case 0n 1n+y:
+      Unit{}
+    case 1n+x 1n+y:
+      ltb_lt(x, y, e)
+
+law lt_ltb:
+  for +a: Nat
+  for +b: Nat
+  for h: LT(a, b)
+  {ltb(a, b) == True{} : Bool}
+
+def lt_ltb(a, b, h):
+  match a b:
+    case _ 0n:
+      Empty.absurd({ltb(a, 0n) == True{} : Bool}, lt_zero(a, h))
+    case 0n 1n+y:
+      {==}
+    case 1n+x 1n+y:
+      lt_ltb(x, y, h)
+
+# not a < b means b <= a
+law ltb_false:
+  for +a: Nat
+  for +b: Nat
+  for e: {ltb(a, b) == False{} : Bool}
+  LE(b, a)
+
+def ltb_false(a, b, e):
+  match a b:
+    case _ 0n:
+      Unit{}
+    case 0n 1n+y:
+      Empty.absurd(LE(1n+y, 0n), tf(e))
+    case 1n+x 1n+y:
+      ltb_false(x, y, e)

@@ -400,3 +400,45 @@ law d_after_h:
 
 def d_after_h(E, entry, w, x, h, t, d, dh, domdh, sp1, sp2, sp3, te, domtx, pw, hw):
   d_after_h.go(E, entry, w, x, h, t, d, L.mem(d, L.before(h, w)), {==}, dh, domdh, sp1, sp2, sp3, te, domtx, pw, hw)
+
+def d_after_k.step(-E: Nat -> Nat -> Data, +entry: Nat, +w: +List<Nat>, +x: Nat, +k: Nat, +d: Nat, +dk: {L.eqn(d, k) == False{} : Bool}, domdk: Dom(E, entry, d, k), domkx: Dom(E, entry, k, x), +pw1: Valid(E, entry, L.app(L.before(d, w), Con{d, L.after(d, w)})), +hw1: {L.hd(L.app(L.before(d, w), Con{d, L.after(d, w)})) == x : Nat}, +nk1: {L.mem(k, L.before(d, w)) == False{} : Bool}, dp: Deep(E, entry, d)) -> Empty:
+  (+r2, q) = dp
+  (+vw2, +nd2) = q
+  +nk2 : {L.mem(k, r2) == False{} : Bool} = d_noh.go(E, entry, r2, d, k, L.mem(k, r2), {==}, dk, domdk, vw2, nd2)
+  +kd : {L.eqn(k, d) == False{} : Bool} = L.eqn_false(k, d, e => ne_of(d, k, dk, Equal.sym(Nat, k, d, e)))
+  +nkd : {L.mem(k, Con{d, r2}) == False{} : Bool} = L.or_ff(L.eqn(k, d), L.mem(k, r2), kd, nk2)
+  +pw3 : Valid(E, entry, L.app(L.before(d, w), Con{d, r2})) = valid_splice(E, entry, L.before(d, w), d, L.after(d, w), r2, pw1, vw2)
+  +hw3 : {L.hd(L.app(L.before(d, w), Con{d, r2})) == x : Nat} = Equal.trans(Nat, L.hd(L.app(L.before(d, w), Con{d, r2})), L.hd(L.app(L.before(d, w), Con{d, L.after(d, w)})), x, Equal.sym(Nat, L.hd(L.app(L.before(d, w), Con{d, L.after(d, w)})), L.hd(L.app(L.before(d, w), Con{d, r2})), L.hd_app(L.before(d, w), d, L.after(d, w), r2)), hw1)
+  L.bclash(L.mem(k, L.app(L.before(d, w), Con{d, r2})), domkx(L.app(L.before(d, w), Con{d, r2}), pw3, hw3), L.mem_app_false(k, L.before(d, w), Con{d, r2}, nk1, nkd))
+
+def d_after_k.go(-E: Nat -> Nat -> Data, +entry: Nat, +w: +List<Nat>, +x: Nat, +k: Nat, +d: Nat, c: Bool, ec: {c == L.mem(d, L.before(k, w)) : Bool}, +dk: {L.eqn(d, k) == False{} : Bool}, domdk: Dom(E, entry, d, k), domkx: Dom(E, entry, k, x), +pw: Valid(E, entry, w), +hw: {L.hd(w) == x : Nat}) -> {c == False{} : Bool}:
+  match c:
+    case False{}:
+      {==}
+    case True{}:
+      +m1 : {L.mem(d, L.before(k, w)) == True{} : Bool} = Equal.sym(Bool, True{}, L.mem(d, L.before(k, w)), ec)
+      +nk1 : {L.mem(k, L.before(d, w)) == False{} : Bool} = L.bd_no_h(d, k, w, m1)
+      +ws : {w == L.app(L.before(d, w), Con{d, L.after(d, w)}) : +List<Nat>} = L.split(d, w, L.mem_before(d, k, w, m1))
+      +pw1 : Valid(E, entry, L.app(L.before(d, w), Con{d, L.after(d, w)})) = (%ws : Valid(E, entry, _); pw)
+      +hw1 : {L.hd(L.app(L.before(d, w), Con{d, L.after(d, w)})) == x : Nat} = (%ws : {L.hd(_) == x : Nat}; hw)
+      +vws : VW(E, entry, d, L.after(d, w)) = valid_suffix(E, entry, L.before(d, w), d, L.after(d, w), pw1)
+      Empty.absurd({True{} == False{} : Bool}, d_after_k.step(E, entry, w, x, k, d, dk, domdk, domkx, pw1, hw1, nk1, deepest(E, entry, L.after(d, w), d, d, vws, L.mem_head(d, L.after(d, w)))))
+
+# T3: d dominates k, d != k, and k dominates x. Then on every walk now at x, d does not occur
+# after the last k. (So a value defined in d has at x the value it had at the last visit of k.)
+law d_after_k:
+  for -E: Nat -> Nat -> Data
+  for +entry: Nat
+  for +w: +List<Nat>
+  for +x: Nat
+  for +k: Nat
+  for +d: Nat
+  for +dk: {L.eqn(d, k) == False{} : Bool}
+  for domdk: Dom(E, entry, d, k)
+  for domkx: Dom(E, entry, k, x)
+  for +pw: Valid(E, entry, w)
+  for +hw: {L.hd(w) == x : Nat}
+  {L.mem(d, L.before(k, w)) == False{} : Bool}
+
+def d_after_k(E, entry, w, x, k, d, dk, domdk, domkx, pw, hw):
+  d_after_k.go(E, entry, w, x, k, d, L.mem(d, L.before(k, w)), {==}, dk, domdk, domkx, pw, hw)

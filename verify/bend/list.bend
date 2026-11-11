@@ -448,3 +448,141 @@ def mem_app_r(x, a, b, m):
       m
     case Con{y, r}:
       mem_tail(x, y, app(r, b), mem_app_r(x, r, b, m))
+
+def and(a: Bool, b: Bool) -> Bool:
+  match a:
+    case True{}:
+      b
+    case False{}:
+      False{}
+
+def not(a: Bool) -> Bool:
+  match a:
+    case True{}:
+      False{}
+    case False{}:
+      True{}
+
+def imp(a: Bool, b: Bool) -> Bool:
+  match a:
+    case True{}:
+      b
+    case False{}:
+      True{}
+
+law and_l:
+  for a: Bool
+  for -b: Bool
+  for e: {and(a, b) == True{} : Bool}
+  {a == True{} : Bool}
+
+def and_l(a, b, e):
+  match a:
+    case True{}:
+      {==}
+    case False{}:
+      e
+
+law and_r:
+  for a: Bool
+  for -b: Bool
+  for e: {and(a, b) == True{} : Bool}
+  {b == True{} : Bool}
+
+def and_r(a, b, e):
+  match a:
+    case True{}:
+      e
+    case False{}:
+      Empty.absurd({b == True{} : Bool}, ft(e))
+
+law and_tt:
+  for a: Bool
+  for -b: Bool
+  for ea: {a == True{} : Bool}
+  for eb: {b == True{} : Bool}
+  {and(a, b) == True{} : Bool}
+
+def and_tt(a, b, ea, eb):
+  match a:
+    case True{}:
+      eb
+    case False{}:
+      ea
+
+law imp_elim:
+  for a: Bool
+  for -b: Bool
+  for e: {imp(a, b) == True{} : Bool}
+  for ea: {a == True{} : Bool}
+  {b == True{} : Bool}
+
+def imp_elim(a, b, e, ea):
+  match a:
+    case True{}:
+      e
+    case False{}:
+      Empty.absurd({b == True{} : Bool}, ft(ea))
+
+law not_true:
+  for a: Bool
+  for e: {not(a) == True{} : Bool}
+  {a == False{} : Bool}
+
+def not_true(a, e):
+  match a:
+    case True{}:
+      Empty.absurd({True{} == False{} : Bool}, ft(e))
+    case False{}:
+      {==}
+
+law not_false:
+  for a: Bool
+  for e: {a == False{} : Bool}
+  {not(a) == True{} : Bool}
+
+def not_false(a, e):
+  match a:
+    case True{}:
+      Empty.absurd({False{} == True{} : Bool}, tf(e))
+    case False{}:
+      {==}
+
+law eqn_sym:
+  for +a: Nat
+  for +b: Nat
+  {eqn(a, b) == eqn(b, a) : Bool}
+
+def eqn_sym(a, b):
+  match a b:
+    case 0n 0n:
+      {==}
+    case 0n 1n+y:
+      {==}
+    case 1n+x 0n:
+      {==}
+    case 1n+x 1n+y:
+      eqn_sym(x, y)
+
+law or_true_l:
+  for -a: Bool
+  for b: Bool
+  for e: {a == True{} : Bool}
+  {or(a, b) == True{} : Bool}
+
+def or_true_l(a, b, e):
+  %Equal.sym(Bool, a, True{}, e) : {or(_, b) == True{} : Bool}
+  {==}
+
+law or_false_l:
+  for a: Bool
+  for -b: Bool
+  for e: {or(a, b) == False{} : Bool}
+  {a == False{} : Bool}
+
+def or_false_l(a, b, e):
+  match a:
+    case True{}:
+      e
+    case False{}:
+      {==}
