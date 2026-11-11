@@ -1,0 +1,8 @@
+"hello world\n" <nil>
+out
+ err
+ true 3 exit status 3
+"piped input\n" <nil>
+true
+true
+true <nil>

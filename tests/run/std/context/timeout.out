@@ -1,0 +1,9 @@
+<nil>
+context deadline exceeded true
+true true
+false
+context deadline exceeded
+afterfunc ran
+false
+context.Background context.TODO
+<nil>

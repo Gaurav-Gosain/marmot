@@ -1,0 +1,5 @@
+<nil> 9 x y true 2m0s 1.5 [a b] [rest1 -f 2] 3 5
+invalid value "abc" for flag -x: parse error
+flag provided but not defined: -nope
+<nil> [-x 1]
+d=2m0s f=1.5 item= n=9 name=x y v=true 

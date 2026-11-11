@@ -1,0 +1,8 @@
+app: hello 42
+app: value=7
+[x] no newline
+[x]  0
+P: msg
+sf basic.go:23: with file
+bad 3
+recovered: bad 3

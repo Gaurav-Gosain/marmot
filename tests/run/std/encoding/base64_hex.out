@@ -1,0 +1,16 @@
+   true <nil> 
+Zg== Zg== Zg true <nil> 66
+Zm8= Zm8= Zm8 true <nil> 666f
+Zm9v Zm9v Zm9v true <nil> 666f6f
+Zm9vYg== Zm9vYg== Zm9vYg true <nil> 666f6f62
+Zm9vYmE= Zm9vYmE= Zm9vYmE true <nil> 666f6f6261
+Zm9vYmFy Zm9vYmFy Zm9vYmFy true <nil> 666f6f626172
+//79 __79 //79 true <nil> fffefd
+aMOpbGxvIHfDtnJsZA== aMOpbGxvIHfDtnJsZA== aMOpbGxvIHfDtnJsZA true <nil> 68c3a96c6c6f2077c3b6726c64
+illegal base64 data at input byte 0
+illegal base64 data at input byte 0
+Hello <nil>
+encoding/hex: invalid byte: U+0067 'g'
+encoding/hex: odd length hex string
+00000000  30 31 32 33 34 35 36 37  38 39 61 62 63 64 65 66  |0123456789abcdef|
+00000010  58 59 5a                                          |XYZ|
