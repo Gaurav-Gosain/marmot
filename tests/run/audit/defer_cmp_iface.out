@@ -1,0 +1,6 @@
+true
+array ok recovered: false n: 1
+array panic recovered: true n: 1
+true
+struct ok recovered: false n: 7
+struct panic recovered: true n: 7
