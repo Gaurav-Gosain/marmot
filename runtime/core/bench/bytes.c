@@ -36,4 +36,9 @@ void marmot_main(void) {
   uint64_t h512[8] = {0};
   BENCH("sha256 blocks 1MiB", n, 200, (rt_sha256_block(h256, (const uint8_t *)buf, n), h256[0]));
   BENCH("sha512 blocks 1MiB", n, 200, (rt_sha512_block(h512, (const uint8_t *)buf, n), h512[0]));
+  uint8_t rk[240], ctr[16] = {0}, hk[16] = {1}, y[16] = {0};
+  int nr = rt_aes_expand((const uint8_t *)"0123456789abcdef", 16, rk, 0);
+  char *dst = rt_alloc((uintptr_t)n, RT_ALLOC_NOSCAN, 0, 0);
+  BENCH("aes-128-gcm seal 1MiB (ctr+ghash)", n, 200,
+        (rt_aes_ctr32(nr, rk, ctr, (uint8_t *)dst, (const uint8_t *)buf, n), rt_ghash(hk, y, (const uint8_t *)dst, n), y[0]));
 }

@@ -3,6 +3,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/sha256"
 	"crypto/sha512"
 	"fmt"
@@ -59,4 +61,9 @@ func main() {
 	bench("sha256 blocks 1MiB", n, 200, func() int { h256.Write(buf); return 0 })
 	h512 := sha512.New()
 	bench("sha512 blocks 1MiB", n, 200, func() int { h512.Write(buf); return 0 })
+	blk, _ := aes.NewCipher([]byte("0123456789abcdef"))
+	gcm, _ := cipher.NewGCM(blk)
+	nonce := make([]byte, 12)
+	dst := make([]byte, 0, n+16)
+	bench("aes-128-gcm seal 1MiB (ctr+ghash)", n, 200, func() int { return len(gcm.Seal(dst[:0], nonce, buf, nil)) })
 }

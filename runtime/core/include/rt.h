@@ -247,6 +247,23 @@ uint64_t rt_hash_u64(uint64_t x, uint64_t seed);
 void rt_sha256_block(uint32_t h[8], const uint8_t *p, intptr_t n);
 void rt_sha512_block(uint64_t h[8], const uint8_t *p, intptr_t n);
 
+// AES and GCM building blocks. Round keys are bytes, 16 * (nr + 1) of them.
+// rt_aes_expand returns nr (10, 12, 14) or 0 for a bad key length; dec may
+// be NULL (it gets the equivalent-inverse-cipher keys). rt_aes_ctr32 is
+// GCM's counter mode: the low 32 bits of ctr (big endian) count blocks and
+// ctr is updated past the last block used; n may be any length. rt_ghash:
+// y = (y ^ block) * H for each 16-byte block, n a multiple of 16 (GCM byte
+// order). ARMv8 AES and PMULL on arm64; table-based C elsewhere (not
+// constant time).
+int32_t rt_aes_expand(const uint8_t *key, int32_t keylen, uint8_t *enc, uint8_t *dec);
+void rt_aes_encrypt_blocks(int32_t nr, const uint8_t *rk, uint8_t *dst, const uint8_t *src,
+                           intptr_t nblocks);
+void rt_aes_decrypt_blocks(int32_t nr, const uint8_t *dk, uint8_t *dst, const uint8_t *src,
+                           intptr_t nblocks);
+void rt_aes_ctr32(int32_t nr, const uint8_t *rk, uint8_t ctr[16], uint8_t *dst,
+                  const uint8_t *src, intptr_t n);
+void rt_ghash(const uint8_t h[16], uint8_t y[16], const uint8_t *p, intptr_t n);
+
 // ---- Signals (os/signal) ----
 
 // Queue sig for rt_signal_recv instead of its default action. Returns 0 or
