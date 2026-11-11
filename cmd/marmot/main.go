@@ -75,7 +75,7 @@ func cmdBuild(args []string, run bool) int {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	out := fs.String("o", "", "output file")
 	opt := fs.String("O", "", "optimization level: 0, 1, 2, 3, s, z (default 2, 3 with -release)")
-	release := fs.Bool("release", false, "release build: whole program optimization, -O3, all specializations")
+	release := fs.Bool("release", os.Getenv("MARMOT_RELEASE") == "1", "release build: whole program optimization, -O3, all specializations (default from $MARMOT_RELEASE=1)")
 	emit := fs.String("emit", "exe", "output kind: mlir, llvm, obj, exe")
 	work := fs.Bool("work", false, "print and keep the temporary work directory")
 	verbose := fs.Bool("v", false, "print progress and timing")

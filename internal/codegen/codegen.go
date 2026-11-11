@@ -24,6 +24,8 @@ type Options struct {
 	// GoDialect emits the go dialect (docs/dialect.md) instead of the
 	// equivalent llvm dialect sequences (Phase B, -dialect=go).
 	GoDialect bool
+	// Release enables release-only transforms (more devirtualization).
+	Release bool
 }
 
 // Module is the MLIR text for one Go package (or the synthetic entry module).
@@ -75,6 +77,9 @@ type Program struct {
 
 	ifaceTypes  map[string]bool      // canonical names of types that can be in interfaces
 	fmaBlocked  map[token.Pos]bool   // float multiplications under an explicit conversion
+
+	ifaceTypeList []types.Type            // the types of ifaceTypes
+	implCache     map[string][]types.Type // interface -> closed-world implementers
 	mainPath    string               // import path of the main package
 	globalRead  map[*ssa.Global]bool // globals read anywhere in the program
 	varLinkname map[string]bool      // pkgpath.name of variables named in //go:linkname

@@ -61,6 +61,9 @@ func (f *funcGen) indirectCall(code string, args, params []string, ret string) s
 
 // invoke calls an interface method through the itab.
 func (f *funcGen) invoke(c *ssa.CallCommon) string {
+	if r, ok := f.devirtualize(c); ok {
+		return r
+	}
 	if f.goOps() {
 		x := f.value(c.Value)
 		it := c.Value.Type().Underlying().(*types.Interface)
@@ -403,4 +406,69 @@ func (f *funcGen) anyBig(vs []ssa.Value) bool {
 		}
 	}
 	return false
+}
+
+// devirtualize turns an interface method call into direct calls guarded by
+// itab comparisons when the closed world has few implementers (SPEC 3a
+// lever 6). The indirect call stays as the fallback, so a dynamic type the
+// analysis did not see (an itab built at run time) is still correct.
+func (f *funcGen) devirtualize(c *ssa.CallCommon) (string, bool) {
+	max := 1
+	if f.m.p.opts.Release {
+		max = 3
+	}
+	iface := c.Value.Type()
+	cands, ok := f.m.p.implementers(iface, max)
+	if !ok || len(cands) == 0 {
+		return "", false
+	}
+	x := f.value(c.Value)
+	tab := f.extractRaw(x, tIface, 0)
+	data := f.extractRaw(x, tIface, 1)
+	sig := c.Method.Type().(*types.Signature)
+	params, ret := f.m.sigTypes(stripRecv(sig), false)
+	params = append([]string{mlir.Ptr}, params...)
+	args := []string{data}
+	for _, a := range c.Args {
+		args = append(args, f.value(a))
+	}
+	done := f.newBlock()
+	for _, t := range cands {
+		mset := f.m.p.prog.MethodSets.MethodSet(t)
+		sel := mset.Lookup(c.Method.Pkg(), c.Method.Name())
+		if sel == nil {
+			return "", false // cannot happen for an implementer; be safe
+		}
+		target := f.m.ifaceFunc(t, sel)
+		want := f.addressOf(f.m.itabSym(t, iface))
+		hit := f.op("llvm.icmp \"eq\" %s, %s : !llvm.ptr", tab, want)
+		yes, no := f.newBlock(), f.newBlock()
+		f.emit("llvm.cond_br %s, %s, %s", hit, yes, no)
+		fmt.Fprintf(f.b, "  %s:\n", yes)
+		sigText := fmt.Sprintf("(%s) -> %s", strings.Join(params, ", "), retOrVoid(ret))
+		if ret == "" {
+			f.emit("llvm.call %s(%s) : %s", mlir.Symbol(target), strings.Join(args, ", "), sigText)
+			f.emit("llvm.br %s", done)
+		} else {
+			r := f.op("llvm.call %s(%s) : %s", mlir.Symbol(target), strings.Join(args, ", "), sigText)
+			f.emit("llvm.br %s(%s : %s)", done, r, ret)
+		}
+		fmt.Fprintf(f.b, "  %s:\n", no)
+	}
+	// Fallback: the itab dispatch.
+	f.nilCheck(tab)
+	it := iface.Underlying().(*types.Interface)
+	idx := ifaceMethodIndex(it, c.Method)
+	slot := f.gepByte(tab, int64(24+8*idx))
+	code := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", slot)
+	r := f.indirectCall(code, args, params, ret)
+	if ret == "" {
+		f.emit("llvm.br %s", done)
+		fmt.Fprintf(f.b, "  %s:\n", done)
+		return "", true
+	}
+	f.emit("llvm.br %s(%s : %s)", done, r, ret)
+	res := f.newVal()
+	fmt.Fprintf(f.b, "  %s(%s: %s):\n", done, res, ret)
+	return res, true
 }

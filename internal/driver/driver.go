@@ -143,7 +143,7 @@ func Build(cfg Config) (string, error) {
 			ssaPkgs = append(ssaPkgs, sp)
 		}
 	}
-	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, GoDialect: cfg.Dialect == "go"})
+	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, GoDialect: cfg.Dialect == "go", Release: cfg.Release})
 	if err != nil {
 		return "", err
 	}

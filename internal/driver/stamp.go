@@ -107,7 +107,7 @@ func (b *build) packageKeys(lp *loader.Program, cg *codegen.Program, pkgs []*ssa
 	if exe, err := os.Executable(); err == nil {
 		fileSig(exeSig, exe)
 	}
-	fmt.Fprintf(exeSig, "%s %s %s %s\n", b.cfg.OptLevel, b.cfg.Emit, b.cfg.Dialect, b.cfg.GC)
+	fmt.Fprintf(exeSig, "%s %s %s %s %v\n", b.cfg.OptLevel, b.cfg.Emit, b.cfg.Dialect, b.cfg.GC, b.cfg.Release)
 	for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_DIALECT"} {
 		fmt.Fprintf(exeSig, "%s=%s\n", k, os.Getenv(k))
 	}

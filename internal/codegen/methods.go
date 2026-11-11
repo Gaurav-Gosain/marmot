@@ -66,6 +66,7 @@ func (p *Program) computeUsedMethods() {
 		}
 	}
 	var ops []*ssa.Value
+	var converted []types.Type
 	scan := func(fn *ssa.Function) {
 		for _, a := range fn.AnonFuncs {
 			push(a)
@@ -89,6 +90,7 @@ func (p *Program) computeUsedMethods() {
 				}
 				if mi, ok := instr.(*ssa.MakeInterface); ok {
 					addIface(mi.X.Type())
+					converted = append(converted, mi.X.Type())
 				}
 				ops = instr.Operands(ops[:0])
 				for _, o := range ops {
@@ -157,6 +159,8 @@ func (p *Program) computeUsedMethods() {
 	}
 	p.usedMethods = used
 	p.ifaceTypes = ifaceTypes
+	p.ifaceTypeList = converted
+	p.implCache = map[string][]types.Type{}
 	keys := make([]string, 0, len(used))
 	for k := range used {
 		keys = append(keys, k)
@@ -339,4 +343,40 @@ func (p *Program) PackageKey(pkg *ssa.Package) string {
 	}
 	sort.Strings(dead)
 	return p.usedMethodsHash + "|" + strings.Join(dead, ",")
+}
+
+// implementers returns the concrete types converted to interfaces by
+// reachable code that implement interface type iface, in a stable order.
+// ok is false when there are more than max. Used for guarded
+// devirtualization only: values made by reflect fall back to dispatch.
+func (p *Program) implementers(iface types.Type, max int) ([]types.Type, bool) {
+	key := p.canonical(iface)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if r, ok := p.implCache[key]; ok {
+		return r, len(r) <= max
+	}
+	it := iface.Underlying().(*types.Interface)
+	var out []types.Type
+	seen := map[string]bool{}
+	for _, t := range p.ifaceTypeList {
+		if types.IsInterface(t) {
+			continue
+		}
+		if !types.Implements(t, it) {
+			continue
+		}
+		k := p.canonical(t)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, t)
+		if len(out) > 8 {
+			break
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return p.canonical(out[i]) < p.canonical(out[j]) })
+	p.implCache[key] = out
+	return out, len(out) <= max
 }
