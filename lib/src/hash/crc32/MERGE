@@ -1,0 +1,12 @@
+-crc32_amd64.go
+-crc32_amd64.s
+-crc32_arm64.go
+-crc32_arm64.s
+-crc32_loong64.go
+-crc32_loong64.s
+-crc32_otherarch.go
+-crc32_ppc64le.go
+-crc32_ppc64le.s
+-crc32_s390x.go
+-crc32_s390x.s
+-crc32_table_ppc64le.s
