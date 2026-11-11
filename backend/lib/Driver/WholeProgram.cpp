@@ -997,8 +997,8 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
             es << m.job.out << ": cannot write\n";
           return;
         }
-        // A split module: the list of its group keys.
-        if (auto list = cache.get(key, "parts")) {
+        // A split module: the list of its group keys (only when splitting).
+        if (auto list = opts.splitInstrs ? cache.get(key, "parts") : std::nullopt) {
           SmallVector<StringRef, 16> keys;
           StringRef(*list).split(keys, '\n', -1, false);
           std::vector<std::string> objs;
