@@ -52,6 +52,7 @@ type hmap struct {
 	growthLeft int            // empty slots that can still be filled
 	tombstones int
 	clearSeq   uint32
+	iterSeq    uint32 // iterations started, for the random start slot
 	keyKind    uint8
 	noscan     bool
 	key        *_type
@@ -706,7 +707,10 @@ func mapiterinit(t *maptype, m *hmap, it *hiter) {
 	}
 	it.groups = m.groups
 	it.mask = m.mask
-	it.start = uintptr(cheaprand64())
+	// A different pseudo random start for every iteration: the map seed
+	// mixed with a per-map counter (cheaper than the goroutine's random
+	// state, which needs getg).
+	it.start = fmix64(uint64(m.seed) ^ uint64(atomicXadd32(&m.iterSeq, 1))*0x9e3779b97f4a7c15)
 	it.i = 0
 	it.clearSeq = m.clearSeq
 	mapiternext(it)
