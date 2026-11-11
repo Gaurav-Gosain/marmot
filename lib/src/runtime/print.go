@@ -95,14 +95,16 @@ func printbool(v bool) {
 // printfloat64 prints v in the shortest form that reads back exactly, as
 // strconv.FormatFloat(v, 'g', -1, 64) does.
 func printfloat64(v float64) {
-	var buf [24]byte
-	gwriteBytes(appendFloat(buf[:0], v, 64))
+	printlock()
+	gwriteBytes(appendFloat(numBuf[:0], v, 64))
+	printunlock()
 }
 
 // printfloat32 prints v as strconv.FormatFloat(float64(v), 'g', -1, 32).
 func printfloat32(v float32) {
-	var buf [15]byte
-	gwriteBytes(appendFloat(buf[:0], float64(v), 32))
+	printlock()
+	gwriteBytes(appendFloat(numBuf[:0], float64(v), 32))
+	printunlock()
 }
 
 // printfloat is printfloat64 (the name used by early compiler versions).
@@ -110,31 +112,38 @@ func printfloat(v float64) { printfloat64(v) }
 
 // printcomplex128 prints c as (re+imi) with shortest floats.
 func printcomplex128(c complex128) {
-	var buf [51]byte
-	gwriteBytes(appendComplex(buf[:0], c, 128))
+	printlock()
+	gwriteBytes(appendComplex(numBuf[:0], c, 128))
+	printunlock()
 }
 
 // printcomplex64 prints c with float32 precision.
 func printcomplex64(c complex64) {
-	var buf [33]byte
-	gwriteBytes(appendComplex(buf[:0], complex128(c), 64))
+	printlock()
+	gwriteBytes(appendComplex(numBuf[:0], complex128(c), 64))
+	printunlock()
 }
 
 // printcomplex is printcomplex128 (the name used by early compiler versions).
 func printcomplex(c complex128) { printcomplex128(c) }
 
+// numBuf is scratch space for formatting numbers, protected by printMu
+// (a local array would be heap allocated on every call).
+var numBuf [100]byte
+
 func printuint(v uint64) {
-	var buf [20]byte
-	i := len(buf)
+	printlock()
+	i := len(numBuf)
 	for {
 		i--
-		buf[i] = byte(v%10 + '0')
+		numBuf[i] = byte(v%10 + '0')
 		v /= 10
 		if v == 0 {
 			break
 		}
 	}
-	gwriteBytes(buf[i:])
+	gwrite(unsafe.Pointer(&numBuf[i]), len(numBuf)-i)
+	printunlock()
 }
 
 func printint(v int64) {
@@ -149,22 +158,23 @@ var minhexdigits = 0 // protected by printlock
 
 func printhexopts(include0x bool, mindigits int, v uint64) {
 	const dig = "0123456789abcdef"
-	var buf [100]byte
-	i := len(buf)
+	printlock()
+	i := len(numBuf)
 	for i--; i > 0; i-- {
-		buf[i] = dig[v%16]
-		if v < 16 && len(buf)-i >= mindigits {
+		numBuf[i] = dig[v%16]
+		if v < 16 && len(numBuf)-i >= mindigits {
 			break
 		}
 		v /= 16
 	}
 	if include0x {
 		i--
-		buf[i] = 'x'
+		numBuf[i] = 'x'
 		i--
-		buf[i] = '0'
+		numBuf[i] = '0'
 	}
-	gwriteBytes(buf[i:])
+	gwrite(unsafe.Pointer(&numBuf[i]), len(numBuf)-i)
+	printunlock()
 }
 
 func printhex(v uint64) {

@@ -192,13 +192,11 @@ func slicerunetostring(a []rune) string {
 // intstring implements string(rune(v)) for any integer v. Values that are
 // not valid code points give "�".
 func intstring(v int64) string {
-	var buf [4]byte
 	r := rune(v)
 	if int64(r) != v {
 		r = runeError
 	}
-	n := encoderune(buf[:], r)
-	s, b := rawstring(n)
-	copy(b, buf[:n])
+	s, b := rawstring(runelen(r))
+	encoderune(b, r)
 	return s
 }
