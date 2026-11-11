@@ -40,7 +40,7 @@ type Input struct {
 const GenFile = "zz_marmot_spec.go"
 
 // Features are the specializations, each behind its own switch.
-var Features = []string{"fmt", "jsonenc", "jsondec", "sort", "regexp", "mapkey", "split", "builder"}
+var Features = []string{"fmt", "jsonenc", "jsondec", "sort", "regexp", "mapkey", "split", "builder", "fold"}
 
 // Measured and kept off (enable by name only): clone (sort.Search,
 // slices.IndexFunc, strings.Map clones were 9% slower than -release
@@ -182,6 +182,7 @@ func RewriteWith(pkgs []*packages.Package, on map[string]bool) (*Result, error) 
 			rewriteSplit(g, f)
 			rewriteBuilder(g, f)
 			rewriteClone(g, f)
+			rewriteFold(g, f)
 			if g.sites > before {
 				g.blankUnusedImports(f)
 			}
@@ -596,6 +597,32 @@ func calleeFunc(info *types.Info, call *ast.CallExpr) *types.Func {
 // replaceStmt replaces statement old with new in the current file, with
 // undo.
 func (g *gen) replaceStmt(old, new ast.Stmt) {
+	f := g.curFile
+	done := false
+	astutil.Apply(f, nil, func(c *astutil.Cursor) bool {
+		if !done && c.Node() == old {
+			c.Replace(new)
+			done = true
+		}
+		return true
+	})
+	if !done {
+		return
+	}
+	g.sites++
+	g.undos = append(g.undos, func() {
+		astutil.Apply(f, nil, func(c *astutil.Cursor) bool {
+			if c.Node() == new {
+				c.Replace(old)
+			}
+			return true
+		})
+	})
+}
+
+// replaceExpr replaces expression old with new in the current file, with
+// undo.
+func (g *gen) replaceExpr(old, new ast.Expr) {
 	f := g.curFile
 	done := false
 	astutil.Apply(f, nil, func(c *astutil.Cursor) bool {
