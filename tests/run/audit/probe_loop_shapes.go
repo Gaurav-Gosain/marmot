@@ -1,6 +1,7 @@
 // Audit probe (loops, 2026-11-12): adversarial program for the opt-in loop
 // transforms; matched go with -par -type-alias and -loops-force-par in dev,
-// -release and GC stress. See docs/audit-backend.md.
+// -release and GC stress. Products are rounded with float64() so gc on
+// arm64 (which fuses a*b+c) and amd64 agree. See docs/audit-backend.md.
 package main
 
 import (
@@ -113,13 +114,13 @@ const size = 400
 func mandel() int {
 	inside := 0
 	for py := 0; py < size; py++ {
-		ci := 2.0*float64(py)/size - 1.0
+		ci := float64(2.0*float64(py)/size) - 1.0
 		for px := 0; px < size; px++ {
-			cr := 2.0*float64(px)/size - 1.5
+			cr := float64(2.0*float64(px)/size) - 1.5
 			zr, zi := 0.0, 0.0
 			i := 0
-			for ; i < 50 && zr*zr+zi*zi <= 4.0; i++ {
-				zr, zi = zr*zr-zi*zi+cr, 2*zr*zi+ci
+			for ; i < 50 && float64(zr*zr)+float64(zi*zi) <= 4.0; i++ {
+				zr, zi = float64(zr*zr)-float64(zi*zi)+cr, float64(2*zr*zi)+ci
 			}
 			if i == 50 {
 				inside++
@@ -134,18 +135,18 @@ func mandelSum() (int, float64) {
 	inside := 0
 	acc := 0.0
 	for py := 0; py < size; py++ {
-		ci := 2.0*float64(py)/size - 1.0
+		ci := float64(2.0*float64(py)/size) - 1.0
 		for px := 0; px < size; px++ {
-			cr := 2.0*float64(px)/size - 1.5
+			cr := float64(2.0*float64(px)/size) - 1.5
 			zr, zi := 0.0, 0.0
 			i := 0
-			for ; i < 50 && zr*zr+zi*zi <= 4.0; i++ {
-				zr, zi = zr*zr-zi*zi+cr, 2*zr*zi+ci
+			for ; i < 50 && float64(zr*zr)+float64(zi*zi) <= 4.0; i++ {
+				zr, zi = float64(zr*zr)-float64(zi*zi)+cr, float64(2*zr*zi)+ci
 			}
 			if i == 50 {
 				inside++
 			}
-			acc += zr * 1e-3 // FP live out of the inner loop, summed in order
+			acc += float64(zr * 1e-3) // FP live out of the inner loop, summed in order
 		}
 	}
 	return inside, acc
@@ -154,14 +155,14 @@ func mandelSum() (int, float64) {
 //go:noinline
 func mandelRows(rows []int) {
 	for py := 0; py < size; py++ {
-		ci := 2.0*float64(py)/size - 1.0
+		ci := float64(2.0*float64(py)/size) - 1.0
 		c := 0
 		for px := 0; px < size; px++ {
-			cr := 2.0*float64(px)/size - 1.5
+			cr := float64(2.0*float64(px)/size) - 1.5
 			zr, zi := 0.0, 0.0
 			i := 0
-			for ; i < 50 && zr*zr+zi*zi <= 4.0; i++ {
-				zr, zi = zr*zr-zi*zi+cr, 2*zr*zi+ci
+			for ; i < 50 && float64(zr*zr)+float64(zi*zi) <= 4.0; i++ {
+				zr, zi = float64(zr*zr)-float64(zi*zi)+cr, float64(2*zr*zi)+ci
 			}
 			c += i
 		}

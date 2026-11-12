@@ -1,6 +1,7 @@
 // Audit probe (loops, 2026-11-12): adversarial program for the opt-in loop
 // transforms; matched go with -par -type-alias and -loops-force-par in dev,
-// -release and GC stress. See docs/audit-backend.md.
+// -release and GC stress. Products are rounded with float64() so gc on
+// arm64 (which fuses a*b+c) and amd64 agree. See docs/audit-backend.md.
 package main
 
 import "fmt"
@@ -11,12 +12,12 @@ const W, H = 600, 400
 func escape(out []int, maxIter int) {
 	for py := 0; py < H; py++ {
 		for px := 0; px < W; px++ {
-			x0 := float64(px)/W*3.5 - 2.5
-			y0 := float64(py)/H*2 - 1
+			x0 := float64(float64(px)/W*3.5) - 2.5
+			y0 := float64(float64(py)/H*2) - 1
 			x, y := 0.0, 0.0
 			i := 0
-			for ; i < maxIter && x*x+y*y <= 4; i++ {
-				x, y = x*x-y*y+x0, 2*x*y+y0
+			for ; i < maxIter && float64(x*x)+float64(y*y) <= 4; i++ {
+				x, y = float64(x*x)-float64(y*y)+x0, float64(2*x*y)+y0
 			}
 			out[py*W+px] = i
 		}
@@ -26,11 +27,11 @@ func escape(out []int, maxIter int) {
 //go:noinline
 func escapeStore(out []float64, trace []float64, maxIter int) {
 	for px := 0; px < W; px++ {
-		x0 := float64(px)/W*3.5 - 2.5
+		x0 := float64(float64(px)/W*3.5) - 2.5
 		x, y := 0.0, 0.0
 		i := 0
-		for ; i < maxIter && x*x+y*y <= 4; i++ {
-			x, y = x*x-y*y+x0, 2*x*y+0.3
+		for ; i < maxIter && float64(x*x)+float64(y*y) <= 4; i++ {
+			x, y = float64(x*x)-float64(y*y)+x0, float64(2*x*y)+0.3
 			trace[px] = x // store in the early exit loop
 		}
 		out[px] = x + float64(i)
@@ -55,7 +56,7 @@ func interchange(a, b [][]float64, c [][]float64) {
 		for j := 0; j < n; j++ {
 			s := 0.0
 			for k := 0; k < n; k++ {
-				s += a[i][k] * b[k][j]
+				s += float64(a[i][k] * b[k][j])
 			}
 			c[i][j] = s
 		}
