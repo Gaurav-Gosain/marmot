@@ -13,6 +13,7 @@ build/
 !/docs/design.md
 !/docs/benchmarks.md
 !/docs/support.md
+!/docs/support-matrix.md
 !/docs/img/
 !/docs/diagrams/
 /scripts/linux/
