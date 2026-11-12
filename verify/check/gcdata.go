@@ -243,6 +243,9 @@ func newResolver(pkgs []*packages.Package) *resolver {
 // parse turns a descriptor type string into a go/types type. Qualified names are replaced
 // by placeholders first, since package paths are not Go syntax.
 func (r *resolver) parse(s string) (types.Type, error) {
+	// x/tools/go/ssa's synthetic defer stack type: marmot passes the frame pointer for it
+	// (defer.go: frame = f.value(v.DeferStack)), one pointer word, never a Go object
+	s = strings.ReplaceAll(s, "$ssa.deferStack", "unsafe.Pointer")
 	ph := map[string]string{}
 	var b strings.Builder
 	for i := 0; i < len(s); {
