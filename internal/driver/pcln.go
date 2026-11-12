@@ -53,9 +53,16 @@ func (b *build) fullTrace() bool { return pclnV3 && (!b.cfg.Release || b.cfg.Tra
 // pclnFrags: the backend writes a pc table fragment next to each object and
 // the table goes into the binary with one link and a patch (
 // "Fragments"; macOS). MARMOT_PCLN_DSYM=1 uses the dsymutil path instead.
+// On ELF only with tier0: its objects have no DWARF to build the table from.
 func (b *build) pclnFrags() bool {
-	return runtime.GOOS == "darwin" && b.wantPcln() && os.Getenv("MARMOT_PCLN_DSYM") == ""
+	if !b.wantPcln() || os.Getenv("MARMOT_PCLN_DSYM") != "" {
+		return false
+	}
+	return runtime.GOOS == "darwin" || b.tier0()
 }
+
+// tier0 reports whether the backend compiles with tier0 (-tier0).
+func (b *build) tier0() bool { return !b.wpo() && os.Getenv("MARMOT_TIER0") == "1" }
 
 // backendBuildArgs are the backend options that follow from the build mode.
 func (b *build) backendBuildArgs(emit string) []string {
@@ -75,7 +82,7 @@ func (b *build) backendBuildArgs(emit string) []string {
 	}
 	// MARMOT_TIER0=1: dev builds through the tier0 code generator (LLVM -O0
 	// for the functions it leaves). Off by default until it passes the gate.
-	if !b.wpo() && os.Getenv("MARMOT_TIER0") == "1" && (emit == "exe" || emit == "obj") {
+	if b.tier0() && (emit == "exe" || emit == "obj") {
 		a = append(a, "-tier0")
 	}
 	if b.pclnFrags() {
@@ -94,6 +101,9 @@ func (b *build) pclnTool() string {
 // linkWithPcln links out with the table. link(args) runs the linker with
 // the given extra arguments and output.
 func (b *build) linkWithPcln(objs []string, link func(extra []string, out string) error, out string) error {
+	if b.pclnFrags() && runtime.GOOS != "darwin" {
+		return b.linkWithFragsELF(objs, link, out)
+	}
 	if b.pclnFrags() {
 		err := b.linkWithFrags(objs, link, out)
 		if err == nil {
@@ -152,6 +162,44 @@ func (b *build) linkWithPcln(objs []string, link func(extra []string, out string
 	return nil
 }
 
+// linkWithFragsELF links once, builds the table from the objects' fragments
+// and the binary's symbols, and adds it as a section after stripping.
+func (b *build) linkWithFragsELF(objs []string, link func(extra []string, out string) error, out string) error {
+	tmp := filepath.Join(b.work, "nopcln.exe")
+	if err := link(nil, tmp); err != nil {
+		return err
+	}
+	list, err := b.writeFragList(objs)
+	if err == nil {
+		tbl := filepath.Join(b.work, "pcln.bin")
+		args := append([]string{"-frags", list}, b.pclnVersionArgs()...)
+		if err = b.run(b.pclnTool(), append(args, "-binary", tmp, "-o", tbl)...); err == nil {
+			if err := b.run(llvmTool("llvm-objcopy"), "--strip-all", tmp, tmp+".s"); err != nil {
+				return err
+			}
+			b.logf("pcln table added (fragments)")
+			return b.run(llvmTool("llvm-objcopy"), "--add-section", ".marmot_pcln="+tbl, tmp+".s", out)
+		}
+	}
+	b.logf("pcln: fragments: %v (no table)", err)
+	return b.run(llvmTool("llvm-objcopy"), "--strip-all", tmp, out)
+}
+
+// writeFragList writes the list of the objects' fragment files.
+func (b *build) writeFragList(objs []string) (string, error) {
+	var frags strings.Builder
+	for _, o := range objs {
+		if fileExists(o + ".pcln") {
+			frags.WriteString(o + ".pcln\n")
+		}
+	}
+	if frags.Len() == 0 {
+		return "", fmt.Errorf("no fragments")
+	}
+	list := filepath.Join(b.work, "pcln.frags")
+	return list, os.WriteFile(list, []byte(frags.String()), 0o644)
+}
+
 // sameText reports whether two Mach-O files have their code at the same
 // addresses (the table describes the first file's __text).
 func sameText(a, b string) (bool, error) {
@@ -180,17 +228,8 @@ var needsRe = regexp.MustCompile(`the table needs (\d+) bytes`)
 // and 4 KB (an edit changes the table little); if the table does not fit,
 // one more link with the size marmot-pcln asks for.
 func (b *build) linkWithFrags(objs []string, link func(extra []string, out string) error, out string) error {
-	var frags strings.Builder
-	for _, o := range objs {
-		if fileExists(o + ".pcln") {
-			frags.WriteString(o + ".pcln\n")
-		}
-	}
-	if frags.Len() == 0 {
-		return fmt.Errorf("no fragments")
-	}
-	list := filepath.Join(b.work, "pcln.frags")
-	if err := os.WriteFile(list, []byte(frags.String()), 0o644); err != nil {
+	list, err := b.writeFragList(objs)
+	if err != nil {
 		return err
 	}
 	abs, _ := filepath.Abs(out)
