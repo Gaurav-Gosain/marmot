@@ -453,6 +453,16 @@ std::unique_ptr<llvm::Module> lowerAndTranslate(ParsedModule &pm, const std::str
     return nullptr;
   }
 
+  // The target data layout must be known during translation: LLVM folds a
+  // struct GEP on a global into a byte offset as soon as it builds it, with the
+  // module's data layout. Set after translation, the default layout (i64
+  // aligned to 4) placed fields 4 bytes off from the target's layout of the
+  // initializer (.work/static_layout_repro.go; test driver/global-layout.mlir).
+  module->setAttr(mlir::LLVM::LLVMDialect::getDataLayoutAttrName(),
+                  mlir::StringAttr::get(module->getContext(),
+                                        tm.createDataLayout().getStringRepresentation()));
+  module->setAttr(mlir::LLVM::LLVMDialect::getTargetTripleAttrName(),
+                  mlir::StringAttr::get(module->getContext(), tm.getTargetTriple().str()));
   std::unique_ptr<llvm::Module> lmod = mlir::translateModuleToLLVMIR(module, lctx, input);
   if (!lmod)
     return fail("failed to translate to LLVM IR");

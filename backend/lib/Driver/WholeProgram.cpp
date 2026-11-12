@@ -60,7 +60,7 @@ namespace marmot {
 namespace {
 
 // Bump when the meaning of a cache entry changes.
-constexpr const char *kCacheVersion = "marmot-backend-cache-21";
+constexpr const char *kCacheVersion = "marmot-backend-cache-22";
 
 // Largest function, in LLVM instructions, imported into other modules.
 constexpr unsigned kImportLimit = 40;
