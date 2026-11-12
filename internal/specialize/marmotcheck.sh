@@ -6,7 +6,7 @@
 set -u
 cd "$(dirname "$0")/../.."
 R=$PWD; O=${2:--release}; [ "${1:-}" = -O ] && O="-O $2"
-D=$R/.work/spec/progs; rm -rf "$D"; mkdir -p "$D"
+D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
 # The overlay sources of truth (_lib) must equal what marmot compiles (lib/src).
 for f in $(cd internal/specialize/_lib && find . -name '*.go'); do
 	cmp -s "internal/specialize/_lib/$f" "lib/src/$f" || { echo "lib/src/$f differs from internal/specialize/_lib/$f"; exit 1; }

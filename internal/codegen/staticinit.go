@@ -258,7 +258,7 @@ func (m *moduleGen) analyzeStaticInit(pkg *ssa.Package) *staticInit {
 			switch x := instr.(type) {
 			case *ssa.IndexAddr, *ssa.FieldAddr:
 				// Never one that can panic (index out of range, nil base):
-				// skipping it would drop the panic (spec audit, deadinit_*).
+				// skipping it would drop the panic (tests/run/audit/deadinit_*).
 				if allSkipped(s.skip, *x.(ssa.Value).Referrers()) && !s.m.p.instrMayPanic(instr, map[ssa.Value]bool{}) {
 					s.skip[instr] = true
 				}
@@ -631,8 +631,8 @@ func (s *staticInit) removeDeadInit(pkg *ssa.Package, blocks []*ssa.BasicBlock) 
 			case *ssa.BinOp:
 				ok = x.Op != token.QUO && x.Op != token.REM
 			}
-			// Dropping an initializer must not drop a panic (spec audit,
-			// tests/run/audit/deadinit_*): only computations the may-panic
+			// Dropping an initializer must not drop a panic
+			// (tests/run/audit/deadinit_*): only computations the may-panic
 			// rules clear go, plus map updates with keys that cannot be
 			// uncomparable and slices made with constant sizes.
 			if ok && !deadInitSafe(p, instr) {

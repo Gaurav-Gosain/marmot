@@ -1,4 +1,4 @@
-// Audit (spec, 2026-11-12): variable reads that gc performs after the calls
+// Variable reads that gc performs after the calls
 // of the statement and marmot performs before them. The evaluation order
 // pass moves a load only when a call sits between the load and its first
 // use; in each case below the load first feeds a lookup, an append, a call

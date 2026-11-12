@@ -1,4 +1,4 @@
-// Audit (spec, 2026-11-12): the value of an unrecovered panic is printed
+// The value of an unrecovered panic is printed
 // with its String method; when that method panics too, gc stops with
 // "fatal error: panic while printing panic value". marmot's runtime calls
 // gopanic -> preprintpanics -> String -> gopanic ... without end (the

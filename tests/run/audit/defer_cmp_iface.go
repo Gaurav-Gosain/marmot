@@ -1,4 +1,4 @@
-// Audit (spec, 2026-11-12): defer record elision treats a comparison of
+// Defer record elision treats a comparison of
 // structs or arrays as unable to panic, but == on a struct or array with
 // interface fields panics when the dynamic values are not comparable. The
 // frame then has no defer record, so the pending deferred call does not

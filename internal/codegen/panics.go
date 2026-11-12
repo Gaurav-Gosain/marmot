@@ -12,7 +12,7 @@ import (
 // May-panic analysis. An open-coded defer frame needs its _defer record only
 // so a panic (or Goexit) raised while calls are pending can run them. When
 // nothing that runs while a defer is pending can panic or call Goexit, the
-// record is dropped (docs/frontend-passes.md, "Open-coded defers").
+// record is dropped.
 //
 // Context: a set of values known to be non-nil (allocations, globals,
 // field and element addresses, and parameters the caller passes such
@@ -100,7 +100,7 @@ func (p *Program) instrMayPanic(instr ssa.Instruction, known map[ssa.Value]bool)
 	case *ssa.Alloc:
 		// x/tools turns make([]T, n) with constant n into new([n]T)[:];
 		// gc panics (makeslice: len out of range) when that is too large,
-		// so an impossibly large object may panic (spec audit).
+		// so an impossibly large object may panic.
 		if pt, ok := x.Type().Underlying().(*types.Pointer); ok {
 			if sz := types.SizesFor("gc", "amd64").Sizeof(pt.Elem()); sz < 0 || sz >= 1<<40 {
 				return true
@@ -140,7 +140,7 @@ func (p *Program) instrMayPanic(instr ssa.Instruction, known map[ssa.Value]bool)
 			return isSigned(x.Y.Type())
 		case token.EQL, token.NEQ:
 			// Comparing interfaces holding uncomparable types panics, also
-			// inside structs and arrays (spec audit defer_cmp_iface).
+			// inside structs and arrays (tests/run/audit/defer_cmp_iface).
 			return containsInterface(x.X.Type(), 0)
 		}
 		return false

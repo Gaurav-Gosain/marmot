@@ -1,4 +1,4 @@
-// Audit (spec, 2026-11-12): make with a constant length too large to
+// Make with a constant length too large to
 // allocate compiles (x/tools turns it into new([n]T)[:]) and in gc panics
 // with "makeslice: len out of range", which recover catches and deferred
 // calls see. marmot stops with "fatal error: out of memory".

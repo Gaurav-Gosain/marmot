@@ -13,7 +13,7 @@ import (
 )
 
 // The may-panic predicate shared by defer record elision and dead
-// initializer removal, checked against the table in docs/verify.md: each
+// initializer removal: each
 // function below performs one operation; mayPanicCall must say whether it
 // can panic.
 

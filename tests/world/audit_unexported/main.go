@@ -1,4 +1,4 @@
-// Audit (spec, 2026-11-12): unexported methods named m in packages pa and pb
+// Unexported methods named m in packages pa and pb
 // are distinct methods (the Go spec qualifies unexported names by package).
 // Both embeds pa.A and pb.B, so it has both; pb.I must dispatch to pb.B.m.
 // marmot picks pa.A.m for the pb.I itab, both for the compile time itab

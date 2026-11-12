@@ -1,7 +1,7 @@
 // slices.Min and slices.Max (builtin min and max over a slice) when the
 // slice holds NaNs with different payloads. The result is a NaN; which NaN
 // (payload, sign) is not defined by the spec, and marmot returns a different
-// one than gc (documented in docs/SUPPORT.md, known differences). This
+// one than gc (a documented known difference). This
 // program checks only what is defined; print math.Float64bits of the results
 // to see the payload difference.
 package main

@@ -1,6 +1,6 @@
 // Package specialize rewrites standard library calls in the program being
 // compiled into code specialized for what the compiler knows at the call
-// site: constant arguments and static types. See docs/specialize.md.
+// site: constant arguments and static types.
 //
 // Every rewrite is an optimization, never a semantic change. A rewriter that
 // is unsure leaves the call alone.
@@ -49,7 +49,7 @@ var optInFeatures = []string{"clone"}
 
 // releaseDefault lists the features on by default in release builds. A
 // feature joins it only after the full conformance matrix and a fuzz round
-// pass with it forced on (MARMOT_SPEC=name); see docs/specialize.md.
+// pass with it forced on (MARMOT_SPEC=name).
 var releaseDefault = map[string]bool{}
 
 // enabledSet returns the features to run. MARMOT_SPEC selects them: "0"

@@ -1,4 +1,4 @@
-// Audit (spec, 2026-11-12): the FMA rule fuses where gc fuses on arm64,
+// The FMA rule fuses where gc fuses on arm64,
 // but gc also fuses inside complex multiplication: the real part of
 // (a+bi)*(c+di) is computed as fma(a, c, -(b*d)). With a == b and c == d
 // the unfused result is 0 and the fused one is the rounding error of a*c.

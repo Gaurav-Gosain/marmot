@@ -2,7 +2,7 @@
 // writes the result as a standalone module, for measuring a specialization
 // with any toolchain:
 //
-//	go run ./internal/specialize/cmd/specdump -o .work/spec/fmtout ./bench/programs/fmtout
+//	go run ./internal/specialize/cmd/specdump -o out/fmtout ./bench/programs/fmtout
 //
 // The package is loaded against the stock GOROOT plus the fmt entry points
 // (internal/specialize/_lib), so the output builds with go build only when

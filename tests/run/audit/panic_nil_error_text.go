@@ -1,4 +1,4 @@
-// Audit (spec, 2026-11-12): panic(nil) panics with *runtime.PanicNilError,
+// panic(nil) panics with *runtime.PanicNilError,
 // whose Error() in gc is "runtime error: panic called with nil argument".
 // marmot's runtime returns the text without the "runtime error: " prefix.
 package main
