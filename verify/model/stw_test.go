@@ -71,11 +71,11 @@ type sstate struct {
 	runq      []int
 	spinners  int  // spinners with a P (their Ps have owner -2)
 	nmspin    int  // nmspinning
-	before50f bool // before 50f70c9: p->m stays set during a syscall, the exit CAS does not set it
-	fix       bool // 5a287c8: REQ_EXITSYSCALL takes an idle P or queues in one sched.lock
+	before50f bool // before 3b136e2: p->m stays set during a syscall, the exit CAS does not set it
+	fix       bool // 6ce0382: REQ_EXITSYSCALL takes an idle P or queues in one sched.lock
 	// hold; an M that stops spinning rechecks the global queue
 	spinPh int // 0 no spinner; 1 holds a P (findrunnable); 2 released its P, still spinning;
-	// 3 stopped spinning (5a287c8: rechecks the global queue)
+	// 3 stopped spinning (6ce0382: rechecks the global queue)
 	parked []bool // goroutines parked by 'x', waiting for rt_ready from an M without a P
 }
 
@@ -390,7 +390,7 @@ func (s *sstate) moves() []move {
 					add(fmt.Sprintf("g%d exitsyscall wins the CAS on P%d owned by g%d (ABA)", i, g.p, t.owner[g.p]), t)
 					continue
 				}
-				if g.stale { // 50f70c9: the CAS winner sets p->m; the other M will lose its CAS
+				if g.stale { // 3b136e2: the CAS winner sets p->m; the other M will lose its CAS
 					if o := t.owner[g.p]; o >= 0 && o != i {
 						t.gs[o].stale = true
 					}
@@ -418,7 +418,7 @@ func (s *sstate) moves() []move {
 			add(fmt.Sprintf("g%d exitsyscall: no P (gcwaiting %v)", i, t.gcwaiting), t)
 		case gQueuing:
 			t := s.clone()
-			if s.fix { // 5a287c8: under one sched.lock hold, an idle P or the global queue
+			if s.fix { // 6ce0382: under one sched.lock hold, an idle P or the global queue
 				if p := t.idleP(); p >= 0 && !t.gcwaiting {
 					t.ps[p], t.owner[p] = pRun, i
 					t.gs[i].p = p
@@ -515,7 +515,7 @@ func (s *sstate) moves() []move {
 	case 3:
 		t := s.clone()
 		t.spinPh = 0
-		if s.fix && len(t.runq) > 0 && !t.gcwaiting { // 5a287c8: recheck the global queue
+		if s.fix && len(t.runq) > 0 && !t.gcwaiting { // 6ce0382: recheck the global queue
 			if p := t.idleP(); p >= 0 {
 				j := t.runq[0]
 				t.runq = t.runq[1:]
@@ -629,7 +629,7 @@ func newSTW(scripts ...string) *sstate {
 
 var stwScripts = [][]string{{"g", "g"}, {"g", "s"}, {"gg", "g"}, {"g", "g", "s"}, {"gs", "sg"}, {"s", "s", "g"}, {"g", "r"}, {"r", "r", "g"}, {"gr", "rg"}}
 
-// Before 5a287c8 (at 93701ad) a goroutine that leaves a syscall while the world is stopped can
+// Before 6ce0382 (at 0a1ba4a) a goroutine that leaves a syscall while the world is stopped can
 // be queued after start_the_world looked for work, and nobody runs it. This test records
 // the finding: it passes while the model finds that trace.
 func TestSTWExitSyscallLostWakeBefore5a287c8(t *testing.T) {
@@ -640,7 +640,7 @@ func TestSTWExitSyscallLostWakeBefore5a287c8(t *testing.T) {
 	t.Logf("lost wake-up:\n  %s", strings.Join(trace, "\n  "))
 }
 
-// The second window 5a287c8 closes: rt_ready from an M without a P while the only M left
+// The second window 6ce0382 closes: rt_ready from an M without a P while the only M left
 // is between releasing its P and dropping nmspinning skips wakep.
 func TestSTWSpinWindowBefore5a287c8(t *testing.T) {
 	trace, _ := stwCheck(newSTW("x", "x"))
@@ -650,7 +650,7 @@ func TestSTWSpinWindowBefore5a287c8(t *testing.T) {
 	t.Logf("lost wake-up:\n  %s", strings.Join(trace, "\n  "))
 }
 
-// With 5a287c8, no state is stuck.
+// With 6ce0382, no state is stuck.
 func TestSTWFixed(t *testing.T) {
 	for _, sc := range append(stwScripts, []string{"x", "x"}, []string{"x", "s"}, []string{"xs", "g"}, []string{"x", "x", "g"}) {
 		s := newSTW(sc...)
@@ -663,7 +663,7 @@ func TestSTWFixed(t *testing.T) {
 	}
 }
 
-// Before 50f70c9 two Ms could own one P: the P of an M in a syscall is taken and run
+// Before 3b136e2 two Ms could own one P: the P of an M in a syscall is taken and run
 // by another M that enters a syscall too; the first M returns and wins the status CAS while
 // p->m still names the other M. Its SIGURG handler then refuses to stop (p->m != m) and stop
 // the world waits forever (the double GC hang of marmot-2).
