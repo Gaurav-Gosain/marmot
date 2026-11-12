@@ -61,26 +61,26 @@ func rewriteRegexp(g *gen, f *ast.File) {
 			g.decls = append(g.decls, fmt.Sprintf("func %s(expr string) *regexp.Regexp {\n\treturn regexp.MarmotMustCompile(expr, %s, %s_prog)\n}\n", wrap, m, m))
 		}
 		g.usePkg("regexp", "regexp")
-		g.raw = append(g.raw, fmt.Sprintf("const %s_prog = %s\n", m, strconv.Quote(sig)))
+		g.raw = append(g.raw, fmt.Sprintf("const %s_prog uint64 = %#x\n", m, sig))
 		g.replaceCall(call, wrap, []ast.Expr{call.Args[0]})
 		return true
 	})
 }
 
 // regexpMatcher generates the matcher for expr and returns its name and
-// the program text it was generated from.
-func (g *gen) regexpMatcher(expr string) (string, string, bool) {
+// the hash of the program it was generated from.
+func (g *gen) regexpMatcher(expr string) (string, uint64, bool) {
 	re, err := syntax.Parse(expr, syntax.Perl)
 	if err != nil {
-		return "", "", false
+		return "", 0, false
 	}
 	prog, err := syntax.Compile(re.Simplify())
 	if err != nil || len(prog.Inst) > reMaxInsts {
-		return "", "", false
+		return "", 0, false
 	}
 	cond := prog.StartCond()
 	if cond == ^syntax.EmptyOp(0) {
-		return "", "", false
+		return "", 0, false
 	}
 	prefix, _ := prog.Prefix()
 	nc := prog.NumCap
@@ -234,7 +234,7 @@ func (g *gen) regexpMatcher(expr string) (string, string, bool) {
 			w("\t\t}")
 			w("\t\tgoto Lfail")
 		default:
-			return "", "", false
+			return "", 0, false
 		}
 	}
 	w("\t\tgoto Lfail // keeps the label used")
@@ -275,7 +275,7 @@ func (g *gen) regexpMatcher(expr string) (string, string, bool) {
 	w("}")
 	g.usePkg("unicode/utf8", "utf8")
 	g.decls = append(g.decls, strings.Join(instVars, "")+b.String())
-	return name, prog.String(), true
+	return name, progHash(prog), true
 }
 
 // runeCond returns a condition on r for an InstRune without case folding,
@@ -300,4 +300,31 @@ func runeCond(in syntax.Inst) string {
 		}
 	}
 	return strings.Join(parts, " || ")
+}
+
+// progHash is regexp.marmotProgHash (lib/src/regexp/marmot_spec.go); the
+// two must stay identical.
+func progHash(p *syntax.Prog) uint64 {
+	h := uint64(14695981039346656037)
+	mix := func(v uint64) {
+		for i := 0; i < 8; i++ {
+			h ^= v & 0xff
+			h *= 1099511628211
+			v >>= 8
+		}
+	}
+	mix(uint64(p.Start))
+	mix(uint64(p.NumCap))
+	mix(uint64(len(p.Inst)))
+	for i := range p.Inst {
+		in := &p.Inst[i]
+		mix(uint64(in.Op))
+		mix(uint64(in.Out))
+		mix(uint64(in.Arg))
+		mix(uint64(len(in.Rune)))
+		for _, r := range in.Rune {
+			mix(uint64(r))
+		}
+	}
+	return h
 }

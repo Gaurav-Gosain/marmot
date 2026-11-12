@@ -1,6 +1,10 @@
 package specialize
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
 // regexpProgram runs every Find, Match, Replace and Split method on many
 // constant patterns and inputs (Unicode, invalid UTF-8, empty matches,
@@ -77,4 +81,27 @@ func TestRegexpDifferential(t *testing.T) {
 		t.Skip("builds programs with the go tool")
 	}
 	diffTest(t, regexpProgram, 20)
+}
+
+// progHash must be the same function as regexp.marmotProgHash, or no
+// generated matcher is ever attached.
+func TestProgHashMatchesLib(t *testing.T) {
+	body := func(path, name string) string {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := string(src)
+		i := strings.Index(s, "func "+name+"(")
+		if i < 0 {
+			t.Fatalf("%s: no func %s", path, name)
+		}
+		j := strings.Index(s[i:], "\n}\n")
+		return strings.TrimPrefix(s[i:i+j], "func "+name)
+	}
+	lib := body("../../lib/src/regexp/marmot_spec.go", "marmotProgHash")
+	spec := body("regexpspec.go", "progHash")
+	if lib != spec {
+		t.Errorf("progHash differs from regexp.marmotProgHash:\n%s\n---\n%s", spec, lib)
+	}
 }

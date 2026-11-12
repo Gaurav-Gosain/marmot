@@ -14,23 +14,51 @@ import (
 )
 
 // MarmotMustCompile is MustCompile that attaches matcher m when the
-// compiled program prints as prog (so a matcher generated against another
+// compiled program hashes to prog (so a matcher generated against another
 // version of regexp/syntax is never used).
-func MarmotMustCompile(expr string, m func(s string, pos, ncap int, dstCap []int) ([]int, bool), prog string) *Regexp {
+func MarmotMustCompile(expr string, m func(s string, pos, ncap int, dstCap []int) ([]int, bool), prog uint64) *Regexp {
 	re := MustCompile(expr)
-	if re.prog.String() == prog {
+	if marmotProgHash(re.prog) == prog {
 		re.marmot = m
 	}
 	return re
 }
 
 // MarmotCompile is Compile with a matcher, as MarmotMustCompile.
-func MarmotCompile(expr string, m func(s string, pos, ncap int, dstCap []int) ([]int, bool), prog string) (*Regexp, error) {
+func MarmotCompile(expr string, m func(s string, pos, ncap int, dstCap []int) ([]int, bool), prog uint64) (*Regexp, error) {
 	re, err := Compile(expr)
-	if err == nil && re.prog.String() == prog {
+	if err == nil && marmotProgHash(re.prog) == prog {
 		re.marmot = m
 	}
 	return re, err
+}
+
+// marmotProgHash is FNV-1a over every field of the program. The compiler
+// computes the same hash (internal/specialize progHash) from the program it
+// generated the matcher from.
+func marmotProgHash(p *syntax.Prog) uint64 {
+	h := uint64(14695981039346656037)
+	mix := func(v uint64) {
+		for i := 0; i < 8; i++ {
+			h ^= v & 0xff
+			h *= 1099511628211
+			v >>= 8
+		}
+	}
+	mix(uint64(p.Start))
+	mix(uint64(p.NumCap))
+	mix(uint64(len(p.Inst)))
+	for i := range p.Inst {
+		in := &p.Inst[i]
+		mix(uint64(in.Op))
+		mix(uint64(in.Out))
+		mix(uint64(in.Arg))
+		mix(uint64(len(in.Rune)))
+		for _, r := range in.Rune {
+			mix(uint64(r))
+		}
+	}
+	return h
 }
 
 // MarmotEmpty reports whether the empty-width assertions op hold at pos.
