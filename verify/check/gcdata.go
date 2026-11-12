@@ -262,8 +262,12 @@ func (r *resolver) parse(s string) (types.Type, error) {
 	// x/tools/go/ssa's synthetic defer stack type: marmot passes the frame pointer for it
 	// (defer.go: frame = f.value(v.DeferStack)), one pointer word, never a Go object
 	s = strings.ReplaceAll(s, "$ssa.deferStack", "unsafe.Pointer")
-	// a type declared inside a function is named Name·N.M, the middle dot escaped in MLIR
-	s = strings.ReplaceAll(s, `\C2\B7`, "·")
+	// MLIR string escapes: \XX is the byte 0xXX (the middle dot of local type names Name·N.M,
+	// quotes and backslashes of struct tags)
+	s = unescapeMLIR(s)
+	// the loader's //go:embed helper type (internal/loader/embed.go embedHelperSrc), which
+	// exists only in an overlay file: its declared fields
+	s = reEmbedFile.ReplaceAllString(s, "struct{name string; data string; hash [16]byte}")
 	ph := map[string]string{}
 	var b strings.Builder
 	for i := 0; i < len(s); {
@@ -302,6 +306,26 @@ func (r *resolver) parse(s string) (types.Type, error) {
 		return nil, err
 	}
 	return r.conv(e, ph)
+}
+
+var reEmbedFile = regexp.MustCompile(`[\w./-]+\.zz_marmotEmbedFile\b`)
+
+func unescapeMLIR(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b []byte
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+2 < len(s) {
+			if v, err := strconv.ParseUint(s[i+1:i+3], 16, 8); err == nil {
+				b = append(b, byte(v))
+				i += 2
+				continue
+			}
+		}
+		b = append(b, s[i])
+	}
+	return string(b)
 }
 
 func isIdentByte(c byte) bool {
