@@ -61,7 +61,18 @@ func reflectUses(p *packages.Package, info *types.Info, f *Facts) {
 	}
 	for _, obj := range info.Uses {
 		fn, ok := obj.(*types.Func)
-		if !ok || fn.Pkg() == nil || fn.Pkg().Path() != "reflect" {
+		if !ok || fn.Pkg() == nil {
+			continue
+		}
+		if fn.Pkg().Path() != "reflect" {
+			// A method lookup through an interface of the package's own
+			// that reflect.Type or reflect.Value satisfies.
+			if (fn.Name() == "Method" || fn.Name() == "MethodByName") && returnsReflect(fn, "Method") {
+				f.MethodLookup = true
+			}
+			if (fn.Name() == "Method" || fn.Name() == "MethodByName") && returnsReflect(fn, "Value") {
+				f.MethodLookup, f.ReflectCall = true, true
+			}
 			continue
 		}
 		switch fn.Name() {
@@ -69,10 +80,26 @@ func reflectUses(p *packages.Package, info *types.Info, f *Facts) {
 			f.ReflectCall = true
 		case "Method", "MethodByName":
 			f.MethodLookup = true
+			// Value.Method values are called through the call adapters.
+			if returnsReflect(fn, "Value") {
+				f.ReflectCall = true
+			}
 		case "NewAt":
 			f.NewAt = true
 		}
 	}
+}
+
+// returnsReflect reports whether fn returns a reflect.<name>.
+func returnsReflect(fn *types.Func, name string) bool {
+	res := fn.Type().(*types.Signature).Results()
+	for i := 0; i < res.Len(); i++ {
+		if n, ok := types.Unalias(res.At(i).Type()).(*types.Named); ok &&
+			n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == "reflect" && n.Obj().Name() == name {
+			return true
+		}
+	}
+	return false
 }
 
 type pkgMeta struct {
