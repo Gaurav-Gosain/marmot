@@ -7,6 +7,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"io"
 	"context"
 	"encoding/json"
 	"flag"
@@ -148,6 +150,9 @@ type Result struct {
 	// cost measure. Only recorded on macOS, where /usr/bin/time -l reports them (optional tool).
 	Instructions int64 `json:"instructions,omitempty"`
 	Cycles       int64 `json:"cycles,omitempty"`
+	// BinSHA256 is the hash of the built binary. Toolchains that differ only in hidden flags must
+	// produce different binaries where the flags matter; the hash lets that be checked.
+	BinSHA256 string `json:"bin_sha256,omitempty"`
 	// Rev is the marmot commit (and snapshot) this row was measured with.
 	Rev string `json:"rev,omitempty"`
 }
@@ -368,7 +373,7 @@ func measure(p Program, t Toolchain) Result {
 	env := append(append(os.Environ(), "GOCACHE="+gocacheDir(), "MARMOT_MAX_JOBS=2", "MARMOT_CACHE_MAX_MB=512"), t.Env...)
 
 	if *sizeOnly {
-		c := exec.Command(t.Build(root, p.Pkg, out, false)[0], t.Build(root, p.Pkg, out, false)[1:]...)
+		c := exec.Command(t.Build(root, p.Pkg, out, len(t.Env) > 0)[0], t.Build(root, p.Pkg, out, len(t.Env) > 0)[1:]...)
 		c.Dir, c.Env = root, env
 		if o, err := runGroup(c, 10*time.Minute); err != nil {
 			r.Status, r.Error = "build_failed", trunc(fmt.Sprintf("%v: %s", err, o))
@@ -395,7 +400,7 @@ func measure(p Program, t Toolchain) Result {
 		}
 	}
 	// Warm build. One warmup populates the caches.
-	argv := t.Build(root, p.Pkg, out, false)
+	argv := t.Build(root, p.Pkg, out, len(t.Env) > 0)
 	st, err := timeBuild(argv, "", *warmRuns, 1, env)
 	if err != nil {
 		r.Status, r.Error = "build_failed", trunc(err.Error())
@@ -408,6 +413,7 @@ func measure(p Program, t Toolchain) Result {
 		return r
 	}
 	r.Size = fi.Size()
+	r.BinSHA256 = fileSHA(out)
 	r.SizeStripped = strippedSize(out)
 
 	// Output check against the stock Go reference.
@@ -937,4 +943,17 @@ func gocacheDir() string {
 		return filepath.Join(root, ".work", "gocache")
 	}
 	return filepath.Join(work, "gocache")
+}
+
+func fileSHA(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
