@@ -1112,6 +1112,9 @@ func Replace(s, old, new string, n int) string {
 	// it without counting first. Small inputs count first, so that no
 	// match allocates nothing.
 	if n < 0 && len(old) > 0 && len(new) <= len(old) && len(s) >= 256 {
+		if Index(s, old) < 0 {
+			return s // no match: s itself, without allocation, as gc
+		}
 		buf := bytealg.MakeNoZero(len(s))[:len(s)]
 		w := bytealg.MarmotReplaceInto(buf, s, old, new)
 		return unsafe.String(unsafe.SliceData(buf), w)
