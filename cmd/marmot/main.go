@@ -38,7 +38,7 @@ func main() {
 // buildFlags are the flags of build and run.
 type buildFlags struct {
 	out, opt, trace, pgo, emit, tags, gc, target, dialect    *string
-	strip, pgoGen, release, work, verbose, printCmd, nocache *bool
+	strip, pgoGen, release, work, verbose, printCmd, nocache, allocs, allocsAll *bool
 	output                                                   outputFlags
 }
 
@@ -60,6 +60,8 @@ func newBuildFlags(name string) (*flag.FlagSet, *buildFlags) {
 	b.tags = fs.String("tags", "", "comma separated build tags")
 	b.printCmd = fs.Bool("x", false, "print the commands run")
 	b.nocache = fs.Bool("nocache", false, "do not use the object cache")
+	b.allocs = fs.Bool("allocs", false, "report the allocation sites of the main module: heap or stack, and why (rebuilds without the object cache)")
+	b.allocsAll = fs.Bool("allocs-all", false, "like -allocs, for every package")
 	b.gc = fs.String("gc", "precise", "garbage collector: precise or none")
 	b.target = fs.String("target", "", "target triple (default: host)")
 	b.dialect = fs.String("dialect", os.Getenv("MARMOT_DIALECT"), "MLIR dialect level: llvm or go (default: go with -release, llvm otherwise; $MARMOT_DIALECT overrides)")
@@ -155,9 +157,23 @@ func cmdBuild(args []string, run bool) int {
 		defer os.RemoveAll(tmpDir)
 		cfg.Output = filepath.Join(tmpDir, "prog")
 	}
+	var allocPath string
+	if *b.allocs || *b.allocsAll {
+		p, done, err := allocReportFile()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "marmot:", err)
+			return 1
+		}
+		defer done()
+		allocPath = p
+		cfg.NoCache = true // cached objects would skip the code generator's report
+	}
 	exe, err := driver.Build(cfg)
 	if err != nil {
 		return rep.Fail(err)
+	}
+	if allocPath != "" {
+		showAllocs(rep, allocPath, *b.allocsAll)
 	}
 	if !run {
 		rep.OK(exe)

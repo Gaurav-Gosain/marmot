@@ -169,6 +169,7 @@ func (f *funcGen) makeClosure(v *ssa.MakeClosure) {
 	}
 	st := types.NewStruct(fields, nil)
 	if f.stackOK[v] {
+		f.reportAlloc(v, "closure", st, "stack")
 		// The closure does not escape: build it in the frame.
 		mt := f.tm.memType(st)
 		obj := f.alloca(mt, 8)
@@ -179,6 +180,7 @@ func (f *funcGen) makeClosure(v *ssa.MakeClosure) {
 		f.vals[v] = obj
 		return
 	}
+	f.reportAlloc(v, "closure", st, "heap")
 	anyBig := false
 	for _, t := range btypes {
 		anyBig = anyBig || f.tm.isBig(t)

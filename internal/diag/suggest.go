@@ -133,6 +133,32 @@ func (s *Sources) enrich(d *Diagnostic, opt Options) {
 		}
 		d.Notes = keep
 		d.Message = strings.TrimSuffix(d.Message, "; to add it:")
+	case CodeHeapAlloc:
+		if f.ast != nil {
+			var best ast.Node
+			for _, n := range pathNodes(f.ast, pos) {
+				switch x := n.(type) {
+				case *ast.CompositeLit, *ast.CallExpr, *ast.FuncLit:
+					if f.fset.Position(x.Pos()).Line == d.Span.Line {
+						best = x
+					}
+				case *ast.UnaryExpr:
+					if x.Op == token.AND && f.fset.Position(x.Pos()).Line == d.Span.Line {
+						best = x
+					}
+				}
+			}
+			if best != nil {
+				sp := f.spanOf(best)
+				if sp.EndLine != sp.Line {
+					sp.EndLine, sp.EndCol = sp.Line, sp.Col+1
+					if t, ok := f.line(sp.Line); ok {
+						sp.EndCol = len(strings.TrimRight(t, " \t{")) + 1
+					}
+				}
+				d.Span = sp
+			}
+		}
 	case CodeTestFail:
 		if t, ok := f.line(d.Span.Line); ok {
 			ind := len(t) - len(strings.TrimLeft(t, " \t"))

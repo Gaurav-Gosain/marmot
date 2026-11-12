@@ -20,6 +20,9 @@ func (f *funcGen) typeWord(t, iface types.Type) string {
 
 func (f *funcGen) makeInterface(v *ssa.MakeInterface) {
 	t := v.X.Type()
+	if _, isConst := v.X.(*ssa.Const); !isDirectIface(t) && !isConst && f.m.p.opts.Sizes.Sizeof(t) != 0 {
+		f.reportAlloc(v, "box", t, "heap")
+	}
 	if f.goOps() {
 		var tab string
 		if isEmptyInterface(v.Type()) {

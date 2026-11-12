@@ -105,6 +105,7 @@ func (f *funcGen) selectRet() string { return mlir.Struct(mlir.I64, mlir.I1) }
 func mapTypeOf(t types.Type) *types.Map { return t.Underlying().(*types.Map) }
 
 func (f *funcGen) makeMap(v *ssa.MakeMap) {
+	f.reportAlloc(v, "make-map", nil, "heap")
 	hint := f.constInt(0, mlir.I64)
 	if v.Reserve != nil {
 		hint = f.toInt64(f.value(v.Reserve), v.Reserve.Type())

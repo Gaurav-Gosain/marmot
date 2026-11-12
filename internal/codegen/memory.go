@@ -246,8 +246,10 @@ func (f *funcGen) makeSlice(v *ssa.MakeSlice) {
 		// makeslice checks len and cap (negative, len > cap, too large).
 	}
 	if f.stackMakeSlice(v, l, c) {
+		f.reportAlloc(v, "make-slice", nil, "stack")
 		return
 	}
+	f.reportAlloc(v, "make-slice", nil, "heap")
 	if f.goOps() {
 		f.vals[v] = f.op("go.make_slice %s, %s(%s, %s) : i64", mlir.Symbol(f.m.typeDescSym(st.Elem())), f.tm.memType(st.Elem()), l, c)
 		return

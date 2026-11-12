@@ -614,7 +614,11 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 			break
 		}
 		if f.stackConvert(v) {
+			f.reportAlloc(v, "convert", nil, "stack")
 			break
+		}
+		if isString(v.X.Type()) != isString(v.Type()) && (isString(v.X.Type()) || isString(v.Type())) {
+			f.reportAlloc(v, "convert", nil, "heap")
 		}
 		f.vals[v] = f.convert(f.value(v.X), v.X.Type(), v.Type())
 	case *ssa.ChangeType:
@@ -646,6 +650,7 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 	case *ssa.Go:
 		f.goStmt(v)
 	case *ssa.MakeChan:
+		f.reportAlloc(v, "make-chan", nil, "heap")
 		et := v.Type().Underlying().(*types.Chan).Elem()
 		size := f.toInt64(f.value(v.Size), v.Size.Type())
 		if f.goOps() {
@@ -759,10 +764,14 @@ func (f *funcGen) alloc(v *ssa.Alloc) {
 		return
 	}
 	if sym, ok := f.m.static.runtimeObj(v); ok {
+		if v.Heap {
+			f.reportAlloc(v, allocKind(v), et, "static")
+		}
 		f.vals[v] = f.addressOf(sym)
 		return
 	}
 	if v.Heap && !f.stackOK[v] && f.region != "" {
+		f.reportAlloc(v, allocKind(v), et, "region")
 		size := f.m.p.opts.Sizes.Sizeof(et)
 		if size == 0 {
 			f.vals[v] = f.addressOf(f.m.zeroBase())
@@ -772,13 +781,18 @@ func (f *funcGen) alloc(v *ssa.Alloc) {
 		return
 	}
 	if v.Heap && !f.stackOK[v] {
+		f.reportAlloc(v, allocKind(v), et, "heap")
 		f.vals[v] = f.newObject(et)
 		return
 	}
 	mt := f.tm.memType(et)
 	if f.m.p.opts.Sizes.Sizeof(et) > maxStackVar {
+		f.reportAlloc(v, allocKind(v), et, "heap")
 		f.vals[v] = f.newObject(et)
 		return
+	}
+	if v.Heap {
+		f.reportAlloc(v, allocKind(v), et, "stack")
 	}
 	p := f.alloca(mt, f.m.p.opts.Sizes.Alignof(et))
 	if f.tm.isBig(et) && !f.volatile[v] {

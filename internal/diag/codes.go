@@ -50,6 +50,7 @@ const (
 	CodeDeadcode   = "M0108"
 	CodeExhaustive = "M0109"
 	CodeNil        = "M0110"
+	CodeHeapAlloc  = "M0111"
 )
 
 // CodeInfo describes one code for marmot explain.
@@ -252,6 +253,11 @@ var codeTable = []CodeInfo{
 		Right: "u, err := find(id)\nif err != nil {\n\treturn err\n}\nif u == nil {\n\treturn errNotFound\n}\nfmt.Println(u.Name)",
 		Text:  "A pointer is dereferenced, or a map written to, where it can be nil: it is nil on one path into the use (var p *T; if c { p = &T{} }; p.f), or it comes from a function that returns nil with a nil error (or with ok true), in this package or another. A use dominated by a nil check is not reported.",
 		Fix:   "Check for nil before the use, or make the function return an error instead of nil, nil."},
+	{Code: CodeHeapAlloc, Title: "heap allocation",
+		Wrong: "func newPoint() *Point {\n\treturn &Point{1, 2} // returned: heap\n}",
+		Right: "func point() Point {\n\treturn Point{1, 2} // a value: no allocation\n}",
+		Text:  "marmot build -allocs lists where the program allocates on the heap and why the object could not live in the frame: it is returned, stored in memory that outlives the function or in a global, passed to a call that may keep it, captured by an escaping closure, converted to an interface, kept across loop iterations, or too large for the frame. Heap allocations cost time in the allocator and the garbage collector; those in loops cost on every iteration.",
+		Fix:   "Return values instead of pointers, pass buffers in, keep large arrays out of loops, or avoid interfaces on hot paths."},
 	{Code: CodeOther, Title: "error",
 		Text: "An error without a more specific code. The message says what is wrong."},
 }
