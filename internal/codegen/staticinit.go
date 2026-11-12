@@ -32,6 +32,10 @@ type staticInit struct {
 	objSyms   map[*ssa.Alloc]string
 	dynamic   map[ssa.Value]bool
 	loads     []*ssa.UnOp // loads of local literal objects used as static values
+	// runtime holds static heap literal objects whose slice is also used
+	// by code that stays in init (a map literal's values): the allocation
+	// becomes the address of the private global.
+	runtime map[*ssa.Alloc]bool
 }
 
 // memImage is the static content of a memory object of Go type t.
@@ -138,6 +142,7 @@ func (m *moduleGen) analyzeStaticInit(pkg *ssa.Package) *staticInit {
 		objSyms: map[*ssa.Alloc]string{},
 		dynamic: map[ssa.Value]bool{},
 		cand:    map[*ssa.Store]ssa.Value{},
+		runtime: map[*ssa.Alloc]bool{},
 	}
 	init := pkg.Func("init")
 	if init == nil {
@@ -365,18 +370,28 @@ func (s *staticInit) allocUsesStatic(a *ssa.Alloc) bool {
 				if v != ssa.Value(a) || x.Low != nil || x.High != nil || x.Max != nil {
 					return false
 				}
+				used := false // by code that stays in init
 				for _, rr := range *x.Referrers() {
 					if _, ok := rr.(*ssa.DebugRef); ok {
 						continue
 					}
 					st, ok := rr.(*ssa.Store)
 					if !ok || st.Val != x {
-						return false
+						used = true
+						continue
 					}
 					root, ok := s.cand[st]
 					if !ok || s.dynamic[root] {
 						return false
 					}
+				}
+				if used {
+					// The slice is built at run time from the static
+					// object, so every store into it must come first.
+					if !a.Heap || !s.storesBefore(a, x) {
+						return false
+					}
+					s.runtime[a] = true
 				}
 			default:
 				return false
@@ -504,6 +519,15 @@ func (s *staticInit) staticValue(v ssa.Value) (cv, bool) {
 		return cAgg(tIface, cAddr(tw), data), true
 	}
 	return cv{}, false
+}
+
+// runtimeObj returns the private global standing for heap allocation a of
+// the init function, if a is a static object used at run time.
+func (s *staticInit) runtimeObj(a *ssa.Alloc) (string, bool) {
+	if s == nil || !s.runtime[a] || !s.isStaticObj(a) {
+		return "", false
+	}
+	return s.objSym(a), true
 }
 
 // objSym returns the private global holding a static literal object.

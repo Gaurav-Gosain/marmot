@@ -764,6 +764,10 @@ func (f *funcGen) alloc(v *ssa.Alloc) {
 		f.vals[v] = f.null()
 		return
 	}
+	if sym, ok := f.m.static.runtimeObj(v); ok {
+		f.vals[v] = f.addressOf(sym)
+		return
+	}
 	if v.Heap && !f.stackOK[v] && f.region != "" {
 		size := f.m.p.opts.Sizes.Sizeof(et)
 		if size == 0 {
