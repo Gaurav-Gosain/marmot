@@ -12,7 +12,7 @@
 // Blocking driver calls are bracketed by rt_entersyscall/rt_exitsyscall so
 // other goroutines keep running.
 //
-// Kernel convention (agreed with loops and backend): every kernel parameter
+// Kernel convention (shared with the compiler): every kernel parameter
 // is one 64-bit word (.u64, .s64, .f64, or a device pointer); parameter 0
 // is the element count n; the kernel handles indexes [0, n) of a 1-D grid,
 // returning early for global index >= n.
@@ -680,7 +680,7 @@ RT_API int64_t rt_gpu_break_even(double ops, double bytes_in, double bytes_out) 
   return -1;
 }
 
-// ---- rt_gpu_for: the loop compiler's entry (docs/gpu.md) ----
+// ---- rt_gpu_for: the loop compiler's entry ----
 //
 // Runs the outlined parallel-for body as kernel kname(ptr ctx, i64 n), one
 // thread per iteration, blocks of 256. Memory: the ranges (every byte the

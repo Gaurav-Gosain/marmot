@@ -790,8 +790,8 @@ static void goexit_final(rt_g *g) {
   g->arg = NULL;
   g->param = NULL;
   atomic_store(&g->status, G_DEAD);
-  // slot survives for the next goroutine that reuses this structure (rtgo
-  // recycles its per-goroutine data); the GC keeps scanning it, so the
+  // slot survives for the next goroutine that reuses this structure (the Go
+  // runtime recycles its per-goroutine data); the GC keeps scanning it, so the
   // table bit stays set while the slot is in use.
   if (!g->slot) glive_set(g, false);
 }
@@ -1285,7 +1285,7 @@ RT_API void rt_entersyscall(void) {
   // owns it. With p->m left set, an M returning to a P that another M had
   // since taken into its own syscall won the CAS while p->m still named the
   // other M: two Ms ran on one P, and stop the world signalled the wrong M
-  // and waited forever (marmot-2 hang with one M blocked on gc_mu).
+  // and waited forever (seen as a hang with one M blocked on gc_mu).
   __atomic_store_n(&p->m, NULL, __ATOMIC_RELAXED);
   atomic_store(&p->status, P_SYSCALL);
   if (atomic_load(&sched.gcwaiting)) {

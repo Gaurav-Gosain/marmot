@@ -1,6 +1,6 @@
 #!/bin/sh
 # run.sh: check the proofs.
-#   verify/run.sh [file ...]      on linux-host (the record): every verify/bend/*.bend with bend2
+#   verify/run.sh [file ...]      on the Linux test host (the record): every verify/bend/*.bend with bend2
 #                                 and then the BendTT kernel (--verdict), and every
 #                                 verify/lean/*.lean with Lean 4.34.0
 #   verify/run.sh -l [file ...]   quick local check: bend2 only (no kernel recheck), from a copy

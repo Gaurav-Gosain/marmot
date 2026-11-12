@@ -35,15 +35,14 @@ TARGET_FLAGS := --target=$(TRIPLE) $(if $(SYSROOT_DIR),--sysroot=$(SYSROOT_DIR),
 endif
 OUT     := $(ROOT)/build/lib$(SUFFIX)
 OBJ     := $(ROOT)/build/rtcore$(SUFFIX)
-# SPEC rule 12: build/lib is installed only from a committed and tested
-# state. With uncommitted changes under runtime/core (in a git checkout),
-# build into .work/rtcore instead; commit, then make again to install.
-# Snapshot trees and the tarball builds on the Linux host are clean.
+# build/lib only ever holds a committed state: with uncommitted changes
+# under runtime/core (in a git checkout), build into .work/rtcore instead;
+# commit, then make again to install.
 DIRTY   := $(shell git -C $(ROOT) status --porcelain -- runtime/core 2>/dev/null | head -1)
 ifneq ($(DIRTY),)
 OUT     := $(ROOT)/.work/rtcore/lib$(SUFFIX)
 OBJ     := $(ROOT)/.work/rtcore/obj$(SUFFIX)
-$(info rtcore: uncommitted changes in runtime/core: building into .work/rtcore, not build/lib)
+$(info runtime/core has uncommitted changes: building into .work/rtcore, not build/lib)
 endif
 
 ifeq ($(UNAME_S),Darwin)

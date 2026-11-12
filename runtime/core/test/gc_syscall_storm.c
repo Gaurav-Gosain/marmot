@@ -3,7 +3,7 @@
 // two Ms: an M that returned from a syscall to a P another M had since taken
 // into its own syscall used to own it with p->m naming the other M, so stop
 // the world signalled the wrong thread, and the M blocked on the GC lock was
-// never stopped (marmot-2 hang). A hang shows as a timeout.
+// never stopped. A hang shows as a timeout.
 // expect-stdout: ok
 // env: GOMAXPROCS=2 GOGC=5
 // timeout: 120

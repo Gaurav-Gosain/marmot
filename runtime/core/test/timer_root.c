@@ -1,6 +1,6 @@
 // rt_timer_start's arg is a GC root while the timer is pending: a heap
 // object referenced only by the timer survives collections and is intact
-// when fn runs (rtgo passes fresh timer tokens this way).
+// when fn runs (the Go runtime passes fresh timer tokens this way).
 // expect-stdout: ok
 // env: GOGC=1
 #include "rtest.h"

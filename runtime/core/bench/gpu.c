@@ -1,5 +1,5 @@
 // GPU offload against rt_parallel_for and serial code, same kernels as
-// test/gpu.c. Run on a machine with CUDA (linux-host).
+// test/gpu.c. Run on a machine with CUDA.
 #include "rt.h"
 #include <stdio.h>
 #include <string.h>

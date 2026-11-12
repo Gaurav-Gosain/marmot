@@ -2,8 +2,8 @@
 //
 // Consumers: the Go runtime package in lib/src/runtime (through body-less Go
 // declarations with //go:linkname) and compiler generated code.
-// Owner: rtcore. Other workers request changes by mail. Additions are cheap,
-// signature changes need the consumer's agreement.
+// Additions are cheap; signature changes need the consumers updated with
+// them.
 //
 // All functions use the C calling convention. Go `int`/`uintptr` map to
 // intptr_t/uintptr_t, Go `unsafe.Pointer` maps to void*.
@@ -228,7 +228,7 @@ int32_t rt_gpu_sync(void);
 int32_t rt_gpu_should_offload(int64_t n, double ops, double bytes_in, double bytes_out);
 int64_t rt_gpu_break_even(double ops, double bytes_in, double bytes_out);
 
-// Loop offload entry for compiled code (docs/gpu.md). Runs kernel kname(ptr
+// Loop offload entry for compiled code. Runs kernel kname(ptr
 // ctx, i64 n) (the outlined parallel-for body, one thread per iteration,
 // blocks of 256) over [0, n). ranges list every byte the loop may touch
 // (flags: 1 read, 2 written): they are copied to the device and written ones
@@ -314,7 +314,7 @@ intptr_t rt_libcall_raw(void *fn, const uintptr_t *args, int32_t nargs, int32_t 
 // friends); errno and syscall handling as rt_libcall.
 intptr_t rt_libcall_f64(void *fn, const uintptr_t *args, double f0, int32_t *err);
 
-// The marmot pc table of the running binary (docs/pcln.md): 1 and the
+// The marmot pc table of the running binary: 1 and the
 // table's bytes (read only, live for the whole process), its length, and the
 // runtime address of the image base its offsets are relative to (Mach-O:
 // the main image's mach header, i.e. __TEXT vmaddr + slide; ELF: lowest

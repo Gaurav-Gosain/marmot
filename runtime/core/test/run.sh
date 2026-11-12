@@ -3,7 +3,7 @@
 #
 # Environment: CC, CFLAGS, LIB (archive or source files), OUT (build dir).
 # Tests run one at a time under nice (shared machine). On the laptop run a
-# subset: make test TESTS="test/sort.c test/simd.c"; full runs go to linux-host
+# subset: make test TESTS="test/sort.c test/simd.c"; full runs go to the Linux test host
 # (linux-build.sh).
 # Each test is a C file defining marmot_main. Header comments set expectations:
 #   // expect-exit: N        exit status (default 0)

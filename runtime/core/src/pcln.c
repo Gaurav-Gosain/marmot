@@ -1,4 +1,4 @@
-// pcln.c: find the marmot pc table (docs/pcln.md) in the running binary.
+// pcln.c: find the marmot pc table in the running binary.
 // Safe to call while panicking with a corrupted heap: no heap allocation,
 // one static initialization (system calls only), result cached.
 

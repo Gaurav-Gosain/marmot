@@ -4,15 +4,15 @@ SPEC M9. This is not a verified compiler. Each proof below is about a small mode
 rule. The model is written down next to the proof; what ties it to the C++ or Go code is
 stated for every item, and none of them claims more than is written here.
 
-Check everything with `verify/run.sh` (on linux-host; the record) or `verify/run.sh -l`
+Check everything with `verify/run.sh` (on the Linux test host; the record) or `verify/run.sh -l`
 (quick local check). See `docs/verify.md` for the design and the findings.
 
 Tools:
 
-- Bend 2 at bend2go commit `054c774` (copy in `~/marmot/verify-tools/bend` on linux-host).
+- Bend 2 at bend2go commit `054c774` (copy in `~/marmot/verify-tools/bend` on the Linux test host).
   Each `.bend` file is checked by bend2 and then, with `--verdict`, by the BendTT kernel
   (`bend2/bendtt.lean`, compiled with Lean 4.34.0), whose soundness is proved in Lean.
-- Lean 4.34.0 (linux-host, the record) and 4.34.1 (laptop, quick checks), core library only
+- Lean 4.34.0 (Linux test host, the record) and 4.34.1 (laptop, quick checks), core library only
   (no Mathlib). Every theorem prints its axioms with `#print axioms`.
 
 ## What is proved

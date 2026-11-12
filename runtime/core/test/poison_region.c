@@ -1,5 +1,5 @@
 // MARMOT_POISON=1: an access to region memory after rt_region_free faults
-// and is named, also for the first object of a chunk (verify: regionstore.go).
+// and is named, also for the first object of a chunk.
 // expect-exit: 2
 // expect-stderr: in a freed region chunk
 // env: MARMOT_POISON=1
