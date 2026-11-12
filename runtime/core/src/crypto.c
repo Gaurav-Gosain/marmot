@@ -262,12 +262,109 @@ __attribute__((target("sha,sse4.1,ssse3"))) static void sha256_block_shani(uint3
 }
 #endif
 
+// ---- x86 AVX2 + BMI2 (no SHA-NI: Intel before Ice Lake, e.g. Comet Lake) ----
+//
+// As gc's sha256block_amd64 AVX2 path: the message schedule of two blocks
+// at once in 256-bit vectors (block A in the low 128 bits, block B in the
+// high; every operation used is per 128-bit lane), W+K stored to the stack,
+// then the rounds of A and of B as scalar code with rorx/andn.
+
+#if defined(__x86_64__)
+#define SR(x, n) _mm256_or_si256(_mm256_srli_epi32(x, n), _mm256_slli_epi32(x, 32 - (n)))
+#define SIG0V(x) _mm256_xor_si256(_mm256_xor_si256(SR(x, 7), SR(x, 18)), _mm256_srli_epi32(x, 3))
+#define SIG1V(x) _mm256_xor_si256(_mm256_xor_si256(SR(x, 17), SR(x, 19)), _mm256_srli_epi32(x, 10))
+
+// wk[blk][t] = W[t] + K[t] for blocks a (wk[0]) and b (wk[1]).
+__attribute__((target("avx2"))) static void sha256_sched2(const uint8_t *a, const uint8_t *b,
+                                                          uint32_t wk[2][64]) {
+  const __m256i bswap = _mm256_set_epi64x(0x0c0d0e0f08090a0bull, 0x0405060700010203ull,
+                                          0x0c0d0e0f08090a0bull, 0x0405060700010203ull);
+  __m256i s[16];
+#pragma clang loop unroll(full)
+  for (int g = 0; g < 4; g++) {
+    __m256i v = _mm256_inserti128_si256(
+        _mm256_castsi128_si256(_mm_loadu_si128((const __m128i *)(a + 16 * g))),
+        _mm_loadu_si128((const __m128i *)(b + 16 * g)), 1);
+    s[g] = _mm256_shuffle_epi8(v, bswap);
+  }
+#pragma clang loop unroll(full)
+  for (int g = 4; g < 16; g++) {
+    __m256i w16 = s[g - 4];
+    __m256i w15 = _mm256_alignr_epi8(s[g - 3], s[g - 4], 4);
+    __m256i w7 = _mm256_alignr_epi8(s[g - 1], s[g - 2], 4);
+    __m256i x = _mm256_add_epi32(_mm256_add_epi32(w16, SIG0V(w15)), w7);
+    // sigma1 of W[t-2], W[t-1] for words 0 and 1, then of the new W[t],
+    // W[t+1] for words 2 and 3.
+    __m256i lo = _mm256_shuffle_epi32(s[g - 1], 0xFE);  // words 2,3 -> 0,1
+    lo = _mm256_and_si256(SIG1V(lo), _mm256_set_epi32(0, 0, -1, -1, 0, 0, -1, -1));
+    x = _mm256_add_epi32(x, lo);
+    __m256i hi = _mm256_shuffle_epi32(x, 0x40);  // words 0,1 -> 2,3
+    hi = _mm256_and_si256(SIG1V(hi), _mm256_set_epi32(-1, -1, 0, 0, -1, -1, 0, 0));
+    s[g] = _mm256_add_epi32(x, hi);
+  }
+#pragma clang loop unroll(full)
+  for (int g = 0; g < 16; g++) {
+    __m256i k = _mm256_broadcastsi128_si256(_mm_loadu_si128((const __m128i *)(K256 + 4 * g)));
+    __m256i v = _mm256_add_epi32(s[g], k);
+    _mm_storeu_si128((__m128i *)&wk[0][4 * g], _mm256_castsi256_si128(v));
+    _mm_storeu_si128((__m128i *)&wk[1][4 * g], _mm256_extracti128_si256(v, 1));
+  }
+}
+
+#define R256(a, b, c, d, e, f, g, h, i)                                                     \
+  do {                                                                                     \
+    uint32_t t1 = h + (ROR32(e, 6) ^ ROR32(e, 11) ^ ROR32(e, 25)) + ((e & f) ^ (~e & g)) + wk[i]; \
+    uint32_t t2 = (ROR32(a, 2) ^ ROR32(a, 13) ^ ROR32(a, 22)) + ((a & b) ^ (c & (a ^ b)));  \
+    d += t1;                                                                               \
+    h = t1 + t2;                                                                           \
+  } while (0)
+
+__attribute__((target("bmi2"))) static inline void sha256_rounds(uint32_t hs[8], const uint32_t *wk) {
+  uint32_t a = hs[0], b = hs[1], c = hs[2], d = hs[3], e = hs[4], f = hs[5], g = hs[6], h = hs[7];
+#pragma clang loop unroll(full)
+  for (int i = 0; i < 64; i += 8) {
+    R256(a, b, c, d, e, f, g, h, i);
+    R256(h, a, b, c, d, e, f, g, i + 1);
+    R256(g, h, a, b, c, d, e, f, i + 2);
+    R256(f, g, h, a, b, c, d, e, i + 3);
+    R256(e, f, g, h, a, b, c, d, i + 4);
+    R256(d, e, f, g, h, a, b, c, i + 5);
+    R256(c, d, e, f, g, h, a, b, i + 6);
+    R256(b, c, d, e, f, g, h, a, i + 7);
+  }
+  hs[0] += a;
+  hs[1] += b;
+  hs[2] += c;
+  hs[3] += d;
+  hs[4] += e;
+  hs[5] += f;
+  hs[6] += g;
+  hs[7] += h;
+}
+
+__attribute__((target("avx2,bmi2"))) static void sha256_block_avx2(uint32_t h[8], const uint8_t *p,
+                                                                  intptr_t n) {
+  uint32_t wk[2][64] __attribute__((aligned(32)));
+  for (; n >= 128; n -= 128, p += 128) {
+    sha256_sched2(p, p + 64, wk);
+    sha256_rounds(h, wk[0]);
+    sha256_rounds(h, wk[1]);
+  }
+  if (n >= 64) {
+    sha256_sched2(p, p, wk);
+    sha256_rounds(h, wk[0]);
+  }
+}
+#endif
+
 RT_API void rt_sha256_block(uint32_t h[8], const uint8_t *p, intptr_t n) {
 #if defined(__aarch64__)
   sha256_block_arm(h, p, n);
 #elif defined(__x86_64__)
   if (have_shani())
     sha256_block_shani(h, p, n);
+  else if (rt_x86_level() >= 3)
+    sha256_block_avx2(h, p, n);
   else
     sha256_block_generic(h, p, n);
 #else
