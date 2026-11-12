@@ -95,5 +95,7 @@ bool multiversion(Module &M, const Options &opts) {
   return changed;
 }
 
+unsigned mvLevelOption() { return MVLevel; }
+
 } // namespace loops
 } // namespace marmot

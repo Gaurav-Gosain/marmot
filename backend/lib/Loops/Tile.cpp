@@ -236,5 +236,7 @@ PreservedAnalyses TilePass::run(Function &F, FunctionAnalysisManager &FAM) {
 
 void addTile(FunctionPassManager &fpm, const Options &opts) { fpm.addPass(TilePass(opts)); }
 
+bool tileOption() { return TileOn; }
+
 } // namespace loops
 } // namespace marmot

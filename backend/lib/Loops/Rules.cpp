@@ -85,5 +85,20 @@ const char *ruleFlag(Rule r) {
   return "";
 }
 
+// Every hidden loop option that changes generated code, as text for the
+// backend's cache keys (Options holds only the flags it parses itself).
+std::string cacheKey() {
+  std::string k = "loops:";
+  k += AllRules ? 'A' : '-';
+  for (Rule r : {Rule::RtChecks, Rule::Privatize, Rule::BcvGrowth, Rule::BcvLoaded, Rule::ByteCount,
+                 Rule::Scan, Rule::Interchange, Rule::Jam, Rule::MaskedJam})
+    k += ruleOn(r) ? '1' : '0';
+  k += forceParOption() ? "F" : "-";
+  k += tileOption() ? "T" : "-";
+  k += "mv" + std::to_string(mvLevelOption());
+  k += "mj" + maskedJamOptions();
+  return k;
+}
+
 } // namespace loops
 } // namespace marmot

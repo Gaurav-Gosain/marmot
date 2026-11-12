@@ -2022,5 +2022,7 @@ void addParallelize(ModulePassManager &mpm, const Options &opts) {
   mpm.addPass(ParallelizePass(opts));
 }
 
+bool forceParOption() { return ForcePar; }
+
 } // namespace loops
 } // namespace marmot

@@ -5,6 +5,8 @@
 #ifndef MARMOT_LOOPS_LOOPS_H
 #define MARMOT_LOOPS_LOOPS_H
 
+#include <string>
+
 namespace llvm {
 class PassBuilder;
 } // namespace llvm
@@ -28,6 +30,11 @@ struct Options {
 // Adds the loop passes to the default pipelines built from pb afterwards.
 // Only -O2 and -O3 get them.
 void registerLLVMPasses(llvm::PassBuilder &pb, const Options &opts);
+
+// The values of the hidden -loops-* options (rule switches, -loops-force-par,
+// -loops-mv, masked jam lanes, tiling) as text. Every cache of compiled code
+// must include it in its key: Options does not hold these options.
+std::string cacheKey();
 
 // Adds the MLIR passes that run on the llvm dialect right after go-to-llvm
 // (go-type-alias). Only in builds with MLIR (not the opt plugin).

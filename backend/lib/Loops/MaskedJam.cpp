@@ -734,5 +734,9 @@ void addMaskedJam(FunctionPassManager &fpm, const Options &opts) {
   fpm.addPass(MaskedJamPass(opts));
 }
 
+std::string maskedJamOptions() {
+  return std::to_string(MJLanes) + (MJVector ? "v" : "s");
+}
+
 } // namespace loops
 } // namespace marmot

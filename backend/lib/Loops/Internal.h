@@ -60,6 +60,11 @@ void addTile(llvm::FunctionPassManager &fpm, const Options &opts);
 // verify has not signed off yet.
 enum class Rule { RtChecks, Privatize, BcvGrowth, BcvLoaded, ByteCount, Scan, Interchange, Jam, MaskedJam };
 bool ruleOn(Rule r);
+// Hidden option values, for cacheKey (Rules.cpp).
+unsigned mvLevelOption();
+std::string maskedJamOptions();
+bool forceParOption();
+bool tileOption();
 const char *ruleFlag(Rule r);
 
 // Rule X: x86-64 versions of chunk functions, picked at run time (-loops-mv).
