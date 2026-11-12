@@ -185,7 +185,7 @@ func (p *Program) checkRegionFn(fn *ssa.Function) bool {
 					return false
 				}
 				for i, a := range x.Call.Args {
-					if a == v && p.paramEscapes(callee, i) {
+					if a == v && p.deepParamEscapes(callee, i) {
 						return false
 					}
 				}
@@ -283,7 +283,7 @@ func confinedTo(p *Program, c *ssa.Call, b *ssa.BasicBlock, start int) (ssa.Inst
 					return nil, false
 				}
 				for k, a := range x.Call.Args {
-					if a == v && p.paramEscapes(callee, k) {
+					if a == v && p.deepParamEscapes(callee, k) {
 						return nil, false
 					}
 				}

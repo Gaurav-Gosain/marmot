@@ -26,6 +26,7 @@ type deepState struct {
 	done    map[escKey]bool
 	running map[escKey]bool
 	param   map[escKey]bool // regionParam results
+	order   []escKey        // done keys in completion order (for invalidation)
 }
 
 // deepEscapes is escapes, but also follows pointers loaded through v.
@@ -106,15 +107,26 @@ func (p *Program) deepParamEscapes(fn *ssa.Function, i int) bool {
 		return r
 	}
 	if p.deep.running[k] {
+		// Recursion: assume it does not escape. If the outer computation
+		// ends with "escapes", every result computed under the assumption
+		// is dropped below and recomputed later.
 		p.escMu.Unlock()
-		return true
+		return false
 	}
 	p.deep.running[k] = true
+	start := len(p.deep.order)
 	p.escMu.Unlock()
 	r := p.deepEscapes(fn.Params[i], map[ssa.Value]bool{})
 	p.escMu.Lock()
 	delete(p.deep.running, k)
+	if r {
+		for _, d := range p.deep.order[start:] {
+			delete(p.deep.done, d)
+		}
+		p.deep.order = p.deep.order[:start]
+	}
 	p.deep.done[k] = r
+	p.deep.order = append(p.deep.order, k)
 	p.escMu.Unlock()
 	return r
 }
@@ -294,7 +306,10 @@ func leaksRegionValue(p *Program, v ssa.Value, seen map[ssa.Value]bool) bool {
 				return true
 			}
 			for k, a := range c.Args {
-				if a == v && p.deepParamEscapes(callee, k) {
+				// The frame region is not scanned: the callee must not
+				// store pointers into memory reached through the argument
+				// (verify counterexample 6), nor let anything out of it.
+				if a == v && (p.deepParamEscapes(callee, k) || !p.paramNoPtrStore(callee, k)) {
 					return true
 				}
 			}
@@ -306,6 +321,82 @@ func leaksRegionValue(p *Program, v ssa.Value, seen map[ssa.Value]bool) bool {
 		}
 	}
 	return false
+}
+
+// paramNoPtrStore reports whether fn stores no pointer (other than nil)
+// into memory reachable from parameter i, directly or through callees.
+func (p *Program) paramNoPtrStore(fn *ssa.Function, i int) bool {
+	if len(fn.Blocks) == 0 || i >= len(fn.Params) {
+		return false
+	}
+	k := escKey{fn, -2000 - i}
+	p.escMu.Lock()
+	if p.deep.param == nil {
+		p.deep.done = map[escKey]bool{}
+		p.deep.running = map[escKey]bool{}
+		p.deep.param = map[escKey]bool{}
+	}
+	if r, ok := p.deep.param[k]; ok {
+		p.escMu.Unlock()
+		return r
+	}
+	if p.deep.running[k] {
+		p.escMu.Unlock()
+		return false
+	}
+	p.deep.running[k] = true
+	p.escMu.Unlock()
+	r := p.noPtrStoreThrough(fn.Params[i], map[ssa.Value]bool{})
+	p.escMu.Lock()
+	delete(p.deep.running, k)
+	p.deep.param[k] = r
+	p.escMu.Unlock()
+	return r
+}
+
+func (p *Program) noPtrStoreThrough(v ssa.Value, seen map[ssa.Value]bool) bool {
+	if seen[v] {
+		return true
+	}
+	seen[v] = true
+	for _, r := range *v.Referrers() {
+		switch x := r.(type) {
+		case *ssa.DebugRef, *ssa.BinOp:
+		case *ssa.FieldAddr, *ssa.IndexAddr:
+			if !p.noPtrStoreThrough(x.(ssa.Value), seen) {
+				return false
+			}
+		case *ssa.UnOp:
+			if x.Op != token.MUL {
+				return false
+			}
+			if len(ptrWords(x.Type(), p.opts.Sizes)) > 0 && !p.noPtrStoreThrough(x, seen) {
+				return false
+			}
+		case *ssa.Store:
+			if x.Val == v {
+				return false
+			}
+			if len(ptrWords(x.Val.Type(), p.opts.Sizes)) > 0 {
+				if c, ok := x.Val.(*ssa.Const); !ok || !c.IsNil() {
+					return false
+				}
+			}
+		case *ssa.Call:
+			callee := x.Call.StaticCallee()
+			if callee == nil || x.Call.IsInvoke() {
+				return false
+			}
+			for k, a := range x.Call.Args {
+				if a == v && !p.paramNoPtrStore(callee, k) {
+					return false
+				}
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // frameRoot returns the frame object an argument points into, if any.
