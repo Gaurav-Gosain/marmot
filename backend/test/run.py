@@ -23,12 +23,45 @@ TOOLS = os.environ.get("BACKEND_BIN_DIR") or os.path.join(ROOT, ".work", "backen
 if not os.path.exists(os.path.join(TOOLS, "marmot-backend")):
     TOOLS = os.path.join(ROOT, "build", "bin")
 TOOLS = os.path.abspath(TOOLS)
+
+
+def marmot_root():
+    """A marmot root whose build/bin has the backend tools under test (SPEC
+    rule 12: tests of a private backend build go through the installed marmot
+    driver without installing the backend). Everything else links to ROOT."""
+    if TOOLS == os.path.join(ROOT, "build", "bin"):
+        return ROOT
+    r = os.path.join(ROOT, ".work", "backend", "troot")
+    os.makedirs(os.path.join(r, "build", "bin"), exist_ok=True)
+    for name in ("lib", "internal", "go.mod"):
+        link = os.path.join(r, name)
+        if not os.path.lexists(link):
+            os.symlink(os.path.join(ROOT, name), link)
+    link = os.path.join(r, "build", "lib")
+    if not os.path.lexists(link):
+        os.symlink(os.path.join(ROOT, "build", "lib"), link)
+    for tool, src in (("marmot", os.path.join(ROOT, "build", "bin", "marmot")),
+                      ("marmot-backend", os.path.join(TOOLS, "marmot-backend")),
+                      ("marmot-pcln", os.path.join(TOOLS, "marmot-pcln")),
+                      ("marmot-opt", os.path.join(TOOLS, "marmot-opt"))):
+        link = os.path.join(r, "build", "bin", tool)
+        if os.path.lexists(link):
+            os.remove(link)
+        os.symlink(src, link)
+    return r
+
+
+MARMOT_ROOT_DIR = marmot_root()
 TIMEOUT = 300  # seconds per RUN line (SPEC rule 10; marmot build -nocache waits for build slots under load)
 JOBS = 4
 
 SUBST = [
     ("%backend", os.path.join(TOOLS, "marmot-backend")),
     ("%marmot-opt", os.path.join(TOOLS, "marmot-opt")),
+    # marmot through the backend under test (after %marmot-opt, which it
+    # prefixes); use it instead of a path to build/bin/marmot.
+    ("%marmot", "env MARMOT_ROOT=" + MARMOT_ROOT_DIR + " " +
+     os.path.join(MARMOT_ROOT_DIR, "build", "bin", "marmot")),
     ("%clang", os.path.join(BIN, "clang")),
     ("%opt", os.path.join(BIN, "opt")),
     ("%FileCheck", os.path.join(BIN, "FileCheck")),
