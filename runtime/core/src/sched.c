@@ -1135,12 +1135,17 @@ static rt_g *newproc(void (*fn)(void *), void *arg, bool system) {
 }
 
 // A second goroutine: the program needs sysmon (syscall retake) and gets
-// the parallel collector.
-RT_API void rt_go(void (*fn)(void *), void *arg) {
+// the parallel collector. Also called by rt_parallel_for, whose helpers are
+// system goroutines.
+void sched_multi(void) {
   if (UNLIKELY(!hook_get(&hook_sysmon_start))) {
     __atomic_store_n(&hook_sysmon_start, sysmon_start, __ATOMIC_RELEASE);
     gc_parallel_enable();
   }
+}
+
+RT_API void rt_go(void (*fn)(void *), void *arg) {
+  sched_multi();
   newproc(fn, arg, false);
 }
 

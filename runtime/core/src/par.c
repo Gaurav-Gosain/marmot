@@ -3,7 +3,8 @@
 // rt_parallel_for splits [0, n) into chunks of `grain` iterations claimed
 // dynamically with one atomic add each. The calling goroutine works too and
 // returns only after every chunk has finished, so state on its stack stays
-// valid for the helpers. Helpers are ordinary goroutines: they run on idle
+// valid for the helpers. Helpers are system goroutines (not counted by
+// rt_numgoroutine, as runtime.NumGoroutine does not see them in gc): they run on idle
 // Ps, are visible to the GC and can be nested.
 
 #include "internal.h"
@@ -73,7 +74,10 @@ RT_API void rt_parallel_for(int64_t n, int64_t grain,
   atomic_store(&pf.pending, (int32_t)helpers);
   pf.mu.state = 0;
   pf.waiter = NULL;
-  for (int64_t i = 0; i < helpers; i++) rt_go(pfor_helper, &pf);
+  // System goroutines: runtime.NumGoroutine does not count them (as gc,
+  // where a parallel loop is the program's own code).
+  sched_multi();
+  for (int64_t i = 0; i < helpers; i++) new_system_g(pfor_helper, &pf);
   pfor_run(&pf);
   rt_lock(&pf.mu);
   if (atomic_load(&pf.pending) == 0) {

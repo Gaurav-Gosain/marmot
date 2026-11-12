@@ -376,6 +376,7 @@ extern int32_t (*hook_netpoll)(int64_t ns);
 extern void (*hook_netpoll_break)(void);
 extern void (*hook_sysmon_start)(void);
 void gc_parallel_enable(void);
+void sched_multi(void);  // first goroutine beyond main: sysmon and parallel GC hooks
 
 // ---- Timers (timer.c) ----
 
