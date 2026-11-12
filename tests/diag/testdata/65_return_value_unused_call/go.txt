@@ -1,0 +1,2 @@
+# example.com/return_value_unused_call
+./main.go:5:2: x == 2 (untyped bool value) is not used

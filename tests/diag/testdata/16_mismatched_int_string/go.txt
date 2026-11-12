@@ -1,0 +1,2 @@
+# example.com/mismatched_int_string
+./main.go:6:10: invalid operation: s + n (mismatched types string and int)

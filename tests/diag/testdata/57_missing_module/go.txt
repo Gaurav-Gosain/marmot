@@ -1,0 +1,2 @@
+go: finding module for package example.com/nowhere/lib
+main.go:3:8: cannot find module providing package example.com/nowhere/lib: unrecognized import path "example.com/nowhere/lib": reading https://example.com/nowhere/lib?go-get=1: 404 Not Found

@@ -1,0 +1,12 @@
+error: no rules expected `3`
+ --> main.rs:5:9
+  |
+4 |         2
+  |          - help: missing comma here
+5 |         3
+  |         ^ no rules expected this token in macro call
+  |
+  = note: while trying to match sequence start
+
+error: aborting due to 1 previous error
+

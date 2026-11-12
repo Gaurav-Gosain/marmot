@@ -1,0 +1,10 @@
+error[M0016]: non-boolean condition in if statement
+ --> ./main.go:5:5
+  |
+5 |     if n {
+  |        ^ expected `bool`
+  |
+  = help: Go has no truthiness: compare explicitly, for example `x != 0`, `s != ""` or `p != nil`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0016`

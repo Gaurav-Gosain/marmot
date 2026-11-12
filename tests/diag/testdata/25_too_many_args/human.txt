@@ -1,0 +1,13 @@
+error[M0009]: too many arguments in call to greet
+ --> ./main.go:6:13
+  |
+3 | func greet(name string) { println("hi", name) }
+  | ----------------------- `greet` is declared here
+...
+6 |     greet("a", "b")
+  |                ^^^ unexpected argument
+  |
+  = note: expected `(string)`, found `(string, string)`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0009`

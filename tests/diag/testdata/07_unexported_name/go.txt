@@ -1,0 +1,2 @@
+# example.com/unexported_name
+./main.go:6:6: undefined: fmt.println (but have Println)

@@ -1,0 +1,8 @@
+error: expected expression, found `;`
+ --> main.rs:2:16
+  |
+2 |     let x = 1 +;
+  |                ^ expected expression
+
+error: aborting due to 1 previous error
+

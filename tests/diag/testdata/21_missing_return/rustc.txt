@@ -1,0 +1,15 @@
+error[E0317]: `if` may be missing an `else` clause
+ --> main.rs:4:12
+  |
+4 |       } else if x > 0 {
+  |  ____________^
+5 | |         return 1;
+6 | |     }
+  | |_____^ expected `i32`, found `()`
+  |
+  = note: `if` expressions without `else` evaluate to `()`
+  = help: consider adding an `else` block that evaluates to the expected type
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0317`.

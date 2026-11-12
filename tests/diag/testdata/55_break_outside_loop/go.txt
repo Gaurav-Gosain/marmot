@@ -1,0 +1,2 @@
+# example.com/break_outside_loop
+./main.go:5:3: break is not in a loop, switch, or select

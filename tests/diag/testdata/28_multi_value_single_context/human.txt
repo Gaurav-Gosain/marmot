@@ -1,0 +1,8 @@
+error[M0012]: multiple-value strconv.Atoi("12") (value of type (int, error)) in single-value context
+ --> ./main.go:6:10
+  |
+6 |     println(strconv.Atoi("12") + 1)
+  |             ^^^^^^^^^^^^^^^^^^ returns more than one value
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0012`

@@ -1,0 +1,15 @@
+error[M0001]: missing ',' before newline in composite literal
+ --> ./main.go:6:4
+  |
+6 |         2
+  |          ^ expected `,` here
+  |
+help: add `,` (every element of a multi-line literal ends with one)
+  |
+6 -         2
+6 +         2,
+  |
+
+error: build failed with 1 error
+1 error can be fixed automatically: run `marmot fix`
+for more about an error, run `marmot explain M0001`

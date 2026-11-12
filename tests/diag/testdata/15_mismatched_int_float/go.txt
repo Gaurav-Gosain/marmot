@@ -1,0 +1,2 @@
+# example.com/mismatched_int_float
+./main.go:6:10: invalid operation: n + f (mismatched types int and float64)

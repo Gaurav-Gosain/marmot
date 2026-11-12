@@ -1,0 +1,14 @@
+error[M0002]: undefined: strings
+ --> ./main.go:6:14
+  |
+6 |     fmt.Println(strings.ToUpper("hi"))
+  |                 ^^^^^^^ package `strings` is not imported
+  |
+help: add `import "strings"`
+  |
+4 + import "strings"
+  |
+
+error: build failed with 1 error
+1 error can be fixed automatically: run `marmot fix`
+for more about an error, run `marmot explain M0002`

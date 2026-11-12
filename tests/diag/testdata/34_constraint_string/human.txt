@@ -1,0 +1,15 @@
+error[M0026]: string does not satisfy Number (string missing in ~int | ~int64 | ~float64)
+  --> ./main.go:16:10
+   |
+ 3 | type Number interface {
+   |      ------ `Number` is declared here
+ ...
+16 |     println(Sum([]string{"a"}))
+   |             ^^^ ------------- the type argument is inferred as `string` from this
+   |             |
+   |             `string` does not satisfy `Number`
+   |
+   = note: the type set of `Number` is `~int | ~int64 | ~float64`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0026`

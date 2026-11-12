@@ -6,6 +6,7 @@ error[M0005]: "os" imported and not used
   |
   = help: if it is imported only for its side effects, write `import _ "os"`
 help: remove the import of `"os"`
+  |
 5 -     "os"
   |
 
@@ -16,6 +17,7 @@ error[M0002]: undefined: strings
   |                 ^^^^^^^ package `strings` is not imported
   |
 help: add `import "strings"`
+  |
 6 +     "strings"
   |
 
@@ -26,6 +28,7 @@ error[M0002]: undefined: filepath
   |                                         ^^^^^^^^ package `filepath` is not imported
   |
 help: add `import "path/filepath"`
+  |
 6 +     "path/filepath"
   |
 

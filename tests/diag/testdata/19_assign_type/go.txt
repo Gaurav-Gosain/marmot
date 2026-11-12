@@ -1,0 +1,2 @@
+# example.com/assign_type
+./main.go:5:10: cannot use "three" (untyped string constant) as int value in assignment

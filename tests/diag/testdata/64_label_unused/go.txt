@@ -1,0 +1,2 @@
+# example.com/label_unused
+./main.go:4:1: label outer defined and not used

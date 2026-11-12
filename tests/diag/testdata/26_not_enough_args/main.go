@@ -1,0 +1,7 @@
+package main
+
+func area(w, h int) int { return w * h }
+
+func main() {
+	println(area(3))
+}

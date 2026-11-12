@@ -1,0 +1,18 @@
+error: unused comparison that must be used
+ --> main.rs:4:5
+  |
+4 |     x == 2;
+  |     ^^^^^^ the comparison produces a value
+  |
+note: the lint level is defined here
+ --> main.rs:1:9
+  |
+1 | #![deny(unused_must_use)]
+  |         ^^^^^^^^^^^^^^^
+help: use `let _ = ...` to ignore the resulting value
+  |
+4 |     let _ = x == 2;
+  |     +++++++
+
+error: aborting due to 1 previous error
+

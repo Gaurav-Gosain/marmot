@@ -1,0 +1,10 @@
+error[M0006]: cannot use "ten" (untyped string constant) as int value in struct literal
+ --> ./main.go:9:28
+  |
+9 |     u := User{Name: "a", Age: "ten"}
+  |                               ^^^^^ expected `int`, found `untyped string`
+  |
+  = help: to parse a number from text, use `strconv.Atoi("ten")`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0006`

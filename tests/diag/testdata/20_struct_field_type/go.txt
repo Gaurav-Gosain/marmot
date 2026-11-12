@@ -1,0 +1,2 @@
+# example.com/struct_field_type
+./main.go:9:28: cannot use "ten" (untyped string constant) as int value in struct literal

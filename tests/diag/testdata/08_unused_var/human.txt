@@ -1,0 +1,14 @@
+error[M0004]: declared and not used: count
+ --> ./main.go:4:2
+  |
+4 |     count := 3
+  |     ^^^^^ declared here but never used
+  |
+help: remove `count`
+  |
+4 -     count := 3
+  |
+
+error: build failed with 1 error
+1 error can be fixed automatically: run `marmot fix`
+for more about an error, run `marmot explain M0004`

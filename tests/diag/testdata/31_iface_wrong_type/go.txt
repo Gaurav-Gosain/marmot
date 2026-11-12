@@ -1,0 +1,4 @@
+# example.com/iface_wrong_type
+./main.go:10:16: cannot use Dog{} (value of struct type Dog) as Namer value in variable declaration: Dog does not implement Namer (wrong type for method Name)
+		have Name() []byte
+		want Name() string

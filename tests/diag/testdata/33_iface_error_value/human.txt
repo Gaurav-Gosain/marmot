@@ -1,0 +1,19 @@
+error[M0014]: cannot use MyErr{…} (value of struct type MyErr) as error value in return statement: MyErr does not implement error (method Error has pointer receiver)
+ --> ./main.go:8:9
+  |
+5 | func (e *MyErr) Error() string { return e.msg }
+  |         ------ pointer receiver
+...
+8 |     return MyErr{"bad"}
+  |            ^^^^^^^^^^^^ `MyErr` does not implement `error`
+  |
+  = note: `MyErr` lacks 1 method of `error`:
+            `Error` has a pointer receiver, so only `*MyErr` has it
+help: pass a pointer (check it)
+  |
+8 -     return MyErr{"bad"}
+8 +     return &MyErr{"bad"}
+  |
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0014`

@@ -1,0 +1,14 @@
+error[M0002]: undefined: filepath
+ --> ./main.go:6:14
+  |
+6 |     fmt.Println(filepath.Join("a", "b"))
+  |                 ^^^^^^^^ package `filepath` is not imported
+  |
+help: add `import "path/filepath"`
+  |
+4 + import "path/filepath"
+  |
+
+error: build failed with 1 error
+1 error can be fixed automatically: run `marmot fix`
+for more about an error, run `marmot explain M0002`

@@ -1,0 +1,2 @@
+# example.com/arg_type
+./main.go:6:17: cannot use "two" (untyped string constant) as int value in argument to add

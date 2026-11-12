@@ -5,6 +5,7 @@
   [1;34m|[0m       [1;31m^^[0m [1;31mno new variables on the left[0m
   [1;34m|[0m
 [1;32mhelp:[0m use `=` instead of `:=`
+  [1;34m|[0m
 [1;34m7[0m [31m-     x := 2[0m
 [1;34m7[0m [32m+     x = 2[0m
   [1;34m|[0m
@@ -16,6 +17,7 @@
   [1;34m|[0m         [1;31m^[0m [1;31mdeclared here but never used[0m
   [1;34m|[0m
 [1;32mhelp:[0m replace `i` with `_`[2m (check it)[0m
+  [1;34m|[0m
 [1;34m8[0m [31m-     for i, v := range []int{1} {[0m
 [1;34m8[0m [32m+     for _, v := range []int{1} {[0m
   [1;34m|[0m
@@ -27,6 +29,7 @@
    [1;34m|[0m         [1;31m^[0m [1;31mdeclared here but never used[0m
    [1;34m|[0m
 [1;32mhelp:[0m remove `k`
+   [1;34m|[0m
 [1;34m11[0m [31m-     for k := range map[int]int{} {[0m
 [1;34m11[0m [32m+     for range map[int]int{} {[0m
    [1;34m|[0m

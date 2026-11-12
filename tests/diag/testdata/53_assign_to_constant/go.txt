@@ -1,0 +1,2 @@
+# example.com/assign_to_constant
+./main.go:6:2: cannot assign to Max (neither addressable nor a map index expression)

@@ -6,6 +6,7 @@
   [1;34m|[0m
   [1;34m=[0m [1;32mhelp:[0m if it is imported only for its side effects, write `import _ "os"`
 [1;32mhelp:[0m remove the import of `"os"`
+  [1;34m|[0m
 [1;34m5[0m [31m-     "os"[0m
   [1;34m|[0m
 
@@ -16,6 +17,7 @@
    [1;34m|[0m     [1;31m^^^^^[0m [1;31mdeclared here but never used[0m
    [1;34m|[0m
 [1;32mhelp:[0m remove `count`
+   [1;34m|[0m
 [1;34m13[0m [31m-     count := 3[0m
    [1;34m|[0m
 
@@ -37,6 +39,7 @@
    [1;34m|[0m         [1;31m^^^^^^[0m [1;31mnot declared by package `fmt`[0m
    [1;34m|[0m
 [1;32mhelp:[0m use `fmt.Println`[2m (check it)[0m
+   [1;34m|[0m
 [1;34m15[0m [31m-     fmt.Printn("x")[0m
 [1;34m15[0m [32m+     fmt.Println("x")[0m
    [1;34m|[0m
@@ -48,6 +51,7 @@
    [1;34m|[0m     [1;31m^[0m [1;31mdeclared here but never used[0m
    [1;34m|[0m
 [1;32mhelp:[0m assign the value to `_`
+   [1;34m|[0m
 [1;34m16[0m [31m-     x := strings.ToUpper("a")[0m
 [1;34m16[0m [32m+     _ = strings.ToUpper("a")[0m
    [1;34m|[0m
@@ -59,6 +63,7 @@
    [1;34m|[0m          [1;31m^^^^^^^[0m [1;31mpackage `strings` is not imported[0m
    [1;34m|[0m
 [1;32mhelp:[0m add `import "strings"`
+   [1;34m|[0m
 [1;34m 6[0m [32m+     "strings"[0m
    [1;34m|[0m
 

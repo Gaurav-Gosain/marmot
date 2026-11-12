@@ -1,0 +1,2 @@
+# example.com/no_new_vars
+./main.go:5:4: no new variables on left side of :=

@@ -1,0 +1,14 @@
+error[M0002]: undefined: compte
+ --> ./main.go:6:10
+  |
+6 |     println(compte(3))
+  |             ^^^^^^ not declared in this scope
+  |
+help: use `compute` (check it)
+  |
+6 -     println(compte(3))
+6 +     println(compute(3))
+  |
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0002`

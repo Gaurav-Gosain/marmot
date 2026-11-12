@@ -1,0 +1,11 @@
+error[E0432]: unresolved import `nowhere`
+ --> main.rs:1:5
+  |
+1 | use nowhere::lib;
+  |     ^^^^^^^ use of unresolved module or unlinked crate `nowhere`
+  |
+  = help: you might be missing a crate named `nowhere`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0432`.

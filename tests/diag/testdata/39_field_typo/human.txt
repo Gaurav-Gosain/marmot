@@ -1,0 +1,15 @@
+error[M0003]: c.Prot undefined (type Config has no field or method Prot)
+  --> ./main.go:10:4
+   |
+10 |     c.Prot = 80
+   |       ^^^^ `Config` has no field or method `Prot`
+   |
+   = note: fields of `Config`: `Port`, `Host`
+help: use `Port` (check it)
+   |
+10 -     c.Prot = 80
+10 +     c.Port = 80
+   |
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0003`

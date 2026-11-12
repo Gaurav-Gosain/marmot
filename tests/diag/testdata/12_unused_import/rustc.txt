@@ -1,0 +1,14 @@
+error: unused import: `std::collections::HashMap`
+ --> main.rs:2:5
+  |
+2 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+note: the lint level is defined here
+ --> main.rs:1:9
+  |
+1 | #![deny(unused_imports)]
+  |         ^^^^^^^^^^^^^^
+
+error: aborting due to 1 previous error
+

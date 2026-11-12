@@ -1,0 +1,15 @@
+error[E0609]: no field `prot` on type `Config`
+ --> main.rs:5:7
+  |
+5 |     c.prot = 80;
+  |       ^^^^ unknown field
+  |
+help: a field with a similar name exists
+  |
+5 -     c.prot = 80;
+5 +     c.port = 80;
+  |
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0609`.

@@ -34,6 +34,8 @@ const (
 	CodeNotExported   = "M0024"
 	CodeUnsupported   = "M0025"
 	CodeNotSatisfy    = "M0026"
+	CodeCannotInfer   = "M0027"
+	CodeShadow        = "M0028"
 )
 
 // CodeInfo describes one code for marmot explain.
@@ -103,6 +105,17 @@ var codeTable = []CodeInfo{
 		Text:  "A value is used as an interface but its type lacks a method of the interface, or has it with a different signature or with a pointer receiver only.",
 		Fix:   "Add the missing method, fix its signature, or pass a pointer when the method has a pointer receiver.",
 		match: lazy(`does not implement`)},
+	{Code: CodeCannotInfer, Title: "cannot infer type argument",
+		Wrong: "func Zero[T any]() T\n\nx := Zero()",
+		Right: "x := Zero[int]()",
+		Text:  "A type parameter appears in no argument, so the call does not say what it is. Give the type argument explicitly.",
+		Fix:   "Write the type arguments in brackets after the function name.",
+		match: lazy(`cannot infer `)},
+	{Code: CodeShadow, Title: "shadowed variable",
+		Wrong: "var err error\nif ok {\n\tdata, err := load() // a new err\n\tuse(data)\n}\nreturn err // always nil",
+		Right: "var err error\nif ok {\n\tvar data []byte\n\tdata, err = load()\n\tuse(data)\n}\nreturn err",
+		Text:  "A := in an inner block declares a new variable with the same name as one in an outer block. Assignments go to the inner one, which is then unused, and the outer one keeps its old value. This often loses an error.",
+		Fix:   "Declare the other variables first and assign with =."},
 	{Code: CodeNotSatisfy, Title: "type argument does not satisfy constraint",
 		Wrong: "type Number interface{ ~int | ~float64 }\nfunc Sum[T Number](xs []T) T\n\nSum([]float32{1})",
 		Right: "type Number interface{ ~int | ~float32 | ~float64 }\nfunc Sum[T Number](xs []T) T\n\nSum([]float32{1})",

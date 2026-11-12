@@ -1,0 +1,2 @@
+# example.com/invalid_op_slice
+./main.go:5:10: invalid operation: xs + 1 (mismatched types []int and untyped int)

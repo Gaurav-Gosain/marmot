@@ -1,0 +1,10 @@
+error[M0012]: assignment mismatch: 1 variable but strconv.Atoi returns 2 values
+ --> ./main.go:6:7
+  |
+6 |     n := strconv.Atoi("12")
+  |          ^^^^^^^^^^^^ `strconv.Atoi` returns 2 values
+  |
+  = help: receive every result: `n, err := strconv.Atoi("12")`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0012`

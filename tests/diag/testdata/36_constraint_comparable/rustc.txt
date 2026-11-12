@@ -1,0 +1,21 @@
+error[E0277]: can't compare `F` with `F`
+  --> main.rs:11:20
+   |
+11 |     println!("{}", index(&[F], &F));
+   |                    ^^^^^ no implementation for `F == F`
+   |
+   = help: the trait `PartialEq` is not implemented for `F`
+note: required by a bound in `index`
+  --> main.rs:1:13
+   |
+ 1 | fn index<T: PartialEq>(xs: &[T], v: &T) -> i32 {
+   |             ^^^^^^^^^ required by this bound in `index`
+help: consider annotating `F` with `#[derive(PartialEq)]`
+   |
+ 8 + #[derive(PartialEq)]
+ 9 | struct F;
+   |
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.

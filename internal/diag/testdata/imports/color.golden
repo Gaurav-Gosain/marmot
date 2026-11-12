@@ -6,6 +6,7 @@
   [1;34m|[0m
   [1;34m=[0m [1;32mhelp:[0m if it is imported only for its side effects, write `import _ "os"`
 [1;32mhelp:[0m remove the import of `"os"`
+  [1;34m|[0m
 [1;34m5[0m [31m-     "os"[0m
   [1;34m|[0m
 
@@ -16,6 +17,7 @@
   [1;34m|[0m                 [1;31m^^^^^^^[0m [1;31mpackage `strings` is not imported[0m
   [1;34m|[0m
 [1;32mhelp:[0m add `import "strings"`
+  [1;34m|[0m
 [1;34m6[0m [32m+     "strings"[0m
   [1;34m|[0m
 
@@ -26,6 +28,7 @@
   [1;34m|[0m                                         [1;31m^^^^^^^^[0m [1;31mpackage `filepath` is not imported[0m
   [1;34m|[0m
 [1;32mhelp:[0m add `import "path/filepath"`
+  [1;34m|[0m
 [1;34m6[0m [32m+     "path/filepath"[0m
   [1;34m|[0m
 

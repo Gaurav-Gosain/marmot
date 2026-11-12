@@ -1,0 +1,2 @@
+# example.com/deref_non_pointer
+./main.go:5:11: invalid operation: cannot indirect n (variable of type int)

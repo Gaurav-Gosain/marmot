@@ -1,0 +1,4 @@
+# example.com/too_many_args
+./main.go:6:13: too many arguments in call to greet
+	have (string, string)
+	want (string)

@@ -1,0 +1,3 @@
+# example.com/duplicate_case
+./main.go:8:7: duplicate case 1 (constant of type int) in expression switch
+	./main.go:6:7: previous case

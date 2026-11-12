@@ -1,0 +1,2 @@
+# example.com/constraint_underlying
+./main.go:17:13: Meters does not satisfy Number (Meters missing in ~int | ~float64)

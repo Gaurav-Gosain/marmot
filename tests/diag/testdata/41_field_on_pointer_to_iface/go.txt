@@ -1,0 +1,2 @@
+# example.com/field_on_pointer_to_iface
+./main.go:6:11: r.Read undefined (type *R is pointer to interface, not interface)

@@ -1,0 +1,12 @@
+error: mismatched closing delimiter: `}`
+ --> main.rs:2:13
+  |
+1 | fn main() {
+  |           - closing delimiter possibly meant for this
+2 |     println!("{} {}", "a", "b";
+  |             ^ unclosed delimiter
+3 | }
+  | ^ mismatched closing delimiter
+
+error: aborting due to 1 previous error
+

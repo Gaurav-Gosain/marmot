@@ -1,0 +1,2 @@
+# example.com/undefined_var
+./main.go:7:14: undefined: totl

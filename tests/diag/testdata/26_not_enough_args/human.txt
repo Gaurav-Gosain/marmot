@@ -1,0 +1,13 @@
+error[M0009]: not enough arguments in call to area
+ --> ./main.go:6:16
+  |
+3 | func area(w, h int) int { return w * h }
+  | ----------------------- `area` is declared here
+...
+6 |     println(area(3))
+  |                   ^ missing arguments
+  |
+  = note: expected `(int, int)`, found `(number)`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0009`

@@ -1,0 +1,2 @@
+# example.com/return_type
+./main.go:4:9: cannot use 42 (untyped int constant) as string value in return statement

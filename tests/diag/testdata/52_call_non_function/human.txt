@@ -1,0 +1,8 @@
+error[M0016]: invalid operation: cannot call limit (variable of type int): int is not a function
+ --> ./main.go:5:10
+  |
+5 |     println(limit(3))
+  |             ^^^^^ `limit` is not a function
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0016`

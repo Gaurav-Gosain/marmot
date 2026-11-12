@@ -1,0 +1,2 @@
+# example.com/assign_mismatch_atoi
+./main.go:6:7: assignment mismatch: 1 variable but strconv.Atoi returns 2 values

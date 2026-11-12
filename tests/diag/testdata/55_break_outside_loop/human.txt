@@ -1,0 +1,9 @@
+error: break not in for, switch, or select statement
+ --> ./main.go:5:3
+  |
+5 |         break
+  |         ^^^^^ not inside a loop
+  |
+  = help: to leave a function early, use `return`
+
+error: build failed with 1 error

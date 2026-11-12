@@ -1,0 +1,2 @@
+# example.com/undefined_func_typo
+./main.go:6:10: undefined: compte

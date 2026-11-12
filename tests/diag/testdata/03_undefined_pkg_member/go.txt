@@ -1,0 +1,2 @@
+# example.com/undefined_pkg_member
+./main.go:6:6: undefined: fmt.Printn

@@ -1,0 +1,16 @@
+error[M0003]: s.Puhs undefined (type Stack has no field or method Puhs)
+ --> ./main.go:9:4
+  |
+9 |     s.Puhs(1)
+  |       ^^^^ `Stack` has no field or method `Puhs`
+  |
+  = note: fields of `Stack`: `items`
+  = note: methods of `Stack`: `(*Stack) Push`
+help: use `Push` (check it)
+  |
+9 -     s.Puhs(1)
+9 +     s.Push(1)
+  |
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0003`

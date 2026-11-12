@@ -1,0 +1,2 @@
+# example.com/iface_error_value
+./main.go:8:9: cannot use MyErr{…} (value of struct type MyErr) as error value in return statement: MyErr does not implement error (method Error has pointer receiver)

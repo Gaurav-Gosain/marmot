@@ -1,0 +1,2 @@
+# example.com/map_key_slice
+./main.go:4:11: invalid map key type []int

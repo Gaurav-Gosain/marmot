@@ -1,0 +1,13 @@
+error[M0008]: not enough return values
+ --> ./main.go:8:10
+  |
+5 | func parse(s string) (int, error) {
+  |                      ------------ the signature declares these results
+...
+8 |         return err
+  |                ^^^ returns a different number of values
+  |
+  = note: expected `(int, error)`, found `(error)`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0008`

@@ -1,0 +1,17 @@
+error[M0014]: cannot use Dog{} (value of struct type Dog) as Namer value in variable declaration: Dog does not implement Namer (wrong type for method Name)
+  --> ./main.go:10:16
+   |
+ 3 | type Namer interface{ Name() string }
+   |      ----- `Namer` is declared here
+ ...
+ 7 | func (Dog) Name() []byte { return []byte("dog") }
+   |            ---- has the wrong type
+ ...
+10 |     var n Namer = Dog{}
+   |                   ^^^^^ `Dog` does not implement `Namer`
+   |
+   = note: `Dog` lacks 1 method of `Namer`:
+             `Name` has type `func() []byte`, `Namer` needs `func() string`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0014`

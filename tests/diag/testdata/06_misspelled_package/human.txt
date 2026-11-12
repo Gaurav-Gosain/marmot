@@ -1,0 +1,10 @@
+error[M0002]: undefined: tmplate
+ --> ./main.go:6:7
+  |
+6 |     t := tmplate.New("x")
+  |          ^^^^^^^ not declared in this scope
+  |
+  = help: the standard library package `template` (`import "text/template"`) declares `New`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0002`

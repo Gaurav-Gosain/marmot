@@ -1,0 +1,4 @@
+# example.com/not_enough_return_values
+./main.go:8:10: not enough return values
+	have (error)
+	want (int, error)

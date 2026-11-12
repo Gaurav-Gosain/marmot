@@ -1,0 +1,2 @@
+# example.com/method_value_receiver_missing
+./main.go:7:4: t.Close undefined (type T has no field or method Close)

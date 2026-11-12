@@ -1,0 +1,13 @@
+error[M0027]: in call to Zero, cannot infer T (declared at main.go:3:11)
+ --> ./main.go:9:7
+  |
+3 | func Zero[T any]() T {
+  |           - type parameter declared here
+...
+9 |     x := Zero()
+  |          ^^^^ cannot infer the type arguments of this call
+  |
+  = help: give the type argument: `Zero[T]()`, with the type you want for `T`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0027`

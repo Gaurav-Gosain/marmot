@@ -1,0 +1,2 @@
+# example.com/std_method_typo
+./main.go:7:4: b.WriteStrin undefined (type strings.Builder has no field or method WriteStrin)

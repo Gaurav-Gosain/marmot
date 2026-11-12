@@ -1,0 +1,22 @@
+error[M0014]: cannot use c (variable of struct type C) as Counter value in argument to use: C does not implement Counter (method Inc has pointer receiver)
+  --> ./main.go:13:6
+   |
+ 3 | type Counter interface{ Inc() }
+   |      ------- `Counter` is declared here
+ ...
+ 7 | func (c *C) Inc() { c.n++ }
+   |         -- pointer receiver
+ ...
+13 |     use(c)
+   |         ^ `C` does not implement `Counter`
+   |
+   = note: `C` lacks 1 method of `Counter`:
+             `Inc` has a pointer receiver, so only `*C` has it
+help: pass a pointer (check it)
+   |
+13 -     use(c)
+13 +     use(&c)
+   |
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0014`

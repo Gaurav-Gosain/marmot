@@ -3,6 +3,7 @@ package diag
 import (
 	"fmt"
 	"go/ast"
+	"go/scanner"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -44,7 +45,12 @@ func (s *Sources) enrich(d *Diagnostic, opt Options) {
 		d.Span.Col = 1
 	}
 	if d.Span.EndLine == 0 {
-		d.Span.EndLine, d.Span.EndCol = f.tokenEnd(d.Span.Line, d.Span.Col)
+		if t, ok := f.line(d.Span.Line); ok && d.Span.Col > len(t) {
+			// At the end of the line: one column, not the next token.
+			d.Span.EndLine, d.Span.EndCol = d.Span.Line, d.Span.Col+1
+		} else {
+			d.Span.EndLine, d.Span.EndCol = f.tokenEnd(d.Span.Line, d.Span.Col)
+		}
 	}
 	pos := f.tokenPos(d.Span.Line, d.Span.Col)
 	haveWant(d)
@@ -68,6 +74,31 @@ func (s *Sources) enrich(d *Diagnostic, opt Options) {
 		s.notImplement(d, f, pos)
 	case CodeNotSatisfy:
 		s.notSatisfy(d, f, pos)
+	case CodeCannotInfer:
+		d.Primary = "cannot infer the type arguments of this call"
+		if m := reDeclaredAt.FindStringSubmatch(d.Message); m != nil {
+			l, _ := strconv.Atoi(m[2])
+			c, _ := strconv.Atoi(m[3])
+			if filepath.Base(f.path) == filepath.Base(m[1]) {
+				el, ec := f.tokenEnd(l, c)
+				d.Labels = append(d.Labels, Label{Span: Span{File: f.path, Line: l, Col: c, EndLine: el, EndCol: ec}, Text: "type parameter declared here"})
+			}
+		}
+		if i := strings.Index(d.Message, "cannot infer "); i >= 0 {
+			tp := strings.Fields(d.Message[i+len("cannot infer "):])
+			if len(tp) > 0 && f.at(d.Span, "") {
+				d.Help = append(d.Help, "give the type argument: `"+selectorOrName(f, d.Span)+"[T]()`, with the type you want for `"+tp[0]+"`")
+			}
+		}
+	case CodeInvalidOp:
+		s.invalidOp(d, f, pos)
+	case CodeOther:
+		s.otherHints(d, f, pos)
+		if strings.Contains(d.Message, "is pointer to interface, not interface") {
+			d.Code = CodeNoFieldMethod
+			d.Primary = "a pointer to an interface has no methods"
+			d.Help = append(d.Help, "use the interface type itself: an interface value already holds a pointer when the dynamic type is one")
+		}
 	case CodeMismatched:
 		s.mismatched(d, f, pos)
 	case CodeReturnCount:
@@ -118,9 +149,80 @@ func (s *Sources) enrich(d *Diagnostic, opt Options) {
 	}
 }
 
-// syntaxHint labels an unfinished expression on the line before an
-// "expected operand" error.
+// unclosedBrace finds the innermost { that is never closed.
+func unclosedBrace(f *srcFile) (Span, bool) {
+	var sc scanner.Scanner
+	fs := token.NewFileSet()
+	tf := fs.AddFile("", -1, len(f.data))
+	sc.Init(tf, f.data, func(token.Position, string) {}, 0)
+	var stack []int
+	for {
+		pos, tok, _ := sc.Scan()
+		if tok == token.EOF {
+			break
+		}
+		switch tok {
+		case token.LBRACE:
+			stack = append(stack, tf.Offset(pos))
+		case token.RBRACE:
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+	if len(stack) == 0 {
+		return Span{}, false
+	}
+	l, c := f.pos(stack[len(stack)-1])
+	return Span{File: f.path, Line: l, Col: c, EndLine: l, EndCol: c + 1}, true
+}
+
+// selectorOrName returns the identifier or qualified name at the span.
+func selectorOrName(f *srcFile, sp Span) string {
+	_, ec := f.tokenEnd(sp.Line, sp.Col)
+	t, _ := f.line(sp.Line)
+	if sp.Col-1 < ec-1 && ec-1 <= len(t) {
+		return t[sp.Col-1 : ec-1]
+	}
+	return "f"
+}
+
+// syntaxHint explains the common syntax errors: an unfinished expression,
+// a missing comma or closing bracket, an unclosed brace, else on its own
+// line.
 func syntaxHint(d *Diagnostic, f *srcFile) {
+	switch {
+	case strings.HasPrefix(d.Message, "missing ',' before newline in argument list"):
+		d.Primary = "expected `,` or `)` here"
+		d.Help = append(d.Help, "close the call with `)`, or put a `,` at the end of the line to continue the arguments")
+		return
+	case strings.HasPrefix(d.Message, "missing ',' before newline in composite literal"):
+		d.Primary = "expected `,` here"
+		d.Fixes = append(d.Fixes, Fix{Title: "add `,` (every element of a multi-line literal ends with one)", Applicability: MachineApplicable,
+			Edits: []Edit{{File: f.path, Span: Span{File: f.path, Line: d.Span.Line, Col: d.Span.Col, EndLine: d.Span.Line, EndCol: d.Span.Col}, NewText: ","}}})
+		return
+	case strings.Contains(d.Message, "found 'EOF'"):
+		if open, ok := unclosedBrace(f); ok {
+			d.Primary = "the file ends here"
+			d.Labels = append(d.Labels, Label{Span: open, Text: "this `{` is never closed"})
+		}
+		return
+	case d.Message == "expected statement, found 'else'":
+		d.Primary = "`else` must follow the `}` of the `if` on the same line"
+		for l := d.Span.Line - 1; l > 0; l-- {
+			t, _ := f.line(l)
+			tr := strings.TrimRight(t, " \t")
+			if tr == "" {
+				continue
+			}
+			if strings.HasSuffix(tr, "}") {
+				d.Fixes = append(d.Fixes, Fix{Title: "move `else` up to the closing brace", Applicability: MachineApplicable,
+					Edits: []Edit{{File: f.path, Span: Span{File: f.path, Line: l, Col: len(tr) + 1, EndLine: d.Span.Line, EndCol: d.Span.Col}, NewText: " "}}})
+			}
+			break
+		}
+		return
+	}
 	if !strings.HasPrefix(d.Message, "expected operand") {
 		return
 	}
@@ -172,7 +274,20 @@ func (f *srcFile) at(sp Span, s string) bool {
 	return o >= 0 && o+len(s) <= len(f.data) && string(f.data[o:o+len(s)]) == s
 }
 
+var reDeclaredAt = lazy(`\(declared at ([^:]+):(\d+):(\d+)\)`)
+
+var reButHave = lazy(`^undefined: (\w+)\.(\w+) \(but have (\w+)\)$`)
+
 func (s *Sources) undefined(d *Diagnostic, f *srcFile, pos token.Pos) {
+	if m := reButHave.FindStringSubmatch(d.Message); m != nil {
+		if f.at(d.Span, m[2]) {
+			setSpanLen(d, len(m[2]))
+		}
+		d.Primary = "not exported by package `" + m[1] + "`"
+		d.Fixes = append(d.Fixes, Fix{Title: "use `" + m[1] + "." + m[3] + "`", Applicability: MachineApplicable,
+			Edits: []Edit{{File: f.path, Span: d.Span, NewText: m[3]}}})
+		return
+	}
 	m := reUndefined.FindStringSubmatch(d.Message)
 	if m == nil {
 		return
@@ -704,6 +819,16 @@ func (s *Sources) localExports(f *srcFile) *exports {
 }
 
 func (s *Sources) unusedVar(d *Diagnostic, f *srcFile, pos token.Pos) {
+	if strings.HasPrefix(d.Message, "label ") && strings.HasSuffix(d.Message, " declared and not used") {
+		name := strings.Fields(d.Message)[1]
+		setSpanLen(d, len(name)+1)
+		d.Primary = "declared here but never used"
+		if t, ok := f.line(d.Span.Line); ok && strings.TrimSpace(t) == name+":" {
+			d.Fixes = append(d.Fixes, Fix{Title: "remove the label", Applicability: MachineApplicable,
+				Edits: []Edit{{File: f.path, Span: Span{File: f.path, Line: d.Span.Line, Col: 1, EndLine: d.Span.Line + 1, EndCol: 1}}}})
+		}
+		return
+	}
 	m := reUnusedVar.FindStringSubmatch(d.Message)
 	if m == nil || f.ast == nil {
 		return
@@ -713,6 +838,13 @@ func (s *Sources) unusedVar(d *Diagnostic, f *srcFile, pos token.Pos) {
 		setSpanLen(d, len(name))
 	}
 	d.Primary = "declared here but never used"
+	if outer, ok := outerDecl(f, pos, name); ok {
+		d.Code = CodeShadow
+		d.Primary = "this `" + name + "` is a new variable that shadows the outer one"
+		d.Labels = append(d.Labels, Label{Span: outer, Text: "the outer `" + name + "` is declared here and is not assigned"})
+		d.Help = append(d.Help, "to assign the outer `"+name+"`, declare the other variables before the statement and use `=` instead of `:=`")
+		return
+	}
 	path := pathNodes(f.ast, pos)
 	for i := len(path) - 1; i >= 0; i-- {
 		switch n := path[i].(type) {
@@ -773,6 +905,68 @@ func (s *Sources) unusedVar(d *Diagnostic, f *srcFile, pos token.Pos) {
 			return
 		}
 	}
+}
+
+// outerDecl finds a declaration of name in the enclosing function, before
+// pos and outside the innermost block that contains pos: the variable that
+// a := at pos shadows.
+func outerDecl(f *srcFile, pos token.Pos, name string) (Span, bool) {
+	fd := enclosingFunc(f, pos)
+	if fd == nil {
+		return Span{}, false
+	}
+	path := pathNodes(f.ast, pos)
+	var inner ast.Node
+	for i := len(path) - 1; i >= 0; i-- {
+		if b, ok := path[i].(*ast.BlockStmt); ok {
+			inner = b
+			break
+		}
+	}
+	var found Span
+	ok := false
+	consider := func(id *ast.Ident) {
+		if id.Name == name && id.Pos() < pos && (inner == nil || id.Pos() < inner.Pos() || id.Pos() >= inner.End()) {
+			found, ok = f.spanOf(id), true
+		}
+	}
+	for _, fl := range fd.Type.Params.List {
+		for _, n := range fl.Names {
+			consider(n)
+		}
+	}
+	if fd.Type.Results != nil {
+		for _, fl := range fd.Type.Results.List {
+			for _, n := range fl.Names {
+				consider(n)
+			}
+		}
+	}
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		if n == nil || n.Pos() >= pos {
+			return false
+		}
+		// Only declarations in blocks that enclose pos are visible there.
+		if b, isBlock := n.(*ast.BlockStmt); isBlock && !(b.Pos() <= pos && pos < b.End()) {
+			return false
+		}
+		switch n := n.(type) {
+		case *ast.AssignStmt:
+			if n.Tok == token.DEFINE {
+				for _, l := range n.Lhs {
+					if id, isID := l.(*ast.Ident); isID {
+						consider(id)
+					}
+				}
+			}
+		case *ast.ValueSpec:
+			for _, id := range n.Names {
+				consider(id)
+			}
+		}
+		return true
+	})
+	return found, ok
 }
 
 // pure reports whether evaluating e has no side effects and cannot panic,
@@ -866,6 +1060,14 @@ func (s *Sources) cannotUse(d *Diagnostic, f *srcFile, pos token.Pos) {
 		haveT = strings.TrimSuffix(strings.TrimSuffix(have, " constant"), " value")
 	}
 	d.Primary = fmt.Sprintf("expected `%s`, found `%s`", want, haveT)
+	if strings.HasSuffix(d.Message, "(overflows)") {
+		d.Primary = fmt.Sprintf("`%s` does not fit in `%s`", expr, want)
+		if r, ok := intRange[want]; ok {
+			d.Notes = append(d.Notes, fmt.Sprintf("`%s` holds %s", want, r))
+		}
+		d.Help = append(d.Help, "use a wider type, such as `int`")
+		return
+	}
 	if callee != "" {
 		arg := -1
 		if f.ast != nil {
@@ -1191,7 +1393,7 @@ func (s *Sources) context(d *Diagnostic, f *srcFile, pos token.Pos, opt Options)
 
 var (
 	reNotImpl = lazy(`(?:^cannot use (.+?) \((.+?)\) as (\S+) value in (.+?): )?(\*?[\w.]+) does not implement ([\w.]+) \((.+)\)$`)
-	reNotSat  = lazy(`^(\*?[\w.\[\]]+) does not satisfy ([\w.]+) \((?:(\S+) missing in (.+)|(.+))\)$`)
+	reNotSat  = lazy(`^(\S+) does not satisfy ([\w.]+)(?: \((?:(\S+) missing in (.+)|(.+))\))?$`)
 )
 
 // ifaceMethod is one method an interface requires.
@@ -1296,10 +1498,15 @@ func (s *Sources) notImplement(d *Diagnostic, f *srcFile, pos token.Pos) {
 	isPtr := strings.HasPrefix(typ, "*")
 	tname := strings.TrimPrefix(typ, "*")
 	d.Primary = "`" + typ + "` does not implement `" + iface + "`"
-	if strings.Contains(tname, ".") || strings.Contains(iface, ".") {
-		return // types from other packages: go/types' reason is all we have
+	if strings.Contains(tname, ".") {
+		return // a type from another package: go/types' reason is all we have
 	}
 	need, ispan, ok := s.interfaceMethods(f, iface, 0)
+	if iface == "error" {
+		need, ok = []ifaceMethod{{name: "Error", sig: "() string"}}, true
+	} else if pkg, in, isQual := strings.Cut(iface, "."); isQual {
+		need, ispan, ok = s.importedInterface(f, pkg, in)
+	}
 	if !ok {
 		return
 	}
@@ -1334,7 +1541,9 @@ func (s *Sources) notImplement(d *Diagnostic, f *srcFile, pos token.Pos) {
 	if len(lacks) == 0 {
 		return
 	}
-	labelOrRelated(d, ispan, "`"+iface+"` is declared here")
+	if ispan.Valid() {
+		labelOrRelated(d, ispan, "`"+iface+"` is declared here")
+	}
 	d.Notes = nil // the have/want lines of go/types are in the list below
 	plural := "method"
 	if len(lacks) > 1 {
@@ -1348,6 +1557,51 @@ func (s *Sources) notImplement(d *Diagnostic, f *srcFile, pos token.Pos) {
 		d.Fixes = append(d.Fixes, Fix{Title: "pass a pointer", Applicability: MaybeIncorrect,
 			Edits: []Edit{{File: f.path, Span: Span{File: f.path, Line: d.Span.Line, Col: d.Span.Col, EndLine: d.Span.Line, EndCol: d.Span.Col}, NewText: "&"}}})
 	}
+}
+
+// importedInterface reads the methods of interface pkg.name from the
+// imported package's source.
+func (s *Sources) importedInterface(f *srcFile, pkg, name string) ([]ifaceMethod, Span, bool) {
+	path, ok := s.importFor(f, pkg)
+	if !ok {
+		return nil, Span{}, false
+	}
+	dir := s.pkgDir(f.path, path)
+	if dir == "" {
+		return nil, Span{}, false
+	}
+	ents, _ := os.ReadDir(dir)
+	for _, e := range ents {
+		n := e.Name()
+		if !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		pf := s.file(filepath.Join(dir, n))
+		if pf == nil || pf.ast == nil {
+			continue
+		}
+		for _, dl := range pf.ast.Decls {
+			gd, isGen := dl.(*ast.GenDecl)
+			if !isGen || gd.Tok != token.TYPE {
+				continue
+			}
+			for _, sp := range gd.Specs {
+				ts := sp.(*ast.TypeSpec)
+				it, isIface := ts.Type.(*ast.InterfaceType)
+				if ts.Name.Name != name || !isIface {
+					continue
+				}
+				var ms []ifaceMethod
+				for _, m := range it.Methods.List {
+					if ft, isFunc := m.Type.(*ast.FuncType); isFunc && len(m.Names) > 0 {
+						ms = append(ms, ifaceMethod{name: m.Names[0].Name, sig: sigTypes(pf, ft)})
+					}
+				}
+				return ms, Span{}, true
+			}
+		}
+	}
+	return nil, Span{}, false
 }
 
 // normSig removes white space so signatures compare by text.
@@ -1393,6 +1647,9 @@ func (s *Sources) notSatisfy(d *Diagnostic, f *srcFile, pos token.Pos) {
 	}
 	typ, cons, set := m[1], m[2], m[4]
 	d.Primary = "`" + typ + "` does not satisfy `" + cons + "`"
+	if cons == "comparable" {
+		d.Notes = append(d.Notes, "`comparable` holds the types that support `==`; function, slice and map types do not, nor structs and arrays that contain them")
+	}
 	if f.ast != nil {
 		for _, n := range pathNodes(f.ast, pos) {
 			ce, ok := n.(*ast.CallExpr)
@@ -1441,4 +1698,130 @@ func (s *Sources) constraintDecl(f *srcFile, name string) (*ast.TypeSpec, Span, 
 		}
 	}
 	return nil, Span{}, false
+}
+
+var intRange = map[string]string{
+	"byte": "0 to 255", "uint8": "0 to 255", "int8": "-128 to 127",
+	"uint16": "0 to 65535", "int16": "-32768 to 32767",
+	"uint32": "0 to 4294967295", "int32": "-2147483648 to 2147483647", "rune": "-2147483648 to 2147483647",
+}
+
+// invalidOp explains assignments to constants and strings, calls of
+// values, and non-boolean conditions.
+func (s *Sources) invalidOp(d *Diagnostic, f *srcFile, pos token.Pos) {
+	msg := d.Message
+	switch {
+	case strings.HasPrefix(msg, "cannot assign to ") && f.ast != nil:
+		for _, n := range pathNodes(f.ast, pos) {
+			ix, ok := n.(*ast.IndexExpr)
+			if !ok || ix.Pos() != pos {
+				continue
+			}
+			d.Span = f.spanOf(ix)
+			if id, isID := ix.X.(*ast.Ident); isID && s.isStringVar(f, pos, id.Name) {
+				d.Primary = "strings are immutable"
+				d.Help = append(d.Help, fmt.Sprintf("convert to bytes, change them, and convert back: `b := []byte(%s); b[i] = ...; %s = string(b)`", id.Name, id.Name))
+			}
+			return
+		}
+		name := strings.Fields(strings.TrimPrefix(msg, "cannot assign to "))[0]
+		if ex := s.localExports(f); ex.names[name] == "const" {
+			d.Primary = "`" + name + "` is a constant"
+			if sp, ok := s.declSpan(f, name); ok {
+				labelOrRelated(d, sp, "declared as a constant here")
+			}
+			d.Help = append(d.Help, "to change the value at run time, declare it with `var`")
+		}
+	case strings.HasPrefix(msg, "invalid operation: cannot call "):
+		name := strings.Fields(strings.TrimPrefix(msg, "invalid operation: cannot call "))[0]
+		d.Primary = "`" + name + "` is not a function"
+	case strings.HasPrefix(msg, "non-boolean condition"):
+		d.Primary = "expected `bool`"
+		d.Help = append(d.Help, "Go has no truthiness: compare explicitly, for example `x != 0`, `s != \"\"` or `p != nil`")
+	}
+}
+
+// otherHints handles errors without a more specific code.
+func (s *Sources) otherHints(d *Diagnostic, f *srcFile, pos token.Pos) {
+	msg := d.Message
+	switch {
+	case strings.HasPrefix(msg, "invalid map key type") && f.ast != nil:
+		for _, n := range pathNodes(f.ast, pos) {
+			if e, ok := n.(ast.Expr); ok && e.Pos() == pos {
+				d.Span = f.spanOf(e)
+			}
+		}
+		d.Primary = "not comparable, so it cannot be a map key"
+		d.Help = append(d.Help, "map keys must support `==`: use a string, a struct of comparable fields, or an array such as `[4]int`")
+	case strings.HasSuffix(msg, "is not used") && f.ast != nil:
+		d.Primary = "this value is not used"
+		for _, n := range pathNodes(f.ast, pos) {
+			if be, ok := n.(*ast.BinaryExpr); ok && be.Pos() == pos {
+				d.Span = f.spanOf(be)
+				if be.Op == token.EQL {
+					op := f.fset.Position(be.OpPos)
+					d.Fixes = append(d.Fixes, Fix{Title: "to assign, use `=`", Applicability: MaybeIncorrect,
+						Edits: []Edit{{File: f.path, Span: Span{File: f.path, Line: op.Line, Col: op.Column, EndLine: op.Line, EndCol: op.Column + 2}, NewText: "="}}})
+				}
+				break
+			}
+		}
+	case strings.HasPrefix(msg, "break not in") || strings.HasPrefix(msg, "continue not in"):
+		d.Primary = "not inside a loop"
+		d.Help = append(d.Help, "to leave a function early, use `return`")
+	}
+}
+
+// isStringVar reports whether name is declared in the function around pos
+// as a string (from a string literal or a string type).
+func (s *Sources) isStringVar(f *srcFile, pos token.Pos, name string) bool {
+	fd := enclosingFunc(f, pos)
+	if fd == nil {
+		return false
+	}
+	found := false
+	ast.Inspect(fd, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.AssignStmt:
+			for i, l := range n.Lhs {
+				if id, ok := l.(*ast.Ident); ok && id.Name == name && i < len(n.Rhs) {
+					if bl, ok := n.Rhs[i].(*ast.BasicLit); ok && bl.Kind == token.STRING {
+						found = true
+					}
+				}
+			}
+		case *ast.ValueSpec:
+			if id, ok := n.Type.(*ast.Ident); ok && id.Name == "string" {
+				for _, nm := range n.Names {
+					if nm.Name == name {
+						found = true
+					}
+				}
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// declSpan finds the declaring identifier of a package level name.
+func (s *Sources) declSpan(f *srcFile, name string) (Span, bool) {
+	for _, pf := range s.pkgOf(f.path).files {
+		for _, dl := range pf.ast.Decls {
+			gd, ok := dl.(*ast.GenDecl)
+			if !ok {
+				continue
+			}
+			for _, sp := range gd.Specs {
+				if vs, ok := sp.(*ast.ValueSpec); ok {
+					for _, n := range vs.Names {
+						if n.Name == name {
+							return pf.spanOf(n), true
+						}
+					}
+				}
+			}
+		}
+	}
+	return Span{}, false
 }

@@ -1,0 +1,14 @@
+error[M0004]: declared and not used: i
+ --> ./main.go:6:6
+  |
+6 |     for i, v := range []string{"a"} {
+  |         ^ declared here but never used
+  |
+help: replace `i` with `_` (check it)
+  |
+6 -     for i, v := range []string{"a"} {
+6 +     for _, v := range []string{"a"} {
+  |
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0004`

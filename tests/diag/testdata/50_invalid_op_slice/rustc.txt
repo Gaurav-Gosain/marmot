@@ -1,0 +1,16 @@
+error[E0369]: cannot add `{integer}` to `Vec<{integer}>`
+ --> main.rs:3:25
+  |
+3 |     println!("{:?}", xs + 1);
+  |                      -- ^ - {integer}
+  |                      |
+  |                      Vec<{integer}>
+  |
+note: the foreign item type `Vec<{integer}>` doesn't implement `Add<{integer}>`
+ --> /rustc/ed61e7d7e242494fb7057f2657300d9e77bb4fcb/library/alloc/src/vec/mod.rs:434:1
+  |
+  = note: not implement `Add<{integer}>`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0369`.

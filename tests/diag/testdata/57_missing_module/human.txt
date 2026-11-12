@@ -1,0 +1,10 @@
+error[M0011]: no required module provides package example.com/nowhere/lib
+ --> ./main.go:3:8
+  |
+3 | import "example.com/nowhere/lib"
+  |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: add the module: `go get example.com/nowhere/lib`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0011`

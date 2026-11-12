@@ -1,0 +1,13 @@
+error[M0016]: cannot assign to Max (neither addressable nor a map index expression)
+ --> ./main.go:6:2
+  |
+3 | const Max = 10
+  |       --- declared as a constant here
+...
+6 |     Max = 20
+  |     ^^^ `Max` is a constant
+  |
+  = help: to change the value at run time, declare it with `var`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0016`

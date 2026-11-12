@@ -1,0 +1,2 @@
+# example.com/iface_missing_method
+./main.go:15:7: cannot use Rect{…} (value of struct type Rect) as Shape value in argument to show: Rect does not implement Shape (missing method Perimeter)

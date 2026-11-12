@@ -1,0 +1,14 @@
+error[E0428]: the name `helper` is defined multiple times
+ --> main.rs:3:1
+  |
+1 | fn helper() {}
+  | ----------- previous definition of the value `helper` here
+2 |
+3 | fn helper() {}
+  | ^^^^^^^^^^^ `helper` redefined here
+  |
+  = note: `helper` must be defined only once in the value namespace of this module
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0428`.

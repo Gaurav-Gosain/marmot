@@ -1,0 +1,12 @@
+error[M0026]: func() does not satisfy comparable
+  --> ./main.go:14:10
+   |
+14 |     println(Index([]func(){f}, f))
+   |             ^^^^^ ----------- the type argument is inferred as `func()` from this
+   |             |
+   |             `func()` does not satisfy `comparable`
+   |
+   = note: `comparable` holds the types that support `==`; function, slice and map types do not, nor structs and arrays that contain them
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0026`

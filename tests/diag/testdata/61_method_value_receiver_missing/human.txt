@@ -1,0 +1,8 @@
+error[M0003]: t.Close undefined (type T has no field or method Close)
+ --> ./main.go:7:4
+  |
+7 |     t.Close()
+  |       ^^^^^ `T` has no field or method `Close`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0003`

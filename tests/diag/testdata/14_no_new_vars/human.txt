@@ -1,0 +1,15 @@
+error[M0013]: no new variables on left side of :=
+ --> ./main.go:5:4
+  |
+5 |     x := 2
+  |       ^^ no new variables on the left
+  |
+help: use `=` instead of `:=`
+  |
+5 -     x := 2
+5 +     x = 2
+  |
+
+error: build failed with 1 error
+1 error can be fixed automatically: run `marmot fix`
+for more about an error, run `marmot explain M0013`

@@ -1,0 +1,11 @@
+error[M0001]: expected ';', found 'EOF'
+ --> ./main.go:6:3
+  |
+3 | func main() {
+  |             - this `{` is never closed
+...
+6 | }
+  |   ^ the file ends here
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0001`

@@ -5,6 +5,7 @@ error[M0013]: no new variables on left side of :=
   |       ^^ no new variables on the left
   |
 help: use `=` instead of `:=`
+  |
 7 -     x := 2
 7 +     x = 2
   |
@@ -16,6 +17,7 @@ error[M0004]: declared and not used: i
   |         ^ declared here but never used
   |
 help: replace `i` with `_` (check it)
+  |
 8 -     for i, v := range []int{1} {
 8 +     for _, v := range []int{1} {
   |
@@ -27,6 +29,7 @@ error[M0004]: declared and not used: k
    |         ^ declared here but never used
    |
 help: remove `k`
+   |
 11 -     for k := range map[int]int{} {
 11 +     for range map[int]int{} {
    |

@@ -1,0 +1,2 @@
+# example.com/syntax_else_newline
+./main.go:8:2: syntax error: unexpected keyword else, expected }

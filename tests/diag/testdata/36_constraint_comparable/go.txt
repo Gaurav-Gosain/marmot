@@ -1,0 +1,2 @@
+# example.com/constraint_comparable
+./main.go:14:15: func() does not satisfy comparable

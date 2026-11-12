@@ -1,0 +1,2 @@
+# example.com/call_non_function
+./main.go:5:10: invalid operation: cannot call limit (variable of type int): int is not a function

@@ -1,0 +1,2 @@
+# example.com/multi_value_single_context
+./main.go:6:10: multiple-value strconv.Atoi("12") (value of type (int, error)) in single-value context

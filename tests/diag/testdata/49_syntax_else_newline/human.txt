@@ -1,0 +1,16 @@
+error[M0001]: expected statement, found 'else'
+ --> ./main.go:8:2
+  |
+8 |     else {
+  |     ^^^^ `else` must follow the `}` of the `if` on the same line
+  |
+help: move `else` up to the closing brace
+  |
+7 -     }
+8 -     else {
+7 +     } else {
+  |
+
+error: build failed with 1 error
+1 error can be fixed automatically: run `marmot fix`
+for more about an error, run `marmot explain M0001`

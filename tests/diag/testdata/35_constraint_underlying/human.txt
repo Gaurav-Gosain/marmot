@@ -1,0 +1,17 @@
+error[M0026]: Meters does not satisfy Number (Meters missing in ~int | ~float64)
+  --> ./main.go:17:10
+   |
+ 3 | type Number interface {
+   |      ------ `Number` is declared here
+ ...
+17 |     println(Max(Meters(1), Meters(2)))
+   |             ^^^ --------- the type argument is inferred as `Meters` from this
+   |             |
+   |             `Meters` does not satisfy `Number`
+   |
+   = note: the type set of `Number` is `~int | ~float64`
+   = note: `Meters` has underlying type `float32`, which the type set does not include
+   = help: to accept it, add `~float32` to `Number`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0026`

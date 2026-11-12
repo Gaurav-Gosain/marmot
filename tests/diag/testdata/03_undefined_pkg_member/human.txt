@@ -1,0 +1,14 @@
+error[M0002]: undefined: fmt.Printn
+ --> ./main.go:6:6
+  |
+6 |     fmt.Printn("hello")
+  |         ^^^^^^ not declared by package `fmt`
+  |
+help: use `fmt.Println` (check it)
+  |
+6 -     fmt.Printn("hello")
+6 +     fmt.Println("hello")
+  |
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0002`

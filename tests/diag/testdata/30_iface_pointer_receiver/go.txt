@@ -1,0 +1,2 @@
+# example.com/iface_pointer_receiver
+./main.go:13:6: cannot use c (variable of struct type C) as Counter value in argument to use: C does not implement Counter (method Inc has pointer receiver)

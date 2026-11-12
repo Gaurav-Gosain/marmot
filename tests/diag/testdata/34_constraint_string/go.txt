@@ -1,0 +1,2 @@
+# example.com/constraint_string
+./main.go:16:13: string does not satisfy Number (string missing in ~int | ~int64 | ~float64)

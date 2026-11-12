@@ -1,0 +1,2 @@
+# example.com/non_bool_condition
+./main.go:5:5: non-boolean condition in if statement

@@ -1,0 +1,12 @@
+error[M0008]: too many return values
+ --> ./main.go:4:9
+  |
+3 | func main() {
+  | ----------- `main` declares no results
+4 |     return 1
+  |            ^ returns a value
+  |
+  = note: expected `()`, found `(number)`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0008`

@@ -1,0 +1,2 @@
+# example.com/shadowed_err
+./main.go:8:9: declared and not used: err

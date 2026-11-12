@@ -1,0 +1,10 @@
+error[M0015]: x redeclared in this block
+ --> ./main.go:5:6
+  |
+4 |     var x int
+  |         - `x` is first declared here
+5 |     var x string
+  |         ^
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0015`

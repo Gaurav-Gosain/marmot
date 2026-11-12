@@ -1,0 +1,10 @@
+error[M0007]: invalid operation: xs + 1 (mismatched types []int and untyped int)
+ --> ./main.go:5:13
+  |
+5 |     println(xs + 1)
+  |             -- ^ - `untyped int`
+  |             |
+  |             `[]int`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0007`

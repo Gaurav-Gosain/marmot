@@ -1,0 +1,4 @@
+# example.com/not_enough_args
+./main.go:6:15: not enough arguments in call to area
+	have (number)
+	want (int, int)

@@ -1,0 +1,14 @@
+error[M0014]: cannot use Temp(1) (constant 1 of float64 type Temp) as fmt.Stringer value in variable declaration: Temp does not implement fmt.Stringer (missing method String)
+  --> ./main.go:10:23
+   |
+ 7 | func (t Temp) Strng() string { return fmt.Sprintf("%.1f C", float64(t)) }
+   |               ----- not `String`
+ ...
+10 |     var s fmt.Stringer = Temp(1)
+   |                          ^^^^^^^ `Temp` does not implement `fmt.Stringer`
+   |
+   = note: `Temp` lacks 1 method of `fmt.Stringer`:
+             `String() string` is missing; `Temp` has `Strng`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0014`

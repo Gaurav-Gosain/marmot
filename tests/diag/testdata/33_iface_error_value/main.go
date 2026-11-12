@@ -1,0 +1,11 @@
+package main
+
+type MyErr struct{ msg string }
+
+func (e *MyErr) Error() string { return e.msg }
+
+func run() error {
+	return MyErr{"bad"}
+}
+
+func main() { println(run() != nil) }

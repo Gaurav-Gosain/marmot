@@ -1,0 +1,8 @@
+error[M0016]: cannot range over count (value of type func() int): func must be func(yield func(...) bool): wrong argument count
+ --> ./main.go:6:17
+  |
+6 |     for i := range count {
+  |                    ^^^^^
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0016`

@@ -1,0 +1,7 @@
+package main
+
+func name() string {
+	return 42
+}
+
+func main() { println(name()) }

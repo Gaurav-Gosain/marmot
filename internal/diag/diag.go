@@ -161,13 +161,27 @@ func Dedup(ds []Diagnostic) []Diagnostic {
 	}
 	seen := map[key]bool{}
 	seenSyntax := map[string]bool{}
+	// "could not import P" is a follow-on of the go list error for P at the
+	// same import.
+	type at struct {
+		f    string
+		l, c int
+	}
+	positions := map[at]int{}
+	for _, d := range ds {
+		positions[at{d.Span.File, d.Span.Line, d.Span.Col}]++
+	}
 	var out []Diagnostic
 	for _, d := range ds {
 		if syntax[d.Span.File] && d.Code != CodeSyntax {
 			continue
 		}
-		if d.Code == CodeSyntax && strings.Contains(d.Message, "found 'EOF'") && seenSyntax[d.Span.File] {
-			// The parser ran to the end of the file after the first error.
+		if strings.HasPrefix(d.Message, "could not import ") && positions[at{d.Span.File, d.Span.Line, d.Span.Col}] > 1 {
+			continue
+		}
+		if d.Code == CodeSyntax && seenSyntax[d.Span.File] {
+			// After the first syntax error the parser is out of step; the
+			// errors that follow are almost always caused by the first.
 			continue
 		}
 		if d.Code == CodeSyntax {
@@ -241,6 +255,9 @@ func Process(text string, src *Sources, opt Options) []Diagnostic {
 // Finish runs the steps of Process after parsing.
 func Finish(ds []Diagnostic, src *Sources, opt Options) []Diagnostic {
 	src.Enrich(ds, opt)
+	for i := range ds {
+		relatedToLabels(&ds[i])
+	}
 	ds = DropCascades(ds)
 	Sort(ds)
 	for i := range ds {
@@ -255,6 +272,34 @@ func Finish(ds []Diagnostic, src *Sources, opt Options) []Diagnostic {
 		}
 	}
 	return ds
+}
+
+// relatedToLabels draws related locations in the diagnostic's own file as
+// labels in the snippet, the way rustc shows "first defined here".
+func relatedToLabels(d *Diagnostic) {
+	var keep []Related
+	for _, r := range d.Related {
+		if r.Span.File != d.Span.File || r.Span.File == "" {
+			keep = append(keep, r)
+			continue
+		}
+		sp := r.Span
+		text := r.Message
+		switch {
+		case strings.HasPrefix(text, "other declaration of "):
+			text = "`" + strings.TrimPrefix(text, "other declaration of ") + "` is first declared here"
+		case text == "previous case":
+			text = "first used here"
+		}
+		if sp.EndLine == 0 {
+			sp.EndLine, sp.EndCol = sp.Line, sp.Col+1
+			if n := strings.TrimPrefix(r.Message, "other declaration of "); n != r.Message {
+				sp.EndCol = sp.Col + len(n)
+			}
+		}
+		d.Labels = append(d.Labels, Label{Span: sp, Text: text})
+	}
+	d.Related = keep
 }
 
 // maxMessage is the longest message shown in full in human mode.

@@ -1,0 +1,2 @@
+# example.com/syntax_missing_operand
+./main.go:5:1: syntax error: unexpected }, expected expression

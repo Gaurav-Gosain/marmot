@@ -1,0 +1,13 @@
+error[M0006]: cannot use "two" (untyped string constant) as int value in argument to add
+ --> ./main.go:6:17
+  |
+3 | func add(a, b int) int { return a + b }
+  |               --- expected because of parameter `b`
+...
+6 |     println(add(1, "two"))
+  |                    ^^^^^ expected `int`, found `untyped string`
+  |
+  = help: to parse a number from text, use `strconv.Atoi("two")`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0006`

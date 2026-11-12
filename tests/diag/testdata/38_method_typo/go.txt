@@ -1,0 +1,2 @@
+# example.com/method_typo
+./main.go:9:4: s.Puhs undefined (type Stack has no field or method Puhs)

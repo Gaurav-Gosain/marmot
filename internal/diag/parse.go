@@ -43,6 +43,13 @@ func FromText(text, dir string) []Diagnostic {
 			col, _ := strconv.Atoi(m[3])
 			d.Span = Span{File: file, Line: line, Col: col}
 			d.Message = m[4]
+			if strings.HasPrefix(m[4], "\t") && len(ds) > 0 {
+				// go/types continuation: another location of the error
+				// above ("other declaration of x", "previous case").
+				prev := &ds[len(ds)-1]
+				prev.Related = append(prev.Related, Related{Span: d.Span, Message: strings.TrimSpace(m[4])})
+				continue
+			}
 		} else {
 			msg := l
 			// go list prefixes position-less errors with "-: " or "pkg: ".

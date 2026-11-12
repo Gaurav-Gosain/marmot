@@ -6,6 +6,7 @@ error[M0005]: "os" imported and not used
   |
   = help: if it is imported only for its side effects, write `import _ "os"`
 help: remove the import of `"os"`
+  |
 5 -     "os"
   |
 
@@ -16,6 +17,7 @@ error[M0004]: declared and not used: count
    |     ^^^^^ declared here but never used
    |
 help: remove `count`
+   |
 13 -     count := 3
    |
 
@@ -37,6 +39,7 @@ error[M0002]: undefined: fmt.Printn
    |         ^^^^^^ not declared by package `fmt`
    |
 help: use `fmt.Println` (check it)
+   |
 15 -     fmt.Printn("x")
 15 +     fmt.Println("x")
    |
@@ -48,6 +51,7 @@ error[M0004]: declared and not used: x
    |     ^ declared here but never used
    |
 help: assign the value to `_`
+   |
 16 -     x := strings.ToUpper("a")
 16 +     _ = strings.ToUpper("a")
    |
@@ -59,6 +63,7 @@ error[M0002]: undefined: strings
    |          ^^^^^^^ package `strings` is not imported
    |
 help: add `import "strings"`
+   |
  6 +     "strings"
    |
 

@@ -1,0 +1,10 @@
+error[M0010]: missing return
+ --> ./main.go:9:1
+  |
+9 | }
+  | ^
+  |
+  = help: add a `return` at the end of the function, or `panic` if the end cannot be reached
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0010`

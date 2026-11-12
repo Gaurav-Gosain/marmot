@@ -1,0 +1,11 @@
+error[M0006]: cannot use 300 (untyped int constant) as byte value in variable declaration (overflows)
+ --> ./main.go:4:15
+  |
+4 |     var b byte = 300
+  |                  ^^^ `300` does not fit in `byte`
+  |
+  = note: `byte` holds 0 to 255
+  = help: use a wider type, such as `int`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0006`

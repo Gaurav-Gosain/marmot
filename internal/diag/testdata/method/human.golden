@@ -7,6 +7,7 @@ error[M0003]: c.Incremnt undefined (type Counter has no field or method Incremnt
    = note: fields of `Counter`: `n`, `label`
    = note: methods of `Counter`: `(*Counter) Increment`, `(Counter) Value`
 help: use `Increment` (check it)
+   |
 16 -     c.Incremnt()
 16 +     c.Increment()
    |
@@ -20,6 +21,7 @@ error[M0003]: c.Lable undefined (type Counter has no field or method Lable)
    = note: fields of `Counter`: `n`, `label`
    = note: methods of `Counter`: `(*Counter) Increment`, `(Counter) Value`
 help: use `label` (check it)
+   |
 17 -     c.Lable = "x"
 17 +     c.label = "x"
    |
@@ -32,6 +34,7 @@ error[M0003]: b.WriteStrin undefined (type strings.Builder has no field or metho
    |
    = note: methods of `strings.Builder`: `(*Builder) Cap`, `(*Builder) Grow`, `(*Builder) Len`, `(*Builder) Reset`, `(*Builder) String`, `(*Builder) Write`, `(*Builder) WriteByte`, `(*Builder) WriteRune`, `(*Builder) WriteString`
 help: use `WriteString` (check it)
+   |
 19 -     b.WriteStrin("x")
 19 +     b.WriteString("x")
    |

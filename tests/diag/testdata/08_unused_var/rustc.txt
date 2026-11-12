@@ -1,0 +1,14 @@
+error: unused variable: `count`
+ --> main.rs:3:9
+  |
+3 |     let count = 3;
+  |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_count`
+  |
+note: the lint level is defined here
+ --> main.rs:1:9
+  |
+1 | #![deny(unused_variables)]
+  |         ^^^^^^^^^^^^^^^^
+
+error: aborting due to 1 previous error
+

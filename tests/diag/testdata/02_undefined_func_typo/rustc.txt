@@ -1,0 +1,12 @@
+error[E0425]: cannot find function `compte` in this scope
+ --> main.rs:4:20
+  |
+1 | fn compute(n: i32) -> i32 { n * 2 }
+  | ------------------------- similarly named function `compute` defined here
+...
+4 |     println!("{}", compte(3));
+  |                    ^^^^^^ help: a function with a similar name exists: `compute`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0425`.

@@ -1,0 +1,10 @@
+error[M0006]: cannot use "three" (untyped string constant) as int value in assignment
+ --> ./main.go:5:10
+  |
+5 |     count = "three"
+  |             ^^^^^^^ expected `int`, found `untyped string`
+  |
+  = help: to parse a number from text, use `strconv.Atoi("three")`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0006`

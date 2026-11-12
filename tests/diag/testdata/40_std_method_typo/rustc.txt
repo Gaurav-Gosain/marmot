@@ -1,0 +1,15 @@
+error[E0599]: no method named `push_strr` found for struct `String` in the current scope
+ --> main.rs:3:7
+  |
+3 |     s.push_strr("x");
+  |       ^^^^^^^^^
+  |
+help: there is a method `push_str` with a similar name
+  |
+3 -     s.push_strr("x");
+3 +     s.push_str("x");
+  |
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0599`.

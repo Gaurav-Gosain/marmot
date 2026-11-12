@@ -1,0 +1,14 @@
+error[M0002]: undefined: totl
+ --> ./main.go:7:14
+  |
+7 |     fmt.Println(totl)
+  |                 ^^^^ not declared in this scope
+  |
+help: use `total` (check it)
+  |
+7 -     fmt.Println(totl)
+7 +     fmt.Println(total)
+  |
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0002`

@@ -1,0 +1,9 @@
+error[E0425]: cannot find value `totl` in this scope
+ --> main.rs:3:20
+  |
+3 |     println!("{}", totl);
+  |                    ^^^^ help: a local variable with a similar name exists: `total`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0425`.

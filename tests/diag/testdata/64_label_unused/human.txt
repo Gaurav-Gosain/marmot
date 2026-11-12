@@ -1,0 +1,14 @@
+error[M0004]: label outer declared and not used
+ --> ./main.go:4:1
+  |
+4 | outer:
+  | ^^^^^^ declared here but never used
+  |
+help: remove the label
+  |
+4 - outer:
+  |
+
+error: build failed with 1 error
+1 error can be fixed automatically: run `marmot fix`
+for more about an error, run `marmot explain M0004`

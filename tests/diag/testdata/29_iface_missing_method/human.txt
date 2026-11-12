@@ -1,0 +1,14 @@
+error[M0014]: cannot use Rect{…} (value of struct type Rect) as Shape value in argument to show: Rect does not implement Shape (missing method Perimeter)
+  --> ./main.go:15:7
+   |
+ 3 | type Shape interface {
+   |      ----- `Shape` is declared here
+ ...
+15 |     show(Rect{1, 2})
+   |          ^^^^^^^^^^ `Rect` does not implement `Shape`
+   |
+   = note: `Rect` lacks 1 method of `Shape`:
+             `Perimeter() float64` is missing
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0014`

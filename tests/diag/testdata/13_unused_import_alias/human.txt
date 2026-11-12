@@ -1,0 +1,15 @@
+error[M0005]: "strings" imported as str and not used
+ --> ./main.go:5:2
+  |
+5 |     str "strings"
+  |     ^^^^^^^^^^^^^ imported here but not used
+  |
+  = help: if it is imported only for its side effects, write `import _ "strings"`
+help: remove the import of `"strings"`
+  |
+5 -     str "strings"
+  |
+
+error: build failed with 1 error
+1 error can be fixed automatically: run `marmot fix`
+for more about an error, run `marmot explain M0005`

@@ -1,0 +1,2 @@
+# example.com/field_typo
+./main.go:10:4: c.Prot undefined (type Config has no field or method Prot)

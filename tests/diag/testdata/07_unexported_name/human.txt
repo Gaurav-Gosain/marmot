@@ -1,0 +1,15 @@
+error[M0002]: undefined: fmt.println (but have Println)
+ --> ./main.go:6:6
+  |
+6 |     fmt.println("hi")
+  |         ^^^^^^^ not exported by package `fmt`
+  |
+help: use `fmt.Println`
+  |
+6 -     fmt.println("hi")
+6 +     fmt.Println("hi")
+  |
+
+error: build failed with 1 error
+1 error can be fixed automatically: run `marmot fix`
+for more about an error, run `marmot explain M0002`

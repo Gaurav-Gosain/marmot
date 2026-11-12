@@ -1,0 +1,2 @@
+# example.com/syntax_missing_paren
+./main.go:4:18: syntax error: unexpected newline in argument list; possibly missing comma or )

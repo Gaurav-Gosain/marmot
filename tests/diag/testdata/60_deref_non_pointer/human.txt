@@ -1,0 +1,8 @@
+error[M0016]: invalid operation: cannot indirect n (variable of type int)
+ --> ./main.go:5:11
+  |
+5 |     println(*n)
+  |              ^
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0016`

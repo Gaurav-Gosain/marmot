@@ -1,0 +1,10 @@
+error[M0001]: missing ',' before newline in argument list
+ --> ./main.go:4:18
+  |
+4 |     println("a", "b"
+  |                     ^ expected `,` or `)` here
+  |
+  = help: close the call with `)`, or put a `,` at the end of the line to continue the arguments
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0001`

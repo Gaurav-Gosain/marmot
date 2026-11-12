@@ -1,0 +1,2 @@
+# example.com/syntax_composite_comma
+./main.go:6:4: syntax error: unexpected newline in composite literal; possibly missing comma or }

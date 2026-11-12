@@ -1,0 +1,10 @@
+error: duplicate case 1 (constant of type int) in expression switch
+ --> ./main.go:8:7
+  |
+6 |     case 1:
+  |          - first used here
+...
+8 |     case 1:
+  |          ^
+
+error: build failed with 1 error

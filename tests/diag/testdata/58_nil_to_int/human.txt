@@ -1,0 +1,8 @@
+error[M0006]: cannot use nil as int value in variable declaration
+ --> ./main.go:4:14
+  |
+4 |     var n int = nil
+  |                 ^^^
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0006`

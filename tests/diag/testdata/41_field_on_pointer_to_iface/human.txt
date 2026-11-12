@@ -1,0 +1,10 @@
+error[M0003]: r.Read undefined (type *R is pointer to interface, not interface)
+ --> ./main.go:6:11
+  |
+6 |     return r.Read()
+  |              ^^^^ a pointer to an interface has no methods
+  |
+  = help: use the interface type itself: an interface value already holds a pointer when the dynamic type is one
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0003`

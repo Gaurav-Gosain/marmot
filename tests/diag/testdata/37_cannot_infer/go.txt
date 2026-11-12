@@ -1,0 +1,2 @@
+# example.com/cannot_infer
+./main.go:9:11: in call to Zero, cannot infer T (declared at ./main.go:3:11)

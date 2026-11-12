@@ -1,0 +1,15 @@
+error[M0003]: b.WriteStrin undefined (type strings.Builder has no field or method WriteStrin)
+ --> ./main.go:7:4
+  |
+7 |     b.WriteStrin("x")
+  |       ^^^^^^^^^^ `strings.Builder` has no field or method `WriteStrin`
+  |
+  = note: methods of `strings.Builder`: `(*Builder) Cap`, `(*Builder) Grow`, `(*Builder) Len`, `(*Builder) Reset`, `(*Builder) String`, `(*Builder) Write`, `(*Builder) WriteByte`, `(*Builder) WriteRune`, `(*Builder) WriteString`
+help: use `WriteString` (check it)
+  |
+7 -     b.WriteStrin("x")
+7 +     b.WriteString("x")
+  |
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0003`

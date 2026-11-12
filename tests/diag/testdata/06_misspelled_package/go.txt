@@ -1,0 +1,2 @@
+# example.com/misspelled_package
+./main.go:6:7: undefined: tmplate

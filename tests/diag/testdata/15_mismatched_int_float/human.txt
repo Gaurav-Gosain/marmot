@@ -1,0 +1,12 @@
+error[M0007]: invalid operation: n + f (mismatched types int and float64)
+ --> ./main.go:6:12
+  |
+6 |     println(n + f)
+  |             - ^ - `float64`
+  |             |
+  |             `int`
+  |
+  = help: convert one operand, for example `float64(n) + f`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0007`

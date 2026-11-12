@@ -1,0 +1,11 @@
+error[M0015]: helper redeclared in this block
+ --> ./main.go:5:6
+  |
+3 | func helper() {}
+  |      ------ `helper` is first declared here
+...
+5 | func helper() {}
+  |      ^^^^^^
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0015`

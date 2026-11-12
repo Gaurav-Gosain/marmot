@@ -1,0 +1,2 @@
+# example.com/nil_to_int
+./main.go:4:14: cannot use nil as int value in variable declaration

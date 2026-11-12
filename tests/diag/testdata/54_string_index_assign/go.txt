@@ -1,0 +1,2 @@
+# example.com/string_index_assign
+./main.go:5:2: cannot assign to s[0] (neither addressable nor a map index expression)

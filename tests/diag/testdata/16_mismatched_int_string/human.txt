@@ -1,0 +1,10 @@
+error[M0007]: invalid operation: s + n (mismatched types string and int)
+ --> ./main.go:6:12
+  |
+6 |     println(s + n)
+  |             - ^ - `int`
+  |             |
+  |             `string`
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0007`

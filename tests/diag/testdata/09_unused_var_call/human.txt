@@ -1,0 +1,14 @@
+error[M0004]: declared and not used: err
+ --> ./main.go:6:8
+  |
+6 |     data, err := os.ReadFile("x")
+  |           ^^^ declared here but never used
+  |
+help: replace `err` with `_` (check it)
+  |
+6 -     data, err := os.ReadFile("x")
+6 +     data, _ := os.ReadFile("x")
+  |
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0004`

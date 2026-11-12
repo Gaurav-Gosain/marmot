@@ -514,6 +514,7 @@ func (h *Human) fixDiff(fx Fix, pad string) {
 	}
 	fmt.Fprintf(h.W, "%shelp:%s %s\n", st.Help, st.Reset, title)
 	w := len(pad)
+	fmt.Fprintf(h.W, "%s %s|%s\n", pad, st.Gutter, st.Reset)
 	for _, e := range fx.Edits {
 		f := h.Sources.file(e.File)
 		if f == nil {

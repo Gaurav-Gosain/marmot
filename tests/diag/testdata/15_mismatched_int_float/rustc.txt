@@ -1,0 +1,16 @@
+error[E0277]: cannot add `f64` to `i32`
+ --> main.rs:4:22
+  |
+4 |     println!("{}", n + f);
+  |                      ^ no implementation for `i32 + f64`
+  |
+  = help: the trait `Add<f64>` is not implemented for `i32`
+  = help: the following other types implement trait `Add<Rhs>`:
+            `&i32` implements `Add<i32>`
+            `&i32` implements `Add`
+            `i32` implements `Add<&i32>`
+            `i32` implements `Add`
+
+error: aborting due to 1 previous error
+
+For more information about this error, try `rustc --explain E0277`.
