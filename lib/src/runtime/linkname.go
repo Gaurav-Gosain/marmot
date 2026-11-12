@@ -151,14 +151,29 @@ func os_runtime_rand() uint64 { return cheaprand64() }
 //go:linkname syscall_runtime_envs syscall.runtime_envs
 func syscall_runtime_envs() []string { return append([]string{}, goenvs()...) }
 
+// syscall.Setenv, Unsetenv and Clearenv tell the runtime about changes so
+// that a new GODEBUG takes effect (internal/godebug settings).
+
 //go:linkname syscall_runtimeSetenv syscall.runtimeSetenv
-func syscall_runtimeSetenv(key, value string) {}
+func syscall_runtimeSetenv(key, value string) {
+	if key == "GODEBUG" {
+		godebugNotify(value)
+	}
+}
 
 //go:linkname syscall_runtimeUnsetenv syscall.runtimeUnsetenv
-func syscall_runtimeUnsetenv(key string) {}
+func syscall_runtimeUnsetenv(key string) {
+	if key == "GODEBUG" {
+		godebugNotify("")
+	}
+}
 
 //go:linkname syscall_runtimeClearenv syscall.runtimeClearenv
-func syscall_runtimeClearenv(env map[string]int) {}
+func syscall_runtimeClearenv(env map[string]int) {
+	if _, ok := env["GODEBUG"]; ok {
+		godebugNotify("")
+	}
+}
 
 //go:linkname syscall_Getpagesize syscall.Getpagesize
 func syscall_Getpagesize() int { return physPageSize }
@@ -260,9 +275,22 @@ var (
 
 // internal/godebug.
 
+// godebugUpdate is the *func(def, env string) internal/godebug registered;
+// it is called with the new environment value whenever GODEBUG changes.
+var godebugUpdate unsafe.Pointer
+
 //go:linkname godebug_setUpdate internal/godebug.setUpdate
 func godebug_setUpdate(update func(string, string)) {
+	p := new(func(string, string))
+	*p = update
+	atomicStorep(&godebugUpdate, unsafe.Pointer(p))
 	update("", gogetenv("GODEBUG"))
+}
+
+func godebugNotify(env string) {
+	if p := (*func(string, string))(atomicLoadp(&godebugUpdate)); p != nil {
+		(*p)("", env)
+	}
 }
 
 //go:linkname godebug_registerMetric internal/godebug.registerMetric
