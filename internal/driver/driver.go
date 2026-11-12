@@ -414,8 +414,19 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 			args = append(args, "--target="+b.goos+"/"+b.goarch)
 		}
 		args = append(args, b.backendBuildArgs(emit)...)
+		if b.cfg.Verbose {
+			args = append(args, "-time")
+		}
 		if err := b.run(backend, args...); err != nil {
 			return nil, err
+		}
+		if b.cfg.Verbose {
+			// The backend's phase totals (-time).
+			for _, l := range strings.Split(b.lastOutput, "\n") {
+				if strings.HasPrefix(l, "sum of jobs") || strings.HasPrefix(l, "batch:") || strings.HasPrefix(l, "startup") {
+					b.logf("backend: %s", strings.Join(strings.Fields(l), " "))
+				}
+			}
 		}
 		return objs, nil
 	}

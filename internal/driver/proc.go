@@ -16,10 +16,10 @@ func maxJobs() int {
 	if n > 4 {
 		n = 4
 	}
+	// MARMOT_MAX_JOBS sets the number outright (above 4 too, for builds that
+	// may use every core).
 	if v, err := strconv.Atoi(os.Getenv("MARMOT_MAX_JOBS")); err == nil && v > 0 {
-		if v < n {
-			n = v
-		}
+		n = v
 	} else if slotCount() > 0 && slotJobs < n {
 		n = slotJobs
 	}
