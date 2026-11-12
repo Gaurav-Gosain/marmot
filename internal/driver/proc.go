@@ -10,7 +10,7 @@ import (
 	"syscall"
 )
 
-// maxJobs is the parallelism for backend compiles (SPEC rule 10: at most 4).
+// maxJobs is the parallelism for backend compiles (at most 4).
 func maxJobs() int {
 	n := runtime.NumCPU()
 	if n > 4 {

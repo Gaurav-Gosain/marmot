@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -77,7 +78,8 @@ func llvmTool(name string) string {
 
 type build struct {
 	cfg        Config
-	keepLocals bool // link without -x (the first link of a pc table build)
+	keepLocals bool   // link without -x (the first link of a pc table build)
+	lastOutput string // combined output of the last tool run (run)
 	work       string
 	start      time.Time
 	goos       string // target
@@ -210,7 +212,7 @@ func (b *build) run1() (string, error) {
 			ssaPkgs = append(ssaPkgs, sp)
 		}
 	}
-	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, GoDialect: cfg.Dialect == "go", Release: cfg.Release, MergedGOROOT: lp.GOROOT})
+	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, GoDialect: cfg.Dialect == "go", Release: cfg.Release, MergedGOROOT: lp.GOROOT, XDefs: b.xdefs()})
 	if err != nil {
 		return "", err
 	}
@@ -374,7 +376,7 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 		objs[i] = filepath.Join(b.work, fmt.Sprintf("m%03d%s", i, ext))
 	}
 	if haveBackend {
-		// The backend caches every step (docs/passes.md, "Batch driver and
+		// The backend caches every step ("Batch driver and
 		// cache"); it needs all modules for cross-package summaries.
 		var list strings.Builder
 		for i := range mods {
@@ -411,6 +413,7 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 		if b.cross() {
 			args = append(args, "--target="+b.goos+"/"+b.goarch)
 		}
+		args = append(args, b.backendBuildArgs(emit)...)
 		if err := b.run(backend, args...); err != nil {
 			return nil, err
 		}
@@ -457,7 +460,7 @@ func (b *build) link(objs []string, out string) error {
 		return b.linkBundle(objs, rt, out)
 	}
 	if b.wantPcln() {
-		return b.linkWithPcln(func(extra []string, o string) error {
+		return b.linkWithPcln(objs, func(extra []string, o string) error {
 			return b.link1(objs, rt, o, extra)
 		}, out)
 	}
@@ -518,7 +521,7 @@ func (b *build) link1(objs []string, rt, out string, extra []string) error {
 }
 
 // wpo reports whether the backend compiles all modules as one program
-// (cross-package inlining, dead code removal): release builds only (SPEC 3a
+// (cross-package inlining, dead code removal): release builds only (
 // "Two build modes"). Objects then depend on every module, so the object
 // cache key covers all of them.
 func (b *build) wpo() bool {
@@ -563,6 +566,7 @@ func (b *build) run(name string, args ...string) error {
 	if ctx.Err() == context.DeadlineExceeded {
 		return fmt.Errorf("%s timed out after %v", filepath.Base(name), toolTimeout())
 	}
+	b.lastOutput = string(outb)
 	if err != nil {
 		msg := strings.TrimSpace(string(outb))
 		if len(msg) > 4000 {
@@ -685,7 +689,7 @@ func linkLibraries(libs []string) []string {
 }
 
 // expandParts replaces an object the backend split into groups by the
-// objects listed in its OUT.parts file (OUT first; docs/passes.md "Large
+// objects listed in its OUT.parts file (OUT first; "Large
 // modules").
 func expandParts(objs []string) []string {
 	var out []string
@@ -702,4 +706,26 @@ func expandParts(objs []string) []string {
 		}
 	}
 	return out
+}
+
+// xdefs are the string variables set at build time, as go's linker -X:
+// test binaries report testing.Testing() true, as go test builds them.
+func (b *build) xdefs() map[string]string {
+	if b.cfg.Test {
+		return map[string]string{"testing.testBinary": "1"}
+	}
+	return nil
+}
+
+// writeXDefs adds the build-time string variables to a cache key.
+func (b *build) writeXDefs(w io.Writer) {
+	x := b.xdefs()
+	keys := make([]string, 0, len(x))
+	for k := range x {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(w, "X %s=%q\n", k, x[k])
+	}
 }

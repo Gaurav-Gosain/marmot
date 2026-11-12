@@ -1,14 +1,19 @@
 package driver
 
 import (
+	"crypto/sha256"
 	"debug/macho"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
+	"strings"
 )
 
-// The pc table (docs/pcln.md): after the link, build the table from the
+// The pc table: after the link, build the table from the
 // DWARF line tables the backend emitted for the frontend's locations and
 // put it in the binary (Mach-O: the end of __TEXT, so a small table
 // fits in the segment's free tail). -s (Config.Strip) or MARMOT_STRIP=1 skips it.
@@ -27,13 +32,52 @@ const pclnV3 = true
 // pclnArgs are the table builder's arguments before the inputs.
 // MARMOT_PCLN_VERSION overrides the version.
 func (b *build) pclnArgs(tbl string) []string {
-	a := []string{"-o", tbl}
+	return append([]string{"-o", tbl}, b.pclnVersionArgs()...)
+}
+
+func (b *build) pclnVersionArgs() []string {
 	v := os.Getenv("MARMOT_PCLN_VERSION")
-	if v == "" && pclnV3 && (!b.cfg.Release || b.cfg.Trace == "full") {
+	if v == "" && b.fullTrace() {
 		v = "3"
 	}
 	if v != "" {
-		a = append(a, "-table-version="+v)
+		return []string{"-table-version=" + v}
+	}
+	return nil
+}
+
+// fullTrace: the pc table has inlined frames and every call site keeps its
+// own frames (dev builds and -release -trace=full).
+func (b *build) fullTrace() bool { return pclnV3 && (!b.cfg.Release || b.cfg.Trace == "full") }
+
+// pclnFrags: the backend writes a pc table fragment next to each object and
+// the table goes into the binary with one link and a patch (
+// "Fragments"; macOS). MARMOT_PCLN_DSYM=1 uses the dsymutil path instead.
+func (b *build) pclnFrags() bool {
+	return runtime.GOOS == "darwin" && b.wantPcln() && os.Getenv("MARMOT_PCLN_DSYM") == ""
+}
+
+// backendBuildArgs are the backend options that follow from the build mode.
+func (b *build) backendBuildArgs(emit string) []string {
+	var a []string
+	if emit == "exe" || emit == "obj" {
+		// Large modules as function groups in parallel, cached one by one
+		// ("Large modules"); dev builds only (with -wpo the
+		// whole program is one optimization unit). MARMOT_SPLIT=N overrides
+		// the size, 0 turns it off.
+		split := "20000"
+		if v := os.Getenv("MARMOT_SPLIT"); v != "" {
+			split = v
+		}
+		if !b.wpo() && split != "0" && b.cfg.Emit == "exe" {
+			a = append(a, "-split-large="+split)
+		}
+	}
+	if b.pclnFrags() {
+		a = append(a, "-pcln-frags")
+	}
+	if b.fullTrace() {
+		a = append(a, "-keep-call-sites")
 	}
 	return a
 }
@@ -44,7 +88,14 @@ func (b *build) pclnTool() string {
 
 // linkWithPcln links out with the table. link(args) runs the linker with
 // the given extra arguments and output.
-func (b *build) linkWithPcln(link func(extra []string, out string) error, out string) error {
+func (b *build) linkWithPcln(objs []string, link func(extra []string, out string) error, out string) error {
+	if b.pclnFrags() {
+		err := b.linkWithFrags(objs, link, out)
+		if err == nil {
+			return nil
+		}
+		b.logf("pcln: fragments: %v (dsymutil path)", err)
+	}
 	tmp := filepath.Join(b.work, "nopcln.exe")
 	if runtime.GOOS != "darwin" {
 		// ELF: the DWARF is in the binary.
@@ -114,4 +165,71 @@ func sameText(a, b string) (bool, error) {
 		return false, fmt.Errorf("no __text")
 	}
 	return sa.Addr == sb.Addr && sa.Size == sb.Size, nil
+}
+
+var needsRe = regexp.MustCompile(`the table needs (\d+) bytes`)
+
+// linkWithFrags links once with a zero filled placeholder section and writes
+// the table from the objects' fragments into it (marmot-pcln -patch). The
+// placeholder is the previous build's table size for this output plus 10%
+// and 4 KB (an edit changes the table little); if the table does not fit,
+// one more link with the size marmot-pcln asks for.
+func (b *build) linkWithFrags(objs []string, link func(extra []string, out string) error, out string) error {
+	var frags strings.Builder
+	for _, o := range objs {
+		if fileExists(o + ".pcln") {
+			frags.WriteString(o + ".pcln\n")
+		}
+	}
+	if frags.Len() == 0 {
+		return fmt.Errorf("no fragments")
+	}
+	list := filepath.Join(b.work, "pcln.frags")
+	if err := os.WriteFile(list, []byte(frags.String()), 0o644); err != nil {
+		return err
+	}
+	abs, _ := filepath.Abs(out)
+	sum := sha256.Sum256([]byte(abs))
+	sizeFile := filepath.Join(b.cfg.Root, "build", "cache", "pcln-size-"+hex.EncodeToString(sum[:8]))
+	size := 0
+	if data, err := os.ReadFile(sizeFile); err == nil {
+		size, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+	}
+	reserve := 1
+	if size > 0 {
+		reserve = size + size/10 + 4096
+	}
+	tmp := filepath.Join(b.work, "pcln.exe")
+	ph := filepath.Join(b.work, "pcln.placeholder")
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := os.WriteFile(ph, make([]byte, reserve), 0o644); err != nil {
+			return err
+		}
+		// marmot-pcln reads function addresses from the symbol table; no
+		// debug map is needed (-S).
+		b.keepLocals = true
+		err := link([]string{"-Wl,-sectcreate,__TEXT,__marmot_pcln," + ph, "-Wl,-S"}, tmp)
+		b.keepLocals = false
+		if err != nil {
+			return err
+		}
+		args := append([]string{"-frags", list}, b.pclnVersionArgs()...)
+		args = append(args, "-patch", tmp)
+		err = b.run(b.pclnTool(), args...)
+		if err == nil {
+			if m := regexp.MustCompile(`(\d+) bytes`).FindStringSubmatch(b.lastOutput); m != nil {
+				os.MkdirAll(filepath.Dir(sizeFile), 0o755)
+				os.WriteFile(sizeFile, []byte(m[1]+"\n"), 0o644)
+			}
+			b.logf("pcln table added (fragments, %d link(s))", attempt+1)
+			return os.Rename(tmp, out)
+		}
+		m := needsRe.FindStringSubmatch(err.Error())
+		if m == nil {
+			return err
+		}
+		n, _ := strconv.Atoi(m[1])
+		reserve = n + n/10 + 4096
+	}
+	return fmt.Errorf("placeholder still too small")
 }

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Cache size cap (SPEC rule 10). Everything under build/cache (the MLIR
+// Cache size cap. Everything under build/cache (the MLIR
 // cache, cached executables, link templates and the backend's object
 // cache) shares one cap, MARMOT_CACHE_MAX_MB (default DefaultCacheMB; 0 means
 // no cap). Hits touch their entry; after a build, when the cache is over the

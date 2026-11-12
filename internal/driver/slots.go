@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Machine-wide build slots (SPEC rule 10). Every marmot process that does
+// Machine-wide build slots. Every marmot process that does
 // real work (load, codegen, backend, link) first takes one of N flock
 // slots in a shared directory and holds it until it exits. The kernel
 // drops the lock when the process dies, so a crash or kill frees the slot.

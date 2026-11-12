@@ -53,6 +53,7 @@ func (b *build) buildStamp(goos, goarch string) string {
 		fmt.Fprintf(h, "%s=%s\n", k, os.Getenv(k))
 	}
 	writeNoFlags(h)
+	b.writeXDefs(h)
 	for _, f := range files {
 		fileSig(h, f)
 	}
@@ -121,6 +122,7 @@ func (b *build) packageKeys(lp *loader.Program, cg *codegen.Program, pkgs []*ssa
 		fmt.Fprintf(exeSig, "%s=%s\n", k, os.Getenv(k))
 	}
 	writeNoFlags(exeSig)
+	b.writeXDefs(exeSig)
 	base := hex.EncodeToString(exeSig.Sum(nil))
 	byPath := map[string]*packages.Package{}
 	for _, p := range lp.All {
