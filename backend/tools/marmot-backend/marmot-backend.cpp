@@ -413,7 +413,7 @@ int main(int argc, char **argv) {
 
   // Batch with more than one job (or -wpo or a cache): summaries cross
   // modules. Same objects as compiling each job alone, plus escape facts.
-  if (wpo || (!batchFile.empty() && (work.size() > 1 || !cacheDir.empty()))) {
+  if (wpo || (!batchFile.empty() && (work.size() > 1 || !cacheDir.empty() || tier0))) {
     if (emitKind == marmot::Emit::MLIR) {
       errs() << "marmot-backend: batch mode needs -emit=obj, asm, llvm or bc\n";
       return 1;

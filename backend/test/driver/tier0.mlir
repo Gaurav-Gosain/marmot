@@ -15,6 +15,10 @@
 // RUN: %backend -O2 -tier0 -batch %t.jobs -cache-dir %t.cache -time 2>&1 | %FileCheck %s --check-prefix=ONE
 // RUN: test ! -e %t.a.o.parts
 // RUN: %clang %t.a.o -o %t.exe3 && %t.exe3; test $? -eq 42
+// One job without a cache takes the tier0 path too.
+// RUN: %backend -tier0 -batch %t.jobs -time 2>&1 | %FileCheck %s --check-prefix=NOCACHE
+// RUN: %clang %t.a.o -o %t.exe4 && %t.exe4; test $? -eq 42
+// NOCACHE: tier0: {{[1-9]}} functions, 0 fallbacks
 // COLD: compiled 1 of 1 objects
 // COLD: tier0: {{[1-9]}} functions, 1 fallbacks, 1 modules need LLVM
 // WARM: compiled 0 of 1 objects
