@@ -557,7 +557,7 @@ void rt_heapbits_set(uintptr_t p, uintptr_t size, uintptr_t clsize, const uint8_
 }
 
 static void *alloc_large(uintptr_t size, uint32_t kind, const uint8_t *ptrmap,
-                         uintptr_t elemsize) {
+                         uintptr_t elemsize, bool zero) {
   uintptr_t npages = (size + PAGE_SIZE - 1) >> PAGE_SHIFT;
   if (npages == 0 || npages > (rt_arena_end - rt_arena_start) >> PAGE_SHIFT)
     rt_throw("out of memory: allocation size too large");
@@ -579,7 +579,8 @@ static void *alloc_large(uintptr_t size, uint32_t kind, const uint8_t *ptrmap,
   bool dirty = s->needzero;
   s->needzero = 0;
   spin_unlock(&heap_lock);
-  if (dirty) __builtin_memset((void *)s->base, 0, size);
+  if (dirty && zero) __builtin_memset((void *)s->base, 0, size);
+  if (dirty && !zero) s->needzero = 1;  // not cleared here: the next owner of these pages must
   atomic_fetch_add(&heap_live, s->elemsize);
   atomic_fetch_add(&stat_mallocs, 1);
   atomic_fetch_add(&stat_total_alloc, s->elemsize);
@@ -593,7 +594,7 @@ INLINE uint32_t size_class(uintptr_t size) {
 
 // Allocate from the span cached for spc, refilling as needed. m->locks held.
 static void *alloc_small_locked(mcache *c, uint32_t spc, uintptr_t size,
-                                const uint8_t *ptrmap, uintptr_t elemsize) {
+                                const uint8_t *ptrmap, uintptr_t elemsize, bool zero) {
   mspan *s = c->e[spc].span;
   uint32_t idx = s == &empty_span ? 0 : next_free_index(s);
   if (s == &empty_span || idx == s->nelems) {
@@ -603,12 +604,13 @@ static void *alloc_small_locked(mcache *c, uint32_t spc, uintptr_t size,
     if (idx == s->nelems) rt_throw("mcache_refill: span has no free object");
   }
   uintptr_t p = s->base + idx * s->elemsize;
-  if (s->needzero) __builtin_memset((void *)p, 0, s->elemsize);
+  if (s->needzero && zero) __builtin_memset((void *)p, 0, s->elemsize);
   if (s->kind == RT_ALLOC_PRECISE) rt_heapbits_set(p, size, s->elemsize, ptrmap, elemsize);
   return (void *)p;
 }
 
-void *rt_alloc_slow(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintptr_t elemsize) {
+static void *alloc_slow(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintptr_t elemsize,
+                        bool zero) {
   if (size == 0) return zerobase;
   if (kind > RT_ALLOC_PRECISE) rt_throw("rt_alloc: bad kind");
   if (kind == RT_ALLOC_PRECISE && (!ptrmap || elemsize == 0 || elemsize % 8 != 0))
@@ -619,13 +621,13 @@ void *rt_alloc_slow(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintpt
     gc_collect(true);
   void *p;
   if (size > MAX_SMALL) {
-    p = alloc_large(size, kind, ptrmap, elemsize);
+    p = alloc_large(size, kind, ptrmap, elemsize, zero);
   } else {
     rt_m *m = getm();
     m->locks++;
     mcache *c = m->p->mcache;
     uint32_t spc = size_class(size) * NUM_KINDS + kind;
-    p = alloc_small_locked(c, spc, size, ptrmap, elemsize);
+    p = alloc_small_locked(c, spc, size, ptrmap, elemsize, zero);
     if (UNLIKELY(rt_gcstress)) {
       // Keep every allocation on the slow path.
       spin_lock(&heap_lock);
@@ -640,6 +642,50 @@ void *rt_alloc_slow(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintpt
   if (atomic_load_explicit(&heap_live, memory_order_relaxed) >= next_gc && gc_percent >= 0)
     gc_collect(false);
   return p;
+}
+
+void *rt_alloc_slow(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintptr_t elemsize) {
+  return alloc_slow(size, kind, ptrmap, elemsize, true);
+}
+
+NOINLINE void *rt_alloc_nozero_slow(uintptr_t size) {
+  return alloc_slow(size, RT_ALLOC_NOSCAN, NULL, 0, false);
+}
+
+// A NOSCAN object whose contents are not zeroed: the caller overwrites all
+// of it before reading (string and slice copies, conversion buffers).
+// Inlinable from rtcore.bc.
+RT_API void *rt_alloc_nozero(uintptr_t size) {
+  if (LIKELY(size - 1 < MAX_SMALL)) {
+    uint32_t cls = size <= 1024 ? rt_size_to_class8[(size + 7) >> 3]
+                                : rt_size_to_class128[(size - 1024 + 127) >> 7];
+    rt_m *m = getm();
+    m->locks++;
+    mcentry *ent = &m->mcache->e[cls * NUM_KINDS + RT_ALLOC_NOSCAN];
+    void *fr = ent->freed;
+    if (UNLIKELY(fr != NULL)) {
+      ent->freed = *(void **)fr;
+      m->mcache->nreuse++;
+      m->mcache->reuse_bytes += rt_class_size[cls];
+      m->locks--;
+      return fr;
+    }
+    mspan *s = ent->span;
+    uint64_t cache = s->alloc_cache;
+    if (LIKELY(cache != 0)) {
+      uint32_t b = (uint32_t)__builtin_ctzll(cache);
+      uint32_t idx = s->freeindex + b;
+      uint32_t fi = idx + 1;
+      if (LIKELY(idx < s->nelems && (fi % 64 != 0 || fi == s->nelems))) {
+        s->alloc_cache = (cache >> b) >> 1;
+        s->freeindex = fi;
+        m->locks--;
+        return (void *)(s->base + idx * s->elemsize);
+      }
+    }
+    m->locks--;
+  }
+  return rt_alloc_nozero_slow(size);
 }
 
 // Heap bits for a single-element precise object of at most 8 words (one

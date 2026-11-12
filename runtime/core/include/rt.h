@@ -48,6 +48,10 @@ char **rt_envp(void);
 // Any pointer into an object keeps it alive, but a pointer just past its end
 // does not: never form a past-the-end pointer to a heap object.
 void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintptr_t elemsize);
+// As rt_alloc(size, RT_ALLOC_NOSCAN, NULL, 0) but the memory is not zeroed:
+// for objects without pointers that the caller overwrites completely before
+// reading (string and slice copies, conversion buffers). Inlinable.
+void *rt_alloc_nozero(uintptr_t size);
 
 // Free a heap object the compiler proved dead: nothing may use it or point
 // to it afterwards. Small objects are reused by the next allocation of the
