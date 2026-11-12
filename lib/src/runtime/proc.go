@@ -74,7 +74,7 @@ func GC() {
 
 // NumGoroutine returns the number of goroutines that currently exist.
 func NumGoroutine() int {
-	return rt_numgoroutine()
+	return rt_numgoroutine() + int(atomicLoad32(&corosUnstarted))
 }
 
 // GOMAXPROCS sets the maximum number of CPUs that can be executing

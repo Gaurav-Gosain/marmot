@@ -18,8 +18,16 @@ type coro struct {
 // //go:linknamestd (symbols runtime.newcoro, runtime.coroswitch); the
 // iter_ variants also cover a plain iter.newcoro symbol.
 func newcoro(f func(*coro)) *coro {
+	// The gc runtime creates the coroutine's goroutine here; marmot
+	// starts it on the first switch, and counts it as a goroutine
+	// meanwhile (NumGoroutine).
+	atomicXadd32(&corosUnstarted, 1)
 	return &coro{f: f}
 }
+
+// corosUnstarted counts coroutines made by newcoro whose goroutine has not
+// started yet.
+var corosUnstarted uint32
 
 //go:linkname iter_newcoro iter.newcoro
 func iter_newcoro(f func(*coro)) *coro { return newcoro(f) }
@@ -46,6 +54,7 @@ func coroswitch(c *coro) {
 		c.started = true
 		c.other = gp
 		unlock(&c.lock)
+		atomicXadd32(&corosUnstarted, -1)
 		rt_go(lazyPC(&corostartPC, corostartCode), unsafe.Pointer(c))
 		goparkForever()
 		return
@@ -57,10 +66,17 @@ func coroswitch(c *coro) {
 }
 
 // corostart runs the coroutine body on its own goroutine. When the body
-// returns, control goes back to the side that switched to it last.
+// returns, or calls runtime.Goexit (which runs deferred calls before the
+// goroutine ends), control goes back to the side that switched to it
+// last.
 func corostart(p unsafe.Pointer) {
 	c := (*coro)(p)
+	defer coroexit(c)
 	c.f(c)
+}
+
+// coroexit marks c done and readies the goroutine waiting for it.
+func coroexit(c *coro) {
 	lock(&c.lock)
 	c.done = true
 	next := c.other
