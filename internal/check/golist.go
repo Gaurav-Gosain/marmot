@@ -83,18 +83,27 @@ func goList(dir string, patterns []string, tags []string, env []string, stderr i
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("go list: %v\n%s", err, strings.TrimSpace(errb.String()))
 	}
-	g := &graph{byID: map[string]*listPkg{}}
+	var pkgs []*listPkg
 	dec := json.NewDecoder(&out)
 	for dec.More() {
 		p := new(listPkg)
 		if err := dec.Decode(p); err != nil {
 			return nil, fmt.Errorf("go list output: %v", err)
 		}
+		pkgs = append(pkgs, p)
+	}
+	return newGraph(pkgs), nil
+}
+
+// newGraph links decoded go list packages into a graph.
+func newGraph(pkgs []*listPkg) *graph {
+	g := &graph{byID: map[string]*listPkg{}, pkgs: pkgs}
+	for _, p := range pkgs {
 		p.path = p.ImportPath
 		if i := strings.Index(p.path, " ["); i >= 0 {
 			p.path = p.path[:i]
 		}
-		g.pkgs = append(g.pkgs, p)
+		p.deps, p.root = nil, false
 		g.byID[p.ImportPath] = p
 	}
 	for _, p := range g.pkgs {
@@ -105,7 +114,7 @@ func goList(dir string, patterns []string, tags []string, env []string, stderr i
 		}
 	}
 	g.selectRoots()
-	return g, nil
+	return g
 }
 
 // selectRoots picks the packages to report on, as go vet does: for a

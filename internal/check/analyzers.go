@@ -13,6 +13,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/Gaurav-Gosain/marmot/internal/check/unused"
 	"github.com/gordonklaus/ineffassign/pkg/ineffassign"
 	"github.com/kisielk/errcheck/errcheck"
 	"golang.org/x/tools/go/analysis"
@@ -72,7 +73,6 @@ import (
 	"honnef.co/go/tools/simple"
 	"honnef.co/go/tools/staticcheck"
 	"honnef.co/go/tools/stylecheck"
-	"honnef.co/go/tools/unused"
 )
 
 // family is the analyzers behind one check, with the linter name each

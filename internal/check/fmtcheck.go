@@ -3,6 +3,7 @@ package check
 import (
 	"bytes"
 	"encoding/gob"
+	"fmt"
 	"go/format"
 	"os"
 	"path/filepath"
@@ -40,17 +41,20 @@ func runFmt(sc *scope, st *store, r *CheckResult) {
 		go func(i int, f string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			data, err := os.ReadFile(f)
+			info, err := os.Stat(f)
 			if err != nil {
 				return
 			}
+			// Keyed by size and time: an unchanged file is not read.
 			h := newHasher("fmt")
-			h.str(toolID(), f)
-			h.bytes(data)
+			h.str(toolID(), f, fmt.Sprint(info.Size(), info.ModTime().UnixNano()))
 			key := h.sum()
 			var fr fmtResult
-			if c := st.get(key); c != nil && gob.NewDecoder(bytes.NewReader(c)).Decode(&fr) == nil {
-			} else {
+			var data []byte
+			if c := st.get(key); c == nil || gob.NewDecoder(bytes.NewReader(c)).Decode(&fr) != nil {
+				if data, err = os.ReadFile(f); err != nil {
+					return
+				}
 				fr = fmtResult{}
 				got, err := src.FormatFile(f, data)
 				if err != nil {
@@ -74,6 +78,11 @@ func runFmt(sc *scope, st *store, r *CheckResult) {
 			}
 			if fr.Formatted == nil {
 				return
+			}
+			if data == nil {
+				if data, err = os.ReadFile(f); err != nil {
+					return
+				}
 			}
 			d := fmtDiag(f, data, fr.Formatted)
 			res[i] = out{d: &d}
