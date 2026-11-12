@@ -21,6 +21,7 @@ import (
 type watchFlags struct {
 	interval *time.Duration
 	clear    *bool
+	generate *bool
 	output   outputFlags
 }
 
@@ -29,6 +30,7 @@ func newWatchFlags() (*flag.FlagSet, *watchFlags) {
 	w := &watchFlags{}
 	w.interval = fs.Duration("interval", 300*time.Millisecond, "how often to look for changed files")
 	w.clear = fs.Bool("clear", true, "clear the screen before each build (terminal only)")
+	w.generate = fs.Bool("generate", false, "run marmot generate (cached) before each build")
 	w.output = addOutputFlags(fs)
 	return fs, w
 }
@@ -53,7 +55,7 @@ func cmdWatch(args []string) int {
 			break
 		}
 		n := 1
-		if !strings.Contains(args[0], "=") && name != "clear" && name != "json" && len(args) > 1 {
+		if !strings.Contains(args[0], "=") && name != "clear" && name != "json" && name != "generate" && len(args) > 1 {
 			n = 2
 		}
 		if err := fs.Parse(args[:n]); err != nil {
@@ -117,6 +119,12 @@ func cmdWatch(args []string) int {
 			fmt.Fprintf(os.Stderr, "\x1b[2m[watch] %s, %s %s\x1b[0m\n", time.Now().Format("15:04:05"), what, action)
 		}
 		event("build", changed)
+		if *wf.generate {
+			g := exec.Command(self, "generate", "./...")
+			g.Env, g.Stdout, g.Stderr = env, os.Stdout, os.Stderr
+			g.Dir = root
+			g.Run()
+		}
 		child = exec.Command(self, append([]string{action}, rest...)...)
 		child.Env = env
 		child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
@@ -144,8 +152,8 @@ func cmdWatch(args []string) int {
 		}()
 	}
 
-	snap := scanTree(root)
 	start(nil)
+	snap := scanTree(root) // after generate wrote its outputs
 	tick := time.NewTicker(*wf.interval)
 	defer tick.Stop()
 	for {
@@ -163,9 +171,9 @@ func cmdWatch(args []string) int {
 			time.Sleep(50 * time.Millisecond)
 			now = scanTree(root)
 			changed = diffTree(snap, now)
-			snap = now
 			stop()
 			start(changed)
+			snap = scanTree(root)
 		}
 	}
 }
