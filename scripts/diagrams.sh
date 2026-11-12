@@ -1,6 +1,6 @@
 #!/bin/sh
 # Render docs/diagrams/*.mmd to light and dark SVG with sketch
-# (go install tuios.dev/sketch/cmd/sketch@latest). Chart bars use the theme's
+# (go install tuios.dev/sketch/cmd/sketch@latest; tuios main at b063d337b or later). Chart bars use the theme's
 # accent colour instead of its first series colour, which is red.
 set -e
 cd "$(dirname "$0")/.."
