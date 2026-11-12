@@ -20,7 +20,8 @@ Details and method in [docs/benchmarks.md](docs/benchmarks.md).
 
 | Binaries | marmot | go |
 | --- | --- | --- |
-| hello world size | 148 KB | 1.68 MB |
+| hello world with `println`, `-release` | 148 KB | 1.68 MB |
+| hello world with `fmt.Println`, `-release` | 1.1 MB | 2.4 MB |
 | run time, average over 43 programs (`-release`) | 1.6x faster | 1.0x |
 
 | Build time, the compiler itself (182 packages) | marmot | go |
