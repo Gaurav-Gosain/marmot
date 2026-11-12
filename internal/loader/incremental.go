@@ -655,7 +655,7 @@ func (st *incrState) loadOne(p *packages.Package, exportMu *sync.Mutex) error {
 	if len(p.EmbedPatterns) > 0 {
 		// //go:embed: rewrite the variables, then parse and check again.
 		p.Types, p.TypesInfo, p.Syntax, p.Fset = tpkg, info, files, st.fset
-		ov, helpers, err := embedOverlays([]*packages.Package{p})
+		ov, helpers, err := embedOverlays([]*packages.Package{p}, false)
 		if err != nil {
 			return err
 		}

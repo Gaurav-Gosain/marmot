@@ -32,7 +32,13 @@ const embedHelperFile = "zz_marmot_embed.go"
 // embedOverlays returns the overlay files for the embed variables of pkgs
 // (nil if there are none) and the helper files that must be added to file
 // pattern lists.
-func embedOverlays(pkgs []*packages.Package) (map[string][]byte, []string, error) {
+//
+// With inline, the helper goes into an edited file of the package (imports
+// on its package clause line, declarations at its end) instead of a file
+// of its own: the full load passes the edited files to the parser
+// (packages.Config.ParseFile), not to the go command, which may not
+// overlay or add files beneath GOMODCACHE.
+func embedOverlays(pkgs []*packages.Package, inline bool) (map[string][]byte, []string, error) {
 	var over map[string][]byte
 	var helpers []string
 	for _, p := range pkgs {
@@ -40,6 +46,7 @@ func embedOverlays(pkgs []*packages.Package) (map[string][]byte, []string, error
 			continue
 		}
 		needFS := false
+		fsFile, fsName := "", 0
 		for _, f := range p.Syntax {
 			name := p.Fset.File(f.Pos()).Name()
 			edits, fs, err := embedEdits(p, f)
@@ -54,6 +61,9 @@ func embedOverlays(pkgs []*packages.Package) (map[string][]byte, []string, error
 			if err != nil {
 				return nil, nil, err
 			}
+			if fs && fsFile == "" {
+				fsFile, fsName = name, p.Fset.Position(f.Name.End()).Offset
+			}
 			// Apply from the end so offsets stay valid.
 			sort.Slice(edits, func(a, b int) bool { return edits[a].pos > edits[b].pos })
 			for _, e := range edits {
@@ -65,7 +75,16 @@ func embedOverlays(pkgs []*packages.Package) (map[string][]byte, []string, error
 			}
 			over[name] = src
 		}
-		if needFS && len(p.GoFiles) > 0 {
+		if needFS && inline {
+			// The edits come after the package clause, so its offset holds.
+			src := over[fsFile]
+			imp := []byte("; import (zz_marmot_embed \"embed\"; zz_marmot_unsafe \"unsafe\")")
+			src = append(src[:fsName], append(imp, src[fsName:]...)...)
+			body := fmt.Sprintf(embedHelperSrc, p.Name)
+			body = body[strings.Index(body, "type zz_marmotEmbedFile"):]
+			body = strings.NewReplacer("embed.FS", "zz_marmot_embed.FS", "unsafe.Pointer", "zz_marmot_unsafe.Pointer").Replace(body)
+			over[fsFile] = append(append(src, '\n'), body...)
+		} else if needFS && len(p.GoFiles) > 0 {
 			h := filepath.Join(filepath.Dir(p.GoFiles[0]), embedHelperFile)
 			over[h] = []byte(fmt.Sprintf(embedHelperSrc, p.Name))
 			helpers = append(helpers, h)

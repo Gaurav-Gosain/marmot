@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -416,21 +417,22 @@ func loadFull(pcfg *packages.Config, patterns []string, filePatterns bool) ([]*p
 	// //go:embed: give the embed variables initializers and load again.
 	var embedAll []*packages.Package
 	packages.Visit(pkgs, nil, func(p *packages.Package) { embedAll = append(embedAll, p) })
-	over, helpers, err := embedOverlays(embedAll)
+	over, _, err := embedOverlays(embedAll, true)
 	if err != nil {
 		return nil, err
 	}
 	if over != nil {
-		if pcfg.Overlay == nil {
-			pcfg.Overlay = map[string][]byte{}
-		}
-		for k, v := range over {
-			pcfg.Overlay[k] = v
-		}
-		for _, h := range helpers {
-			if filePatterns && filepath.Dir(h) == filepath.Dir(patterns[0]) {
-				patterns = append(patterns, h)
+		// The edited sources go to the parser, not to the go command (no
+		// overlays beneath GOMODCACHE); the file list stays the same.
+		parse := pcfg.ParseFile
+		pcfg.ParseFile = func(fset *token.FileSet, name string, src []byte) (*ast.File, error) {
+			if data, ok := over[name]; ok {
+				src = data
 			}
+			if parse != nil {
+				return parse(fset, name, src)
+			}
+			return parser.ParseFile(fset, name, src, parser.AllErrors|parser.ParseComments|parser.SkipObjectResolution)
 		}
 		if pkgs, err = packages.Load(pcfg, patterns...); err != nil {
 			return nil, err

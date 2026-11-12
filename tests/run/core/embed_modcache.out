@@ -1,0 +1,5 @@
+"alpha\n" "beta\n"
+embed_data/a.txt: "alpha\n"
+embed_data/b.txt: "beta\n"
+check for missing values after append
+check for useless assignments
