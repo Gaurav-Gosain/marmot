@@ -19,9 +19,9 @@ import (
 )
 
 type benchFlags struct {
-	bench, benchtime, vs, compare, save, timeout *string
-	count                                        *int
-	output                                       outputFlags
+	bench, benchtime, vs, compare, save, timeout, cpuprofile *string
+	count                                                    *int
+	output                                                   outputFlags
 }
 
 func newBenchFlags() (*flag.FlagSet, *benchFlags) {
@@ -34,6 +34,7 @@ func newBenchFlags() (*flag.FlagSet, *benchFlags) {
 	b.compare = fs.String("compare", "", "compare with results saved by -save (or any go test -bench output)")
 	b.save = fs.String("save", "", "write the raw results to this file")
 	b.timeout = fs.String("timeout", "30m", "time limit of each benchmark binary run")
+	b.cpuprofile = fs.String("cpuprofile", "", "write a CPU profile of the last run to this file (with -vs go, the go build's to FILE.go); read it with marmot prof")
 	b.output = addOutputFlags(fs)
 	return fs, b
 }
@@ -122,12 +123,18 @@ func cmdBench(args []string) int {
 		if human {
 			fmt.Fprintf(os.Stderr, "\r\x1b[Krun %d of %d", i+1, *bf.count)
 		}
-		if err := runBench(mbin, testArgs, &mout, tmo); err != nil {
+		margs, gargs := testArgs, testArgs
+		if *bf.cpuprofile != "" && i == *bf.count-1 {
+			abs, _ := filepath.Abs(*bf.cpuprofile)
+			margs = append(append([]string{}, testArgs...), "-test.cpuprofile="+abs)
+			gargs = append(append([]string{}, testArgs...), "-test.cpuprofile="+abs+".go")
+		}
+		if err := runBench(mbin, margs, &mout, tmo); err != nil {
 			fmt.Fprintln(os.Stderr, "\nmarmot bench:", err)
 			return 1
 		}
 		if gbin != "" {
-			if err := runBench(gbin, testArgs, &gout, tmo); err != nil {
+			if err := runBench(gbin, gargs, &gout, tmo); err != nil {
 				fmt.Fprintln(os.Stderr, "\nmarmot bench:", err)
 				return 1
 			}
