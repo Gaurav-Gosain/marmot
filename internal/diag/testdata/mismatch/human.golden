@@ -1,6 +1,10 @@
 error[M0007]: invalid operation: n + f (mismatched types int and float64)
  --> ./main.go:8:13
   |
+6 |     n := 3
+  |     - `n` is `int` from here
+7 |     f := 1.5
+  |     - `f` is `float64` from here
 8 |     total := n + f
   |              - ^ - `float64`
   |              |
@@ -11,6 +15,9 @@ error[M0007]: invalid operation: n + f (mismatched types int and float64)
 error[M0006]: cannot use n (variable of type int) as string value in variable declaration
  --> ./main.go:9:20
   |
+6 |     n := 3
+  |     - `n` is declared here as `int`
+...
 9 |     var name string = n
   |                       ^ expected `string`, found `int`
   |

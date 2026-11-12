@@ -1,6 +1,10 @@
 error[M0007]: invalid operation: n + f (mismatched types int and float64)
  --> ./main.go:6:12
   |
+4 |     n := 3
+  |     - `n` is `int` from here
+5 |     f := 1.5
+  |     - `f` is `float64` from here
 6 |     println(n + f)
   |             - ^ - `float64`
   |             |

@@ -1,6 +1,10 @@
 error[M0007]: invalid operation: s + n (mismatched types string and int)
  --> ./main.go:6:12
   |
+4 |     n := 3
+  |     - `n` is `int` from here
+5 |     s := "x"
+  |     - `s` is `string` from here
 6 |     println(s + n)
   |             - ^ - `int`
   |             |

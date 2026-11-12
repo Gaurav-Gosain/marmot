@@ -1,6 +1,10 @@
 [1;31merror[M0007][0m: [1minvalid operation: n + f (mismatched types int and float64)[0m
  [1;34m-->[0m ./main.go:8:13
   [1;34m|[0m
+[1;34m6 |[0m     n := [36m3[0m
+  [1;34m|[0m     [1;34m-[0m [1;34m`n` is `int` from here[0m
+[1;34m7 |[0m     f := [36m1.5[0m
+  [1;34m|[0m     [1;34m-[0m [1;34m`f` is `float64` from here[0m
 [1;34m8 |[0m     total := n + f
   [1;34m|[0m              [1;34m-[0m [1;31m^[0m [1;34m-[0m [1;34m`float64`[0m
   [1;34m|[0m              [1;34m|[0m
@@ -11,6 +15,9 @@
 [1;31merror[M0006][0m: [1mcannot use n (variable of type int) as string value in variable declaration[0m
  [1;34m-->[0m ./main.go:9:20
   [1;34m|[0m
+[1;34m6 |[0m     n := [36m3[0m
+  [1;34m|[0m     [1;34m-[0m [1;34m`n` is declared here as `int`[0m
+[1;34m...[0m
 [1;34m9 |[0m     [35mvar[0m name string = n
   [1;34m|[0m                       [1;31m^[0m [1;31mexpected `string`, found `int`[0m
   [1;34m|[0m

@@ -1,6 +1,8 @@
 error[M0007]: invalid operation: xs + 1 (mismatched types []int and untyped int)
  --> ./main.go:5:13
   |
+4 |     xs := []int{1}
+  |     -- `xs` is `[]int` from here
 5 |     println(xs + 1)
   |             -- ^ - `untyped int`
   |             |

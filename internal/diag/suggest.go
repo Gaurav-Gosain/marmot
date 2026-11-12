@@ -934,6 +934,68 @@ func (s *Sources) unusedVar(d *Diagnostic, f *srcFile, pos token.Pos) {
 	}
 }
 
+// localDecl finds the declaration of a local variable or parameter named
+// name that is closest before pos in the enclosing function.
+func (s *Sources) localDecl(f *srcFile, pos token.Pos, name string) (Span, bool) {
+	fd := enclosingFunc(f, pos)
+	if fd == nil || !isIdentName(name) {
+		return Span{}, false
+	}
+	var best *ast.Ident
+	consider := func(id *ast.Ident) {
+		if id.Name == name && id.Pos() < pos && (best == nil || id.Pos() > best.Pos()) {
+			best = id
+		}
+	}
+	for _, fl := range fd.Type.Params.List {
+		for _, n := range fl.Names {
+			consider(n)
+		}
+	}
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		if n == nil || n.Pos() >= pos {
+			return false
+		}
+		switch n := n.(type) {
+		case *ast.AssignStmt:
+			if n.Tok == token.DEFINE {
+				for _, l := range n.Lhs {
+					if id, ok := l.(*ast.Ident); ok {
+						consider(id)
+					}
+				}
+			}
+		case *ast.ValueSpec:
+			for _, id := range n.Names {
+				consider(id)
+			}
+		case *ast.RangeStmt:
+			for _, e := range []ast.Expr{n.Key, n.Value} {
+				if id, ok := e.(*ast.Ident); ok {
+					consider(id)
+				}
+			}
+		}
+		return true
+	})
+	if best == nil {
+		return Span{}, false
+	}
+	return f.spanOf(best), true
+}
+
+func isIdentName(s string) bool {
+	if s == "" || !isIdentStart(s[0]) {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if !isIdentByte(s[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 // outerDecl finds a declaration of name in the enclosing function, before
 // pos and outside the innermost block that contains pos: the variable that
 // a := at pos shadows.
@@ -1087,6 +1149,9 @@ func (s *Sources) cannotUse(d *Diagnostic, f *srcFile, pos token.Pos) {
 		haveT = strings.TrimSuffix(strings.TrimSuffix(have, " constant"), " value")
 	}
 	d.Primary = fmt.Sprintf("expected `%s`, found `%s`", want, haveT)
+	if sp, ok := s.localDecl(f, pos, expr); ok && !strings.HasPrefix(haveT, "untyped") {
+		labelOrRelated(d, sp, "`"+expr+"` is declared here as `"+haveT+"`")
+	}
 	if strings.HasSuffix(d.Message, "(overflows)") {
 		d.Primary = fmt.Sprintf("`%s` does not fit in `%s`", expr, want)
 		if r, ok := intRange[want]; ok {
@@ -1266,6 +1331,16 @@ func (s *Sources) mismatched(d *Diagnostic, f *srcFile, pos token.Pos) {
 		d.Span = Span{File: f.path, Line: op.Line, Col: op.Column, EndLine: op.Line, EndCol: op.Column + len(be.Op.String())}
 		d.Primary = ""
 		d.Labels = append(d.Labels, Label{Span: f.spanOf(be.X), Text: "`" + lt + "`"}, Label{Span: f.spanOf(be.Y), Text: "`" + rt + "`"})
+		for _, side := range []struct {
+			e ast.Expr
+			t string
+		}{{be.X, lt}, {be.Y, rt}} {
+			if id, ok := side.e.(*ast.Ident); ok {
+				if sp, ok := s.localDecl(f, pos, id.Name); ok && sp.Line != d.Span.Line {
+					labelOrRelated(d, sp, "`"+id.Name+"` is `"+side.t+"` from here")
+				}
+			}
+		}
 		if numeric[lt] && numeric[rt] {
 			// Convert toward floating point so no fraction is lost.
 			if strings.HasPrefix(rt, "float") && !strings.HasPrefix(lt, "float") {
