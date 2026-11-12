@@ -26,6 +26,7 @@ add_library(MarmotLoops STATIC
   Multiversion.cpp
   Parallelize.cpp
   Register.cpp
+  Rules.cpp
   Tile.cpp
 )
 target_include_directories(MarmotLoops PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

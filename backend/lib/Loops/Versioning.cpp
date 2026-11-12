@@ -145,6 +145,10 @@ private:
 // and L, reads one address per iteration of exactly one recurrence, and no
 // store or call in L may write what it reads.
 int Versioner::loadBound(Loop *L, LoadInst *ld) {
+  if (!ruleOn(Rule::BcvLoaded)) {
+    reject(Twine("loaded bound (") + ruleFlag(Rule::BcvLoaded) + ")");
+    return -1;
+  }
   if (!ld->isSimple() || !ld->getType()->isIntegerTy(64)) {
     reject("loaded bound is not a plain 64-bit load");
     return -1;
@@ -447,6 +451,8 @@ bool Versioner::run(Loop *L, std::string &whyOut) {
         grows.push_back({br, S});
     }
   }
+  if (!grows.empty() && !ruleOn(Rule::BcvGrowth))
+    return done(reject(Twine("append growth branches (") + ruleFlag(Rule::BcvGrowth) + ")"));
   if (checks.empty() && grows.empty())
     return done(reject("no checks"));
   // Frozen phis: the latch value is a phi of a merge block whose incoming

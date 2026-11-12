@@ -605,6 +605,12 @@ bool Parallelizer::analyze(Loop *L, Plan &P) {
   for (auto &o : P.overlaps)
     if (!ok(o.s1) || !ok(o.e1) || !ok(o.s2) || !ok(o.e2))
       return reject("run time alias check not expandable");
+  // Rules not yet signed off (Rules.cpp).
+  if ((!P.overlaps.empty() || !P.families.empty() || !P.disjoint.empty()) &&
+      !ruleOn(Rule::RtChecks))
+    return reject(Twine("needs run time alias or row checks (") + ruleFlag(Rule::RtChecks) + ")");
+  if (!P.privs.empty() && !ruleOn(Rule::Privatize))
+    return reject(Twine("needs privatized reduction arrays (") + ruleFlag(Rule::Privatize) + ")");
   return true;
 }
 

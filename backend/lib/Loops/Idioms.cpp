@@ -497,7 +497,8 @@ PreservedAnalyses IdiomPass::run(Function &F, FunctionAnalysisManager &FAM) {
     auto &AA = FAM.getResult<AAManager>(F);
     bool did = false;
     for (Loop *L : LI.getLoopsInPreorder())
-      if (byteCount(F, L, SE, LI, DT) || scan(F, L, SE, LI, DT, AA)) {
+      if ((ruleOn(Rule::ByteCount) && byteCount(F, L, SE, LI, DT)) ||
+          (ruleOn(Rule::Scan) && scan(F, L, SE, LI, DT, AA))) {
         did = true;
         break;
       }

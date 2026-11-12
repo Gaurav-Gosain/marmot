@@ -28,7 +28,7 @@ var (
 	flN     = flag.Int("n", 50, "number of programs")
 	flSeed  = flag.Int64("seed", 1, "first seed")
 	flJ     = flag.Int("j", 2, "parallel jobs")
-	flFlags = flag.String("flags", "-par -type-alias -loops-force-par", "MARMOT_BACKEND_FLAGS for marmot")
+	flFlags = flag.String("flags", "-par -type-alias -loops-force-par -loops-all-rules", "MARMOT_BACKEND_FLAGS for marmot")
 	flKeep  = flag.Bool("keep", false, "keep every program")
 	flPrint = flag.Int64("print", 0, "print the program for this seed and exit")
 )

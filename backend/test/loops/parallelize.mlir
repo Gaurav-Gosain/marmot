@@ -1,10 +1,15 @@
 // loop-parallelize decisions and the shape of the transformed code.
-// RUN: %backend -O2 -par -loops-remarks -emit=llvm -o %t.ll %s 2>&1 | %FileCheck %s --check-prefix=REMARK
+// RUN: %backend -O2 -par -loops-all-rules -loops-remarks -emit=llvm -o %t.ll %s 2>&1 | %FileCheck %s --check-prefix=REMARK
 // RUN: %FileCheck %s --check-prefix=IR < %t.ll
-// RUN: %backend -O2 -par -loops-remarks -emit=llvm -o %t3.ll %s 2>&1 | %FileCheck %s --check-prefix=SCAN
+// RUN: %backend -O2 -par -loops-all-rules -loops-remarks -emit=llvm -o %t3.ll %s 2>&1 | %FileCheck %s --check-prefix=SCAN
+// Plain -par: only the signed-off rules (Rules.cpp); run time checks and scans need their switches.
+// RUN: %backend -O2 -par -loops-remarks -emit=llvm -o %t4.ll %s 2>&1 | %FileCheck %s --check-prefix=GATED
 // RUN: %backend -O2 -no-par -loops-remarks -emit=llvm -o %t2.ll %s 2>&1 | %FileCheck %s --allow-empty --check-prefix=NOPAR
 // RUN: %FileCheck %s --check-prefix=NOPARIR < %t2.ll
 
+// GATED: loops: sum: {{.*}}parallel, 1 reductions
+// GATED: loops: scale: {{.*}}not parallel: needs run time alias or row checks (-loops-rtchecks)
+// GATED-NOT: scan loop split
 // REMARK: loops: sum: {{.*}}parallel, 1 reductions, 0 run time checks
 // REMARK: loops: scale: {{.*}}parallel, 0 reductions, 1 run time checks
 // REMARK: loops: recur: {{.*}}not parallel

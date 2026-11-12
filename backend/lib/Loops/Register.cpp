@@ -28,10 +28,13 @@ void registerLLVMPasses(PassBuilder &pb, const Options &opts) {
   pb.registerVectorizerStartEPCallback([opts](FunctionPassManager &fpm, OptimizationLevel ol) {
     if (ol.getSpeedupLevel() < 2 || ol.getSizeLevel() > 0 || !opts.parallel)
       return;
-    addInterchange(fpm, opts);
-    addMaskedJam(fpm, opts);
+    if (ruleOn(Rule::Interchange))
+      addInterchange(fpm, opts);
+    if (ruleOn(Rule::MaskedJam))
+      addMaskedJam(fpm, opts);
     addTile(fpm, opts);
-    addJam(fpm, opts);
+    if (ruleOn(Rule::Jam))
+      addJam(fpm, opts);
   });
 }
 

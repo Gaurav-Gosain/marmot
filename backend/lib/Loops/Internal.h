@@ -56,6 +56,12 @@ void addInterchange(llvm::FunctionPassManager &fpm, const Options &opts);
 void addMaskedJam(llvm::FunctionPassManager &fpm, const Options &opts);
 // tiling of chunk loops (Tile.cpp, Rule T2).
 void addTile(llvm::FunctionPassManager &fpm, const Options &opts);
+// Rules that -par uses only when their switch is on (Rules.cpp): the ones
+// verify has not signed off yet.
+enum class Rule { RtChecks, Privatize, BcvGrowth, BcvLoaded, ByteCount, Scan, Interchange, Jam, MaskedJam };
+bool ruleOn(Rule r);
+const char *ruleFlag(Rule r);
+
 // Rule X: x86-64 versions of chunk functions, picked at run time (-loops-mv).
 bool multiversion(llvm::Module &M, const Options &opts);
 // loop-jam (Jam.cpp): unroll-and-jam of chunk loops by JamCount.

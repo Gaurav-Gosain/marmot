@@ -1,7 +1,10 @@
 // Bounds check versioning (Rule V): a loop whose only extra exits are bounds
 // checks gets a fast copy without them, guarded by a precondition; the fast
 // copy is then parallelized.
-// RUN: %backend -O2 -par -loops-remarks -emit=llvm -o %t.ll %s 2>&1 | %FileCheck %s --check-prefix=REMARK
+// RUN: %backend -O2 -par -loops-all-rules -loops-remarks -emit=llvm -o %t.ll %s 2>&1 | %FileCheck %s --check-prefix=REMARK
+// RUN: %backend -O2 -par -loops-remarks -emit=llvm -o %t2.ll %s 2>&1 | %FileCheck %s --check-prefix=GATED
+// GATED: loops: fill: {{.*}}bounds checks versioned (1 checks
+// GATED: loops: gather: {{.*}}loaded bound (-loops-bcv-loaded)
 // RUN: %FileCheck %s --check-prefix=IR < %t.ll
 
 // REMARK: loops: fill: {{.*}}bounds checks versioned (1 checks
