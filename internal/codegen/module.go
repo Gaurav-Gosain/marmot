@@ -17,6 +17,8 @@ type moduleGen struct {
 	tm  *typeMapper
 
 	defs        strings.Builder // definitions: globals and functions
+	used        []cv            // llvm.used entries
+	tlinks      []string        // unnamed composite type descriptors defined here
 	locs        map[string]int  // location aliases (locs.go)
 	locDefs     strings.Builder
 	decls       map[string]string
@@ -124,6 +126,8 @@ func (m *moduleGen) finish(name string) (Module, error) {
 	for _, k := range keys {
 		out.WriteString(m.decls[k])
 	}
+	m.emitTypelinks()
+	m.emitUsed()
 	out.WriteString(m.defs.String())
 	out.WriteString("}\n")
 	out.WriteString(m.locDefs.String())
@@ -294,11 +298,21 @@ func (m *moduleGen) global(g *ssa.Global) {
 		m.constGlobal(sym, "external", false, m.static.value(img))
 		return
 	}
-	fmt.Fprintf(&m.defs, "  llvm.mlir.global external %s() {addr_space = 0 : i32} : %s {\n    %%0 = llvm.mlir.zero : %s\n    llvm.return %%0 : %s\n  }\n",
-		mlir.Symbol(sym), t, t, t)
+	linkage := "external"
+	if m.p.varLinkname[g.Pkg.Pkg.Path()+"."+g.Name()] || m.p.varLinkname[sym] {
+		// Another package may define the same symbol (//go:linkname):
+		// a zero definition is a common symbol, so the one with an
+		// initializer (or any one) wins at link time.
+		linkage = "common"
+	}
+	fmt.Fprintf(&m.defs, "  llvm.mlir.global %s %s() {addr_space = 0 : i32} : %s {\n    %%0 = llvm.mlir.zero : %s\n    llvm.return %%0 : %s\n  }\n",
+		linkage, mlir.Symbol(sym), t, t, t)
 }
 
 func (m *moduleGen) globalSym(g *ssa.Global) string {
+	if t, ok := m.p.globalLink[g]; ok {
+		return t
+	}
 	return rtPath(g.Pkg.Pkg) + "." + g.Name()
 }
 
@@ -351,16 +365,49 @@ func (m *moduleGen) keepWriteOnlyGlobals(pkg *ssa.Package, names []string) {
 		}
 		keep = append(keep, cAddr(m.globalSym(g)))
 	}
-	if len(keep) == 0 {
+	m.used = append(m.used, keep...)
+}
+
+// emitUsed writes llvm.used (kept from dead stripping and whole program
+// optimization) once per module.
+func (m *moduleGen) emitUsed() {
+	if len(m.used) == 0 {
 		return
 	}
 	var b strings.Builder
-	t := mlir.Array(int64(len(keep)), mlir.Ptr)
+	t := mlir.Array(int64(len(m.used)), mlir.Ptr)
 	fmt.Fprintf(&b, "  llvm.mlir.global appending @llvm.used() {addr_space = 0 : i32, section = \"llvm.metadata\"} : %s {\n", t)
 	n := 0
-	v := writeCV(&b, &n, cAgg(t, keep...))
+	v := writeCV(&b, &n, cAgg(t, m.used...))
 	fmt.Fprintf(&b, "    llvm.return %s : %s\n  }\n", v, t)
 	m.defs.WriteString(b.String())
+}
+
+// emitTypelinks lists the unnamed composite type descriptors this module
+// defines in a section the linker concatenates (Mach-O __DATA,__marmot_tlinks,
+// ELF marmot_tlinks), so reflect can find them by structure (SliceOf,
+// PtrTo of unnamed types) and stay pointer-identical with static types.
+// Only when reflect is part of the program.
+func (m *moduleGen) emitTypelinks() {
+	if len(m.tlinks) == 0 || m.p.prog.ImportedPackage("reflect") == nil {
+		return
+	}
+	sec := "marmot_tlinks"
+	if m.p.opts.GOOS == "darwin" {
+		sec = "__DATA,__marmot_tlinks"
+	}
+	es := make([]cv, len(m.tlinks))
+	for i, s := range m.tlinks {
+		es[i] = cAddr(s)
+	}
+	t := mlir.Array(int64(len(es)), mlir.Ptr)
+	var b strings.Builder
+	fmt.Fprintf(&b, "  llvm.mlir.global internal constant @marmot.tlinks() {addr_space = 0 : i32, alignment = 8 : i64, section = %q} : %s {\n", sec, t)
+	n := 0
+	v := writeCV(&b, &n, cAgg(t, es...))
+	fmt.Fprintf(&b, "    llvm.return %s : %s\n  }\n", v, t)
+	m.defs.WriteString(b.String())
+	m.used = append(m.used, cAddr("marmot.tlinks"))
 }
 
 // storedAtRunTime reports whether package init still stores into g.

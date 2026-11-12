@@ -344,11 +344,30 @@ func (f *funcGen) complexOp(op token.Token, x, y, vt string) string {
 	case token.SUB:
 		return f.build(vt, f.op("llvm.fsub %s, %s : %s", a, c, et), f.op("llvm.fsub %s, %s : %s", b, d, et))
 	case token.MUL:
-		ac := f.op("llvm.fmul %s, %s : %s", a, c, et)
-		bd := f.op("llvm.fmul %s, %s : %s", b, d, et)
-		ad := f.op("llvm.fmul %s, %s : %s", a, d, et)
-		bc := f.op("llvm.fmul %s, %s : %s", b, c, et)
-		return f.build(vt, f.op("llvm.fsub %s, %s : %s", ac, bd, et), f.op("llvm.fadd %s, %s : %s", ad, bc, et))
+		// As gc: computed in float64 (complex64 too, rounded at the end);
+		// on arm64 the second product of each part is fused:
+		// real = fma(-b, d, a*c), imag = fma(b, c, a*d).
+		if et == mlir.F32 {
+			a, b = f.op("llvm.fpext %s : f32 to f64", a), f.op("llvm.fpext %s : f32 to f64", b)
+			c, d = f.op("llvm.fpext %s : f32 to f64", c), f.op("llvm.fpext %s : f32 to f64", d)
+		}
+		ac := f.op("llvm.fmul %s, %s : f64", a, c)
+		ad := f.op("llvm.fmul %s, %s : f64", a, d)
+		var re, im string
+		if f.m.p.opts.GOARCH == "arm64" {
+			nb := f.op("llvm.fneg %s : f64", b)
+			re = f.op("llvm.intr.fma(%s, %s, %s) : (f64, f64, f64) -> f64", nb, d, ac)
+			im = f.op("llvm.intr.fma(%s, %s, %s) : (f64, f64, f64) -> f64", b, c, ad)
+		} else {
+			bd := f.op("llvm.fmul %s, %s : f64", b, d)
+			bc := f.op("llvm.fmul %s, %s : f64", b, c)
+			re = f.op("llvm.fsub %s, %s : f64", ac, bd)
+			im = f.op("llvm.fadd %s, %s : f64", ad, bc)
+		}
+		if et == mlir.F32 {
+			re, im = f.op("llvm.fptrunc %s : f64 to f32", re), f.op("llvm.fptrunc %s : f64 to f32", im)
+		}
+		return f.build(vt, re, im)
 	case token.QUO:
 		// The runtime implements Go's complex division (inf and NaN rules).
 		if et == mlir.F32 {
@@ -398,6 +417,31 @@ func readOnlyBytes(v *ssa.Convert) bool {
 // lookup key or in comparisons, where a temporary view of b is enough
 // (gc's slicebytetostringtmp).
 func tempString(v *ssa.Convert) bool {
+	// The view aliases b: every use must follow the conversion in the same
+	// block with nothing in between that may write memory (loops audit
+	// tempstring_write: s := string(b); b[0] = 'x'; s == "abc").
+	b := v.Block()
+	idx := -1
+	for i, x := range b.Instrs {
+		if x == ssa.Instruction(v) {
+			idx = i
+			break
+		}
+	}
+	for _, r := range *v.Referrers() {
+		if _, dbg := r.(*ssa.DebugRef); dbg {
+			continue
+		}
+		if r.Block() != b {
+			return false
+		}
+		for k := idx + 1; k < len(b.Instrs) && b.Instrs[k] != r; k++ {
+			switch b.Instrs[k].(type) {
+			case *ssa.Store, *ssa.Call, *ssa.MapUpdate, *ssa.Send, *ssa.Go, *ssa.Defer, *ssa.Select, *ssa.Panic:
+				return false
+			}
+		}
+	}
 	for _, r := range *v.Referrers() {
 		switch x := r.(type) {
 		case *ssa.DebugRef:

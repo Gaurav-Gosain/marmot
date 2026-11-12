@@ -55,6 +55,7 @@ type funcGen struct {
 	sinkBefore        map[ssa.Instruction][]ssa.Instruction // emit these sunk loads before the instruction
 	sunkDone          map[ssa.Instruction]bool
 	wrapOld           string                         // recoverWrapEnter result (recoverwrap.go)
+	deferThunk        bool                           // emitting a defer thunk: a builtin call here is the deferred call itself
 	fuseLookup        map[*ssa.Lookup]*ssa.MapUpdate // map read-modify-write pairs (mapfuse.go)
 	fuseSlot          map[*ssa.MapUpdate]string
 }
@@ -188,7 +189,9 @@ func (f *funcGen) gen(sym string, shared bool) {
 	if f.m.p.isRecoverWrapper(fn) {
 		f.wrapOld = f.recoverWrapEnter()
 	}
-	f.computeSinks()
+	if !f.evalOrderOn() {
+		f.computeSinks() // the older load sinking while the scheduler is off
+	}
 	f.sinkAllocs()
 	f.findMapFusions()
 	// Phis are block arguments; name them all first because branches
@@ -212,14 +215,23 @@ func (f *funcGen) gen(sym string, shared bool) {
 			order = append(order, b) // unreachable from entry (recover block)
 		}
 	}
+	var ranges [][2]token.Pos
+	sched := f.evalOrderOn()
+	if sched {
+		ranges = f.statementRanges()
+	}
 	for i, b := range order {
+		instrs := b.Instrs
+		if sched {
+			instrs = f.schedule(b, ranges)
+		}
 		if i > 0 || len(b.Preds) > 0 {
 			f.blockHeader(b, i == 0)
 		}
 		if b == fn.Recover && f.frame != "" {
 			f.rtcall("deferreturn", f.frame)
 		}
-		for _, instr := range b.Instrs {
+		for _, instr := range instrs {
 			if f.m.static != nil && f.m.static.skip[instr] || f.skipInstr[instr] || f.sunk[instr] {
 				continue
 			}
@@ -477,6 +489,10 @@ func (f *funcGen) constant(c constant.Value, t types.Type) string {
 			return f.op("llvm.mlir.constant(%v) : i1", constant.BoolVal(c))
 		case u.Info()&types.IsInteger != 0:
 			var bits uint64
+			c = constant.ToInt(c) // an integer value may arrive as a Float constant (1e2)
+			if c.Kind() != constant.Int {
+				f.fail(token.NoPos, "integer constant %v is not an integer", c)
+			}
 			if i, ok := constant.Int64Val(c); ok {
 				bits = uint64(i)
 			} else if ui, ok := constant.Uint64Val(c); ok {
@@ -507,7 +523,7 @@ func (f *funcGen) constant(c constant.Value, t types.Type) string {
 			return f.makeString(p, f.constInt(int64(len(s)), mlir.I64))
 		case u.Kind() == types.UnsafePointer:
 			// uintptr constant converted to unsafe.Pointer.
-			i, _ := constant.Uint64Val(c)
+			i, _ := constant.Uint64Val(constant.ToInt(c))
 			n := f.constInt(int64(i), mlir.I64)
 			return f.op("llvm.inttoptr %s : i64 to !llvm.ptr", n)
 		}
@@ -730,8 +746,18 @@ func (f *funcGen) nilCheck(p string) {
 	})
 }
 
+// maxAllocSize is the runtime maxAlloc (1<<47).
+const maxAllocSize = 1 << 47
+
 func (f *funcGen) alloc(v *ssa.Alloc) {
 	et := v.Type().(*types.Pointer).Elem()
+	if v.Comment == "makeslice" && f.m.p.opts.Sizes.Sizeof(et) > maxAllocSize {
+		// make([]T, n) with a constant n that x/tools turned into an array
+		// too large to allocate: gc panics (recoverable) in makeslice.
+		f.rtcall("panicmakeslicelen")
+		f.vals[v] = f.null()
+		return
+	}
 	if v.Heap && !f.stackOK[v] && f.region != "" {
 		size := f.m.p.opts.Sizes.Sizeof(et)
 		if size == 0 {

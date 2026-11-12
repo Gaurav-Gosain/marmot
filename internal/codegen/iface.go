@@ -175,6 +175,20 @@ func (f *funcGen) dynType(x string, xt types.Type) string {
 }
 
 func (f *funcGen) typeAssert(v *ssa.TypeAssert) {
+	if !v.CommaOk && isInterface(v.AssertedType) && types.Identical(v.AssertedType, v.X.Type()) {
+		// x/tools' nil check before an interface method value (s.M with
+		// s nil): gc panics with a nil pointer dereference there.
+		x := f.value(v.X)
+		isNil := f.op("llvm.icmp \"eq\" %s, %s : !llvm.ptr", f.extractRaw(x, tIface, 0), f.null())
+		bad, ok := f.newBlock(), f.newBlock()
+		f.emit("llvm.cond_br %s weights([1, 1000]), %s, %s", isNil, bad, ok)
+		f.b.WriteString("  " + bad + ":\n")
+		f.rtcall("panicmem")
+		f.emit("llvm.unreachable")
+		f.b.WriteString("  " + ok + ":\n")
+		f.vals[v] = x
+		return
+	}
 	if f.goOps() {
 		f.typeAssertGo(v)
 		return

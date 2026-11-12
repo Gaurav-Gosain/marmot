@@ -242,7 +242,17 @@ func (f *funcGen) builtin(b *ssa.Builtin, args []ssa.Value, instr ssa.Instructio
 		return f.build(f.tm.valType(instr.(ssa.Value).Type()), re, im)
 	case "min", "max":
 		return f.minMax(b.Name() == "min", args, instr.(ssa.Value).Type())
+	case "panic":
+		// Only reached as a deferred call (defer panic(v)); a direct panic
+		// is an ssa.Panic instruction. gopanic does not return.
+		f.rtcall("gopanic", f.value(args[0]))
+		return ""
 	case "recover":
+		if f.deferThunk {
+			// defer recover(): recover is the deferred function itself, not
+			// called by one, so it returns nil and stops nothing (spec).
+			return f.zero(f.tm.valType(types.NewInterfaceType(nil, nil)))
+		}
 		fp := f.op("llvm.call_intrinsic \"llvm.frameaddress.p0\"(%s) : (i32) -> !llvm.ptr", f.constInt(0, mlir.I32))
 		return f.rtcall("gorecover", f.op("llvm.ptrtoint %s : !llvm.ptr to i64", fp))
 	case "ssa:deferstack":

@@ -203,6 +203,10 @@ func (m *moduleGen) typeDescSym(t types.Type) string {
 	}
 	m.defined[sym] = true
 	m.emitTypeDesc(sym, t)
+	switch t.(type) {
+	case *types.Pointer, *types.Slice, *types.Array, *types.Chan, *types.Map, *types.Signature, *types.Struct:
+		m.tlinks = append(m.tlinks, sym)
+	}
 	return sym
 }
 
@@ -456,9 +460,11 @@ func (m *moduleGen) uncommon(sym string, t types.Type) string {
 			mexprs = cAddr(esym)
 		}
 	}
-	// ptrToThis: *T for a defined non-pointer type T.
+	// ptrToThis: *T for a defined non-pointer type T, and (as gc) for any
+	// type with methods, so reflect.PointerTo(T) keeps the promoted methods
+	// (struct{ Marshaler } in encoding/json).
 	ptrToThis := cNull()
-	if named {
+	if named || len(ms) > 0 {
 		if _, isPtr := t.Underlying().(*types.Pointer); !isPtr {
 			ptrToThis = cAddr(m.typeDescSym(types.NewPointer(t)))
 		}

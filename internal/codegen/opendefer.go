@@ -286,7 +286,7 @@ func (m *moduleGen) openDeferRunner(parent *funcGen, od *openDefers) string {
 	m.nthunk++
 	sym := fmt.Sprintf("%s$opendefer%d", m.p.symbol(parent.fn), m.nthunk)
 	m.defined[sym] = true
-	t := &funcGen{m: m, fn: parent.fn, tm: m.tm, vals: map[ssa.Value]string{}, blkName: map[*ssa.BasicBlock]string{}}
+	t := &funcGen{m: m, fn: parent.fn, tm: m.tm, vals: map[ssa.Value]string{}, blkName: map[*ssa.BasicBlock]string{}, deferThunk: true}
 	t.b = &t.body
 	slots := t.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", t.gepByte("%ctx", 8))
 	rec := t.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", t.gepByte("%ctx", 16))

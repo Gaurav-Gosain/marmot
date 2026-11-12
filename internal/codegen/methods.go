@@ -242,7 +242,8 @@ func (p *Program) typeClosure(root types.Type, set map[string]bool) []types.Type
 	for len(stack) > 0 {
 		t := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if _, ok := t.(*types.Named); ok {
+		_, isNamed := t.(*types.Named)
+		if isNamed || p.prog.MethodSets.MethodSet(t).Len() > 0 {
 			if _, isPtr := t.Underlying().(*types.Pointer); !isPtr {
 				add(types.NewPointer(t)) // ptrToThis: reflect.New, Addr
 			}

@@ -99,6 +99,7 @@ type Program struct {
 	mainPath      string                  // import path of the main package
 	globalRead    map[*ssa.Global]bool    // globals read anywhere in the program
 	varLinkname   map[string]bool         // pkgpath.name of variables named in //go:linkname
+	globalLink    map[*ssa.Global]string  // //go:linkname local target for variables
 	dylibs        map[string]bool         // libraries named by //go:cgo_import_dynamic
 }
 
@@ -130,6 +131,7 @@ func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package
 		linkname:    map[*ssa.Function]string{},
 		dynamic:     map[string]string{},
 		varLinkname: map[string]bool{},
+		globalLink:  map[*ssa.Global]string{},
 		dylibs:      map[string]bool{},
 		pragmas:     map[*ssa.Function]pragma{},
 		syms:        map[*ssa.Function]string{},
@@ -222,6 +224,11 @@ func (p *Program) collect(pkg *ssa.Package) {
 				}
 				if g, ok := pkg.Members[fs[1]].(*ssa.Global); ok {
 					p.varLinkname[pkg.Pkg.Path()+"."+g.Name()] = true
+					if len(fs) >= 3 {
+						// Both declarations name one symbol (gc): the
+						// variable takes the target's symbol.
+						p.globalLink[g] = fs[2]
+					}
 					continue
 				}
 				fn, ok := pkg.Members[fs[1]].(*ssa.Function)
@@ -298,8 +305,15 @@ func (p *Program) computeSymbol(fn *ssa.Function) string {
 		return path + "." + fn.Name()
 	}
 	// Synthetic functions (wrappers, thunks, instances): the SSA name with
-	// full package paths is unique and stable across modules.
-	return fn.String()
+	// full package paths is unique and stable across modules, except for
+	// wrappers of unexported methods: (T).m promoted from two embedded
+	// types of different packages has one SSA name for two methods, so
+	// the method's package is added.
+	name := fn.String()
+	if obj, ok := fn.Object().(*types.Func); ok && obj != nil && !obj.Exported() && obj.Pkg() != nil {
+		name += "@" + obj.Pkg().Path()
+	}
+	return name
 }
 
 // SetTypesInfo provides the type checker results (for syntax-level facts
