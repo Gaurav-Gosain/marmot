@@ -15,16 +15,22 @@ ready for production use.
 
 ## At a glance
 
-Measured against `go build` on an Apple M3 Pro, default flags. Every program's output is checked
-against Go. These are early numbers; see [docs/benchmarks.md](docs/benchmarks.md).
+Measured against `go build` on an Apple M3 Pro. Every program's output is checked against Go.
+Details and method in [docs/benchmarks.md](docs/benchmarks.md).
 
-| | marmot | go |
+| Binaries | marmot | go |
 | --- | --- | --- |
-| hello world binary | 148 KB | 1.68 MB |
-| run time, average over 43 programs | 1.6x faster | 1.0 |
-| first build of a large program, fast code generator | 5.2 s | 3.9 s |
-| rebuild when nothing changed | 0.13 s | 0.12 s |
-| rebuild of a large program after a small edit | 0.9 to 1.7 s | 0.3 to 0.7 s |
+| hello world size | 148 KB | 1.68 MB |
+| run time, average over 43 programs | 1.6x faster | 1.0x |
+
+| Build time, the compiler itself (182 packages) | marmot | go |
+| --- | --- | --- |
+| first build, empty caches | 5.2 s | 3.9 s |
+| rebuild, nothing changed | 0.13 s | 0.12 s |
+| rebuild after a one line edit | 0.9 to 1.7 s | 0.3 to 0.7 s |
+
+Build times use the fast code generator (`MARMOT_TIER0=1`), which will become the default for
+dev builds.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/overview-dark.svg">
