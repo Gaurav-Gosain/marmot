@@ -308,6 +308,9 @@ func (b *build) run1() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if cfg.Emit == "exe" {
+		objs = expandParts(objs)
+	}
 	b.logf("compiled %d objects", len(objs))
 	switch cfg.Emit {
 	case "llvm", "obj":
@@ -679,4 +682,24 @@ func linkLibraries(libs []string) []string {
 		args = append(args, "-Wl,-dead_strip_dylibs")
 	}
 	return args
+}
+
+// expandParts replaces an object the backend split into groups by the
+// objects listed in its OUT.parts file (OUT first; docs/passes.md "Large
+// modules").
+func expandParts(objs []string) []string {
+	var out []string
+	for _, o := range objs {
+		data, err := os.ReadFile(o + ".parts")
+		if err != nil {
+			out = append(out, o)
+			continue
+		}
+		for _, l := range strings.Split(string(data), "\n") {
+			if l = strings.TrimSpace(l); l != "" {
+				out = append(out, l)
+			}
+		}
+	}
+	return out
 }
