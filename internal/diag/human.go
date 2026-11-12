@@ -148,6 +148,14 @@ func (h *Human) sevColor(s Severity) string {
 	return h.Style.Error
 }
 
+// RenderOne writes one diagnostic, without the summary.
+func (h *Human) RenderOne(d *Diagnostic) {
+	if h.Sources == nil {
+		h.Sources = NewSources()
+	}
+	h.one(d)
+}
+
 func (h *Human) one(d *Diagnostic) {
 	st := h.Style
 	pad := strings.Repeat(" ", h.gutterWidth(d))

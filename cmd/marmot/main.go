@@ -207,6 +207,11 @@ var testFlags = map[string]bool{
 
 // cmdTest implements marmot test [build flags] [test flags] [packages].
 func cmdTest(args []string) int {
+	for i, a := range args {
+		if a == "-watch" || a == "--watch" {
+			return cmdWatch(append([]string{"test"}, append(append([]string{}, args[:i]...), args[i+1:]...)...))
+		}
+	}
 	var buildArgs, testArgs, pkgs []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -341,6 +346,9 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 	}
 	if rep.Mode == diag.ModeJSON {
 		return runTestJSON(rep, cmd, pkg, start)
+	}
+	if rep.Mode == diag.ModeHuman {
+		return runTestHuman(rep, cmd, pkg, start)
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	err = cmd.Run()
