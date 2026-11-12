@@ -22,4 +22,6 @@ type A struct {
 var a = A{Bool: true, Int: 2, Int8: 3, Int16: 4, Int32: 5, Int64: 6, Uint: 7, Uint8: 8, Uint16: 9, Uint32: 10, Uint64: 11, Uintptr: 12, Float32: 14.1, Float64: 15.1, Foo: "foo"}
 var b = A{P: &a.Int}
 
-func main() { println(a.Bool, a.Int, a.Int8, a.Int16, a.Int32, a.Int64, a.Uint, a.Uint8, a.Uint16, a.Uint32, a.Uint64, a.Uintptr, a.Float32, a.Float64, a.Foo, b.P == nil) }
+func main() {
+	println(a.Bool, a.Int, a.Int8, a.Int16, a.Int32, a.Int64, a.Uint, a.Uint8, a.Uint16, a.Uint32, a.Uint64, a.Uintptr, a.Float32, a.Float64, a.Foo, b.P == nil)
+}

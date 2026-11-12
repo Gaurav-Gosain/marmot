@@ -51,7 +51,7 @@ type outcome struct {
 var (
 	flRun     = flag.String("run", "", "regexp: only run tests whose path matches")
 	flDir     = flag.String("dir", "", "only run tests under this directory (relative to tests/, e.g. run/core)")
-	flJ       = flag.Int("j", 4, "parallel jobs (capped at 4 by SPEC rule 10)")
+	flJ       = flag.Int("j", 4, "parallel jobs (at most 4)")
 	flUpdate  = flag.Bool("update", false, "regenerate goldens with the stock Go toolchain")
 	flV       = flag.Bool("v", false, "print every test, with diff detail for failures")
 	flJSON    = flag.String("json", "", "write JSON results to this file (default tests/results.json)")
@@ -208,11 +208,11 @@ func repoRoot() (string, error) {
 		return "", err
 	}
 	for d := dir; ; d = filepath.Dir(d) {
-		if _, err := os.Stat(filepath.Join(d, "SPEC.md")); err == nil {
+		if _, err := os.Stat(filepath.Join(d, "cmd", "marmot")); err == nil {
 			return d, nil
 		}
 		if filepath.Dir(d) == d {
-			return "", fmt.Errorf("cannot find repo root (SPEC.md) above %s", dir)
+			return "", fmt.Errorf("cannot find the repository root (a directory with cmd/marmot) above %s", dir)
 		}
 	}
 }

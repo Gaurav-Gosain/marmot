@@ -16,8 +16,8 @@ run/opt/panic_in_loop@Oz  # recovered panic then nil deref panic is not recovera
 run/std/runtime/goroutines_gc  # runtime.Caller unsupported (no pc to file:line table yet)
 run/std/log/basic  # runtime.Caller unsupported, log.Lshortfile prints ???:0
 world/ulid  # return id, parse(&id): gc reads variables after calls (see core/eval_order_var_after_call)
-run/mem/regionstore@lifetime  # MARMOT_LIFETIME=all: region store use-after-free, expected until fixed (frontend)
-world/audit_unexported  # unexported methods of different packages are confused in itabs (frontend iface.go, rtgo itab builder)
+run/mem/regionstore@lifetime  # MARMOT_LIFETIME=all: region store use-after-free, expected until fixed
+world/audit_unexported  # unexported methods of different packages are confused in itabs
 run/audit/deadinit_bigmake  # huge make: fatal "out of memory" instead of the makeslice panic (dead initializer removal)
 run/audit/defer_builtin_recover  # recover() result lost for a deferred builtin
 run/audit/evalorder_gaps  # map index evaluation order differs from gc

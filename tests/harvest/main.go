@@ -152,7 +152,7 @@ func fail(err error) {
 func repoRoot() string {
 	d, _ := os.Getwd()
 	for ; ; d = filepath.Dir(d) {
-		if _, err := os.Stat(filepath.Join(d, "SPEC.md")); err == nil {
+		if _, err := os.Stat(filepath.Join(d, "cmd", "marmot")); err == nil {
 			return d
 		}
 		if filepath.Dir(d) == d {
