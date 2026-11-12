@@ -1,0 +1,3 @@
+main.go:7:4: no new variables on left side of :=
+main.go:8:6: declared and not used: i
+main.go:11:6: declared and not used: k

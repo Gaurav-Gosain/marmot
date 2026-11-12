@@ -1,0 +1,5 @@
+main.go:9:7: assignment mismatch: 1 variable but strconv.Atoi returns 2 values
+main.go:16:31: too many arguments in call to pair
+	have (number)
+	want ()
+main.go:16:26: multiple-value pair(1) (value of type (int, int)) in single-value context

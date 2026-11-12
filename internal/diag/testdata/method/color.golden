@@ -1,0 +1,32 @@
+[1m./main.go:16:4: [0m[1;31merror:[0m [1mc.Incremnt undefined (type Counter has no field or method Incremnt)[0m [2m[M0003][0m
+   [1;34m|[0m
+[1;34m16 |[0m     c.Incremnt()
+   [1;34m|[0m       [1;31m^^^^^^^^[0m [1;31mdid you mean Increment?[0m
+   [1;34m=[0m [1;36mnote:[0m fields of Counter: n, label
+   [1;34m=[0m [1;36mnote:[0m methods of Counter: (*Counter) Increment, (Counter) Value
+   [1;34m=[0m [1;32mfix:[0m use Increment
+[1;34m16[0m [31m-     c.Incremnt()[0m
+[1;34m16[0m [32m+     c.Increment()[0m
+
+[1m./main.go:17:4: [0m[1;31merror:[0m [1mc.Lable undefined (type Counter has no field or method Lable)[0m [2m[M0003][0m
+   [1;34m|[0m
+[1;34m17 |[0m     c.Lable = [32m"x"[0m
+   [1;34m|[0m       [1;31m^^^^^[0m [1;31mdid you mean label?[0m
+   [1;34m=[0m [1;36mnote:[0m fields of Counter: n, label
+   [1;34m=[0m [1;36mnote:[0m methods of Counter: (*Counter) Increment, (Counter) Value
+   [1;34m=[0m [1;32mfix:[0m use label
+[1;34m17[0m [31m-     c.Lable = "x"[0m
+[1;34m17[0m [32m+     c.label = "x"[0m
+
+[1m./main.go:19:4: [0m[1;31merror:[0m [1mb.WriteStrin undefined (type strings.Builder has no field or method WriteStrin)[0m [2m[M0003][0m
+   [1;34m|[0m
+[1;34m19 |[0m     b.WriteStrin([32m"x"[0m)
+   [1;34m|[0m       [1;31m^^^^^^^^^^[0m [1;31mdid you mean WriteString?[0m
+   [1;34m=[0m [1;36mnote:[0m methods of strings.Builder: (*Builder) Cap, (*Builder) Grow, (*Builder) Len, (*Builder) Reset, (*Builder) String, (*Builder) Write, (*Builder) WriteByte, (*Builder) WriteRune, (*Builder) WriteString
+   [1;34m=[0m [1;32mfix:[0m use WriteString
+[1;34m19[0m [31m-     b.WriteStrin("x")[0m
+[1;34m19[0m [32m+     b.WriteString("x")[0m
+
+[1;31m3 errors[0m
+[2m3 errors can be fixed automatically: marmot fix[0m
+[2mfor more about an error: marmot explain M0003[0m

@@ -1,0 +1,9 @@
+main.go:14:21: cannot use "two" (untyped string constant) as int value in argument to add
+main.go:15:6: undefined: fmt.Printn
+main.go:16:7: undefined: strings
+main.go:17:9: too many return values
+	have (number)
+	want ()
+main.go:13:2: declared and not used: count
+main.go:16:2: declared and not used: x
+main.go:5:2: "os" imported and not used

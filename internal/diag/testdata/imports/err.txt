@@ -1,0 +1,4 @@
+main.go:9:14: undefined: strings
+main.go:9:38: undefined: filepath
+main.go:10:7: undefined: tmplate
+main.go:5:2: "os" imported and not used

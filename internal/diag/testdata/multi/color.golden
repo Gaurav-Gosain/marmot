@@ -1,0 +1,61 @@
+[1m./main.go:5:2: [0m[1;31merror:[0m [1m"os" imported and not used[0m [2m[M0005][0m
+  [1;34m|[0m
+[1;34m5 |[0m     [32m"os"[0m
+  [1;34m|[0m     [1;31m^^^^[0m [1;31mnot used in this file[0m
+  [1;34m=[0m [1;32mhelp:[0m if the package is imported only for its side effects, write import _ "os"
+  [1;34m=[0m [1;32mfix:[0m remove the import of "os"
+[1;34m5[0m [31m-     "os"[0m
+
+[1m./main.go:13:2: [0m[1;31merror:[0m [1mdeclared and not used: count[0m [2m[M0004][0m
+   [1;34m|[0m
+[1;34m13 |[0m     count := [36m3[0m
+   [1;34m|[0m     [1;31m^^^^^[0m [1;31mdeclared here, never used[0m
+   [1;34m=[0m [1;32mfix:[0m remove count
+[1;34m13[0m [31m-     count := 3[0m
+
+[1m./main.go:14:21: [0m[1;31merror:[0m [1mcannot use "two" (untyped string constant) as int value in argument to add[0m [2m[M0006][0m
+   [1;34m|[0m
+[1;34m14 |[0m     fmt.Println(add([36m1[0m, [32m"two"[0m))
+   [1;34m|[0m                        [1;31m^^^^^[0m [1;31mthis is untyped string, want int[0m
+   [1;34m=[0m [1;36mnote:[0m signature: func add(a, b int) int
+   [1;34m=[0m [1;36mnote:[0m add is declared here (./main.go:8)
+   [1;34m=[0m [1;32mhelp:[0m to parse a number from a string, use strconv.Atoi("two")
+
+[1m./main.go:15:6: [0m[1;31merror:[0m [1mundefined: fmt.Printn[0m [2m[M0002][0m
+   [1;34m|[0m
+[1;34m15 |[0m     fmt.Printn([32m"x"[0m)
+   [1;34m|[0m         [1;31m^^^^^^[0m [1;31mdid you mean Println?[0m
+   [1;34m=[0m [1;32mhelp:[0m a func with a similar name exists: fmt.Println
+   [1;34m=[0m [1;32mfix:[0m use fmt.Println
+[1;34m15[0m [31m-     fmt.Printn("x")[0m
+[1;34m15[0m [32m+     fmt.Println("x")[0m
+
+[1m./main.go:16:2: [0m[1;31merror:[0m [1mdeclared and not used: x[0m [2m[M0004][0m
+   [1;34m|[0m
+[1;34m16 |[0m     x := strings.ToUpper([32m"a"[0m)
+   [1;34m|[0m     [1;31m^[0m [1;31mdeclared here, never used[0m
+   [1;34m=[0m [1;32mhelp:[0m remove the statement if the value is not needed
+   [1;34m=[0m [1;32mfix:[0m assign the value to _
+[1;34m16[0m [31m-     x := strings.ToUpper("a")[0m
+[1;34m16[0m [32m+     _ = strings.ToUpper("a")[0m
+
+[1m./main.go:16:7: [0m[1;31merror:[0m [1mundefined: strings[0m [2m[M0002][0m
+   [1;34m|[0m
+[1;34m16 |[0m     x := strings.ToUpper([32m"a"[0m)
+   [1;34m|[0m          [1;31m^^^^^^^[0m [1;31mpackage strings is not imported[0m
+   [1;34m=[0m [1;32mhelp:[0m add the import: import "strings"
+   [1;34m=[0m [1;32mfix:[0m import "strings"
+[1;34m 6[0m [32m+     "strings"[0m
+
+[1m./main.go:17:9: [0m[1;31merror:[0m [1mtoo many return values[0m [2m[M0008][0m
+   [1;34m|[0m
+[1;34m17 |[0m     [35mreturn[0m [36m1[0m
+   [1;34m|[0m            [1;31m^[0m [1;31mreturned here[0m
+   [1;34m=[0m [1;36mnote:[0m have (number)
+   [1;34m=[0m [1;36mnote:[0m want ()
+   [1;34m=[0m [1;36mnote:[0m signature: func main() (./main.go:12)
+   [1;34m=[0m [1;32mhelp:[0m main has no results; to return a value, declare it: func main() T
+
+[1;31m7 errors[0m
+[2m5 errors can be fixed automatically: marmot fix[0m
+[2mfor more about an error: marmot explain M0002[0m

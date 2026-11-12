@@ -1,0 +1,9 @@
+[1m./main.go:5:1: [0m[1;31merror:[0m [1mexpected operand, found '}'[0m [2m[M0001][0m
+  [1;34m|[0m
+[1;34m4 |[0m     x := [36m1[0m +
+  [1;34m|[0m            [1;34m-[0m [1;34mthe expression is not finished[0m
+[1;34m5 |[0m }
+  [1;34m|[0m [1;31m^[0m [1;31man operand was expected here[0m
+
+[1;31m1 error[0m
+[2mfor more about an error: marmot explain M0001[0m

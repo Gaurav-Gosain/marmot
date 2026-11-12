@@ -1,0 +1,27 @@
+[1m./main.go:7:4: [0m[1;31merror:[0m [1mno new variables on left side of :=[0m [2m[M0013][0m
+  [1;34m|[0m
+[1;34m7 |[0m     x := [36m2[0m
+  [1;34m|[0m       [1;31m^^[0m [1;31mevery name on the left is already declared[0m
+  [1;34m=[0m [1;32mfix:[0m use = instead of :=
+[1;34m7[0m [31m-     x := 2[0m
+[1;34m7[0m [32m+     x = 2[0m
+
+[1m./main.go:8:6: [0m[1;31merror:[0m [1mdeclared and not used: i[0m [2m[M0004][0m
+  [1;34m|[0m
+[1;34m8 |[0m     [35mfor[0m i, v := [35mrange[0m []int{[36m1[0m} {
+  [1;34m|[0m         [1;31m^[0m [1;31mdeclared here, never used[0m
+  [1;34m=[0m [1;32mfix:[0m replace i with _
+[1;34m8[0m [31m-     for i, v := range []int{1} {[0m
+[1;34m8[0m [32m+     for _, v := range []int{1} {[0m
+
+[1m./main.go:11:6: [0m[1;31merror:[0m [1mdeclared and not used: k[0m [2m[M0004][0m
+   [1;34m|[0m
+[1;34m11 |[0m     [35mfor[0m k := [35mrange[0m [35mmap[0m[int]int{} {
+   [1;34m|[0m         [1;31m^[0m [1;31mdeclared here, never used[0m
+   [1;34m=[0m [1;32mfix:[0m drop k
+[1;34m11[0m [31m-     for k := range map[int]int{} {[0m
+[1;34m11[0m [32m+     for range map[int]int{} {[0m
+
+[1;31m3 errors[0m
+[2m3 errors can be fixed automatically: marmot fix[0m
+[2mfor more about an error: marmot explain M0004[0m

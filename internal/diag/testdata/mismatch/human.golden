@@ -1,0 +1,16 @@
+./main.go:8:13: error: invalid operation: n + f (mismatched types int and float64) [M0007]
+  |
+8 |     total := n + f
+  |              - ^ - float64
+  |              |
+  |              int
+  = help: convert one operand, for example float64(n) + f
+
+./main.go:9:20: error: cannot use n (variable of type int) as string value in variable declaration [M0006]
+  |
+9 |     var name string = n
+  |                       ^ this is int, want string
+  = help: to format a number as text, use strconv.Itoa(n); string(n) gives the character with that code point
+
+2 errors
+for more about an error: marmot explain M0006

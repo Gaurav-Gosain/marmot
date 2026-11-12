@@ -1,0 +1,33 @@
+./main.go:5:2: error: "os" imported and not used [M0005]
+  |
+5 |     "os"
+  |     ^^^^ not used in this file
+  = help: if the package is imported only for its side effects, write import _ "os"
+  = fix: remove the import of "os"
+5 -     "os"
+
+./main.go:9:14: error: undefined: strings [M0002]
+  |
+9 |     fmt.Println(strings.Repeat("a", 2), filepath.Join("a", "b"))
+  |                 ^^^^^^^ package strings is not imported
+  = help: add the import: import "strings"
+  = fix: import "strings"
+6 +     "strings"
+
+./main.go:9:38: error: undefined: filepath [M0002]
+  |
+9 |     fmt.Println(strings.Repeat("a", 2), filepath.Join("a", "b"))
+  |                                         ^^^^^^^^ package filepath is not imported
+  = help: add the import: import "path/filepath"
+  = fix: import "path/filepath"
+6 +     "path/filepath"
+
+./main.go:10:7: error: undefined: tmplate [M0002]
+   |
+10 |     t := tmplate.New("x")
+   |          ^^^^^^^ did you mean template?
+   = help: package template (import "text/template") declares New
+
+4 errors
+3 errors can be fixed automatically: marmot fix
+for more about an error: marmot explain M0002

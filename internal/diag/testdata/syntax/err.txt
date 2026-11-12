@@ -1,0 +1,5 @@
+main.go:5:1: expected operand, found '}'
+main.go:5:3: expected ';', found 'EOF'
+main.go:5:3: expected ';', found 'EOF'
+main.go:5:3: expected '}', found 'EOF'
+main.go:4:2: declared and not used: x

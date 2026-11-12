@@ -1,0 +1,32 @@
+./main.go:16:4: error: c.Incremnt undefined (type Counter has no field or method Incremnt) [M0003]
+   |
+16 |     c.Incremnt()
+   |       ^^^^^^^^ did you mean Increment?
+   = note: fields of Counter: n, label
+   = note: methods of Counter: (*Counter) Increment, (Counter) Value
+   = fix: use Increment
+16 -     c.Incremnt()
+16 +     c.Increment()
+
+./main.go:17:4: error: c.Lable undefined (type Counter has no field or method Lable) [M0003]
+   |
+17 |     c.Lable = "x"
+   |       ^^^^^ did you mean label?
+   = note: fields of Counter: n, label
+   = note: methods of Counter: (*Counter) Increment, (Counter) Value
+   = fix: use label
+17 -     c.Lable = "x"
+17 +     c.label = "x"
+
+./main.go:19:4: error: b.WriteStrin undefined (type strings.Builder has no field or method WriteStrin) [M0003]
+   |
+19 |     b.WriteStrin("x")
+   |       ^^^^^^^^^^ did you mean WriteString?
+   = note: methods of strings.Builder: (*Builder) Cap, (*Builder) Grow, (*Builder) Len, (*Builder) Reset, (*Builder) String, (*Builder) Write, (*Builder) WriteByte, (*Builder) WriteRune, (*Builder) WriteString
+   = fix: use WriteString
+19 -     b.WriteStrin("x")
+19 +     b.WriteString("x")
+
+3 errors
+3 errors can be fixed automatically: marmot fix
+for more about an error: marmot explain M0003

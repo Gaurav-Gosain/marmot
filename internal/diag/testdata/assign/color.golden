@@ -1,0 +1,22 @@
+[1m./main.go:9:7: [0m[1;31merror:[0m [1massignment mismatch: 1 variable but strconv.Atoi returns 2 values[0m [2m[M0012][0m
+  [1;34m|[0m
+[1;34m9 |[0m     n := strconv.Atoi(s)
+  [1;34m|[0m          [1;31m^^^^^^^^^^^^[0m
+  [1;34m=[0m [1;32mhelp:[0m strconv.Atoi returns 2 values; receive all of them: n, err := strconv.Atoi(s)
+
+[1m./main.go:16:26: [0m[1;31merror:[0m [1mmultiple-value pair(1) (value of type (int, int)) in single-value context[0m [2m[M0012][0m
+   [1;34m|[0m
+[1;34m16 |[0m     fmt.Println(parse([32m"1"[0m), pair([36m1[0m))
+   [1;34m|[0m                             [1;31m^^^^[0m
+
+[1m./main.go:16:31: [0m[1;31merror:[0m [1mtoo many arguments in call to pair[0m [2m[M0009][0m
+   [1;34m|[0m
+[1;34m16 |[0m     fmt.Println(parse([32m"1"[0m), pair([36m1[0m))
+   [1;34m|[0m                                  [1;31m^[0m
+   [1;34m=[0m [1;36mnote:[0m have (number)
+   [1;34m=[0m [1;36mnote:[0m want ()
+   [1;34m=[0m [1;36mnote:[0m signature: func pair() (int, int)
+   [1;34m=[0m [1;36mnote:[0m pair is declared here (./main.go:13)
+
+[1;31m3 errors[0m
+[2mfor more about an error: marmot explain M0009[0m

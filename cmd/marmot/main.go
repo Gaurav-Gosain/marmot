@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Gaurav-Gosain/marmot/internal/diag"
 	"github.com/Gaurav-Gosain/marmot/internal/driver"
 )
 
@@ -30,6 +31,8 @@ Commands:
   build    compile packages and dependencies
   run      compile and run a Go program
   test     compile and run package tests (like go test)
+  fix      apply the suggested fixes of build errors (imports, unused names, typos)
+  explain  describe an error code, for example marmot explain M0002
   version  print the marmot version
   cache    show the build cache size; 'cache trim' trims it to MARMOT_CACHE_MAX_MB
            (default 4096), 'cache clean' removes it
@@ -61,6 +64,10 @@ func realMain() int {
 		fmt.Println(version)
 	case "cache":
 		return cmdCache(os.Args[2:])
+	case "explain":
+		return cmdExplain(os.Args[2:])
+	case "fix":
+		return cmdFix(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -93,9 +100,11 @@ func cmdBuild(args []string, run bool) int {
 	gc := fs.String("gc", "precise", "garbage collector: precise or none")
 	target := fs.String("target", "", "target triple (default: host)")
 	dialect := fs.String("dialect", os.Getenv("MARMOT_DIALECT"), "MLIR dialect level: llvm or go (default: go with -release, llvm otherwise; $MARMOT_DIALECT overrides)")
+	of := addOutputFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	rep := of.reporter(name)
 	optSet := *opt != "" // an explicit -O level selects LLVM over tier0
 	if *opt == "" {
 		*opt = "2"
@@ -106,8 +115,7 @@ func cmdBuild(args []string, run bool) int {
 	switch *opt {
 	case "0", "1", "2", "3", "s", "z":
 	default:
-		fmt.Fprintf(os.Stderr, "marmot: bad -O level %q\n", *opt)
-		return 2
+		return rep.Usage(fmt.Sprintf("marmot: bad -O level %q", *opt))
 	}
 	if *dialect == "" {
 		*dialect = "llvm"
@@ -118,14 +126,12 @@ func cmdBuild(args []string, run bool) int {
 	switch *dialect {
 	case "llvm", "go":
 	default:
-		fmt.Fprintf(os.Stderr, "marmot: bad -dialect %q\n", *dialect)
-		return 2
+		return rep.Usage(fmt.Sprintf("marmot: bad -dialect %q", *dialect))
 	}
 	switch *emit {
 	case "mlir", "llvm", "obj", "exe":
 	default:
-		fmt.Fprintf(os.Stderr, "marmot: bad -emit kind %q\n", *emit)
-		return 2
+		return rep.Usage(fmt.Sprintf("marmot: bad -emit kind %q", *emit))
 	}
 	rest := fs.Args()
 	var patterns, progArgs []string
@@ -140,8 +146,7 @@ func cmdBuild(args []string, run bool) int {
 		}
 		patterns, progArgs = rest[:i], rest[i:]
 		if *emit != "exe" {
-			fmt.Fprintln(os.Stderr, "marmot run: -emit must be exe")
-			return 2
+			return rep.Usage("marmot run: -emit must be exe")
 		}
 	} else {
 		patterns = rest
@@ -175,10 +180,10 @@ func cmdBuild(args []string, run bool) int {
 	}
 	exe, err := driver.Build(cfg)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return rep.Fail(err)
 	}
 	if !run {
+		rep.OK(exe)
 		return 0
 	}
 	cmd := exec.Command(exe, progArgs...)
@@ -250,7 +255,7 @@ func cmdTest(args []string) int {
 		buildArgs = append(buildArgs, a)
 		// Build flags with a value.
 		switch name {
-		case "o", "O", "tags", "dialect", "gc", "target", "emit", "pgo":
+		case "o", "O", "tags", "dialect", "gc", "target", "emit", "pgo", "color":
 			if !hasVal && i+1 < len(args) {
 				i++
 				buildArgs = append(buildArgs, args[i])
@@ -278,9 +283,11 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 	release := fs.Bool("release", os.Getenv("MARMOT_RELEASE") == "1", "release build")
 	dialect := fs.String("dialect", os.Getenv("MARMOT_DIALECT"), "dialect")
 	out := fs.String("o", "", "write the test binary here and do not run it")
+	of := addOutputFlags(fs)
 	if err := fs.Parse(buildArgs); err != nil {
 		return 2
 	}
+	rep := of.reporter("test")
 	optSet := *opt != "" // an explicit -O level selects LLVM over tier0
 	if *opt == "" {
 		*opt = "2"
@@ -321,8 +328,10 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 	start := time.Now()
 	exe, dir, err := driver.BuildTest(cfg)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		fmt.Printf("FAIL\t%s [build failed]\n", pkg)
+		rep.Fail(err)
+		if rep.Mode != diag.ModeJSON {
+			fmt.Printf("FAIL\t%s [build failed]\n", pkg)
+		}
 		return 1
 	}
 	if *out != "" {

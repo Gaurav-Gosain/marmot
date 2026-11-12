@@ -1,0 +1,9 @@
+./main.go:5:1: error: expected operand, found '}' [M0001]
+  |
+4 |     x := 1 +
+  |            - the expression is not finished
+5 | }
+  | ^ an operand was expected here
+
+1 error
+for more about an error: marmot explain M0001

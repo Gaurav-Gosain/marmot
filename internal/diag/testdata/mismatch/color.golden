@@ -1,0 +1,16 @@
+[1m./main.go:8:13: [0m[1;31merror:[0m [1minvalid operation: n + f (mismatched types int and float64)[0m [2m[M0007][0m
+  [1;34m|[0m
+[1;34m8 |[0m     total := n + f
+  [1;34m|[0m              [1;34m-[0m [1;31m^[0m [1;34m-[0m [1;34mfloat64[0m
+  [1;34m|[0m              [1;34m|[0m
+  [1;34m|[0m              [1;34mint[0m
+  [1;34m=[0m [1;32mhelp:[0m convert one operand, for example float64(n) + f
+
+[1m./main.go:9:20: [0m[1;31merror:[0m [1mcannot use n (variable of type int) as string value in variable declaration[0m [2m[M0006][0m
+  [1;34m|[0m
+[1;34m9 |[0m     [35mvar[0m name string = n
+  [1;34m|[0m                       [1;31m^[0m [1;31mthis is int, want string[0m
+  [1;34m=[0m [1;32mhelp:[0m to format a number as text, use strconv.Itoa(n); string(n) gives the character with that code point
+
+[1;31m2 errors[0m
+[2mfor more about an error: marmot explain M0006[0m

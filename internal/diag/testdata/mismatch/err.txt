@@ -1,0 +1,2 @@
+main.go:8:11: invalid operation: n + f (mismatched types int and float64)
+main.go:9:20: cannot use n (variable of type int) as string value in variable declaration
