@@ -211,10 +211,11 @@ func mark(dst []bool, e lay, off int64) {
 type resolver struct {
 	named map[string]*types.TypeName // "pkgpath.Name"
 	paths []string                   // package paths, longest first
+	local map[string][]*types.TypeName // pkg.Name of types declared inside functions
 }
 
 func newResolver(pkgs []*packages.Package) *resolver {
-	r := &resolver{named: map[string]*types.TypeName{}}
+	r := &resolver{named: map[string]*types.TypeName{}, local: map[string][]*types.TypeName{}}
 	seen := map[string]bool{}
 	var add func(p *packages.Package)
 	add = func(p *packages.Package) {
@@ -229,6 +230,20 @@ func newResolver(pkgs []*packages.Package) *resolver {
 				r.named[p.PkgPath+"."+n] = tn
 			}
 		}
+		var walk func(sc *types.Scope, top bool)
+		walk = func(sc *types.Scope, top bool) {
+			if !top {
+				for _, n := range sc.Names() {
+					if tn, ok := sc.Lookup(n).(*types.TypeName); ok {
+						r.local[p.PkgPath+"."+n] = append(r.local[p.PkgPath+"."+n], tn)
+					}
+				}
+			}
+			for i := 0; i < sc.NumChildren(); i++ {
+				walk(sc.Child(i), false)
+			}
+		}
+		walk(sc, true)
 		for _, imp := range p.Imports {
 			add(imp)
 		}
@@ -246,6 +261,8 @@ func (r *resolver) parse(s string) (types.Type, error) {
 	// x/tools/go/ssa's synthetic defer stack type: marmot passes the frame pointer for it
 	// (defer.go: frame = f.value(v.DeferStack)), one pointer word, never a Go object
 	s = strings.ReplaceAll(s, "$ssa.deferStack", "unsafe.Pointer")
+	// a type declared inside a function is named Name·N.M, the middle dot escaped in MLIR
+	s = strings.ReplaceAll(s, `\C2\B7`, "·")
 	ph := map[string]string{}
 	var b strings.Builder
 	for i := 0; i < len(s); {
@@ -257,6 +274,12 @@ func (r *resolver) parse(s string) (types.Type, error) {
 					k := j
 					for k < len(s) && isIdentByte(s[k]) {
 						k++
+					}
+					if strings.HasPrefix(s[k:], "·") {
+						k += len("·")
+						for k < len(s) && (s[k] == '.' || s[k] >= '0' && s[k] <= '9') {
+							k++
+						}
 					}
 					key := s[i:k]
 					id := fmt.Sprintf("Q%d_", len(ph))
@@ -289,6 +312,15 @@ func (r *resolver) conv(e ast.Expr, ph map[string]string) (types.Type, error) {
 	case *ast.Ident:
 		if q, ok := ph[x.Name]; ok {
 			tn := r.named[q]
+			if base, _, ok := strings.Cut(q, "·"); ok {
+				switch ls := r.local[base]; len(ls) {
+				case 1:
+					tn = ls[0]
+				case 0:
+				default:
+					return nil, fmt.Errorf("local type %s: %d declarations of that name", q, len(ls))
+				}
+			}
 			if tn == nil {
 				return nil, fmt.Errorf("unknown type %s", q)
 			}
