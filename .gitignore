@@ -34,3 +34,4 @@ build/
 /tests/results.json
 /tests/RESULTS.md
 /tests/watch/
+/bench/BUILD*.md
