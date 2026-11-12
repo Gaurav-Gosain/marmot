@@ -221,3 +221,18 @@ func TestShortenMessage(t *testing.T) {
 		t.Errorf("not shortened: %q", d.Message)
 	}
 }
+
+func TestFormatFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.go")
+	src := "package main\n\nimport (\n\t\"fmt\"\n\t\"os\"\n)\n\nfunc main() {\n\tstrings := []string{\"a\"}\n\tfmt.Println(filepath.Join(\"a\",\"b\"), strings)\n}\n"
+	os.WriteFile(path, []byte(src), 0o644)
+	got, err := NewSources().FormatFile(path, []byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "package main\n\nimport (\n\t\"fmt\"\n\t\"path/filepath\"\n)\n\nfunc main() {\n\tstrings := []string{\"a\"}\n\tfmt.Println(filepath.Join(\"a\", \"b\"), strings)\n}\n"
+	if string(got) != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+}
