@@ -32,7 +32,7 @@ type report struct {
 
 var (
 	flResults = flag.String("results", "tests/results.json", "conform results (darwin/arm64)")
-	flLinux   = flag.String("linux", "", "conform results from linux/amd64 (scripts/linux/at.sh output)")
+	flLinux   = flag.String("linux", "", "conform results from a linux/amd64 run")
 	flOut     = flag.String("out", "docs/support.md", "output file")
 	flStock   = flag.String("stock", "", "optional notes file with a table of stock package test results (package, result, pass, fail, rate)")
 	flGates   = flag.String("gates", "", "optional notes file with a table of opt-in transforms (Transform, Switch, status)")
@@ -317,7 +317,7 @@ func main() {
 			}
 		}
 		if len(rows) > 0 {
-			w("Results of `marmot test -short` on stock packages (%s). \"alloc counts only\" means every failure is a `testing.AllocsPerRun` count.\n\n", strings.ReplaceAll(strings.TrimSpace(strings.TrimPrefix(date, "`marmot test -short` of the GOROOT package,")), "laptop", ""))
+			w("Results of `marmot test -short` on stock packages (%s). \"alloc counts only\" means every failure is a `testing.AllocsPerRun` count.\n\n", regexp.MustCompile(`\d{4}-\d{2}-\d{2}`).FindString(date))
 			w("| package | result | pass | fail | rate |\n| --- | --- | --- | --- | --- |\n%s\n\n", strings.Join(rows, "\n"))
 		}
 	} else {

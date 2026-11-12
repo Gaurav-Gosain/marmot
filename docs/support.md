@@ -103,7 +103,7 @@ Each row is a directory under `tests/run/std`. Packages not listed have no test 
 
 ### Stock standard library tests under `marmot test`
 
-Results of `marmot test -short` on stock packages (darwin/arm64 , 2026-11-12, before the fixes). "alloc counts only" means every failure is a `testing.AllocsPerRun` count.
+Results of `marmot test -short` on stock packages (2026-11-12). "alloc counts only" means every failure is a `testing.AllocsPerRun` count.
 
 | package | result | pass | fail | rate |
 | --- | --- | --- | --- | --- |
