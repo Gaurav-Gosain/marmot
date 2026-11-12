@@ -56,8 +56,9 @@ func rt_hex_encode(dst *byte, src unsafe.Pointer, n int)
 func rt_hex_decode(dst *byte, src unsafe.Pointer, n int) int
 
 func Encode(dst, src []byte) int {
-	if len(src) > 0 && len(dst) >= 2*len(src) {
-		// marmot: SIMD encoder of the C core.
+	if len(src) > 0 && len(dst) >= 2*len(src) && !overlaps(dst[:2*len(src)], src) {
+		// marmot: SIMD encoder of the C core, for buffers that do not
+		// overlap (the Go loop reads src after writing earlier dst bytes).
 		rt_hex_encode(unsafe.SliceData(dst), unsafe.Pointer(unsafe.SliceData(src)), len(src))
 		return len(src) * 2
 	}

@@ -180,8 +180,10 @@ func (enc *Encoding) Encode(dst, src []byte) {
 	_ = enc.encode
 
 	// marmot: whole 3-byte groups of the standard and URL alphabets go
-	// through the C core's SIMD encoder; the tail is encoded below.
-	if enc.simd != 0 && len(src) >= 3 && len(dst) >= len(src)/3*4 {
+	// through the C core's SIMD encoder when dst and src do not overlap
+	// (the Go loop reads src after writing earlier dst bytes); the tail is
+	// encoded below.
+	if enc.simd != 0 && len(src) >= 3 && len(dst) >= len(src)/3*4 && !overlaps(dst[:len(src)/3*4], src) {
 		k := rt_base64_encode(unsafe.SliceData(dst), unsafe.Pointer(unsafe.SliceData(src)), len(src), int32(enc.simd-1))
 		src = src[k:]
 		dst = dst[k/3*4:]
@@ -561,7 +563,7 @@ func (enc *Encoding) Decode(dst, src []byte) (n int, err error) {
 	// alphabets go through the C core's SIMD decoder, which stops at the
 	// first padding, newline or invalid character; the rest (and every
 	// error) is handled below.
-	if enc.simd != 0 && len(src) >= 4 && len(dst) >= len(src)/4*3 {
+	if enc.simd != 0 && len(src) >= 4 && len(dst) >= len(src)/4*3 && !overlaps(dst[:len(src)/4*3], src) {
 		used := rt_base64_decode(unsafe.SliceData(dst), unsafe.Pointer(unsafe.SliceData(src)), len(src)/4*4, int32(enc.simd-1))
 		si = used
 		n = used / 4 * 3
@@ -702,4 +704,13 @@ func decodedLen(n int, padChar rune) int {
 	}
 	// Padded base64 should always be a multiple of 4 characters in length.
 	return n / 4 * 3
+}
+
+// overlaps reports whether a and b share memory.
+func overlaps(a, b []byte) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	pa, pb := uintptr(unsafe.Pointer(unsafe.SliceData(a))), uintptr(unsafe.Pointer(unsafe.SliceData(b)))
+	return pa < pb+uintptr(len(b)) && pb < pa+uintptr(len(a))
 }
