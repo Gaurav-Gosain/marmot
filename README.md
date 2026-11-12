@@ -29,8 +29,7 @@ Details and method in [docs/benchmarks.md](docs/benchmarks.md).
 | rebuild, nothing changed | 0.13 s | 0.12 s |
 | rebuild after a one line edit | 0.9 to 1.7 s | 0.3 to 0.7 s |
 
-Build times use the fast code generator (`MARMOT_TIER0=1`), which will become the default for
-dev builds.
+Dev builds use the fast code generator by default (`MARMOT_TIER0=0` turns it off).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/overview-dark.svg">

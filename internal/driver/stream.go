@@ -29,7 +29,7 @@ type backendStream struct {
 
 // canStream reports whether the backend can start jobs as they arrive.
 func (b *build) canStream() bool {
-	return b.haveBackend() && os.Getenv("MARMOT_TIER0") == "1" && !b.wpo() && b.cfg.Dialect != "go" &&
+	return b.haveBackend() && b.tier0() && b.cfg.Dialect != "go" &&
 		(b.cfg.Emit == "exe" || b.cfg.Emit == "obj") && os.Getenv("MARMOT_NO_STREAM") == ""
 }
 

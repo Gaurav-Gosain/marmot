@@ -86,9 +86,9 @@ uses.
 | One line edit, leaf package | 1.1 s | 0.9 s | 0.3 s |
 | One line edit, deep package | 2.8 s | 1.7 s | 0.7 s |
 
-The fast code generator (`MARMOT_TIER0=1`) writes machine code directly, without LLVM. It is
-used for dev builds only, and it is not on by default yet. Its code is not optimized; for fast
-binaries use the default build or `-release`.
+The fast code generator writes machine code directly, without LLVM. It is the default for dev
+builds (`MARMOT_TIER0=0` turns it off) and is never used with `-release`. Its code is not
+optimized; for fast binaries use `-release`.
 
 The next version, now in testing, generates MLIR on all cores and overlaps code generation with
 it. With it the first build takes 2.9 to 3.0 s against 3.9 to 4.4 s for go. Rebuilds after an

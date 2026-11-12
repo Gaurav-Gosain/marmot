@@ -69,4 +69,4 @@ change the cap.
 | `GOGC` | Garbage collection target percentage, as in Go. |
 | `MARMOT_CACHE_MAX_MB` | Size cap of the build cache in megabytes. |
 | `MARMOT_RELEASE=1` | Make `-release` the default. |
-| `MARMOT_TIER0=1` | Dev builds use the fast code generator (no LLVM). Faster builds, slower code. |
+| `MARMOT_TIER0=0` | Dev builds use LLVM instead of the fast code generator (the default). Slower builds, faster code. |

@@ -61,8 +61,11 @@ func (b *build) pclnFrags() bool {
 	return runtime.GOOS == "darwin" || b.tier0()
 }
 
-// tier0 reports whether the backend compiles with tier0 (-tier0).
-func (b *build) tier0() bool { return !b.wpo() && os.Getenv("MARMOT_TIER0") == "1" }
+// tier0 reports whether the backend compiles with tier0 (-tier0): dev builds
+// by default, never -release; MARMOT_TIER0=0 turns it off.
+func (b *build) tier0() bool {
+	return !b.wpo() && !b.cfg.Release && os.Getenv("MARMOT_TIER0") != "0"
+}
 
 // backendBuildArgs are the backend options that follow from the build mode.
 func (b *build) backendBuildArgs(emit string) []string {
@@ -80,8 +83,8 @@ func (b *build) backendBuildArgs(emit string) []string {
 			a = append(a, "-split-large="+split)
 		}
 	}
-	// MARMOT_TIER0=1: dev builds through the tier0 code generator (LLVM -O0
-	// for the functions it leaves). Off by default until it passes the gate.
+	// Dev builds go through the tier0 code generator (LLVM -O0 for the
+	// functions it leaves).
 	if b.tier0() && (emit == "exe" || emit == "obj") {
 		a = append(a, "-tier0")
 	}
