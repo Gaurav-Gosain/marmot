@@ -14,6 +14,12 @@ marmot follows the `go` command where it can. Run it inside a Go module.
 | `marmot watch [build\|run\|test]` | Build, run or test again after every change to a `.go` file, `go.mod` or `go.sum`. |
 | `marmot repl` | Evaluate Go declarations, statements and expressions interactively. |
 | `marmot mcp` | Serve build, run, test, fix and explain to coding agents over the Model Context Protocol. |
+| `marmot fmt [packages]` | Format Go source and fix its imports, as goimports does. `-l` lists, `-d` shows a diff, `-check` fails when a file is not formatted. |
+| `marmot generate [packages]` | Run `//go:generate` directives, restoring cached outputs when nothing they depend on changed. |
+| `marmot size BINARY` | Size by section, package and function; `-why FUNC` shows a chain of calls from `main` to a function. |
+| `marmot bench [package]` | Run benchmarks several times; `-vs go` compares with `go test`, `-compare FILE` with a saved run. |
+| `marmot prof PROFILE` | Read a pprof profile: top functions, call tree (`-tree`), annotated source (`-list`). |
+| `marmot doctor` | Check the installation and the environment and say what to fix. |
 | `marmot completion SHELL` | Print shell completion for bash, zsh, fish or powershell. |
 | `marmot cache` | Show the build cache size. `cache trim` and `cache clean` shrink or remove it. |
 | `marmot version` | Print the version. |
@@ -78,6 +84,40 @@ change the cap.
 | `MARMOT_OUTPUT` | Diagnostic output: `json`, `human` or `plain`. See below. |
 | `NO_COLOR` | Turn off color in human output. |
 | `MARMOT_TIER0=0` | Dev builds use LLVM instead of the fast code generator (the default). Slower builds, faster code. |
+
+## Tests, benchmarks and profiles
+
+On a terminal `marmot test` shows each failure first, at the line of its `t.Error` or `t.Fatal`
+with the source, then every test and subtest with its status and time, then a summary. Off a
+terminal the output is the same as `go test`. `marmot test -watch` runs the tests again after
+every change.
+
+`marmot bench -vs go ./pkg` builds the package's benchmarks with marmot and with `go test`,
+runs them alternately (`-count`, default 6), and prints the median and spread of each, the
+change and whether it is significant (Mann-Whitney U, as benchstat does). Benchmarks are built
+at `-O 2` unless you give a level or `-release`. A benchmark under 1 ns per iteration gets a
+note: the optimizer probably removed work whose result was unused. `-cpuprofile FILE` profiles
+the last run; read it with `marmot prof FILE`.
+
+`marmot prof` reads any pprof CPU or memory profile: the functions with the most cost (flat
+and cumulative), the hottest path, `-tree` for the call tree as a text flame graph, `-list
+REGEXP` for the source of matching functions with the cost of each line, `-sample
+alloc_space` and friends for memory profiles, `-json` for programs.
+
+## Binary size
+
+`marmot size app` lists the sections of the executable, the code of each package and the
+largest functions (names come from marmot's line table, or from the symbol table for other
+binaries). `-pkg fmt` lists one package's functions; `-why fmt.Sprintf` prints a chain of direct
+calls from `main` to the function, which says why it is linked in.
+
+## Cached code generation
+
+`marmot generate ./...` runs `//go:generate` directives like `go generate`, and remembers what
+each one wrote, keyed by the directive, its environment, the generator binary and the
+package's other files. When none of those changed, the outputs are restored instead of running
+the generator. `-n` lists directives and whether they are cached; `-force` runs everything.
+`marmot watch -generate` runs it before every build.
 
 ## Watch mode
 
