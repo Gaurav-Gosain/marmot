@@ -161,7 +161,13 @@ func (p *Program) checkRegionFn(fn *ssa.Function) bool {
 	for v := range may {
 		for _, r := range *v.Referrers() {
 			switch x := r.(type) {
-			case *ssa.DebugRef, *ssa.BinOp, *ssa.Return, *ssa.FieldAddr:
+			case *ssa.DebugRef, *ssa.Return, *ssa.FieldAddr:
+			case *ssa.BinOp:
+				// String + may return an operand itself (verify counterexample 8).
+				// Its result is not followed here: reject.
+				if x.Op == token.ADD && isString(x.Type()) {
+					return false
+				}
 			case *ssa.IndexAddr:
 				if !ptrArray(x) {
 					return false
@@ -263,6 +269,10 @@ func confinedTo(p *Program, c *ssa.Call, b *ssa.BasicBlock, start int) (ssa.Inst
 			}
 			switch x := r.(type) {
 			case *ssa.BinOp:
+				// String + may return an operand itself (verify counterexample 8).
+				if x.Op == token.ADD && isString(x.Type()) {
+					work = append(work, x)
+				}
 			case *ssa.FieldAddr:
 				work = append(work, x)
 			case *ssa.IndexAddr:

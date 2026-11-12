@@ -41,7 +41,12 @@ func (p *Program) deepEscapes(v ssa.Value, seen map[ssa.Value]bool) bool {
 	}
 	for _, r := range *refs {
 		switch x := r.(type) {
-		case *ssa.DebugRef, *ssa.BinOp:
+		case *ssa.DebugRef:
+		case *ssa.BinOp:
+			// String + may return an operand itself (verify counterexample 8).
+			if x.Op == token.ADD && isString(x.Type()) && p.deepEscapes(x, seen) {
+				return true
+			}
 		case *ssa.UnOp:
 			if x.Op != token.MUL {
 				return true
@@ -291,7 +296,12 @@ func leaksRegionValue(p *Program, v ssa.Value, seen map[ssa.Value]bool) bool {
 	seen[v] = true
 	for _, r := range *v.Referrers() {
 		switch x := r.(type) {
-		case *ssa.DebugRef, *ssa.BinOp, *ssa.Store, *ssa.FieldAddr, *ssa.IndexAddr:
+		case *ssa.DebugRef, *ssa.Store, *ssa.FieldAddr, *ssa.IndexAddr:
+		case *ssa.BinOp:
+			// String + may return an operand itself (verify counterexample 8).
+			if x.Op == token.ADD && isString(x.Type()) && leaksRegionValue(p, x, seen) {
+				return true
+			}
 		case *ssa.UnOp:
 			if x.Op != token.MUL {
 				return true

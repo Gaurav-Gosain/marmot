@@ -185,7 +185,13 @@ func (p *Program) escapesF(v ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool
 				return true
 			}
 		case *ssa.BinOp:
-			// Comparisons do not leak.
+			// Comparisons do not leak. A string concatenation may return one
+			// of its operands itself (the runtime returns the only non-empty
+			// operand uncopied, as gc's does), so an operand escapes when the
+			// result does (verify counterexample 8, stackconcat.go).
+			if x.Op == token.ADD && isString(x.Type()) && p.escapesF(x, seen, noPhi, ret) {
+				return true
+			}
 		case *ssa.Call:
 			if p.callLeaksF(&x.Call, v, x, seen, noPhi, ret) {
 				return true
