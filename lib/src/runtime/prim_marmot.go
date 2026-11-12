@@ -150,16 +150,26 @@ func getg() *g {
 	if gp == nil {
 		gp = (*g)(mallocConservative(unsafe.Sizeof(g{})))
 		*slot = unsafe.Pointer(gp)
-	} else {
-		sc, so := gp.sudogcache, gp.selorder
-		*gp = g{}
-		gp.sudogcache, gp.selorder = sc, so
 	}
+	initg(gp, cur)
+	return gp
+}
+
+// initg makes gp the state of the goroutine with handle cur: everything
+// cleared except the sudog cache and the select buffer, which are reused.
+// The C core reuses goroutine structures together with their slot, so
+// gostart calls it for every new goroutine even when the handle matches.
+func initg(gp *g, cur unsafe.Pointer) {
+	sc, so := gp.sudogcache, gp.selorder
+	*gp = g{}
+	gp.sudogcache, gp.selorder = sc, so
 	gp.handle = cur
 	gp.goid = rt_goid()
 	gp.rand = uint64(rt_nanotime()) ^ uint64(uintptr(unsafe.Pointer(gp)))
-	return gp
 }
+
+// resetGoroutineState is called when a goroutine starts.
+func resetGoroutineState(gp *g) { initg(gp, gp.handle) }
 
 // Park primitives. The C core calls the unlock callback by code address;
 // the addresses are computed once, at init or on first use (taking the

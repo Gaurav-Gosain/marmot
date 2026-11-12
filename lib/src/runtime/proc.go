@@ -71,16 +71,6 @@ func gostart(arg unsafe.Pointer) {
 	fn()
 }
 
-// resetGoroutineState clears per goroutine fields when a goroutine starts:
-// the C core may reuse a goroutine structure, and with it the g in its
-// slot, for a new goroutine.
-func resetGoroutineState(gp *g) {
-	gp.bubble = nil
-	gp.bubbleStart = nil
-	gp.parkDurable = false
-	gp.labels = nil
-}
-
 // Gosched yields the processor, allowing other goroutines to run.
 func Gosched() {
 	rt_gosched()
