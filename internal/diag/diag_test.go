@@ -3,6 +3,7 @@ package diag
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -122,5 +123,50 @@ func TestFromTextInternal(t *testing.T) {
 	ds := FromText("marmot-backend failed: signal: abort trap\nLLVM ERROR: bad\nin function main.f\n", "/x")
 	if len(ds) != 1 || ds[0].Code != CodeInternal || len(ds[0].Notes) != 2 {
 		t.Fatalf("got %+v", ds)
+	}
+}
+
+func TestParseTestOutput(t *testing.T) {
+	out := `=== RUN   TestAdd
+    a_test.go:7: Add(2, 2) = 0, want 4
+--- FAIL: TestAdd (0.01s)
+=== RUN   TestOK
+--- PASS: TestOK (0.00s)
+=== RUN   TestSub
+=== RUN   TestSub/zero
+    a_test.go:16: bad
+        got: -1
+        want: 1
+--- FAIL: TestSub (0.00s)
+    --- FAIL: TestSub/zero (0.00s)
+=== RUN   TestBoom
+panic: boom [recovered]
+	panic: boom
+
+goroutine 5 [running]:
+tt.TestBoom(...)
+	/src/tt/a_test.go:30 +0x1c
+FAIL
+`
+	ts := ParseTestOutput(strings.NewReader(out), "tt", "/src/tt", nil)
+	got := map[string]TestResult{}
+	for _, r := range ts {
+		got[r.Name] = r
+	}
+	if r := got["TestAdd"]; r.Status != "fail" || r.Line != 7 || r.File != "/src/tt/a_test.go" || r.DurationMs != 10 {
+		t.Errorf("TestAdd: %+v", r)
+	}
+	if r := got["TestOK"]; r.Status != "pass" {
+		t.Errorf("TestOK: %+v", r)
+	}
+	if r := got["TestSub/zero"]; r.Message != "bad\ngot: -1\nwant: 1" {
+		t.Errorf("TestSub/zero message %q", r.Message)
+	}
+	if r := got["TestBoom"]; r.Status != "fail" || r.Message != "boom [recovered]" || r.Line != 30 {
+		t.Errorf("TestBoom: %+v", r)
+	}
+	ds := TestDiagnostics(ts)
+	if len(ds) != 3 {
+		t.Errorf("%d diagnostics, want 3 (TestSub folds into its subtest)", len(ds))
 	}
 }

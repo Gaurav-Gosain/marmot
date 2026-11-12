@@ -87,6 +87,12 @@ func (s *Sources) enrich(d *Diagnostic, opt Options) {
 		}
 		d.Notes = keep
 		d.Message = strings.TrimSuffix(d.Message, "; to add it:")
+	case CodeTestFail:
+		if t, ok := f.line(d.Span.Line); ok {
+			ind := len(t) - len(strings.TrimLeft(t, " \t"))
+			d.Span.Col, d.Span.EndLine, d.Span.EndCol = ind+1, d.Span.Line, len(strings.TrimRight(t, " \t"))+1
+			d.Primary = "failed here"
+		}
 	case CodeSyntax:
 		syntaxHint(d, f)
 	case CodeMissingReturn:

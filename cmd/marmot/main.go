@@ -348,6 +348,9 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 	if cmd.Dir == "" {
 		cmd.Dir = wd
 	}
+	if rep.Mode == diag.ModeJSON {
+		return runTestJSON(rep, cmd, pkg, start)
+	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	err = cmd.Run()
 	elapsed := time.Since(start).Seconds()

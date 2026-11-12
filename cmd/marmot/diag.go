@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -202,4 +204,55 @@ func cmdFix(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// runTestJSON runs a test binary in JSON mode: -test.v output is parsed
+// into one {"kind":"test"} line per test, failures become diagnostics with
+// source context, and a result line ends the run.
+func runTestJSON(rep *diag.Reporter, cmd *exec.Cmd, pkg string, start time.Time) int {
+	verbose := false
+	for _, a := range cmd.Args[1:] {
+		if a == "-test.v" || strings.HasPrefix(a, "-test.v=") {
+			verbose = true
+		}
+	}
+	if !verbose {
+		cmd.Args = append(cmd.Args, "-test.v")
+	}
+	// The parser reads the plain panic text of the test binary.
+	cmd.Env = append(os.Environ(), "MARMOT_OUTPUT=plain")
+	pr, pw := io.Pipe()
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, pw, pw
+	if err := cmd.Start(); err != nil {
+		return rep.Fail(err)
+	}
+	done := make(chan []diag.TestResult)
+	go func() { done <- diag.ParseTestOutput(pr, pkg, cmd.Dir, nil) }()
+	err := cmd.Wait()
+	pw.Close()
+	results := <-done
+	enc := json.NewEncoder(rep.W)
+	enc.SetEscapeHTML(false)
+	failed := 0
+	for _, t := range results {
+		enc.Encode(t)
+		if t.Status == "fail" {
+			failed++
+		}
+	}
+	ds := diag.TestDiagnostics(results)
+	src := diag.NewSources()
+	src.Enrich(ds, diag.Options{Context: true})
+	diag.WriteJSON(rep.W, ds)
+	code := 0
+	if err != nil {
+		code = 1
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() > 0 {
+			code = ee.ExitCode()
+		}
+	}
+	diag.WriteResult(rep.W, diag.Result{Command: "test", OK: code == 0, Errors: len(ds), Output: pkg,
+		DurationMs: time.Since(start).Milliseconds(), ExitCode: code})
+	return code
 }
