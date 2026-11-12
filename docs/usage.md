@@ -11,6 +11,10 @@ marmot follows the `go` command where it can. Run it inside a Go module.
 | `marmot test [packages]` | Compile and run package tests, like `go test`. |
 | `marmot fix [packages]` | Apply the machine applicable fixes of build errors. `--code M0004,M0005` limits it to those codes; `--all` adds fixes that may be incorrect, such as typo corrections. |
 | `marmot explain CODE` | Describe an error code. With no code, list all of them. |
+| `marmot watch [build\|run\|test]` | Build, run or test again after every change to a `.go` file, `go.mod` or `go.sum`. |
+| `marmot repl` | Evaluate Go declarations, statements and expressions interactively. |
+| `marmot mcp` | Serve build, run, test, fix and explain to coding agents over the Model Context Protocol. |
+| `marmot completion SHELL` | Print shell completion for bash, zsh, fish or powershell. |
 | `marmot cache` | Show the build cache size. `cache trim` and `cache clean` shrink or remove it. |
 | `marmot version` | Print the version. |
 
@@ -74,6 +78,33 @@ change the cap.
 | `MARMOT_OUTPUT` | Diagnostic output: `json`, `human` or `plain`. See below. |
 | `NO_COLOR` | Turn off color in human output. |
 | `MARMOT_TIER0=0` | Dev builds use LLVM instead of the fast code generator (the default). Slower builds, faster code. |
+
+## Watch mode
+
+`marmot watch` builds the current package now and again after every change. `marmot watch run
+./cmd/server -port 8080` stops the program and starts the new build after each change;
+`marmot watch test ./...` runs the tests again. The screen is cleared before each round on a
+terminal (`-clear=false` keeps the scrollback); `-interval` sets how often files are checked.
+Rebuilds go through the build cache, so only what changed is compiled again.
+
+## The REPL
+
+`marmot repl` reads Go one entry at a time. An expression prints its value, a statement runs, a
+`func` or `type` declaration is kept for later entries. Packages of the standard library are
+imported when you use them (`strings.ToUpper("a")` just works); `import "example.com/x"` adds
+others. Tab or the right arrow accepts the completion shown in grey; history is kept in
+`~/.marmot_history`. Commands: `:type EXPR`, `:doc NAME`, `:time`, `:imports`, `:reset`,
+`:quit`.
+
+Each entry is compiled and run as a whole program with the entries before it, and only the new
+output is shown. Earlier statements run again each time, so their side effects repeat. An entry
+that does not compile or panics is not kept.
+
+## Coding agents
+
+`marmot mcp` is a Model Context Protocol server on stdin and stdout. Its tools `build`, `run`,
+`test`, `fix` and `explain` take a directory and return the JSON output described below. To
+register it with Claude Code: `claude mcp add marmot -- marmot mcp`.
 
 ## Error messages
 
