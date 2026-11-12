@@ -141,6 +141,10 @@ type Result struct {
 	// above -max-load after all retries; the report drops the timing of noisy rows.
 	LoadEnd float64 `json:"load_avg_1m_end"`
 	Noisy   bool    `json:"noisy,omitempty"`
+	// Instructions and Cycles are retired instructions and cycles of one run, a load independent
+	// cost measure. Only recorded on macOS, where /usr/bin/time -l reports them (optional tool).
+	Instructions int64 `json:"instructions,omitempty"`
+	Cycles       int64 `json:"cycles,omitempty"`
 	// Rev is the marmot commit (and snapshot) this row was measured with.
 	Rev string `json:"rev,omitempty"`
 }
@@ -416,6 +420,7 @@ func measure(p Program, t Toolchain) Result {
 		return r
 	}
 	r.RSS = medianInt(rss)
+	r.Instructions, r.Cycles = counters(out)
 	r.Status = "ok"
 	return r
 }
@@ -884,4 +889,31 @@ func pruned(p Program, t Toolchain) bool {
 		return cl.Programs[p.Name].Class != "A"
 	}
 	return false
+}
+
+var (
+	instrRe  = regexp.MustCompile(`(\d+)\s+instructions retired`)
+	cyclesRe = regexp.MustCompile(`(\d+)\s+cycles elapsed`)
+)
+
+// counters runs the binary once under /usr/bin/time -l on macOS and returns the retired
+// instructions and cycles. Counters do not depend on machine load, unlike wall time. It is
+// optional: on other systems, or if the tool is missing, it returns zeros.
+func counters(bin string) (instr, cycles int64) {
+	if runtime.GOOS != "darwin" {
+		return 0, 0
+	}
+	var se bytes.Buffer
+	c := exec.Command("/usr/bin/time", "-l", bin)
+	c.Stderr = &se
+	if _, err := runGroup(c, time.Duration(*timeoutSec)*time.Second); err != nil {
+		return 0, 0
+	}
+	if m := instrRe.FindSubmatch(se.Bytes()); m != nil {
+		instr, _ = strconv.ParseInt(string(m[1]), 10, 64)
+	}
+	if m := cyclesRe.FindSubmatch(se.Bytes()); m != nil {
+		cycles, _ = strconv.ParseInt(string(m[1]), 10, 64)
+	}
+	return
 }
