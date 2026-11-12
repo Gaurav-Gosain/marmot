@@ -185,7 +185,7 @@ func (b *build) saveModule(k, text string) string {
 	dir := filepath.Join(b.cfg.Root, "build", "cache", "mlir")
 	os.MkdirAll(dir, 0o755)
 	p := filepath.Join(dir, k+".mlir")
-	if os.WriteFile(p+".tmp", []byte(text), 0o644) == nil && os.Rename(p+".tmp", p) == nil {
+	if os.WriteFile(p+".tmp", []byte(aliasTypes(text)), 0o644) == nil && os.Rename(p+".tmp", p) == nil {
 		return p
 	}
 	return ""

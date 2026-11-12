@@ -365,7 +365,7 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 		ins[i] = m.Path
 		if m.Text != "" {
 			ins[i] = filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", i))
-			text := m.Text
+			text := aliasTypes(m.Text)
 			if b.cfg.Work {
 				text = "// " + m.Name + "\n" + text
 			}

@@ -66,6 +66,7 @@ func Load(cfg Config) (*Program, error) {
 	tags := append([]string{"marmot", "purego", "math_big_pure_go"}, cfg.Tags...)
 	env := append(os.Environ(),
 		"GOROOT="+goroot,
+		"GOCACHE="+GoCache(cfg.Root),
 		"CGO_ENABLED=0",
 		"GOOS="+cfg.GOOS,
 		"GOARCH="+cfg.GOARCH,
@@ -278,7 +279,7 @@ func InputFiles(cfg Config) ([]string, string, error) {
 		return nil, "", err
 	}
 	tags := append([]string{"marmot", "purego", "math_big_pure_go"}, cfg.Tags...)
-	env := append(os.Environ(), "GOROOT="+goroot, "CGO_ENABLED=0", "GOOS="+cfg.GOOS,
+	env := append(os.Environ(), "GOROOT="+goroot, "GOCACHE="+GoCache(cfg.Root), "CGO_ENABLED=0", "GOOS="+cfg.GOOS,
 		"GOARCH="+cfg.GOARCH, "GOFLAGS=-tags="+strings.Join(tags, ","), "GOTOOLCHAIN=local")
 	list := func(patterns ...string) (string, error) {
 		cmd := exec.Command("go", append([]string{"list", "-e", "-deps", "-f",
@@ -338,4 +339,16 @@ func isStd(path string) bool {
 		first = path[:i]
 	}
 	return !strings.Contains(first, ".") && path != "command-line-arguments"
+}
+
+// GoCache is the Go build cache for the go commands marmot runs: inside
+// marmot's own cache (build/cache, under its size cap and cleaned by marmot
+// cache trim and clean), not the user's Go cache, which grew by gigabytes
+// because every merged GOROOT path gets its own entries. MARMOT_GOCACHE
+// overrides it.
+func GoCache(root string) string {
+	if d := os.Getenv("MARMOT_GOCACHE"); d != "" {
+		return d
+	}
+	return filepath.Join(root, "build", "cache", "gocache")
 }
