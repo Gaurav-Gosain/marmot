@@ -165,6 +165,20 @@ struct Job {
   std::string in, out, key;
 };
 
+// One line of a jobs list: 1 for a job, 0 for a blank or comment line, -1
+// for a malformed line.
+int parseJobLine(StringRef line, Job &job) {
+  line = line.trim();
+  if (line.empty() || line.starts_with("#"))
+    return 0;
+  SmallVector<StringRef, 3> fields;
+  SplitString(line, fields);
+  if (fields.size() != 2 && fields.size() != 3)
+    return -1;
+  job = {fields[0].str(), fields[1].str(), fields.size() == 3 ? fields[2].str() : ""};
+  return 1;
+}
+
 bool readJobs(const std::string &path, std::vector<Job> &out, std::string &err) {
   auto buf = MemoryBuffer::getFileOrSTDIN(path);
   if (!buf) {
@@ -176,16 +190,14 @@ bool readJobs(const std::string &path, std::vector<Job> &out, std::string &err) 
   unsigned lineNo = 0;
   for (StringRef line : lines) {
     ++lineNo;
-    line = line.trim();
-    if (line.empty() || line.starts_with("#"))
-      continue;
-    SmallVector<StringRef, 3> fields;
-    SplitString(line, fields);
-    if (fields.size() != 2 && fields.size() != 3) {
+    Job job;
+    int r = parseJobLine(line, job);
+    if (r < 0) {
       err = path + ":" + std::to_string(lineNo) + ": want \"in out [key]\"";
       return false;
     }
-    out.push_back({fields[0].str(), fields[1].str(), fields.size() == 3 ? fields[2].str() : ""});
+    if (r > 0)
+      out.push_back(std::move(job));
   }
   return true;
 }
@@ -374,7 +386,8 @@ int main(int argc, char **argv) {
       return 1;
     }
     std::string err;
-    if (!readJobs(batchFile, work, err)) {
+    // -tier0 -batch=-: jobs are read from stdin as they come (below).
+    if (!(tier0 && batchFile == "-") && !readJobs(batchFile, work, err)) {
       errs() << "marmot-backend: " << err << "\n";
       return 1;
     }
@@ -413,6 +426,10 @@ int main(int argc, char **argv) {
 
   // Batch with more than one job (or -wpo or a cache): summaries cross
   // modules. Same objects as compiling each job alone, plus escape facts.
+  // -tier0 -batch=-: each job line of stdin starts as soon as it is read;
+  // EOF ends the batch.
+  const bool stream = tier0 && batchFile == "-";
+  size_t jobCount = work.size();
   if (wpo || (!batchFile.empty() && (work.size() > 1 || !cacheDir.empty() || tier0))) {
     if (emitKind == marmot::Emit::MLIR) {
       errs() << "marmot-backend: batch mode needs -emit=obj, asm, llvm or bc\n";
@@ -424,7 +441,33 @@ int main(int argc, char **argv) {
     marmot::CompileOptions o = opts;
     o.singleThreaded = true;
     marmot::WpoStats st;
-    ok = marmot::compileWholeProgram(wjobs, o, n, wpo, cacheDir, total, st, errs());
+    if (stream) {
+      n = std::max(1u, std::min(jobs ? unsigned(jobs) : std::thread::hardware_concurrency(), cap));
+      unsigned lineNo = 0;
+      bool bad = false;
+      auto next = [&](marmot::WpoJob &wj) {
+        std::string line;
+        while (std::getline(std::cin, line)) {
+          ++lineNo;
+          Job job;
+          int r = parseJobLine(line, job);
+          if (r < 0) {
+            errs() << "marmot-backend: stdin:" << lineNo << ": want \"in out [key]\"\n";
+            bad = true;
+            return false;
+          }
+          if (r > 0) {
+            wj = {job.in, job.out, job.key};
+            ++jobCount;
+            return true;
+          }
+        }
+        return false;
+      };
+      ok = marmot::compileTier0(next, o, n, cacheDir, total, st, errs()) && !bad;
+    } else {
+      ok = marmot::compileWholeProgram(wjobs, o, n, wpo, cacheDir, total, st, errs());
+    }
     if (opts.timePhases)
       errs() << format("batch: %u functions, %u live, %u internalized, %u imported, "
                        "%u no-escape params after %u escape rounds, %u calls devirtualized, "
@@ -434,7 +477,7 @@ int main(int argc, char **argv) {
                        st.functions, st.liveFunctions, st.internalized, st.imported,
                        st.noEscapeParams, st.escapeRounds, st.devirtualized.load(),
                        st.prunedTypes,
-                       st.cacheHits, st.cacheMisses, st.compiled.load(), wjobs.size(),
+                       st.cacheHits, st.cacheMisses, st.compiled.load(), jobCount,
                        st.splitModules, st.groups);
     if (opts.timePhases && opts.tier0) {
       errs() << format("tier0: %u functions, %u fallbacks, %u modules need LLVM\n",
@@ -454,9 +497,9 @@ int main(int argc, char **argv) {
   if (opts.timePhases) {
     double wall = std::chrono::duration<double, std::milli>(
                       std::chrono::steady_clock::now() - start).count();
-    total.print(errs(), work.size() > 1 ? "sum of jobs" : work[0].in);
+    total.print(errs(), jobCount != 1 || work.empty() ? "sum of jobs" : work[0].in);
     errs() << format("startup %.2f ms, wall %.2f ms, %zu job(s)\n", prepMs,
-                     wall, work.size());
+                     wall, jobCount);
   }
   return ok ? 0 : 1;
 }

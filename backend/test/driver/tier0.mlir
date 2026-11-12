@@ -19,6 +19,13 @@
 // RUN: %backend -tier0 -batch %t.jobs -time 2>&1 | %FileCheck %s --check-prefix=NOCACHE
 // RUN: %clang %t.a.o -o %t.exe4 && %t.exe4; test $? -eq 42
 // NOCACHE: tier0: {{[1-9]}} functions, 0 fallbacks
+// -batch=-: job lines on stdin, each started as it is read.
+// RUN: rm -f %t.a.o && cat %t.jobs | %backend -tier0 -batch=- -time 2>&1 | %FileCheck %s --check-prefix=STDIN
+// RUN: %clang %t.a.o -o %t.exe5 && %t.exe5; test $? -eq 42
+// RUN: printf 'bad line with four\n' | %not %backend -tier0 -batch=- 2>&1 | %FileCheck %s --check-prefix=BAD
+// STDIN: tier0: {{[1-9]}} functions, 0 fallbacks
+// STDIN: startup {{.*}}, 1 job(s)
+// BAD: stdin:1: want "in out [key]"
 // COLD: compiled 1 of 1 objects
 // COLD: tier0: {{[1-9]}} functions, 1 fallbacks, 1 modules need LLVM
 // WARM: compiled 0 of 1 objects

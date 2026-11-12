@@ -5,6 +5,7 @@
 #include "marmot/Driver/Pipeline.h"
 
 #include <atomic>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -43,6 +44,13 @@ struct WpoStats {
 bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &opts,
                          unsigned threads, bool wpo, const std::string &cacheDir,
                          PhaseTimes &total, WpoStats &stats, llvm::raw_ostream &errs);
+
+// -tier0 batch whose jobs arrive one by one: next fills in a job and returns
+// true, or returns false at the end. Each job starts as it arrives (dev mode
+// has no cross-module phase), with memory capped by MARMOT_MAX_MEM_MB.
+bool compileTier0(const std::function<bool(WpoJob &)> &next, const CompileOptions &opts,
+                  unsigned threads, const std::string &cacheDir, PhaseTimes &total,
+                  WpoStats &stats, llvm::raw_ostream &errs);
 
 } // namespace marmot
 

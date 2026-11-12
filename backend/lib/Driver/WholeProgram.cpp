@@ -49,6 +49,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
+#include <condition_variable>
 #include <cstdlib>
 #include <map>
 #include <mutex>
@@ -765,6 +767,242 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback) 
   return out;
 }
 
+// -tier0 (dev): each module on its own, in one pass, started as its job
+// arrives. tier0 compiles what it supports into OUT; LLVM -O0 compiles the
+// functions it leaves into OUT.1.o (both listed in OUT.parts). No escape
+// rounds, summaries, bitcode or splitting: at -O0 none of them changes the
+// code.
+bool compileTier0(const std::function<bool(WpoJob &)> &next, const CompileOptions &opts,
+                  unsigned threads, const std::string &cacheDir, PhaseTimes &total,
+                  WpoStats &stats, raw_ostream &errs) {
+  Cache cache(cacheDir);
+  struct EvictAtEnd {
+    Cache &c;
+    ~EvictAtEnd() { c.evict(); }
+  } evictAtEnd{cache};
+  bool cacheObjects = cache.enabled() && opts.emit == Emit::Obj;
+  const std::string fp = fingerprint(opts);
+  std::mutex mu;
+  bool ok = true;
+  // The pc table fragment of an object made by LLVM: OUT.pcln, cached with
+  // the object. A failure only costs the table lines of the object.
+  auto fragment = [&](const std::string &out, StringRef obj, const std::string &key) {
+    if (!opts.pclnFragments || opts.prepareOnly || opts.emit != Emit::Obj)
+      return;
+    std::optional<std::string> f = cacheObjects ? cache.get(key, "pcln") : std::nullopt;
+    if (!f) {
+      std::string text, err;
+      if (!pcln::makeFragment(MemoryBufferRef(obj, out), 3, text, err)) {
+        std::lock_guard<std::mutex> lock(mu);
+        errs << "marmot-backend: warning: " << out << ": no pc table fragment: " << err << "\n";
+        return;
+      }
+      if (cacheObjects)
+        cache.put(key, "pcln", text);
+      f = std::move(text);
+    }
+    if (!writeFile(out + ".pcln", *f)) {
+      std::lock_guard<std::mutex> lock(mu);
+      errs << "marmot-backend: warning: " << out << ".pcln: cannot write\n";
+    }
+  };
+  // Memory: a parsed and lowered module peaks at 8 to 14 times its text
+  // (measured), plus what the allocator keeps across threads, and largest
+  // first starts the biggest modules together (11 at once passed 3 GB on
+  // cmd/marmot). A job parses only when the text of the jobs in flight plus
+  // its own fits in a thirty-second of the memory limit; one job always
+  // runs.
+  uint64_t textBudget = 3072ull << 20;
+  if (const char *e = std::getenv("MARMOT_MAX_MEM_MB"))
+    textBudget = std::strtoull(e, nullptr, 10) << 20;
+  textBudget = textBudget ? textBudget / 32 : UINT64_MAX;
+  std::mutex admitMu;
+  std::condition_variable admitCv;
+  uint64_t inFlight = 0;
+  struct Admit {
+    std::mutex &mu;
+    std::condition_variable &cv;
+    uint64_t &inFlight;
+    uint64_t n;
+    Admit(std::mutex &mu, std::condition_variable &cv, uint64_t &inFlight, uint64_t n,
+          uint64_t budget)
+        : mu(mu), cv(cv), inFlight(inFlight), n(n) {
+      std::unique_lock<std::mutex> l(mu);
+      cv.wait(l, [&] { return inFlight == 0 || inFlight + n <= budget; });
+      inFlight += n;
+    }
+    ~Admit() {
+      {
+        std::lock_guard<std::mutex> l(mu);
+        inFlight -= n;
+      }
+      cv.notify_all();
+    }
+  };
+  auto compileJob = [&](const WpoJob &j, raw_ostream &es, PhaseTimes &t) {
+    auto t0 = std::chrono::steady_clock::now();
+    std::string inHash;
+    if (!j.key.empty()) {
+      inHash = hashHex("key|" + j.key);
+    } else {
+      auto buf = MemoryBuffer::getFile(j.in);
+      if (!buf) {
+        es << j.in << ": " << buf.getError().message() << "\n";
+        return;
+      }
+      inHash = hashHex((*buf)->getBuffer());
+    }
+    t.parse += msSince(t0);
+    const std::string key = hashHex(inHash + "|t0|" + fp);
+    const std::string restKey = hashHex(key + "|rest");
+    const std::string rest = j.out + ".1.o";
+    auto writeOut = [&](const std::string &path, StringRef obj) {
+      if (!opts.prepareOnly && !writeFile(path, obj))
+        es << path << ": cannot write\n";
+    };
+    auto writeParts = [&](bool two) {
+      if (opts.prepareOnly)
+        return;
+      if (!two) {
+        sys::fs::remove(j.out + ".parts");
+        return;
+      }
+      if (!writeFile(j.out + ".parts", j.out + "\n" + rest + "\n"))
+        es << j.out << ".parts: cannot write\n";
+    };
+    if (cacheObjects) {
+      auto obj = cache.get(key, "o");
+      auto parts = obj ? cache.get(key, "t0parts") : std::nullopt;
+      auto obj2 = parts && *parts == "2" ? cache.get(restKey, "o") : std::nullopt;
+      if (obj && parts && (*parts == "1" || obj2)) {
+        writeOut(j.out, *obj);
+        fragment(j.out, *obj, key);
+        if (obj2) {
+          writeOut(rest, *obj2);
+          fragment(rest, *obj2, restKey);
+        }
+        writeParts(bool(obj2));
+        return;
+      }
+    }
+    uint64_t textSize = 0;
+    sys::fs::file_size(j.in, textSize);
+    Admit admit(admitMu, admitCv, inFlight, textSize, textBudget);
+    ParsedModulePtr pm;
+    {
+      auto tp = std::chrono::steady_clock::now();
+      pm = parseFile(j.in, opts, es);
+      t.parse += msSince(tp);
+    }
+    if (!pm)
+      return;
+    std::string err;
+    auto tm = createTargetMachine(opts, err);
+    if (!tm) {
+      es << j.in << ": " << err << "\n";
+      return;
+    }
+    if (!lowerModule(*pm, j.in, opts, *tm, t, es))
+      return;
+    mlir::ModuleOp module = mlir::ModuleOp::getFromOpaquePointer(parsedModuleOp(*pm));
+    const std::string out0 = opts.prepareOnly ? j.out + ".prepare.tmp" : j.out;
+    std::string frag;
+    std::vector<std::string> fallback, reasons;
+    tier0::Stats st;
+    auto tc = std::chrono::steady_clock::now();
+    if (!tier0::emit(module, key.substr(0, 16), out0, frag, fallback, reasons, st, err)) {
+      es << j.in << ": tier0: " << err << "\n";
+      return;
+    }
+    t.codegen += msSince(tc);
+    // LLVM gets the module when tier0 left a function or anything that is
+    // not a function or global (constructors, aliases).
+    bool needRest = !fallback.empty();
+    for (mlir::Operation &op : module.getBody()->getOperations())
+      if (!isa<mlir::LLVM::LLVMFuncOp, mlir::LLVM::GlobalOp>(op))
+        needRest = true;
+    {
+      std::lock_guard<std::mutex> lock(mu);
+      stats.tier0Functions += st.functions;
+      stats.tier0Fallbacks += st.fallbacks;
+      stats.tier0Rest += needRest;
+      for (const std::string &r : reasons)
+        ++stats.tier0Reasons[r];
+    }
+    ++stats.compiled;
+    const std::string out1 = opts.prepareOnly ? rest + ".prepare.tmp" : rest;
+    if (needRest) {
+      // Functions tier0 compiled are declarations now; a declaration
+      // must not carry its subprogram (LLVM's verifier rejects it).
+      module.walk([](mlir::LLVM::LLVMFuncOp f) {
+        if (!f.isExternal())
+          return;
+        if (auto fl = dyn_cast<mlir::FusedLoc>(f.getLoc()))
+          if (fl.getMetadata() && isa<mlir::LLVM::DISubprogramAttr>(fl.getMetadata()))
+            f->setLoc(mlir::FusedLoc::get(fl.getLocations(), mlir::Attribute(), f->getContext()));
+      });
+      LLVMContext ctx;
+      auto lm = translateLowered(*pm, j.in, *tm, ctx, t, es);
+      if (!lm || !optimizeAndEmit(*lm, *tm, j.in, out1, opts, t, es))
+        return;
+    }
+    pm = nullptr;
+    auto o0 = MemoryBuffer::getFile(out0);
+    auto o1 = needRest ? MemoryBuffer::getFile(out1) : nullptr;
+    if (!o0 || (needRest && !o1)) {
+      es << j.out << ": cannot read the object back\n";
+      return;
+    }
+    if (!frag.empty() && !opts.prepareOnly && opts.pclnFragments) {
+      if (!writeFile(j.out + ".pcln", frag))
+        es << j.out << ".pcln: cannot write\n";
+      if (cacheObjects)
+        cache.put(key, "pcln", frag);
+    } else {
+      fragment(j.out, (*o0)->getBuffer(), key);
+    }
+    if (needRest)
+      fragment(rest, (*o1)->getBuffer(), restKey);
+    if (cacheObjects) {
+      cache.put(key, "o", (*o0)->getBuffer());
+      if (needRest)
+        cache.put(restKey, "o", (*o1)->getBuffer());
+      cache.put(key, "t0parts", needRest ? "2" : "1");
+    }
+    if (opts.prepareOnly) {
+      sys::fs::remove(out0);
+      if (needRest)
+        sys::fs::remove(out1);
+    }
+    writeParts(needRest);
+  };
+  DefaultThreadPool pool(hardware_concurrency(threads));
+  std::vector<std::pair<std::string, PhaseTimes>> perJob;
+  WpoJob job;
+  while (next(job))
+    pool.async([&, j = job] {
+      watchdogBegin(j.in);
+      std::string msgs;
+      raw_string_ostream es(msgs);
+      PhaseTimes t;
+      compileJob(j, es, t);
+      watchdogEnd(j.in);
+      std::lock_guard<std::mutex> lock(mu);
+      errs << msgs;
+      if (!msgs.empty())
+        ok = false;
+      total.add(t);
+      perJob.push_back({j.in, t});
+    });
+  pool.wait();
+  stats.cacheHits = cache.hits;
+  stats.cacheMisses = cache.misses;
+  if (opts.timePhases)
+    for (auto &[in, t] : perJob)
+      t.print(errs, sys::path::filename(in).str());
+  return ok;
+}
+
 bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &opts,
                          unsigned threads, bool wpo, const std::string &cacheDir,
                          PhaseTimes &total, WpoStats &stats, raw_ostream &errs) {
@@ -852,152 +1090,16 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     return mlir::ModuleOp::getFromOpaquePointer(parsedModuleOp(*mods[i].parsed));
   };
 
-  // -tier0 (dev): each module on its own, largest first, in one pass. tier0
-  // compiles what it supports into OUT; LLVM -O0 compiles the functions it
-  // leaves into OUT.1.o (both listed in OUT.parts). No escape rounds,
-  // summaries, bitcode or splitting: at -O0 none of them changes the code.
   if (opts.tier0 && !wpo) {
-    parallel([&](unsigned i, raw_ostream &es, PhaseTimes &t) {
-      const WpoJob &j = jobs[i];
-      auto t0 = std::chrono::steady_clock::now();
-      std::string inHash;
-      if (!j.key.empty()) {
-        inHash = hashHex("key|" + j.key);
-      } else {
-        auto buf = MemoryBuffer::getFile(j.in);
-        if (!buf) {
-          es << j.in << ": " << buf.getError().message() << "\n";
-          return;
-        }
-        inHash = hashHex((*buf)->getBuffer());
-      }
-      t.parse += msSince(t0);
-      const std::string key = hashHex(inHash + "|t0|" + fp);
-      const std::string restKey = hashHex(key + "|rest");
-      const std::string rest = j.out + ".1.o";
-      auto writeOut = [&](const std::string &path, StringRef obj) {
-        if (!opts.prepareOnly && !writeFile(path, obj))
-          es << path << ": cannot write\n";
-      };
-      auto writeParts = [&](bool two) {
-        if (opts.prepareOnly)
-          return;
-        if (!two) {
-          sys::fs::remove(j.out + ".parts");
-          return;
-        }
-        if (!writeFile(j.out + ".parts", j.out + "\n" + rest + "\n"))
-          es << j.out << ".parts: cannot write\n";
-      };
-      if (cacheObjects) {
-        auto obj = cache.get(key, "o");
-        auto parts = obj ? cache.get(key, "t0parts") : std::nullopt;
-        auto obj2 = parts && *parts == "2" ? cache.get(restKey, "o") : std::nullopt;
-        if (obj && parts && (*parts == "1" || obj2)) {
-          writeOut(j.out, *obj);
-          fragment(j.out, *obj, key);
-          if (obj2) {
-            writeOut(rest, *obj2);
-            fragment(rest, *obj2, restKey);
-          }
-          writeParts(bool(obj2));
-          return;
-        }
-      }
-      ParsedModulePtr pm;
-      {
-        auto tp = std::chrono::steady_clock::now();
-        pm = parseFile(j.in, opts, es);
-        t.parse += msSince(tp);
-      }
-      if (!pm)
-        return;
-      std::string err;
-      auto tm = createTargetMachine(opts, err);
-      if (!tm) {
-        es << j.in << ": " << err << "\n";
-        return;
-      }
-      if (!lowerModule(*pm, j.in, opts, *tm, t, es))
-        return;
-      mlir::ModuleOp module = mlir::ModuleOp::getFromOpaquePointer(parsedModuleOp(*pm));
-      const std::string out0 = opts.prepareOnly ? j.out + ".prepare.tmp" : j.out;
-      std::string frag;
-      std::vector<std::string> fallback, reasons;
-      tier0::Stats st;
-      auto tc = std::chrono::steady_clock::now();
-      if (!tier0::emit(module, key.substr(0, 16), out0, frag, fallback, reasons, st, err)) {
-        es << j.in << ": tier0: " << err << "\n";
-        return;
-      }
-      t.codegen += msSince(tc);
-      // LLVM gets the module when tier0 left a function or anything that is
-      // not a function or global (constructors, aliases).
-      bool needRest = !fallback.empty();
-      for (mlir::Operation &op : module.getBody()->getOperations())
-        if (!isa<mlir::LLVM::LLVMFuncOp, mlir::LLVM::GlobalOp>(op))
-          needRest = true;
-      {
-        std::lock_guard<std::mutex> lock(mu);
-        stats.tier0Functions += st.functions;
-        stats.tier0Fallbacks += st.fallbacks;
-        stats.tier0Rest += needRest;
-        for (const std::string &r : reasons)
-          ++stats.tier0Reasons[r];
-      }
-      ++stats.compiled;
-      const std::string out1 = opts.prepareOnly ? rest + ".prepare.tmp" : rest;
-      if (needRest) {
-        // Functions tier0 compiled are declarations now; a declaration
-        // must not carry its subprogram (LLVM's verifier rejects it).
-        module.walk([](mlir::LLVM::LLVMFuncOp f) {
-          if (!f.isExternal())
-            return;
-          if (auto fl = dyn_cast<mlir::FusedLoc>(f.getLoc()))
-            if (fl.getMetadata() && isa<mlir::LLVM::DISubprogramAttr>(fl.getMetadata()))
-              f->setLoc(mlir::FusedLoc::get(fl.getLocations(), mlir::Attribute(), f->getContext()));
-        });
-        LLVMContext ctx;
-        auto lm = translateLowered(*pm, j.in, *tm, ctx, t, es);
-        if (!lm || !optimizeAndEmit(*lm, *tm, j.in, out1, opts, t, es))
-          return;
-      }
-      pm = nullptr;
-      auto o0 = MemoryBuffer::getFile(out0);
-      auto o1 = needRest ? MemoryBuffer::getFile(out1) : nullptr;
-      if (!o0 || (needRest && !o1)) {
-        es << j.out << ": cannot read the object back\n";
-        return;
-      }
-      if (!frag.empty() && !opts.prepareOnly && opts.pclnFragments) {
-        if (!writeFile(j.out + ".pcln", frag))
-          es << j.out << ".pcln: cannot write\n";
-        if (cacheObjects)
-          cache.put(key, "pcln", frag);
-      } else {
-        fragment(j.out, (*o0)->getBuffer(), key);
-      }
-      if (needRest)
-        fragment(rest, (*o1)->getBuffer(), restKey);
-      if (cacheObjects) {
-        cache.put(key, "o", (*o0)->getBuffer());
-        if (needRest)
-          cache.put(restKey, "o", (*o1)->getBuffer());
-        cache.put(key, "t0parts", needRest ? "2" : "1");
-      }
-      if (opts.prepareOnly) {
-        sys::fs::remove(out0);
-        if (needRest)
-          sys::fs::remove(out1);
-      }
-      writeParts(needRest);
-    });
-    stats.cacheHits = cache.hits;
-    stats.cacheMisses = cache.misses;
-    if (opts.timePhases)
-      for (unsigned i : order)
-        perJob[i].print(errs, sys::path::filename(jobs[i].in).str());
-    return ok;
+    size_t k = 0;
+    return compileTier0(
+        [&](WpoJob &j) {
+          if (k == order.size())
+            return false;
+          j = jobs[order[k++]];
+          return true;
+        },
+        opts, threads, cacheDir, total, stats, errs);
   }
 
   // Phase 1a: hash inputs; declared functions (cached by input hash).
