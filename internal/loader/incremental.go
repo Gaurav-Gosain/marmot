@@ -348,15 +348,12 @@ func callsRecoverAST(body *ast.BlockStmt) bool {
 // roots and changed packages are always loaded from source.
 func loadIncremental(cfg Config, pcfg *packages.Config, patterns []string, confSig string,
 	needSrc func(p *packages.Package, key string) bool) ([]*packages.Package, []*packages.Package, map[*packages.Package]*IncrementalPackage, *token.FileSet, error) {
-	light := *pcfg
-	light.Mode = packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports |
-		packages.NeedDeps | packages.NeedEmbedFiles | packages.NeedEmbedPatterns | packages.NeedModule |
-		packages.NeedTypesSizes
+	light := lightConfig(pcfg)
 	if cfg.CacheDir == "" {
 		cfg.CacheDir = filepath.Join(cfg.Root, "build", "cache", "types")
 	}
 	tl := time.Now()
-	roots, err := loadList(&light, patterns, cfg.CacheDir)
+	roots, err := loadList(light, patterns, cfg.CacheDir)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}

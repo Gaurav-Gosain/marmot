@@ -32,11 +32,19 @@ func fileSig(h interface{ Write([]byte) (int, error) }, path string) {
 
 // buildStamp returns the stamp of a build, or "" if it cannot be computed.
 func (b *build) buildStamp(goos, goarch string) string {
-	files, goroot, err := loader.InputFiles(loader.Config{
+	lcfg := loader.Config{
 		Dir: b.cfg.Dir, Root: b.cfg.Root, Tags: b.cfg.Tags, GOOS: goos, GOARCH: goarch, Patterns: b.cfg.Patterns,
-	})
-	if err != nil {
-		return ""
+	}
+	files, goroot, ok := []string(nil), "", false
+	if b.incremental() {
+		lcfg.CacheDir = b.typesCache()
+		files, goroot, ok = loader.CachedInputFiles(lcfg)
+	}
+	if !ok {
+		var err error
+		if files, goroot, err = loader.InputFiles(lcfg); err != nil {
+			return ""
+		}
 	}
 	sort.Strings(files)
 	h := sha256.New()

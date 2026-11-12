@@ -255,3 +255,33 @@ func writeListCache(path, sig string, roots []*packages.Package, dir string) {
 		os.Rename(tmp, path)
 	}
 }
+
+// lightConfig is pcfg for the package graph only (no syntax or types).
+func lightConfig(pcfg *packages.Config) *packages.Config {
+	light := *pcfg
+	light.Mode = packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports |
+		packages.NeedDeps | packages.NeedEmbedFiles | packages.NeedEmbedPatterns | packages.NeedModule |
+		packages.NeedTypesSizes
+	return &light
+}
+
+// CachedInputFiles is InputFiles from the go list cache of an incremental
+// load (cfg.CacheDir), without running go list; ok is false when that cache
+// is missing or out of date.
+func CachedInputFiles(cfg Config) (files []string, goroot string, ok bool) {
+	pcfg, patterns, goroot, _, err := setup(cfg)
+	if err != nil {
+		return nil, "", false
+	}
+	light := lightConfig(pcfg)
+	sig := listSig(light, patterns)
+	roots, ok := readListCache(listCachePath(cfg.CacheDir, sig), sig, light.Dir)
+	if !ok {
+		return nil, "", false
+	}
+	packages.Visit(roots, nil, func(p *packages.Package) {
+		files = append(files, p.GoFiles...)
+		files = append(files, p.EmbedFiles...)
+	})
+	return files, goroot, true
+}

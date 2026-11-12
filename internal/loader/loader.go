@@ -66,19 +66,19 @@ type Program struct {
 	Sizes       types.Sizes
 }
 
-// Load loads the packages and builds SSA for all of them.
-func Load(cfg Config) (*Program, error) {
-	realRoot, err := goEnv("GOROOT")
+// setup returns the go/packages configuration and patterns of a load.
+func setup(cfg Config) (pcfg *packages.Config, patterns []string, goroot, realRoot string, err error) {
+	realRoot, err = goEnv("GOROOT")
 	if err != nil {
-		return nil, err
+		return nil, nil, "", "", err
 	}
 	libSrc := filepath.Join(cfg.Root, "lib", "src")
 	if v := os.Getenv("MARMOT_LIBSRC"); v != "" {
 		libSrc = v
 	}
-	goroot, err := MergedGOROOT(realRoot, libSrc, filepath.Join(cfg.Root, "build"))
+	goroot, err = MergedGOROOT(realRoot, libSrc, filepath.Join(cfg.Root, "build"))
 	if err != nil {
-		return nil, fmt.Errorf("merged GOROOT: %v", err)
+		return nil, nil, "", "", fmt.Errorf("merged GOROOT: %v", err)
 	}
 	// purego selects the pure Go fallbacks of packages with assembly.
 	tags := append([]string{"marmot", "purego", "math_big_pure_go"}, cfg.Tags...)
@@ -91,7 +91,7 @@ func Load(cfg Config) (*Program, error) {
 		"GOFLAGS=-tags="+strings.Join(tags, ","),
 		"GOTOOLCHAIN=local",
 	)
-	pcfg := &packages.Config{
+	pcfg = &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedImports |
 			packages.NeedDeps | packages.NeedSyntax | packages.NeedTypes |
 			packages.NeedTypesInfo | packages.NeedTypesSizes | packages.NeedModule |
@@ -103,7 +103,7 @@ func Load(cfg Config) (*Program, error) {
 	// The runtime is an implicit dependency of every program. go list cannot
 	// mix .go files with package patterns, so for file lists an overlay file
 	// that imports runtime joins the named files.
-	patterns := append([]string{}, cfg.Patterns...)
+	patterns = append([]string{}, cfg.Patterns...)
 	if len(patterns) > 0 && strings.HasSuffix(patterns[0], ".go") {
 		for i, p := range patterns {
 			if !filepath.IsAbs(p) {
@@ -113,13 +113,22 @@ func Load(cfg Config) (*Program, error) {
 		first := patterns[0]
 		name, err := packageName(first)
 		if err != nil {
-			return nil, err
+			return nil, nil, "", "", err
 		}
 		extra := filepath.Join(filepath.Dir(first), "zz_marmot_runtime.go")
 		pcfg.Overlay = map[string][]byte{extra: []byte("package " + name + "\n\nimport _ \"runtime\"\n")}
 		patterns = append(patterns, extra)
 	} else {
 		patterns = append(patterns, "runtime")
+	}
+	return pcfg, patterns, goroot, realRoot, nil
+}
+
+// Load loads the packages and builds SSA for all of them.
+func Load(cfg Config) (*Program, error) {
+	pcfg, patterns, goroot, realRoot, err := setup(cfg)
+	if err != nil {
+		return nil, err
 	}
 	filePatterns := len(cfg.Patterns) > 0 && strings.HasSuffix(cfg.Patterns[0], ".go")
 	t0 := time.Now()

@@ -47,10 +47,13 @@ func (b *build) moduleCached(p *packages.Package) bool {
 	return fileExists(filepath.Join(b.cfg.Root, "build", "cache", "mlir", b.moduleKey(p)+".mlir"))
 }
 
+// typesCache is the export data and go list cache of incremental loads.
+func (b *build) typesCache() string { return filepath.Join(b.cfg.Root, "build", "cache", "types") }
+
 // incrementalConfig sets up cfg for an incremental load.
 func (b *build) incrementalConfig(cfg *loader.Config) {
 	cfg.Incremental = true
-	cfg.CacheDir = filepath.Join(b.cfg.Root, "build", "cache", "types")
+	cfg.CacheDir = b.typesCache()
 	// Keys come from the go list graph, before the loader adds files
 	// (embed helpers) to packages loaded from source.
 	cfg.Listed = func(all []*packages.Package) {
