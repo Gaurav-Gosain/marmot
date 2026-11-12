@@ -308,6 +308,8 @@ void signal_init_thread(rt_m *m) {
 }
 
 // Called by rt_write on EPIPE for stdout or stderr: die by SIGPIPE.
+RT_API void rt_sigpipe(void) { signal_raise_sigpipe(); }
+
 void signal_raise_sigpipe(void) {
   if (atomic_load(&sig_enabled) & (1ull << SIGPIPE)) {
     atomic_fetch_or(&sig_pending, 1ull << SIGPIPE);

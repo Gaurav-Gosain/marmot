@@ -443,6 +443,11 @@ int32_t rt_signal_disable(int32_t sig);
 int32_t rt_signal_ignore(int32_t sig);
 // 1 if sig is ignored: inherited as ignored at startup, or rt_signal_ignore.
 int32_t rt_signal_ignored(int32_t sig);
+// EPIPE on a write to fd 1 or 2 (gc's sigpipe): queue SIGPIPE for the Go
+// side if it asked for it (rt_signal_enable), return if SIGPIPE is ignored,
+// else die from SIGPIPE with the default action. rt_write does this itself;
+// for writes that bypass it (package syscall).
+void rt_sigpipe(void);
 // Park until an enabled signal arrives; returns its number. Signals that
 // arrive while nobody waits stay pending (one per signal number). While a
 // goroutine waits here the deadlock check stays quiet, as in gc.
