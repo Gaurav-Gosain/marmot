@@ -13,7 +13,7 @@
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
-export MARMOT_ROOT="$ROOT" MARMOT_MAX_JOBS=2
+export MARMOT_ROOT="$ROOT" MARMOT_MAX_JOBS=2 GOCACHE="$ROOT/.work/gocache"
 OUT="$ROOT/.work/selfhost"
 FILTER="${1:-.}"
 rm -rf "$OUT"
