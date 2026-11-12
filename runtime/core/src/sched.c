@@ -1033,6 +1033,19 @@ found:
   return g;
 }
 
+// Goroutine group (testing/synctest bubble); see rt_group_new.
+struct rt_group {
+  _Atomic int64_t running;
+  _Atomic int64_t alive;
+  void (*on_idle)(void *);
+  void *arg;
+};
+
+// A member stops counting as running (durable park or exit).
+static void group_leave_running(rt_group *grp) {
+  if (atomic_fetch_sub(&grp->running, 1) == 1 && grp->on_idle) grp->on_idle(grp->arg);
+}
+
 static void schedule_loop(rt_m *m) {
   for (;;) {
     rt_g *g = findrunnable(m);
@@ -1050,13 +1063,27 @@ static void schedule_loop(rt_m *m) {
       case REQ_PARK: {
         void (*f)(void *) = m->unlockf;
         void *arg = m->unlockarg;
+        bool durable = m->park_durable;
         m->unlockf = NULL;
         m->unlockarg = NULL;
+        m->park_durable = false;
+        rt_group *grp = g->group;
+        // The flag is set before the goroutine can be readied (the unlock),
+        // the count drops after: a wakeup in between adds first, so the
+        // count never reaches 0 for a goroutine that is already runnable.
+        if (grp && durable) atomic_store_explicit(&g->durable, true, memory_order_release);
         atomic_store_explicit(&g->status, G_WAITING, memory_order_release);
         if (f) f(arg);
+        if (grp && durable) group_leave_running(grp);
         break;
       }
       case REQ_EXIT:
+        if (g->group) {
+          rt_group *grp = g->group;
+          g->group = NULL;
+          atomic_fetch_sub(&grp->alive, 1);
+          group_leave_running(grp);
+        }
         goexit_final(g);
         if (m->p) gfput(m->p, g);
         break;
@@ -1103,6 +1130,69 @@ static void schedule_loop(rt_m *m) {
   }
 }
 
+// ---- goroutine groups (testing/synctest bubbles) ----
+//
+// A group counts its members that are not durably parked (running) and all
+// members alive. When running drops to 0 (a member parked durably or
+// exited), on_idle runs on the scheduler thread, under the rules of park
+// unlock callbacks.
+
+
+static rt_spin group_lock;
+static fixalloc group_alloc;
+static bool group_inited;
+
+RT_API rt_group *rt_group_new(void (*on_idle)(void *arg), void *arg) {
+  spin_lock(&group_lock);
+  if (!group_inited) {
+    fixalloc_init(&group_alloc, sizeof(rt_group));
+    group_inited = true;
+  }
+  rt_group *grp = fixalloc_alloc(&group_alloc);
+  spin_unlock(&group_lock);
+  atomic_store(&grp->running, 0);
+  atomic_store(&grp->alive, 0);
+  grp->on_idle = on_idle;
+  grp->arg = arg;
+  return grp;
+}
+
+RT_API void rt_group_free(rt_group *grp) {
+  spin_lock(&group_lock);
+  fixalloc_free(&group_alloc, grp);
+  spin_unlock(&group_lock);
+}
+
+RT_API void rt_group_join(rt_group *grp) {
+  rt_g *g = getm()->curg;
+  if (g->group) rt_throw("rt_group_join: goroutine already in a group");
+  atomic_fetch_add(&grp->alive, 1);
+  atomic_fetch_add(&grp->running, 1);
+  g->group = grp;
+}
+
+RT_API void rt_group_counts(rt_group *grp, int64_t *running, int64_t *alive) {
+  if (running) *running = atomic_load(&grp->running);
+  if (alive) *alive = atomic_load(&grp->alive);
+}
+
+
+RT_API void rt_park_durable(void (*unlock)(void *), void *lock) {
+  rt_m *m = getm();
+  m->unlockf = unlock;
+  m->unlockarg = lock;
+  m->park_durable = true;
+  mcall(REQ_PARK);
+  rt_safepoint();
+}
+
+// rt_ready and rt_handoff: a durably parked member runs again.
+INLINE void group_wake(rt_g *g) {
+  if (UNLIKELY(g->group != NULL) &&
+      atomic_exchange_explicit(&g->durable, false, memory_order_acq_rel))
+    atomic_fetch_add(&g->group->running, 1);
+}
+
 // ---- public goroutine API ----
 
 static rt_g *newproc(void (*fn)(void *), void *arg, bool system) {
@@ -1114,6 +1204,14 @@ static rt_g *newproc(void (*fn)(void *), void *arg, bool system) {
   g->fn = fn;
   g->arg = arg;
   g->param = NULL;  // slot is kept from the previous user of this structure
+  // Goroutines started by a group member join its group.
+  rt_g *parent = m->curg;
+  g->group = !system && parent && parent->group ? parent->group : NULL;
+  atomic_store_explicit(&g->durable, false, memory_order_relaxed);
+  if (g->group) {
+    atomic_fetch_add(&g->group->alive, 1);
+    atomic_fetch_add(&g->group->running, 1);
+  }
   g->system = system;
   g->preempt = false;
   g->id = new_goid(p);
@@ -1197,6 +1295,7 @@ RT_API void rt_handoff(rt_g *target, void (*unlock)(void *), void *lock) {
   uint32_t s = G_WAITING;
   if (!atomic_compare_exchange_strong(&target->status, &s, G_RUNNABLE))
     rt_throw("rt_handoff: goroutine is not waiting");
+  group_wake(target);
   rt_m *m = getm();
   m->handoff_g = target;
   m->unlockf = unlock;
@@ -1209,6 +1308,7 @@ RT_API void rt_ready(rt_g *g) {
   uint32_t s = G_WAITING;
   if (!atomic_compare_exchange_strong(&g->status, &s, G_RUNNABLE))
     rt_throw("rt_ready: goroutine is not waiting");
+  group_wake(g);
   rt_m *m = getm();
   if (m) m->locks++;
   rt_p *p = m ? m->p : NULL;

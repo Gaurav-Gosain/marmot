@@ -182,6 +182,8 @@ struct rt_g {
   void *syscallsp;        // sp saved at rt_entersyscall
   void *syscallregs[24];  // callee-saved registers at rt_entersyscall
   rt_timer *sleeptimer;   // rt_sleep, allocated on first use (not GC memory)
+  struct rt_group *group; // rt_group_join: counted in this group, NULL if none
+  _Atomic bool durable;   // parked with rt_park_durable (not counted as running)
 };
 
 // Request from a goroutine to its M's scheduler after switching to g0.
@@ -246,6 +248,7 @@ struct rt_m {
   // Scheduling request from curg.
   int32_t req;
   rt_g *handoff_g;          // REQ_HANDOFF target, then the next goroutine to run
+  bool park_durable;        // the pending REQ_PARK is rt_park_durable
   void (*unlockf)(void *);
   void *unlockarg;
   // Stop-the-world state.

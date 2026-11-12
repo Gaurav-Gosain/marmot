@@ -120,6 +120,23 @@ void rt_procyield(int32_t n);
 // but must only release locks (and call rt_ready); it must not allocate,
 // park, panic, or use rt_current/rt_gslot.
 void rt_park(void (*unlock)(void *), void *lock);
+
+// Goroutine groups (testing/synctest bubbles). A group counts its members
+// that are running (not durably parked) and its members alive. A goroutine
+// joins with rt_group_join; goroutines started by a member join its group.
+// rt_park_durable parks like rt_park but counts as durably blocked; any
+// other wait (rt_park, syscalls, I/O, rt_sleep) counts as running. When the
+// running count reaches 0 (a member parked durably or exited), on_idle(arg)
+// runs once on the scheduler thread, under the rules of park unlock
+// callbacks: spin locks and rt_ready only, no allocation, no blocking.
+// rt_ready of a durably parked member counts it as running again.
+// rt_group_free once no member is alive.
+typedef struct rt_group rt_group;
+rt_group *rt_group_new(void (*on_idle)(void *arg), void *arg);
+void rt_group_join(rt_group *grp);
+void rt_park_durable(void (*unlock)(void *), void *lock);
+void rt_group_counts(rt_group *grp, int64_t *running, int64_t *alive);
+void rt_group_free(rt_group *grp);
 // Make a parked goroutine runnable. Safe from any thread. Called on a thread
 // that runs goroutines, it puts g in that thread's run-next slot (the old
 // occupant moves to the run queue), so g runs as soon as the caller parks
