@@ -6,6 +6,7 @@
 set -u
 cd "$(dirname "$0")/../.."
 R=$PWD; O=${2:--release}; [ "${1:-}" = -O ] && O="-O $2"
+export GOCACHE=${GOCACHE:-$R/.work/gocache}
 D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
 # The overlay sources of truth (_lib) must equal what marmot compiles (lib/src).
 for f in $(cd internal/specialize/_lib && find . -name '*.go'); do
