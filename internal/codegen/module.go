@@ -294,6 +294,16 @@ func (m *moduleGen) global(g *ssa.Global) {
 	sym := m.globalSym(g)
 	m.defined[sym] = true
 	t := m.tm.memType(g.Type().(*types.Pointer).Elem())
+	if v, ok := m.p.opts.XDefs[g.Pkg.Pkg.Path()+"."+g.Name()]; ok && isString(g.Type().(*types.Pointer).Elem()) {
+		var data cv
+		if v == "" {
+			data = cNull()
+		} else {
+			data = cAddr(m.stringData(v))
+		}
+		m.constGlobal(sym, "external", false, cStruct(data, cI64(int64(len(v)))))
+		return
+	}
 	if img := m.static.images[g]; img != nil && !m.static.dynamic[g] {
 		m.constGlobal(sym, "external", false, m.static.value(img))
 		return

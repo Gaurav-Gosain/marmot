@@ -29,6 +29,9 @@ type Options struct {
 	// MergedGOROOT is where the loader's GOROOT symlinks live; source
 	// locations resolve them.
 	MergedGOROOT string
+	// XDefs sets string variables as the linker's -X does: "pkgpath.name"
+	// to value (go test sets testing.testBinary to "1").
+	XDefs map[string]string
 }
 
 // Module is the MLIR text for one Go package (or the synthetic entry module).
