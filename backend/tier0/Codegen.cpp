@@ -713,11 +713,11 @@ void FuncGen::prologue() {
     } else {
       e(movReg(R1, unsigned(l.reg)));
     }
+    if (!l.fp) normalize(R1, l.t);  // an i1's other bits are undefined
     if (isAggregate(a.getType())) {
       addrOf(R2, of(a) + l.off);
       memStore(R1, R2, sizeOf(l.t));
     } else {
-      if (!l.fp) normalize(R1, l.t);
       stSlot(R1, of(a), 8);
     }
   }

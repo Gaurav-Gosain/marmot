@@ -32,8 +32,8 @@ int main(void){
   }
   CK(sat(1e30), INT64_MAX); CK(sat(-1e30), INT64_MIN); CK(sat(NAN), 0); CK(sat(-3.7), -3);
   CK(usat(1e30), UINT64_MAX); CK(usat(-5), 0); CK(usat(NAN), 0);
-  CK(fmaxi(1, 2) == 2, 1); CK(isnan(fmaxi(NAN, 2)), 1); CK(signbit(fmaxi(-0.0, 0.0)), 0);
-  CK(fmini(1, 2) == 1, 1); CK(isnan(fmini(3, NAN)), 1); CK(signbit(fmini(0.0f, -0.0f)), 1);
+  CK(fmaxi(1, 2) == 2, 1); CK(isnan(fmaxi(NAN, 2)), 1); CK(!!signbit(fmaxi(-0.0, 0.0)), 0);
+  CK(fmini(1, 2) == 1, 1); CK(isnan(fmini(3, NAN)), 1); CK(!!signbit(fmini(0.0f, -0.0f)), 1);
   CK(fmaxn(NAN, 2) == 2, 1); CK(fmaxn(-1, -3) == -1, 1);
   CK(fa(), fa()); if(!fa()) bad=1;
   puts(bad?"FAIL":"ok"); return bad;

@@ -94,7 +94,12 @@ Single pass per function, no IR of its own:
    of all i64 / ptr, all f32 or all f64 is a block, all in registers or all on the stack with
    the rest of its register class marked used. A result with more than 8 pieces of either
    class is returned through a pointer in x8. test/abi_gen.py checks this against LLVM with
-   random signatures in both call directions.
+   random signatures in both call directions. On x86-64 (SysV, ELF), every piece is assigned
+   on its own: integers to rdi, rsi, rdx, rcx, r8, r9, floats to xmm0-7, the rest to 8-byte
+   stack slots. Results use rax, rdx, rcx and xmm0, xmm1, then the x87 st0, st1 for a third
+   and fourth float; anything larger goes through a pointer in rdi, returned in rax. An i1
+   piece arrives with its other bits undefined and is masked. test/xpack.sh builds the same
+   tests for an x86-64 Linux machine.
 6. Object writer: Mach-O MH_OBJECT (arm64: `__TEXT,__text`, `__DATA,__data`, `__DATA,__const`,
    zero fill, relocations BRANCH26, PAGE21/PAGEOFF12, GOT_LOAD_* for imports, UNSIGNED for data
    pointers), then ELF (R_AARCH64_*, R_X86_64_*). Symbols with the same names and linkage as
@@ -123,7 +128,8 @@ miscompile can be bisected to one function.
 
 ## Testing
 
-`sh test/run.sh <tier0-run> <llvm bin dir>` runs the intrinsic, i128 and random ABI tests.
+`sh test/run.sh <tier0-run> <llvm bin dir>` runs the intrinsic, i128 and random ABI tests
+(arm64); `sh test/xpack.sh <tier0-run> <llvm bin dir> <dir>` packs them for x86-64 Linux.
 
 - Unit tests per operation kind: small modules compiled by tier0 and by LLVM, linked into one
   program, results compared (this also checks the calling convention in both directions).

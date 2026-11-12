@@ -215,6 +215,9 @@ public:
     u8(uint8_t(0x58 | (r & 7)));
   }
   void ud2() { u8(0x0F); u8(0x0B); }
+  // x87: fld / fstp of a 4 or 8 byte float in memory.
+  void fld(unsigned base, int32_t disp, bool dbl) { rm(false, {uint8_t(dbl ? 0xDD : 0xD9)}, 0, base, disp); }
+  void fstp(unsigned base, int32_t disp, bool dbl) { rm(false, {uint8_t(dbl ? 0xDD : 0xD9)}, 3, base, disp); }
   void mfence() { u8(0x0F); u8(0xAE); u8(0xF0); }
 
   // --- atomics: lock prefixed, [base + 0] ---

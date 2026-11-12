@@ -30,17 +30,17 @@ std::vector<ArgLoc> assignArgsX64(TypeRange types, uint64_t &stackSize, bool sre
   return out;
 }
 
-// Results: up to four integer pieces (rax, rdx, rcx, r8) and two float
-// pieces (xmm0, xmm1); more and the result goes through a pointer passed in
-// rdi, returned again in rax.
+// Results: up to three integer pieces (rax, rdx, rcx) and four float pieces
+// (xmm0, xmm1, then the x87 st0, st1), as llc assigns them; more and the
+// result goes through a pointer passed in rdi, returned again in rax.
 bool returnsInMemoryX64(Type t) {
   std::vector<std::pair<uint64_t, Type>> parts;
   flatten(t, 0, parts);
   unsigned ngp = 0, nfp = 0;
   for (auto &p : parts) (isFloat(p.second) ? nfp : ngp)++;
-  return ngp > 4 || nfp > 2;
+  return ngp > 3 || nfp > 4;
 }
-const unsigned retGpr[4] = {X::RAX, X::RDX, X::RCX, X::R8};
+const unsigned retGpr[3] = {X::RAX, X::RDX, X::RCX};
 
 class FuncGenX64 {
 public:
@@ -203,7 +203,7 @@ void FuncGenX64::layout() {
     for (BlockArgument arg : b.getArguments()) n += std::max<uint64_t>((sizeOf(arg.getType()) + 7) & ~uint64_t(7), 8);
     tempSize = std::max(tempSize, n);
   }
-  tempArea = alloc(tempSize, 8);
+  tempArea = alloc(std::max<uint64_t>(tempSize, 8), 8);  // also the x87 result spill
   frameSize = (frameSize + 15) & ~uint64_t(15);
 }
 
@@ -218,7 +218,7 @@ void FuncGenX64::prologue() {
     BlockArgument arg = params[l.arg];
     unsigned r;
     if (l.reg < 0) {
-      a.load(T4, X::RBP, d32(16 + l.stack), 8);
+      a.load(T4, X::RBP, d32(16 + l.stack), unsigned(sizeOf(l.t)));  // the slot's high bytes are undefined
       r = T4;
     } else if (l.fp) {
       a.movqFromX(T4, unsigned(l.reg));
@@ -228,6 +228,11 @@ void FuncGenX64::prologue() {
       r = unsigned(l.reg);
     }
     if (isAggregate(arg.getType())) {
+      if (!l.fp && intWidth(l.t) % 8) {
+        if (r != T4) a.mov(T4, r);
+        r = T4;
+        normalize(r, l.t);
+      }
       a.store(r, X::RSP, d32(of(arg) + l.off), unsigned(sizeOf(l.t)));
     } else {
       if (r != T4) {
@@ -309,6 +314,11 @@ void FuncGenX64::emitCall(LL::CallOp call) {
   for (auto &p : parts) (isFloat(p.second) ? fp : gp).push_back(p);
   auto store = [&](unsigned reg, uint64_t off, Type t) {
     if (isAggregate(r.getType())) {
+      if (!isFloat(t) && intWidth(t) % 8) {  // i1: the register's other bits are undefined
+        a.mov(T4, reg);
+        normalize(T4, t);
+        reg = T4;
+      }
       a.store(reg, X::RSP, d32(of(r) + off), unsigned(sizeOf(t)));
     } else {
       a.mov(T4, reg);
@@ -318,8 +328,14 @@ void FuncGenX64::emitCall(LL::CallOp call) {
   };
   for (unsigned i = 0; i < gp.size(); i++) store(retGpr[i], gp[i].first, gp[i].second);
   for (unsigned i = 0; i < fp.size(); i++) {
-    a.movqFromX(X::RAX, i);
-    if (fp[i].second.isF32()) a.mov32(X::RAX, X::RAX);
+    bool dbl = fp[i].second.isF64();
+    if (i >= 2) {  // st0 then st1, popped through the temporary area
+      a.fstp(X::RSP, d32(tempArea), dbl);
+      a.load(X::RAX, X::RSP, d32(tempArea), dbl ? 8 : 4);
+    } else {
+      a.movqFromX(X::RAX, i);
+      if (!dbl) a.mov32(X::RAX, X::RAX);
+    }
     store(X::RAX, fp[i].first, fp[i].second);
   }
 }
@@ -335,11 +351,16 @@ void FuncGenX64::emitReturn(LL::ReturnOp ret) {
     std::vector<std::pair<uint64_t, Type>> parts;
     flatten(v.getType(), 0, parts);
     unsigned ngp = 0, nfp = 0;
-    // Floats first (through r11), then the integer registers.
-    for (auto [off, t] : parts) {
-      if (!isFloat(t)) continue;
+    // Floats first (through r11; the third and fourth on the x87 stack,
+    // the fourth pushed first), then the integer registers.
+    std::vector<std::pair<uint64_t, Type>> fps;
+    for (auto &p : parts)
+      if (isFloat(p.second)) fps.push_back(p);
+    for (unsigned i = unsigned(fps.size()); i-- > 2;)
+      a.fld(X::RSP, d32(isAggregate(v.getType()) ? of(v) + fps[i].first : of(v)), fps[i].second.isF64());
+    for (unsigned i = 0; i < fps.size() && i < 2; i++) {
       if (isAggregate(v.getType()))
-        a.load(T4, X::RSP, d32(of(v) + off), unsigned(sizeOf(t)));
+        a.load(T4, X::RSP, d32(of(v) + fps[i].first), unsigned(sizeOf(fps[i].second)));
       else
         get(T4, v);
       a.movqToX(nfp++, T4);
