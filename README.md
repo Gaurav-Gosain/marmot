@@ -22,8 +22,9 @@ against Go. These are early numbers; see [docs/benchmarks.md](docs/benchmarks.md
 | --- | --- | --- |
 | hello world binary | 148 KB | 1.68 MB |
 | run time, average over 43 programs | 1.6x faster | 1.0 |
-| rebuild when nothing changed | about equal | |
-| rebuild of a large program after a small edit | about 4x slower | |
+| first build of a large program, fast code generator | 5.2 s | 3.9 s |
+| rebuild when nothing changed | 0.13 s | 0.12 s |
+| rebuild of a large program after a small edit | 0.9 to 1.7 s | 0.3 to 0.7 s |
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/overview-dark.svg">

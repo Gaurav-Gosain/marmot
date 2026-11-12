@@ -74,14 +74,25 @@ These use every core, so they are faster in wall-clock time, not in total CPU wo
 
 ## Build time
 
-| Case | marmot | go |
-| --- | --- | --- |
-| Rebuild, nothing changed | 0.1 s | 0.1 to 0.3 s |
-| Small program, one file edited | 0.6 to 1.0 s | 0.3 s |
-| Large program (the compiler itself), one file edited | about 4 s | 0.9 s |
-| Large program, first build | about 32 s | 6 s |
+Building the compiler itself (`./cmd/marmot`, 182 packages including the standard library) on an
+Apple M3 Pro with 11 cores. The first build starts with empty caches on both sides. The edits add
+one line to a package: "leaf" is the main package, "deep" is a package that most of the compiler
+uses.
 
-Build time on large programs is the main weakness today.
+| Case | marmot | marmot, fast code generator | go |
+| --- | --- | --- | --- |
+| First build, empty caches | 11.6 s | 5.2 s | 3.9 s |
+| Rebuild, nothing changed | 0.13 s | 0.13 s | 0.12 s |
+| One line edit, leaf package | 1.1 s | 0.9 s | 0.3 s |
+| One line edit, deep package | 2.8 s | 1.7 s | 0.7 s |
+
+The fast code generator (`MARMOT_TIER0=1`) writes machine code directly, without LLVM. It is
+used for dev builds only, and it is not on by default yet. Its code is not optimized; for fast
+binaries use the default build or `-release`.
+
+The next version, now in testing, generates MLIR on all cores and overlaps code generation with
+it. With it the first build takes 2.9 to 3.0 s against 3.9 to 4.4 s for go. Rebuilds after an
+edit are the remaining gap.
 
 ## Memory
 
