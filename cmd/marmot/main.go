@@ -2,13 +2,17 @@
 //
 //	marmot build [flags] [packages]
 //	marmot run [flags] package|files... [arguments]
-//	marmot version
+//	marmot test [flags] [packages]
+//	marmot fix, explain, cache, version, completion
+//
+// marmot --help lists the commands; marmot COMMAND -h its flags.
 package main
 
 import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -24,58 +28,43 @@ import (
 
 const version = "marmot devel"
 
-func usage() {
-	fmt.Fprintf(os.Stderr, `usage: marmot <command> [flags] [packages]
-
-Commands:
-  build    compile packages and dependencies
-  run      compile and run a Go program
-  test     compile and run package tests (like go test)
-  fix      apply the suggested fixes of build errors (imports, unused names, typos)
-  explain  describe an error code, for example marmot explain M0002
-  version  print the marmot version
-  cache    show the build cache size; 'cache trim' trims it to MARMOT_CACHE_MAX_MB
-           (default 4096), 'cache clean' removes it
-
-Run 'marmot build -h' for build flags.
-`)
-}
-
 func main() {
 	stop := startProfile()
-	code := realMain()
+	code := run(os.Args[1:])
 	stop()
 	os.Exit(code)
 }
 
-func realMain() int {
-	if len(os.Args) < 2 {
-		usage()
-		return 2
-	}
-	switch os.Args[1] {
-	case "build":
-		return cmdBuild(os.Args[2:], false)
-	case "run":
-		return cmdBuild(os.Args[2:], true)
-	case "test":
-		return cmdTest(os.Args[2:])
-	case "version":
-		fmt.Println(version)
-	case "cache":
-		return cmdCache(os.Args[2:])
-	case "explain":
-		return cmdExplain(os.Args[2:])
-	case "fix":
-		return cmdFix(os.Args[2:])
-	case "help", "-h", "--help":
-		usage()
-	default:
-		fmt.Fprintf(os.Stderr, "marmot: unknown command %q\n", os.Args[1])
-		usage()
-		return 2
-	}
-	return 0
+// buildFlags are the flags of build and run.
+type buildFlags struct {
+	out, opt, trace, pgo, emit, tags, gc, target, dialect    *string
+	strip, pgoGen, release, work, verbose, printCmd, nocache *bool
+	output                                                   outputFlags
+}
+
+// newBuildFlags defines the flags of build and run. The same set drives
+// parsing and the help text.
+func newBuildFlags(name string) (*flag.FlagSet, *buildFlags) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	b := &buildFlags{}
+	b.out = fs.String("o", "", "output file")
+	b.opt = fs.String("O", "", "optimization level: 0, 1, 2, 3, s, z (default 2, 3 with -release)")
+	b.trace = fs.String("trace", "", "traceback detail of -release builds: full adds inlined frames (dev builds always have them)")
+	b.strip = fs.Bool("s", false, "omit the pc table (tracebacks without file:line)")
+	b.pgoGen = fs.Bool("pgo-gen", false, "build an instrumented binary that writes marmot-<id>.profraw next to itself")
+	b.pgo = fs.String("pgo", "", "profile guided optimization with this indexed profile (llvm-profdata merge -o FILE *.profraw)")
+	b.release = fs.Bool("release", os.Getenv("MARMOT_RELEASE") == "1", "release build: whole program optimization, -O3, all specializations (default from $MARMOT_RELEASE=1)")
+	b.emit = fs.String("emit", "exe", "output kind: mlir, llvm, obj, exe")
+	b.work = fs.Bool("work", false, "print and keep the temporary work directory")
+	b.verbose = fs.Bool("v", false, "print progress and timing")
+	b.tags = fs.String("tags", "", "comma separated build tags")
+	b.printCmd = fs.Bool("x", false, "print the commands run")
+	b.nocache = fs.Bool("nocache", false, "do not use the object cache")
+	b.gc = fs.String("gc", "precise", "garbage collector: precise or none")
+	b.target = fs.String("target", "", "target triple (default: host)")
+	b.dialect = fs.String("dialect", os.Getenv("MARMOT_DIALECT"), "MLIR dialect level: llvm or go (default: go with -release, llvm otherwise; $MARMOT_DIALECT overrides)")
+	b.output = addOutputFlags(fs)
+	return fs, b
 }
 
 func cmdBuild(args []string, run bool) int {
@@ -83,27 +72,14 @@ func cmdBuild(args []string, run bool) int {
 	if run {
 		name = "run"
 	}
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	out := fs.String("o", "", "output file")
-	opt := fs.String("O", "", "optimization level: 0, 1, 2, 3, s, z (default 2, 3 with -release)")
-	trace := fs.String("trace", "", "full: inlined frames in tracebacks of -release builds (dev builds always have them)")
-	strip := fs.Bool("s", false, "omit the pc table (tracebacks without file:line)")
-	pgoGen := fs.Bool("pgo-gen", false, "build an instrumented binary that writes marmot-<id>.profraw next to itself")
-	pgo := fs.String("pgo", "", "profile guided optimization with this indexed profile (llvm-profdata merge -o FILE *.profraw)")
-	release := fs.Bool("release", os.Getenv("MARMOT_RELEASE") == "1", "release build: whole program optimization, -O3, all specializations (default from $MARMOT_RELEASE=1)")
-	emit := fs.String("emit", "exe", "output kind: mlir, llvm, obj, exe")
-	work := fs.Bool("work", false, "print and keep the temporary work directory")
-	verbose := fs.Bool("v", false, "print progress and timing")
-	tags := fs.String("tags", "", "comma separated build tags")
-	printCmd := fs.Bool("x", false, "print the commands run")
-	nocache := fs.Bool("nocache", false, "do not use the object cache")
-	gc := fs.String("gc", "precise", "garbage collector: precise or none")
-	target := fs.String("target", "", "target triple (default: host)")
-	dialect := fs.String("dialect", os.Getenv("MARMOT_DIALECT"), "MLIR dialect level: llvm or go (default: go with -release, llvm otherwise; $MARMOT_DIALECT overrides)")
-	of := addOutputFlags(fs)
+	fs, b := newBuildFlags(name)
+	fs.SetOutput(io.Discard)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return usageError(name, err)
 	}
+	out, opt, trace, pgo, emit, tags, gc, target, dialect := b.out, b.opt, b.trace, b.pgo, b.emit, b.tags, b.gc, b.target, b.dialect
+	strip, pgoGen, release, work, verbose, printCmd, nocache := b.strip, b.pgoGen, b.release, b.work, b.verbose, b.printCmd, b.nocache
+	of := b.output
 	rep := of.reporter(name)
 	optSet := *opt != "" // an explicit -O level selects LLVM over tier0
 	if *opt == "" {
@@ -279,19 +255,34 @@ func cmdTest(args []string) int {
 	return status
 }
 
-func testOne(buildArgs []string, pkg string, testArgs []string) int {
+// testBuildFlags are the build flags marmot test takes.
+type testBuildFlags struct {
+	opt, tags, dialect, out *string
+	printCmd, work, release *bool
+	output                  outputFlags
+}
+
+func newTestFlags() (*flag.FlagSet, *testBuildFlags) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	opt := fs.String("O", "", "optimization level")
-	tags := fs.String("tags", "", "build tags")
-	printCmd := fs.Bool("x", false, "print commands")
-	work := fs.Bool("work", false, "keep the work directory")
-	release := fs.Bool("release", os.Getenv("MARMOT_RELEASE") == "1", "release build")
-	dialect := fs.String("dialect", os.Getenv("MARMOT_DIALECT"), "dialect")
-	out := fs.String("o", "", "write the test binary here and do not run it")
-	of := addOutputFlags(fs)
+	t := &testBuildFlags{}
+	t.opt = fs.String("O", "", "optimization level: 0, 1, 2, 3, s, z")
+	t.tags = fs.String("tags", "", "comma separated build tags")
+	t.printCmd = fs.Bool("x", false, "print the commands run")
+	t.work = fs.Bool("work", false, "print and keep the temporary work directory")
+	t.release = fs.Bool("release", os.Getenv("MARMOT_RELEASE") == "1", "release build")
+	t.dialect = fs.String("dialect", os.Getenv("MARMOT_DIALECT"), "MLIR dialect level: llvm or go")
+	t.out = fs.String("o", "", "write the test binary here and do not run it")
+	t.output = addOutputFlags(fs)
+	return fs, t
+}
+
+func testOne(buildArgs []string, pkg string, testArgs []string) int {
+	fs, t := newTestFlags()
+	fs.SetOutput(io.Discard)
 	if err := fs.Parse(buildArgs); err != nil {
-		return 2
+		return usageError("test", err)
 	}
+	opt, tags, printCmd, work, release, dialect, out, of := t.opt, t.tags, t.printCmd, t.work, t.release, t.dialect, t.out, t.output
 	rep := of.reporter("test")
 	optSet := *opt != "" // an explicit -O level selects LLVM over tier0
 	if *opt == "" {
@@ -390,8 +381,7 @@ func cmdCache(args []string) int {
 			return 1
 		}
 	default:
-		fmt.Fprintln(os.Stderr, "usage: marmot cache [trim|clean]")
-		return 2
+		return usageError("cache", fmt.Errorf("unknown cache command %q (want trim or clean)", args[0]))
 	}
 	return 0
 }

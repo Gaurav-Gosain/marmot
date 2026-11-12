@@ -48,11 +48,16 @@ func (o outputFlags) reporter(command string) *diag.Reporter {
 }
 
 // cmdExplain implements marmot explain [--json] CODE.
-func cmdExplain(args []string) int {
+func newExplainFlags() (*flag.FlagSet, outputFlags) {
 	fs := flag.NewFlagSet("explain", flag.ContinueOnError)
-	of := addOutputFlags(fs)
+	return fs, addOutputFlags(fs)
+}
+
+func cmdExplain(args []string) int {
+	fs, of := newExplainFlags()
+	fs.SetOutput(io.Discard)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return usageError("explain", err)
 	}
 	rep := of.reporter("explain")
 	if fs.NArg() == 0 {
@@ -120,15 +125,29 @@ func wrap(s string, n int) string {
 // cmdFix implements marmot fix [--code M0004,...] [--json] [build flags] [packages]:
 // build, apply the machine applicable fixes of the errors, and repeat while
 // fixes apply (a fix can uncover the next error), at most a few rounds.
-func cmdFix(args []string) int {
+type fixFlags struct {
+	codes, tags *string
+	all         *bool
+	output      outputFlags
+}
+
+func newFixFlags() (*flag.FlagSet, *fixFlags) {
 	fs := flag.NewFlagSet("fix", flag.ContinueOnError)
-	codesFlag := fs.String("code", "", "only apply fixes for these comma separated codes, for example M0004,M0005")
-	all := fs.Bool("all", false, "also apply fixes that may be incorrect (typo corrections); check the result")
-	tags := fs.String("tags", "", "comma separated build tags")
-	of := addOutputFlags(fs)
+	f := &fixFlags{}
+	f.codes = fs.String("code", "", "only apply fixes for these comma separated codes, for example M0004,M0005")
+	f.all = fs.Bool("all", false, "also apply fixes that may be incorrect (typo corrections); check the result")
+	f.tags = fs.String("tags", "", "comma separated build tags")
+	f.output = addOutputFlags(fs)
+	return fs, f
+}
+
+func cmdFix(args []string) int {
+	fs, ff := newFixFlags()
+	fs.SetOutput(io.Discard)
 	if err := fs.Parse(args); err != nil {
-		return 2
+		return usageError("fix", err)
 	}
+	codesFlag, all, tags, of := ff.codes, ff.all, ff.tags, ff.output
 	rep := of.reporter("fix")
 	codes := map[string]bool{}
 	for _, c := range strings.Split(*codesFlag, ",") {

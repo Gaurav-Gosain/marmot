@@ -1,0 +1,226 @@
+package fang
+
+import (
+	"image/color"
+	"os"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"charm.land/lipgloss/v2"
+	"charm.land/tone"
+)
+
+// ColorScheme describes a colorscheme.
+type ColorScheme struct {
+	Base           color.Color
+	Title          color.Color
+	Description    color.Color
+	Codeblock      color.Color
+	Program        color.Color
+	DimmedArgument color.Color
+	Comment        color.Color
+	Flag           color.Color
+	FlagDefault    color.Color
+	Command        color.Color
+	QuotedString   color.Color
+	Argument       color.Color
+	Help           color.Color
+	Dash           color.Color
+	ErrorHeader    [2]color.Color // 0=fg 1=bg
+	ErrorDetails   color.Color
+}
+
+// DefaultColorScheme is the default colorscheme.
+func DefaultColorScheme(c lipgloss.LightDarkFunc) ColorScheme {
+	return ColorScheme{
+		Base:           c(tone.Charcoal, tone.Ash),
+		Title:          tone.Charple,
+		Codeblock:      c(tone.Salt, lipgloss.Color("#2F2E36")),
+		Program:        c(tone.Malibu, tone.Guppy),
+		Command:        c(tone.Pony, tone.Cheeky),
+		DimmedArgument: c(tone.Squid, tone.Oyster),
+		Comment:        c(tone.Squid, lipgloss.Color("#747282")),
+		Flag:           c(lipgloss.Color("#0CB37F"), tone.Guac),
+		Argument:       c(tone.Charcoal, tone.Ash),
+		Description:    c(tone.Charcoal, tone.Ash), // flag and command descriptions
+		FlagDefault:    c(tone.Smoke, tone.Squid),  // flag default values in descriptions
+		QuotedString:   c(tone.Coral, tone.Salmon),
+		ErrorHeader: [2]color.Color{
+			tone.Butter,
+			tone.Cherry,
+		},
+	}
+}
+
+// Styles represents all the styles used.
+type Styles struct {
+	Text            lipgloss.Style
+	Title           lipgloss.Style
+	Span            lipgloss.Style
+	ErrorHeader     lipgloss.Style
+	ErrorText       lipgloss.Style
+	FlagDescription lipgloss.Style
+	FlagDefault     lipgloss.Style
+	Codeblock       Codeblock
+	Program         Program
+}
+
+// Codeblock styles.
+type Codeblock struct {
+	Base    lipgloss.Style
+	Program Program
+	Text    lipgloss.Style
+	Comment lipgloss.Style
+}
+
+// Program name, args, flags, styling.
+type Program struct {
+	Name           lipgloss.Style
+	Command        lipgloss.Style
+	Flag           lipgloss.Style
+	Argument       lipgloss.Style
+	DimmedArgument lipgloss.Style
+	QuotedString   lipgloss.Style
+}
+
+// mustColorscheme picks the light or dark variant of the scheme. Asking the
+// terminal for its background color can stall for seconds when nothing
+// answers, so the choice comes from the environment: MARMOT_THEME=light or
+// dark, else COLORFGBG (set by many terminals, "fg;bg" with bg 7 or 15 for
+// a light background), else dark.
+func mustColorscheme(cs func(lipgloss.LightDarkFunc) ColorScheme) ColorScheme {
+	return cs(lipgloss.LightDark(isDarkTheme()))
+}
+
+func isDarkTheme() bool {
+	switch os.Getenv("MARMOT_THEME") {
+	case "light":
+		return false
+	case "dark":
+		return true
+	}
+	if v := os.Getenv("COLORFGBG"); v != "" {
+		bg := v[strings.LastIndexByte(v, ';')+1:]
+		return bg != "7" && bg != "15"
+	}
+	return true
+}
+
+func makeStyles(cs ColorScheme) Styles {
+	//nolint:mnd
+	return Styles{
+		Text: lipgloss.NewStyle().Foreground(cs.Base),
+		Title: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(cs.Title).
+			Transform(strings.ToUpper).
+			Padding(1, 0).
+			Margin(0, 2),
+		FlagDescription: lipgloss.NewStyle().
+			Foreground(cs.Description).
+			Transform(titleFirstWord),
+		FlagDefault: lipgloss.NewStyle().
+			Foreground(cs.FlagDefault),
+		Codeblock: Codeblock{
+			Base: lipgloss.NewStyle().
+				Background(cs.Codeblock).
+				Foreground(cs.Base).
+				MarginLeft(2).
+				Padding(1, 2),
+			Text: lipgloss.NewStyle().
+				Background(cs.Codeblock),
+			Comment: lipgloss.NewStyle().
+				Background(cs.Codeblock).
+				Foreground(cs.Comment),
+			Program: Program{
+				Name: lipgloss.NewStyle().
+					Background(cs.Codeblock).
+					Foreground(cs.Program),
+				Flag: lipgloss.NewStyle().
+					Background(cs.Codeblock).
+					Foreground(cs.Flag),
+				Argument: lipgloss.NewStyle().
+					Background(cs.Codeblock).
+					Foreground(cs.Argument),
+				DimmedArgument: lipgloss.NewStyle().
+					Background(cs.Codeblock).
+					Foreground(cs.DimmedArgument),
+				Command: lipgloss.NewStyle().
+					Background(cs.Codeblock).
+					Foreground(cs.Command),
+				QuotedString: lipgloss.NewStyle().
+					Background(cs.Codeblock).
+					Foreground(cs.QuotedString),
+			},
+		},
+		Program: Program{
+			Name: lipgloss.NewStyle().
+				Foreground(cs.Program),
+			Argument: lipgloss.NewStyle().
+				Foreground(cs.Argument),
+			DimmedArgument: lipgloss.NewStyle().
+				Foreground(cs.DimmedArgument),
+			Flag: lipgloss.NewStyle().
+				Foreground(cs.Flag),
+			Command: lipgloss.NewStyle().
+				Foreground(cs.Command),
+			QuotedString: lipgloss.NewStyle().
+				Foreground(cs.QuotedString),
+		},
+		Span: lipgloss.NewStyle().
+			Background(cs.Codeblock),
+		ErrorText: lipgloss.NewStyle().
+			MarginLeft(2).
+			Width(width() - 4).
+			Transform(titleFirstWord),
+		ErrorHeader: lipgloss.NewStyle().
+			Foreground(cs.ErrorHeader[0]).
+			Background(cs.ErrorHeader[1]).
+			Bold(true).
+			Padding(0, 1).
+			Margin(1).
+			MarginLeft(2).
+			SetString("ERROR"),
+	}
+}
+
+func titleFirstWord(s string) string {
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return s
+	}
+	// Upper-case the first letter only: lower-casing the rest would turn
+	// MLIR into Mlir.
+	r, n := utf8.DecodeRuneInString(words[0])
+	words[0] = string(unicode.ToUpper(r)) + words[0][n:]
+	return strings.Join(words, " ")
+}
+
+
+func isCasedRune(r rune) bool {
+	if r < utf8.RuneSelf {
+		return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+	}
+	return unicode.IsUpper(r) || unicode.IsLower(r) || unicode.IsTitle(r)
+}
+
+func isMidRune(r rune) bool {
+	switch r {
+	case '\'', '.', ':', '·', '‘', '’', '․', '﹒', '﹕', '＇', '．', '：':
+		return true
+	}
+	return false
+}
+
+func isBreakRune(r rune) bool {
+	if r < utf8.RuneSelf {
+		return !isCasedRune(r) && !isMidRune(r) && (r < '0' || r > '9') && r != '_'
+	}
+	// Ideographs and kana stand alone in Unicode word breaking; every other
+	// letter, digit and mark joins a word.
+	if unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana) {
+		return true
+	}
+	return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) && !isMidRune(r)
+}
