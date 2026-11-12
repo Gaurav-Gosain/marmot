@@ -77,6 +77,16 @@ void MachOWriter::common(const std::string &name, uint64_t size, unsigned log2Al
   s.commonAlign = log2Align;
 }
 
+void MachOWriter::renameShared(const std::string &from, const std::string &to) {
+  auto it = index_.find(from);
+  if (it == index_.end()) return;
+  unsigned i = it->second;
+  index_.erase(it);
+  index_[to] = i;
+  syms_[i].name = to;
+  if (syms_[i].defined) syms_[i].global = syms_[i].hidden = true;
+}
+
 uint64_t MachOWriter::size(Sect s) const {
   const Section &x = sec_[unsigned(s)];
   return s == Sect::Bss ? x.bssSize : x.data.size();

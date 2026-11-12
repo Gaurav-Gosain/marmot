@@ -40,6 +40,11 @@ public:
   // definition elsewhere, or allocates size zero bytes.
   void common(const std::string &name, uint64_t size, unsigned log2Align);
 
+  // Renames a symbol; a defined one becomes a hidden global, so another object
+  // of the same image can reach it.
+  void renameShared(const std::string &from, const std::string &to);
+  const std::string &name(unsigned sym) const { return syms_[sym].name; }
+
   // Section contents. Code is appended as instruction words.
   std::vector<uint8_t> &bytes(Sect s) { return sec_[unsigned(s)].data; }
   uint64_t size(Sect s) const;

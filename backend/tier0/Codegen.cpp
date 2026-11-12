@@ -17,6 +17,8 @@
 #include "mlir/IR/AttrTypeSubElements.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #include <cstring>
@@ -221,7 +223,7 @@ bool returnsInMemory(Type t) {
 
 class ModuleGen {
 public:
-  explicit ModuleGen(ModuleOp m) : module(m), ctx(m.getContext()) {}
+  ModuleGen(ModuleOp m, const std::string &unit) : module(m), ctx(m.getContext()), unit(unit) {}
   bool run(std::string &fragment, std::vector<std::string> &fallback, std::vector<std::string> &reasons,
            Stats &stats, std::string &err);
   MachOWriter w;
@@ -231,9 +233,26 @@ public:
   llvm::DenseMap<StringAttr, bool> definedData;
   bool isDefinedData(StringRef name) const;
 
+  // Line rows of the functions emitted, for the pc table fragment.
+  using Row = std::tuple<uint64_t, uint32_t, uint32_t>;  // offset, line, file
+  struct Lines {
+    unsigned sym;
+    uint64_t size;
+    std::vector<Row> rows;
+  };
+  std::vector<Lines> lines;
+  std::vector<std::string> files;
+  llvm::StringMap<uint32_t> fileIndex;
+  uint32_t fileId(StringRef f) {
+    auto [it, fresh] = fileIndex.try_emplace(f, uint32_t(files.size()));
+    if (fresh) files.push_back(f.str());
+    return it->second;
+  }
+
 private:
   ModuleOp module;
   MLIRContext *ctx;
+  std::string unit;
   void emitGlobal(LL::GlobalOp g);
 };
 
@@ -1489,14 +1508,48 @@ void FuncGen::emitIntrinsic(LL::CallIntrinsicOp c) {
   }
 }
 
+// The source line of a location: the innermost inlined position, else the
+// first position a fused location holds.
+std::optional<std::pair<StringRef, unsigned>> lineOf(Location l) {
+  if (auto f = dyn_cast<FileLineColLoc>(l)) {
+    // Line 0, and positions in the input module itself (ops the front end
+    // gave no location, before the backend renames them).
+    StringRef n = f.getFilename().getValue();
+    if (f.getLine() == 0 || n.ends_with(".mlir") || n.ends_with(".mlirbc")) return std::nullopt;
+    return std::make_pair(f.getFilename().getValue(), f.getLine());
+  }
+  if (auto n = dyn_cast<NameLoc>(l)) return lineOf(n.getChildLoc());
+  if (auto c = dyn_cast<CallSiteLoc>(l)) {
+    if (auto r = lineOf(c.getCallee())) return r;
+    return lineOf(c.getCaller());
+  }
+  if (auto f = dyn_cast<FusedLoc>(l))
+    for (Location s : f.getLocations())
+      if (auto r = lineOf(s)) return r;
+  return std::nullopt;
+}
+
 void FuncGen::run() {
   if (fn.isVarArg()) unsupported("variadic function");
   layout();
   uint64_t start = here();
+  std::vector<ModuleGen::Row> rows;
+  auto row = [&](Location l) {
+    auto r = lineOf(l);
+    if (!r) return;
+    uint32_t file = mg.fileId(r->first);
+    if (!rows.empty() && std::get<1>(rows.back()) == r->second && std::get<2>(rows.back()) == file) return;
+    if (!rows.empty() && std::get<0>(rows.back()) == here() - start) rows.pop_back();
+    rows.push_back({here() - start, r->second, file});
+  };
+  row(fn.getLoc());
   prologue();
   for (Block &b : fn.getBody()) {
     blockStart[&b] = here();
-    for (Operation &op : b) emitOp(op);
+    for (Operation &op : b) {
+      row(op.getLoc());
+      emitOp(op);
+    }
   }
   for (const Fixup &f : fixups) {
     int32_t off = int32_t(int64_t(blockStart[f.dest]) - int64_t(f.at));
@@ -1505,7 +1558,9 @@ void FuncGen::run() {
   }
   // Defined only now: a function that falls back leaves no symbol.
   auto lk = fn.getLinkage();
-  w.define(machoName(fn.getSymName()), Sect::Text, start, !isLocalLinkage(lk), isWeakLinkage(lk), isHidden(fn));
+  std::string sym = machoName(fn.getSymName());
+  w.define(sym, Sect::Text, start, !isLocalLinkage(lk), isWeakLinkage(lk), isHidden(fn));
+  mg.lines.push_back({w.symbol(sym), here() - start, std::move(rows)});
 }
 
 // Removes discardable definitions (linkonce, linkonce_odr, internal,
@@ -1561,15 +1616,29 @@ static void dropUnused(ModuleOp module) {
 // Internal and private symbols become hidden globals with names unique to
 // unit, so the tier0 object and the LLVM object of the fallback functions
 // can both refer to them.
-static void shareLocals(ModuleOp module, const std::string &unit) {
+// Internal and private symbols, renamed unique to unit: in a module with
+// fallback functions both objects must reach them, as hidden globals.
+static llvm::DenseMap<StringAttr, StringAttr> localNames(ModuleOp module, const std::string &unit) {
   MLIRContext *ctx = module.getContext();
   llvm::DenseMap<StringAttr, StringAttr> renamed;
+  for (Operation &op : module.getBody()->getOperations()) {
+    StringAttr old;
+    if (auto f = dyn_cast<LL::LLVMFuncOp>(op)) {
+      if (isLocalLinkage(f.getLinkage())) old = f.getSymNameAttr();
+    } else if (auto g = dyn_cast<LL::GlobalOp>(op)) {
+      if (isLocalLinkage(g.getLinkage())) old = g.getSymNameAttr();
+    }
+    if (old) renamed[old] = StringAttr::get(ctx, old.getValue() + ".t0." + unit);
+  }
+  return renamed;
+}
+
+static void shareLocals(ModuleOp module, const llvm::DenseMap<StringAttr, StringAttr> &renamed) {
+  if (renamed.empty()) return;
   auto share = [&](auto op) {
-    if (!isLocalLinkage(op.getLinkage())) return;
-    StringAttr old = op.getSymNameAttr();
-    StringAttr nu = StringAttr::get(ctx, old.getValue() + ".t0." + unit);
-    renamed[old] = nu;
-    op.setSymName(nu.getValue());
+    auto it = renamed.find(op.getSymNameAttr());
+    if (it == renamed.end()) return;
+    op.setSymName(it->second.getValue());
     op.setLinkage(LL::Linkage::External);
     op.setVisibility_(LL::Visibility::Hidden);
   };
@@ -1579,7 +1648,6 @@ static void shareLocals(ModuleOp module, const std::string &unit) {
     else if (auto g = dyn_cast<LL::GlobalOp>(op))
       share(g);
   }
-  if (renamed.empty()) return;
   AttrTypeReplacer r;
   r.addReplacement([&](FlatSymbolRefAttr a) -> std::optional<Attribute> {
     auto it = renamed.find(a.getAttr());
@@ -1626,7 +1694,20 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
     }
   }
   stats.codeBytes = w.size(Sect::Text);
-  fragment.clear();  // line tables come later
+  llvm::DenseMap<StringAttr, StringAttr> renamed;
+  if (!fallback.empty()) {
+    renamed = localNames(module, unit);
+    for (auto &[from, to] : renamed) w.renameShared(machoName(from.getValue()), machoName(to.getValue()));
+  }
+  // The pc table fragment (Pcln.h): files, then each function and its rows.
+  fragment.clear();
+  llvm::raw_string_ostream os(fragment);
+  for (const std::string &f : files) os << "P\t" << f << "\n";
+  for (const Lines &l : lines) {
+    os << "F\t" << l.size << "\t" << StringRef(w.name(l.sym)).drop_front() << "\n";
+    for (auto &[off, line, file] : l.rows) os << "R\t" << off << "\t" << line << "\t" << file << "\n";
+  }
+  os.flush();
   // What stays for LLVM: the fallback functions, everything else declared.
   llvm::DenseMap<StringAttr, bool> keep;
   for (auto &n : fallback) keep[StringAttr::get(ctx, n)] = true;
@@ -1635,7 +1716,7 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
       if (f.isExternal() || keep.count(f.getSymNameAttr())) continue;
       f.getBody().dropAllReferences();
       f.getBody().getBlocks().clear();
-      if (isWeakLinkage(f.getLinkage())) f.setLinkage(LL::Linkage::External);
+      if (isWeakLinkage(f.getLinkage()) || isLocalLinkage(f.getLinkage())) f.setLinkage(LL::Linkage::External);
     } else if (auto g = dyn_cast<LL::GlobalOp>(op)) {
       if (!definedData.count(g.getSymNameAttr())) continue;
       g.getInitializerRegion().dropAllReferences();
@@ -1644,6 +1725,7 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
       g.setLinkage(LL::Linkage::External);
     }
   }
+  shareLocals(module, renamed);
   return true;
 }
 
@@ -1653,8 +1735,7 @@ bool emit(ModuleOp module, const std::string &unit, const std::string &outObject
           std::vector<std::string> &fallback, std::vector<std::string> &reasons, Stats &stats,
           std::string &err) {
   dropUnused(module);
-  shareLocals(module, unit);
-  ModuleGen mg(module);
+  ModuleGen mg(module, unit);
   if (!mg.run(fragment, fallback, reasons, stats, err)) return false;
   return mg.w.write(outObject, err);
 }

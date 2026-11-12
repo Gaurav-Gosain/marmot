@@ -2,10 +2,11 @@
 // --emit=mlir) with tier0 into an object, and reports time, counts and the
 // reasons functions fell back to LLVM.
 //
-//   tier0-run in.mlir out.o [rest.mlir]
+//   tier0-run in.mlir out.o [rest.mlir [frag]]
 //
 // rest.mlir receives what is left for LLVM (the fallback functions, the rest
-// declared), to compile with marmot-backend and link next to out.o.
+// declared), to compile with marmot-backend and link next to out.o. frag
+// receives the pc table fragment of the tier0 functions.
 #include "../Tier0.h"
 
 #include "mlir/Dialect/DLTI/DLTI.h"
@@ -21,8 +22,8 @@
 #include <map>
 
 int main(int argc, char **argv) {
-  if (argc != 3 && argc != 4) {
-    llvm::errs() << "usage: tier0-run in.mlir out.o [rest.mlir]\n";
+  if (argc < 3 || argc > 5) {
+    llvm::errs() << "usage: tier0-run in.mlir out.o [rest.mlir [frag]]\n";
     return 2;
   }
   mlir::MLIRContext ctx;
@@ -48,14 +49,17 @@ int main(int argc, char **argv) {
   std::map<std::string, unsigned> why;
   for (auto &r : reasons) why[r]++;
   for (auto &[r, n] : why) llvm::outs() << "  fallback " << n << ": " << r << "\n";
-  if (argc == 4) {
+  for (int i = 3; i < argc; i++) {
     std::error_code ec;
-    llvm::raw_fd_ostream os(argv[3], ec);
+    llvm::raw_fd_ostream os(argv[i], ec);
     if (ec) {
-      llvm::errs() << "cannot write " << argv[3] << "\n";
+      llvm::errs() << "cannot write " << argv[i] << "\n";
       return 1;
     }
-    m->print(os);
+    if (i == 3)
+      m->print(os);
+    else
+      os << frag;
   }
   return 0;
 }
