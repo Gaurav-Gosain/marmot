@@ -128,11 +128,46 @@ func BuildTest(cfg Config) (exe, dir string, err error) {
 // Build compiles the packages and writes the output. It returns the output
 // path.
 func Build(cfg Config) (string, error) {
+	if dev := cfg.Output; dev != "" {
+		if st, err := os.Stat(dev); err == nil && !st.Mode().IsRegular() && !st.IsDir() {
+			return buildToDevice(cfg, dev)
+		}
+	}
 	b, err := build1(cfg)
 	if err != nil {
 		return "", err
 	}
 	return b.out, nil
+}
+
+// buildToDevice builds to a temporary file and writes it to dev, an
+// existing file that is not a regular one (-o /dev/null): the link steps
+// rename and reread their output, which a device does not allow.
+func buildToDevice(cfg Config, dev string) (string, error) {
+	dir, err := os.MkdirTemp("", "marmot-out-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(dir)
+	cfg.Output = filepath.Join(dir, filepath.Base(dev))
+	b, err := build1(cfg)
+	if err != nil {
+		return "", err
+	}
+	src, err := os.Open(b.out)
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+	dst, err := os.OpenFile(dev, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(dst, src); err != nil {
+		dst.Close()
+		return "", err
+	}
+	return dev, dst.Close()
 }
 
 func build1(cfg Config) (*build, error) {
