@@ -2,6 +2,9 @@ package main
 
 import "math"
 
+// NaN inputs are left out on purpose: the sign and payload of a NaN result are not defined by the
+// Go spec and differ between compilers and architectures (see docs/SUPPORT.md, known differences).
+//
 // Cases where gc on arm64 fuses (or must not fuse) multiply-add. The expected output is
 // whatever stock Go prints; marmot must match it bit for bit.
 //
@@ -58,7 +61,6 @@ func main() {
 		{1e8 + 0.5, 1e8 - 0.5, -1e16},
 		{3, 7, 1},
 		{math.Inf(1), 0, 1},
-		{math.NaN(), 1, 1},
 		{1e308, 10, -1e308},
 		{0.7, 0.3, -0.21},
 		{-0.0, 1, -0.0},
