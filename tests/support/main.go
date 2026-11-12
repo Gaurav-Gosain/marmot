@@ -311,7 +311,7 @@ func main() {
 	w("- Floating point uses the same fused multiply-add rule as gc on arm64 (`x*y+z` fuses, an explicit conversion does not).\n")
 	w("- Variables are read after calls in the same expression, as gc does (the spec leaves this unspecified).\n")
 	w("- `runtime.Caller` and friends work from a pc table; binaries built with `-s` have none.\n")
-	w("- The sign and payload bits of a NaN result (and signaling versus quiet NaN) can differ from gc. The Go spec leaves them undefined and gc itself differs across architectures. All other floating point results are bit identical to gc on the same architecture.\n")
+	w("- **NaN payloads.** Where the Go specification only says the result is a NaN, marmot may return a different NaN (payload and sign bits) than gc: the builtin `min` and `max` (also over slices, so `slices.Min` and `slices.Max`), `math.Max`, `math.Min`, and `math.Floor`, `Ceil`, `Trunc`, `Round` and `RoundToEven` of a signaling NaN (gc quiets it, marmot may return it unchanged). The value is a NaN in every case; only `math.Float64bits`, `math.Float32bits` or `unsafe` shows the difference, and gc itself differs here across architectures. Values that are not NaN are bit identical to gc on the same architecture; a difference there is a bug. Programs: `tests/run/audit/minmax_nan_payload`, `tests/run/audit/math_exp_log_bits`.\n")
 	w("- Slice growth capacities and map iteration order are not guaranteed to equal gc's.\n")
 	w("- cgo, the race detector, plugins, DWARF and Windows are not supported.\n")
 	w("- `reflect`: see the open failures below for the current gaps.\n\n")
