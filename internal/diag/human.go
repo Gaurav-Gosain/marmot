@@ -40,6 +40,7 @@ type Human struct {
 	Style   Style
 	Dir     string // paths are shown relative to Dir when below it
 	Max     int    // at most this many errors are shown (0: 10)
+	Summary string // the summary verb, "build failed with" when empty
 	Sources *Sources
 }
 
@@ -102,7 +103,15 @@ func (h *Human) Render(ds []Diagnostic) {
 	if errs == 0 {
 		color = st.Warning
 	}
-	fmt.Fprintf(h.W, "%s%s%s\n", color, "error: build failed with "+sum, st.Reset)
+	prefix := h.Summary
+	if prefix == "" {
+		prefix = "build failed with"
+	}
+	head := "error: " + prefix + " " + sum
+	if errs == 0 {
+		head = "warning: " + sum
+	}
+	fmt.Fprintf(h.W, "%s%s%s\n", color, head, st.Reset)
 	fixable := 0
 	for _, d := range ds {
 		if len(d.Fixes) > 0 && d.Fixes[0].Applicability == MachineApplicable {
@@ -175,8 +184,10 @@ func (h *Human) one(d *Diagnostic) {
 	if f != nil {
 		h.snippet(f, d)
 	}
-	if len(d.Notes)+len(d.Related)+len(d.Help)+len(d.Fixes) > 0 && f != nil {
-		gut()
+	if len(d.Notes)+len(d.Related)+len(d.Help)+len(d.Fixes) > 0 || d.Check != "" {
+		if f != nil {
+			gut()
+		}
 	}
 	for _, n := range d.Notes {
 		if strings.HasPrefix(n, "  ") {
@@ -194,6 +205,13 @@ func (h *Human) one(d *Diagnostic) {
 	}
 	if d.Bundle != "" {
 		fmt.Fprintf(h.W, "%s %s=%s %snote:%s report bundle: %s\n", pad, st.Gutter, st.Reset, st.Bold, st.Reset, d.Bundle)
+	}
+	if d.Check != "" {
+		by := "`" + d.Check + "`"
+		if d.Analyzer != "" {
+			by += ", analyzer `" + d.Analyzer + "`"
+		}
+		fmt.Fprintf(h.W, "%s %s=%s %snote:%s reported by check %s\n", pad, st.Gutter, st.Reset, st.Bold, st.Reset, by)
 	}
 	if d.FullMessage != "" {
 		if p := writeFullMessage(d.FullMessage); p != "" {

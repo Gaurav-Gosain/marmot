@@ -37,6 +37,17 @@ const (
 	CodeCannotInfer   = "M0027"
 	CodeShadow        = "M0028"
 	CodeUnknownField  = "M0029"
+
+	// marmot check findings, one code per check family.
+	CodeVet       = "M0100"
+	CodeLint      = "M0101"
+	CodeModernize = "M0102"
+	CodeNotFmt    = "M0103"
+	CodeGopls     = "M0104"
+	CodeVuln      = "M0105"
+	CodeNotTidy   = "M0106"
+	CodeCross     = "M0107"
+	CodeDeadcode  = "M0108"
 )
 
 // CodeInfo describes one code for marmot explain.
@@ -202,6 +213,33 @@ var codeTable = []CodeInfo{
 		Text: "The runtime stopped the program: a deadlock, out of memory, a concurrent map write, or a broken invariant. Fatal errors cannot be recovered."},
 	{Code: CodeTestFail, Title: "test failed",
 		Text: "A test called t.Error, t.Fatal or panicked."},
+	{Code: CodeVet, Title: "vet finding",
+		Text: "go vet's analyzers found code that compiles but is likely wrong: a Printf format that does not match its arguments, a copied lock, an unreachable statement, a struct tag that does not parse. The note names the analyzer.",
+		Fix:  "Follow the finding; marmot fix applies the machine applicable ones."},
+	{Code: CodeLint, Title: "lint finding",
+		Text: "A staticcheck style analyzer found a bug pattern, a deprecated API, or code that can be simpler. The note names the analyzer (SA, S, ST and QF numbers follow staticcheck).",
+		Fix:  "Follow the finding, or silence it for one line with a //lint:ignore comment that says why."},
+	{Code: CodeModernize, Title: "modernize suggestion",
+		Text: "The code can use a newer language or library feature that the module's go version allows (min and max, range over int, slices and maps functions, strings.Cut, ...). Behavior is unchanged.",
+		Fix:  "marmot fix applies these."},
+	{Code: CodeNotFmt, Title: "not formatted",
+		Text: "The file is not in gofmt layout, or its imports are not as goimports would write them.",
+		Fix:  "Run marmot fmt."},
+	{Code: CodeGopls, Title: "gopls finding",
+		Text: "An analyzer of gopls (simplifications, unused parameters, ...) has a suggestion.",
+		Fix:  "Follow the finding; marmot fix applies the machine applicable ones."},
+	{Code: CodeVuln, Title: "known vulnerability",
+		Text: "The program calls code of a module version with a known vulnerability (from the Go vulnerability database). Only vulnerabilities in reached code are reported.",
+		Fix:  "Upgrade the module to the fixed version the finding names."},
+	{Code: CodeNotTidy, Title: "go.mod not tidy",
+		Text: "go.mod or go.sum lists modules the build does not need, or lacks ones it does.",
+		Fix:  "Run go mod tidy."},
+	{Code: CodeCross, Title: "cross build failure",
+		Text: "The module builds for this platform but not for another one it is checked for: a file with a build tag or a platform name is missing a function or uses one that does not exist there.",
+		Fix:  "Add the missing implementation for that platform, or a build tag that excludes the package there."},
+	{Code: CodeDeadcode, Title: "unreachable function",
+		Text: "No path from main or a test reaches the function, so it is dead code.",
+		Fix:  "Remove it, or use it."},
 	{Code: CodeOther, Title: "error",
 		Text: "An error without a more specific code. The message says what is wrong."},
 }
@@ -233,7 +271,7 @@ func Lookup(code string) *CodeInfo {
 // AllCodes lists every code in numeric order.
 func AllCodes() []CodeInfo {
 	out := make([]CodeInfo, 0, len(codeTable))
-	for i := 0; i <= 99; i++ {
+	for i := 0; i <= 199; i++ {
 		if c := codeIndex[codeName(i)]; c != nil {
 			out = append(out, *c)
 		}
@@ -243,5 +281,5 @@ func AllCodes() []CodeInfo {
 
 func codeName(i int) string {
 	const digits = "0123456789"
-	return "M00" + string(digits[i/10]) + string(digits[i%10])
+	return "M0" + string(digits[i/100]) + string(digits[i/10%10]) + string(digits[i%10])
 }

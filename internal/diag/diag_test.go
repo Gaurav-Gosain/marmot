@@ -236,3 +236,18 @@ func TestFormatFile(t *testing.T) {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
 }
+
+func TestCheckDiagnostic(t *testing.T) {
+	var b strings.Builder
+	d := Diagnostic{Kind: "diagnostic", Severity: Warning, Code: CodeLint, Message: "strings.Title is deprecated", Check: "lint", Analyzer: "SA1019"}
+	(&Human{W: &b, Style: Plain}).Render([]Diagnostic{d})
+	out := b.String()
+	for _, want := range []string{"warning[M0101]: strings.Title is deprecated", "= note: reported by check `lint`, analyzer `SA1019`", "1 warning"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if Lookup("M0105") == nil || len(AllCodes()) < 39 {
+		t.Errorf("check codes not listed: %d codes", len(AllCodes()))
+	}
+}

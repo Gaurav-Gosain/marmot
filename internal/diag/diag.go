@@ -121,6 +121,12 @@ type Diagnostic struct {
 	Bundle string `json:"bundle,omitempty"`
 	// Package is the import path the diagnostic belongs to, when known.
 	Package string `json:"package,omitempty"`
+	// Check is the marmot check family that reported it (vet, lint,
+	// modernize, fmt, gopls, vuln, tidy, cross, deadcode); empty for build
+	// errors.
+	Check string `json:"check,omitempty"`
+	// Analyzer is the analyzer within the check (printf, SA1019, ...).
+	Analyzer string `json:"analyzer,omitempty"`
 }
 
 // Sort orders diagnostics by file, line and column, with diagnostics without
