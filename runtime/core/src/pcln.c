@@ -99,3 +99,37 @@ RT_API int32_t rt_pcln(const uint8_t **table, intptr_t *len, uintptr_t *base) {
   *base = pcln_base;
   return 1;
 }
+
+// ---- type links (reflect type identity) ----
+
+#if RT_OS_DARWIN
+RT_API void **rt_typelinks(intptr_t *n) {
+  unsigned long size = 0;
+  uint8_t *p = getsectiondata(&_mh_execute_header, "__DATA", "__marmot_tlinks", &size);
+  if (!p || size < sizeof(void *)) {
+    *n = 0;
+    return NULL;
+  }
+  *n = (intptr_t)(size / sizeof(void *));
+  return (void **)p;
+}
+#elif RT_OS_LINUX
+// The linker defines these for a section named like a C identifier. With
+// lld's default -z start-stop-gc the section must itself be retained (used
+// attribute / SHF_GNU_RETAIN); these references do not keep it.
+extern void *__start_marmot_tlinks[] __attribute__((weak, visibility("hidden")));
+extern void *__stop_marmot_tlinks[] __attribute__((weak, visibility("hidden")));
+RT_API void **rt_typelinks(intptr_t *n) {
+  if (!__start_marmot_tlinks || !__stop_marmot_tlinks || __stop_marmot_tlinks <= __start_marmot_tlinks) {
+    *n = 0;
+    return NULL;
+  }
+  *n = __stop_marmot_tlinks - __start_marmot_tlinks;
+  return __start_marmot_tlinks;
+}
+#else
+RT_API void **rt_typelinks(intptr_t *n) {
+  *n = 0;
+  return NULL;
+}
+#endif
