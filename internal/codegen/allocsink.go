@@ -6,7 +6,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// Allocation sinking (docs/frontend-passes.md). A heap allocation that
+// Allocation sinking. A heap allocation that
 // cannot panic (new, make of a map with a constant or no hint, make of a
 // slice or channel with constant sizes, a closure) moves from its block B
 // to the nearest common dominator D of its uses when D != B and D is in no

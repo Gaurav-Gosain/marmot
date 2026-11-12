@@ -9,7 +9,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// Stack buffers for conversions (docs/frontend-passes.md), as gc's
+// Stack buffers for conversions, as gc's
 // tmpBuf: string(b) and []byte(s) whose result does not escape use a
 // 32 byte frame buffer when the data fits (else the runtime allocates);
 // []byte(constant) that does not escape gets a frame array of its exact

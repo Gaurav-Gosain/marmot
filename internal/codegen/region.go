@@ -9,7 +9,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// Region inference (SPEC 3a lever 4, docs/passes.md "Regions").
+// Region inference.
 //
 // A function is region cloneable when the objects it allocates only form a
 // fresh graph that it returns: every heap allocation (and every result of a
@@ -28,39 +28,58 @@ import (
 // objects), as rt.h requires.
 
 type regionState struct {
-	ok      map[*ssa.Function]bool
-	running map[*ssa.Function]bool
+	ok map[*ssa.Function]bool // final results, shared by all goroutines
 }
 
 // regionCloneable reports whether fn is region cloneable.
 func (p *Program) regionCloneable(fn *ssa.Function) bool {
-	if !optRegions || len(fn.Blocks) == 0 || fn.Recover != nil || len(fn.FreeVars) > 0 {
-		return false
+	q := newSummaryQuery()
+	r := p.regionCloneableQ(q, fn)
+	if len(q.running) != 0 {
+		panic("regionCloneable: query still running")
 	}
 	p.escMu.Lock()
 	if p.regions.ok == nil {
 		p.regions.ok = map[*ssa.Function]bool{}
-		p.regions.running = map[*ssa.Function]bool{}
 	}
-	if r, ok := p.regions.ok[fn]; ok {
-		p.escMu.Unlock()
-		return r
+	for k, v := range q.local {
+		p.regions.ok[k.fn] = v
 	}
-	if p.regions.running[fn] {
-		p.escMu.Unlock()
-		return true // recursion: optimistic, confirmed when the outer check ends
-	}
-	p.regions.running[fn] = true
-	p.escMu.Unlock()
-	r := p.checkRegionFn(fn)
-	p.escMu.Lock()
-	delete(p.regions.running, fn)
-	p.regions.ok[fn] = r
 	p.escMu.Unlock()
 	return r
 }
 
-func (p *Program) checkRegionFn(fn *ssa.Function) bool {
+// regionCloneableQ: recursion is optimistic within query q (see
+// summaryQuery); a callee found not cloneable drops what was decided
+// assuming it was.
+func (p *Program) regionCloneableQ(q *summaryQuery, fn *ssa.Function) bool {
+	if !optRegions || len(fn.Blocks) == 0 || fn.Recover != nil || len(fn.FreeVars) > 0 {
+		return false
+	}
+	p.escMu.Lock()
+	r, ok := p.regions.ok[fn]
+	p.escMu.Unlock()
+	if ok {
+		return r
+	}
+	k := escKey{fn, regionCloneKey}
+	if r, ok := q.local[k]; ok {
+		return r
+	}
+	if q.running[k] {
+		return true // this query's own recursion: optimistic
+	}
+	q.running[k] = true
+	start := len(q.order)
+	r = p.checkRegionFn(q, fn)
+	q.finish(k, start, r, true)
+	return r
+}
+
+// regionCloneKey marks regionCloneable entries in a summaryQuery.
+const regionCloneKey = -1000
+
+func (p *Program) checkRegionFn(q *summaryQuery, fn *ssa.Function) bool {
 	res := fn.Signature.Results()
 	if res.Len() != 1 || !isPtrRepr(res.At(0).Type()) {
 		return false
@@ -70,8 +89,8 @@ func (p *Program) checkRegionFn(fn *ssa.Function) bool {
 	// never values loaded from memory. MAY: everything that may point into
 	// the region: MUST plus pointers loaded out of MAY objects (which may
 	// also be heap pointers stored there earlier). Both are computed to a
-	// fixpoint before any use is checked (verify counterexample 2, rule
-	// Region.lean C and M).
+	// fixpoint before any use is checked (verify/lean/Region.lean,
+	// sets C and M).
 	must := map[ssa.Value]bool{}
 	may := map[ssa.Value]bool{}
 	var work []ssa.Value
@@ -93,7 +112,7 @@ func (p *Program) checkRegionFn(fn *ssa.Function) bool {
 				}
 			case *ssa.Call:
 				if callee := x.Call.StaticCallee(); callee != nil && isPtrRepr(x.Type()) && !x.Call.IsInvoke() &&
-					callee != fn && p.regionCloneable(callee) {
+					callee != fn && p.regionCloneableQ(q, callee) {
 					must[x] = true
 					addMay(x)
 				} else if callee == fn {
@@ -163,7 +182,7 @@ func (p *Program) checkRegionFn(fn *ssa.Function) bool {
 			switch x := r.(type) {
 			case *ssa.DebugRef, *ssa.Return, *ssa.FieldAddr:
 			case *ssa.BinOp:
-				// String + may return an operand itself (verify counterexample 8).
+				// String + may return an operand itself (verify/testdata/progs/stackconcat.go).
 				// Its result is not followed here: reject.
 				if x.Op == token.ADD && isString(x.Type()) {
 					return false
@@ -269,7 +288,7 @@ func confinedTo(p *Program, c *ssa.Call, b *ssa.BasicBlock, start int) (ssa.Inst
 			}
 			switch x := r.(type) {
 			case *ssa.BinOp:
-				// String + may return an operand itself (verify counterexample 8).
+				// String + may return an operand itself (verify/testdata/progs/stackconcat.go).
 				if x.Op == token.ADD && isString(x.Type()) {
 					work = append(work, x)
 				}

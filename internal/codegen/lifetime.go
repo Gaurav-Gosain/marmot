@@ -7,11 +7,11 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// Lifetime transforms (lead decision 2026-11-12): every transform that
-// frees or reuses memory or changes object lifetime has its own switch and
-// is OFF by default in dev and -release until verify has proved or
-// re-checked its rule, run its checker over tests/run and tests/world, and
-// passed adversarial tests under poison-on-free. Switches are environment
+// Lifetime transforms: every transform that frees or reuses memory or
+// changes object lifetime has its own switch and is OFF by default in dev
+// and -release until its rule is proved or checked, its checker runs clean
+// over tests/run and tests/world, and adversarial tests pass under
+// poison-on-free. Switches are environment
 // variables set to 1; MARMOT_LIFETIME=all turns every one on.
 //
 //	MARMOT_REUSE         in-place reuse (rt_free of the old array on append growth)
@@ -27,7 +27,7 @@ import (
 //	MARMOT_STACKCONV     frame buffers for string(b), []byte(s) and small make
 //	MARMOT_BYVALUE       closures capture settled variables by value
 //
-// Other transforms under rule 11 (wrong analysis changes behavior), same
+// Other transforms where a wrong analysis changes behavior, same
 // switches and default:
 //
 //	MARMOT_MAPFUSE       v := m[k]; ...; m[k] = w as one mapassign

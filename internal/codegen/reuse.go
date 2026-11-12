@@ -9,7 +9,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// In-place reuse (docs/frontend-passes.md, "In-place reuse"): when append
+// In-place reuse: when append
 // must grow a slice whose old backing array no other live value can
 // reach, the old array is returned to the allocator (rt_free) so the next
 // allocation of that size class reuses it.
@@ -24,8 +24,8 @@ import (
 // (older chain values may share the array the growth frees).
 
 func (f *funcGen) findReusableAppends() {
-	// Off by default until verify signs the rule off (a use-after-free was
-	// found 2026-11-12); MARMOT_REUSE=1 turns it on.
+	// Off by default until the rule is proved (a use-after-free was found
+	// in testing); MARMOT_REUSE=1 turns it on.
 	if !optReuse || os.Getenv("MARMOT_NO_REUSE") != "" {
 		return
 	}
@@ -283,7 +283,7 @@ func chainDeadAfter(c *ssa.Call) bool {
 			return false
 		}
 		// Element addresses taken from v point into the same array: their
-		// loads and stores are uses too (verify counterexample 5).
+		// loads and stores are uses too.
 		if refs := v.Referrers(); refs != nil {
 			for _, r := range *refs {
 				if ia, ok := r.(*ssa.IndexAddr); ok && !deadAfter(ia, c) {

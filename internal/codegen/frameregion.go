@@ -9,7 +9,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// Frame regions (docs/frontend-passes.md, "Frame regions").
+// Frame regions.
 //
 // A callee F is region-parametric in parameter i when every object F
 // allocates is only stored into memory reached from parameter i (field and
@@ -23,14 +23,52 @@ import (
 // so nothing refers to them after the function returns.
 
 type deepState struct {
-	done    map[escKey]bool
-	running map[escKey]bool
+	done    map[escKey]bool // final results, shared by all goroutines
+	running map[escKey]bool // unused; kept for the initialization below
 	param   map[escKey]bool // regionParam results
-	order   []escKey        // done keys in completion order (for invalidation)
+}
+
+// summaryQuery is one top-level summary computation. Recursion is optimistic (greatest fixpoint): a key that is
+// being computed in this query answers "does not escape" (or "cloneable"),
+// and when that key turns out the other way, every result this query
+// finished after the key started is dropped. Those provisional results stay
+// in the query; only when the query ends (nothing running, every
+// assumption resolved) do they go to the shared cache. Modules are
+// generated in parallel, so another goroutine never sees a provisional
+// answer: it runs its own query (duplicate work, same result).
+type summaryQuery struct {
+	running map[escKey]bool
+	local   map[escKey]bool
+	order   []escKey // local keys in completion order
+}
+
+func newSummaryQuery() *summaryQuery {
+	return &summaryQuery{running: map[escKey]bool{}, local: map[escKey]bool{}}
+}
+
+// finish records a key's result, dropping what was computed under its
+// assumption when the assumption was wrong (optimistic != r).
+func (q *summaryQuery) finish(k escKey, start int, r, optimistic bool) {
+	delete(q.running, k)
+	if r != optimistic {
+		for _, d := range q.order[start:] {
+			delete(q.local, d)
+		}
+		q.order = q.order[:start]
+	}
+	q.local[k] = r
+	q.order = append(q.order, k)
 }
 
 // deepEscapes is escapes, but also follows pointers loaded through v.
 func (p *Program) deepEscapes(v ssa.Value, seen map[ssa.Value]bool) bool {
+	q := newSummaryQuery()
+	r := p.deepEscapesQ(q, v, seen)
+	p.commitDeep(q)
+	return r
+}
+
+func (p *Program) deepEscapesQ(q *summaryQuery, v ssa.Value, seen map[ssa.Value]bool) bool {
 	if seen[v] {
 		return false
 	}
@@ -43,15 +81,15 @@ func (p *Program) deepEscapes(v ssa.Value, seen map[ssa.Value]bool) bool {
 		switch x := r.(type) {
 		case *ssa.DebugRef:
 		case *ssa.BinOp:
-			// String + may return an operand itself (verify counterexample 8).
-			if x.Op == token.ADD && isString(x.Type()) && p.deepEscapes(x, seen) {
+			// String + may return an operand itself (verify/testdata/progs/stackconcat.go).
+			if x.Op == token.ADD && isString(x.Type()) && p.deepEscapesQ(q, x, seen) {
 				return true
 			}
 		case *ssa.UnOp:
 			if x.Op != token.MUL {
 				return true
 			}
-			if len(ptrWords(x.Type(), p.opts.Sizes)) > 0 && p.deepEscapes(x, seen) {
+			if len(ptrWords(x.Type(), p.opts.Sizes)) > 0 && p.deepEscapesQ(q, x, seen) {
 				return true
 			}
 		case *ssa.Store:
@@ -60,7 +98,7 @@ func (p *Program) deepEscapes(v ssa.Value, seen map[ssa.Value]bool) bool {
 			}
 		case *ssa.FieldAddr, *ssa.IndexAddr, *ssa.Slice, *ssa.ChangeType, *ssa.Field, *ssa.Index,
 			*ssa.Extract, *ssa.Phi:
-			if p.deepEscapes(x.(ssa.Value), seen) {
+			if p.deepEscapesQ(q, x.(ssa.Value), seen) {
 				return true
 			}
 		case *ssa.Call:
@@ -82,7 +120,7 @@ func (p *Program) deepEscapes(v ssa.Value, seen map[ssa.Value]bool) bool {
 			for i, a := range c.Args {
 				// A region-parametric callee only adds objects to the graph
 				// behind its argument; it does not let anything out.
-				if a == v && p.deepParamEscapes(fn, i) && !p.regionParam(fn, i) {
+				if a == v && p.deepParamEscapesQ(q, fn, i) && !p.regionParam(fn, i) {
 					return true
 				}
 			}
@@ -100,6 +138,16 @@ func (p *Program) deepParamEscapes(fn *ssa.Function, i int) bool {
 	if len(fn.Blocks) == 0 || i >= len(fn.Params) {
 		return true
 	}
+	q := newSummaryQuery()
+	r := p.deepParamEscapesQ(q, fn, i)
+	p.commitDeep(q)
+	return r
+}
+
+func (p *Program) deepParamEscapesQ(q *summaryQuery, fn *ssa.Function, i int) bool {
+	if len(fn.Blocks) == 0 || i >= len(fn.Params) {
+		return true
+	}
 	k := escKey{fn, i}
 	p.escMu.Lock()
 	if p.deep.done == nil {
@@ -107,33 +155,39 @@ func (p *Program) deepParamEscapes(fn *ssa.Function, i int) bool {
 		p.deep.running = map[escKey]bool{}
 		p.deep.param = map[escKey]bool{}
 	}
-	if r, ok := p.deep.done[k]; ok {
-		p.escMu.Unlock()
+	r, ok := p.deep.done[k]
+	p.escMu.Unlock()
+	if ok {
 		return r
 	}
-	if p.deep.running[k] {
-		// Recursion: assume it does not escape. If the outer computation
-		// ends with "escapes", every result computed under the assumption
-		// is dropped below and recomputed later.
-		p.escMu.Unlock()
-		return false
+	if r, ok := q.local[k]; ok {
+		return r
 	}
-	p.deep.running[k] = true
-	start := len(p.deep.order)
-	p.escMu.Unlock()
-	r := p.deepEscapes(fn.Params[i], map[ssa.Value]bool{})
-	p.escMu.Lock()
-	delete(p.deep.running, k)
-	if r {
-		for _, d := range p.deep.order[start:] {
-			delete(p.deep.done, d)
-		}
-		p.deep.order = p.deep.order[:start]
+	if q.running[k] {
+		return false // this query's own recursion: optimistic
 	}
-	p.deep.done[k] = r
-	p.deep.order = append(p.deep.order, k)
-	p.escMu.Unlock()
+	q.running[k] = true
+	start := len(q.order)
+	r = p.deepEscapesQ(q, fn.Params[i], map[ssa.Value]bool{})
+	q.finish(k, start, r, false)
 	return r
+}
+
+// commitDeep moves a finished query's results to the shared cache.
+func (p *Program) commitDeep(q *summaryQuery) {
+	if len(q.running) != 0 {
+		panic("commitDeep: query still running")
+	}
+	p.escMu.Lock()
+	if p.deep.done == nil {
+		p.deep.done = map[escKey]bool{}
+		p.deep.running = map[escKey]bool{}
+		p.deep.param = map[escKey]bool{}
+	}
+	for k, r := range q.local {
+		p.deep.done[k] = r
+	}
+	p.escMu.Unlock()
 }
 
 // regionParam reports whether fn is region-parametric in parameter i.
@@ -298,7 +352,7 @@ func leaksRegionValue(p *Program, v ssa.Value, seen map[ssa.Value]bool) bool {
 		switch x := r.(type) {
 		case *ssa.DebugRef, *ssa.Store, *ssa.FieldAddr, *ssa.IndexAddr:
 		case *ssa.BinOp:
-			// String + may return an operand itself (verify counterexample 8).
+			// String + may return an operand itself (verify/testdata/progs/stackconcat.go).
 			if x.Op == token.ADD && isString(x.Type()) && leaksRegionValue(p, x, seen) {
 				return true
 			}
@@ -318,7 +372,7 @@ func leaksRegionValue(p *Program, v ssa.Value, seen map[ssa.Value]bool) bool {
 			for k, a := range c.Args {
 				// The frame region is not scanned: the callee must not
 				// store pointers into memory reached through the argument
-				// (verify counterexample 6), nor let anything out of it.
+				// (verify/testdata/progs/frameregionwrite.go), nor let anything out of it.
 				if a == v && (p.deepParamEscapes(callee, k) || !p.paramNoPtrStore(callee, k)) {
 					return true
 				}

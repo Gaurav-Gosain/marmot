@@ -8,7 +8,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// Escape analysis on SSA (SPEC 3a lever 4). x/tools SSA marks every
+// Escape analysis on SSA. x/tools SSA marks every
 // variable whose address is taken as heap allocated (Alloc.Heap). A heap
 // Alloc or a MakeClosure whose pointer provably stays inside the function
 // is allocated on the stack instead. Pointers may flow into loads and
@@ -188,7 +188,7 @@ func (p *Program) escapesF(v ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool
 			// Comparisons do not leak. A string concatenation may return one
 			// of its operands itself (the runtime returns the only non-empty
 			// operand uncopied, as gc's does), so an operand escapes when the
-			// result does (verify counterexample 8, stackconcat.go).
+			// result does (verify/testdata/progs/stackconcat.go).
 			if x.Op == token.ADD && isString(x.Type()) && p.escapesF(x, seen, noPhi, ret) {
 				return true
 			}
