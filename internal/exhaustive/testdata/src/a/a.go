@@ -28,12 +28,15 @@ func colors(c Color) {
 	case Red:
 	default:
 	}
+	switch c { // handles one of three: a filter, not reported
+	case Red:
+	}
 	//exhaustive:ignore
 	switch c {
 	case Red:
 	}
-	switch c { // want "switch on Color misses Green, Blue"
-	case Crimson:
+	switch c { // want "switch on Color misses Blue"
+	case Crimson, Green:
 	}
 }
 
@@ -55,8 +58,8 @@ func (c *Circle) area() float64 { return 3 * c.r * c.r }
 func (t Tri) area() float64    { return t.b * t.h / 2 }
 
 func shapes(s Shape) {
-	switch s.(type) { // want `type switch on Shape misses \*Circle, Tri`
-	case Square:
+	switch s.(type) { // want `type switch on Shape misses Tri`
+	case Square, *Circle:
 	}
 	switch v := s.(type) {
 	case Square, *Circle, Tri:

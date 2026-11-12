@@ -8,8 +8,11 @@
 // of its own package can implement it; its cases are those types (and
 // pointers to them) that do.
 //
-// A switch with a default clause is exhaustive by definition and is not
-// reported. A switch can opt out with a //exhaustive:ignore comment on the
+// Only types of the switch's own module are checked, and only switches
+// that already handle at least half of the cases: a switch that picks out
+// a few values of a large enum (two of eighty tokens) is a filter, not an
+// attempt at exhaustiveness. A switch with a default clause is exhaustive
+// by definition and is not reported. A switch can opt out with a //exhaustive:ignore comment on the
 // line before it. The suggested fix adds the missing cases with empty
 // bodies, which keeps the behavior of the program (an unhandled value did
 // nothing before and does nothing after) and lists them for the reader.
@@ -140,7 +143,7 @@ func checkEnum(pass *analysis.Pass, s *ast.SwitchStmt) {
 		seenVal[k] = true
 		missing = append(missing, qualify(pass, named.Obj(), m.name))
 	}
-	if len(missing) == 0 {
+	if len(missing) == 0 || 2*len(missing) > len(seenVal)+len(covered) || !sameModule(pass, named.Obj()) {
 		return
 	}
 	report(pass, s.Pos(), s.Body, fmt.Sprintf("switch on %s misses %s", typeName(pass, named), list(missing)), "case "+strings.Join(missing, ", ")+":")
@@ -203,10 +206,22 @@ func checkSealed(pass *analysis.Pass, s *ast.TypeSwitchStmt) {
 			missing = append(missing, typeName(pass, impl))
 		}
 	}
-	if len(missing) == 0 {
+	if len(missing) == 0 || 2*len(missing) > len(impls) || !sameModule(pass, named.Obj()) {
 		return
 	}
 	report(pass, s.Pos(), s.Body, fmt.Sprintf("type switch on %s misses %s", typeName(pass, named), list(missing)), "case "+strings.Join(missing, ", ")+":")
+}
+
+// sameModule reports whether the type is declared in the module being
+// analyzed (by the module path when known, else the first path element).
+func sameModule(pass *analysis.Pass, obj *types.TypeName) bool {
+	tp := obj.Pkg().Path()
+	if pass.Module != nil && pass.Module.Path != "" {
+		m := pass.Module.Path
+		return tp == m || strings.HasPrefix(tp, m+"/")
+	}
+	first := func(p string) string { f, _, _ := strings.Cut(p, "/"); return f }
+	return first(tp) == first(pass.Pkg.Path())
 }
 
 // sealed reports whether an interface has an unexported method.
