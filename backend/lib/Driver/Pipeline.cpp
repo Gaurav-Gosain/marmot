@@ -219,8 +219,11 @@ void runLLVMPipeline(llvm::Module &m, llvm::TargetMachine &tm, char level,
   pto.LoopUnrolling = level != 's' && level != 'z';
   pto.LoopVectorization = level == '2' || level == '3';
   pto.SLPVectorization = level == '2' || level == '3';
-  // Go generic instances and wrappers often compile to identical code.
-  pto.MergeFunctions = level == 's' || level == 'z';
+  // Off by default (SPEC rule 11): merging two identical defer thunks or
+  // wrappers adds a frame between a deferred call and recover, which then
+  // returns nil (tests/run/audit/merge_recover_Os.go). -merge-functions turns
+  // it on at -Os/-Oz for measurements.
+  pto.MergeFunctions = opts.mergeFunctions && (level == 's' || level == 'z');
   // Standard instrumentation makes -time-passes, -print-after and friends work.
   llvm::PassInstrumentationCallbacks pic;
   llvm::StandardInstrumentations si(m.getContext(), /*DebugLogging=*/false);

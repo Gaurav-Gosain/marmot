@@ -473,7 +473,7 @@ std::string fingerprint(const CompileOptions &opts) {
   std::string fp;
   raw_string_ostream os(fp);
   os << kCacheVersion << "|O" << opts.optLevel << "|" << int(opts.emit) << "|"
-     << "|snc" << opts.stringsNoCopy << "|" << opts.triple << "|" << opts.cpu
+     << "|snc" << opts.stringsNoCopy << "|mf" << opts.mergeFunctions << "|" << opts.triple << "|" << opts.cpu
      << (opts.cpu == "native" ? "=" + sys::getHostCPUName().str() : std::string()) << "|"
      << opts.features << "|"
      << opts.strings << opts.devirt << opts.boolPack << opts.escape << opts.bce << opts.openDefers

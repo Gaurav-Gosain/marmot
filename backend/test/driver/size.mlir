@@ -7,9 +7,9 @@
 // OS: attributes #{{[0-9]+}} = { {{.*}}optsize
 // OS-NOT: minsize
 // O2-NOT: optsize
-// Two identical functions are merged at -Oz.
+// Two identical functions are not merged (MergeFunctions is off, see no-merge.mlir).
 // OZ: define {{.*}}@g(
-// OZ-NEXT: tail call {{.*}}@f(
+// OZ-NOT: tail call {{.*}}@f(
 // OZ-DAG: attributes #[[F]] = { {{.*}}minsize{{.*}}optsize
 // OZ-DAG: attributes #[[I]] = { {{.*}}optnone
 module {
