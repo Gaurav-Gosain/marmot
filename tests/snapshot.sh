@@ -4,6 +4,7 @@
 # Usage: tests/snapshot.sh   then   go run ./tests/fuzz -root "$(tests/snapshot.sh)"
 set -e
 root=$(cd "$(dirname "$0")/.." && pwd)
+export GOCACHE=${GOCACHE:-$root/.work/gocache}
 dst="$root/.work/tests/tree-fuzz-$$"
 mkdir -p "$dst/build"
 cp -R "$root/build/bin" "$root/build/lib" "$dst/build/"

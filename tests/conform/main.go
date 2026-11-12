@@ -70,6 +70,10 @@ func main() {
 	flag.Parse()
 	root, err := repoRoot()
 	check(err)
+	// Keep Go and marmot build caches inside the project so they can be cleaned together.
+	if os.Getenv("GOCACHE") == "" {
+		os.Setenv("GOCACHE", filepath.Join(root, ".work", "gocache"))
+	}
 	testsDir := filepath.Join(root, "tests")
 	check(os.MkdirAll(filepath.Join(root, ".work"), 0o755))
 	// Each run gets its own directory so concurrent runs do not collide.

@@ -468,6 +468,9 @@ func main() {
 		return
 	}
 	root, _ := os.Getwd()
+	if os.Getenv("GOCACHE") == "" {
+		os.Setenv("GOCACHE", filepath.Join(root, ".work", "gocache"))
+	}
 	work := filepath.Join(root, ".work", "fuzz")
 	os.MkdirAll(work, 0o755)
 	mroot := root
