@@ -46,8 +46,12 @@ One `builtin.module` of llvm dialect operations, close to LLVM IR:
 - Control flow: `br`, `cond_br`, `switch`, `return`, `unreachable`.
 - Calls: direct, indirect, to runtime functions (`rt_*`) and to other packages.
 - Aggregates: first class struct values in arguments, results, `extractvalue`, `insertvalue`.
-- Intrinsics: memcpy, memmove, memset, ctpop, ctlz, cttz, bswap, fabs, sqrt, min/max,
-  overflow arithmetic, and the few the go passes emit.
+- Intrinsics: memcpy, memmove, memset, fma, and through `llvm.call_intrinsic` ctpop, ctlz,
+  cttz, bswap, bitreverse, fshl, fshr, the saturating float to i64 conversions and
+  frameaddress(0).
+- i128 as a local value (16-byte slot, low word first): zext, sext, trunc, constants, add,
+  sub, mul, and, or, xor and shifts, the shape math/bits produces. i128 in calls, memory
+  or comparisons falls back.
 - Atomics: `atomicrmw`, `cmpxchg`, `fence`, atomic loads and stores.
 - Locations on operations, turned into line tables by the debug scope pass.
 
@@ -85,9 +89,12 @@ Single pass per function, no IR of its own:
    register), critical edges split by emitting the moves in a stub.
 5. Calls follow the platform C convention as LLVM lowers it, including how LLVM passes first
    class aggregates (each field in its own register, in order, falling back to the stack the way
-   LLVM's calling convention does) and multi-register struct returns. A table driven
-   classifier is checked against LLVM's own output for every signature shape in the
-   conformance suite.
+   LLVM's calling convention does) and multi-register struct returns. On Darwin arm64, pieces
+   past x7 / v7 go on the stack packed at their natural size and alignment; a top-level array
+   of all i64 / ptr, all f32 or all f64 is a block, all in registers or all on the stack with
+   the rest of its register class marked used. A result with more than 8 pieces of either
+   class is returned through a pointer in x8. test/abi_gen.py checks this against LLVM with
+   random signatures in both call directions.
 6. Object writer: Mach-O MH_OBJECT (arm64: `__TEXT,__text`, `__DATA,__data`, `__DATA,__const`,
    zero fill, relocations BRANCH26, PAGE21/PAGEOFF12, GOT_LOAD_* for imports, UNSIGNED for data
    pointers), then ELF (R_AARCH64_*, R_X86_64_*). Symbols with the same names and linkage as
@@ -115,6 +122,8 @@ miscompile can be bisected to one function.
 4. ELF and x86-64.
 
 ## Testing
+
+`sh test/run.sh <tier0-run> <llvm bin dir>` runs the intrinsic, i128 and random ABI tests.
 
 - Unit tests per operation kind: small modules compiled by tier0 and by LLVM, linked into one
   program, results compared (this also checks the calling convention in both directions).

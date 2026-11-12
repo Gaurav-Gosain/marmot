@@ -49,6 +49,7 @@ uint64_t alignOf(Type t);
 uint64_t sizeOf(Type t) {
   if (auto i = dyn_cast<IntegerType>(t)) {
     unsigned w = i.getWidth();
+    if (w == 128) return 16;
     if (w > 64) unsupported("integer wider than 64 bits");
     return w <= 8 ? 1 : w <= 16 ? 2 : w <= 32 ? 4 : 8;
   }
@@ -129,13 +130,92 @@ void flatten(Type t, uint64_t base, std::vector<std::pair<uint64_t, Type>> &out)
     for (unsigned i = 0; i < a.getNumElements(); i++) flatten(a.getElementType(), base + i * es, out);
     return;
   }
-  sizeOf(t);  // rejects unsupported scalars
+  if (sizeOf(t) > 8) unsupported("i128 in a call or aggregate value");  // also rejects unsupported scalars
   out.push_back({base, t});
 }
 
 unsigned log2Size(uint64_t n) { return n == 1 ? 0 : n == 2 ? 1 : n == 4 ? 2 : 3; }
 
 std::string machoName(StringRef sym) { return "_" + sym.str(); }
+
+// Where LLVM's Darwin arm64 lowering puts each register sized piece of a
+// call's arguments: x0-x7 and v0-v7, then the stack, packed at each piece's
+// natural size and alignment. A top-level array whose pieces are all i64 /
+// ptr, all f32 or all f64 is a block: all of it in registers, or all of it on
+// the stack with the remaining registers of its class marked used.
+struct ArgLoc {
+  unsigned arg;   // argument index
+  uint64_t off;   // offset of the piece in the argument value
+  Type t;
+  bool fp;
+  int reg;        // register number, or -1 for the stack
+  uint64_t stack; // stack offset when reg < 0
+};
+
+uint64_t blockKey(Type t) {
+  if (t.isF32()) return 1;
+  if (t.isF64()) return 2;
+  if (isa<LL::LLVMPointerType>(t) || intWidth(t) == 64) return 3;
+  return 0;
+}
+
+std::vector<ArgLoc> assignArgs(TypeRange types, uint64_t &stackSize) {
+  std::vector<ArgLoc> out;
+  unsigned ngp = 0, nfp = 0;
+  uint64_t sp = 0;
+  auto onStack = [&](ArgLoc &l, uint64_t align) {
+    sp = (sp + align - 1) & ~(align - 1);
+    l.stack = sp;
+    sp += sizeOf(l.t);
+  };
+  for (unsigned i = 0; i < types.size(); i++) {
+    std::vector<std::pair<uint64_t, Type>> parts;
+    flatten(types[i], 0, parts);
+    bool block = false;
+    if (isa<LL::LLVMArrayType>(types[i]) && !parts.empty()) {
+      uint64_t k = blockKey(parts[0].second);
+      block = k != 0;
+      for (auto &p : parts) block = block && blockKey(p.second) == k;
+    }
+    if (block) {
+      bool fp = isFloat(parts[0].second);
+      unsigned &n = fp ? nfp : ngp;
+      bool regs = n + parts.size() <= 8;
+      uint64_t align = std::min<uint64_t>(alignOf(types[i]), 16);
+      if (!regs) n = 8;
+      for (unsigned j = 0; j < parts.size(); j++) {
+        ArgLoc l{i, parts[j].first, parts[j].second, fp, -1, 0};
+        if (regs)
+          l.reg = int(n++);
+        else
+          onStack(l, j == 0 ? align : 1);
+        out.push_back(l);
+      }
+      continue;
+    }
+    for (auto [off, t] : parts) {
+      ArgLoc l{i, off, t, isFloat(t), -1, 0};
+      unsigned &n = l.fp ? nfp : ngp;
+      if (n < 8)
+        l.reg = int(n++);
+      else
+        onStack(l, sizeOf(t));
+      out.push_back(l);
+    }
+  }
+  stackSize = (sp + 15) & ~uint64_t(15);
+  return out;
+}
+
+// True when LLVM returns a value of type t in memory (through the pointer
+// in x8): more than 8 general or 8 floating point pieces.
+bool returnsInMemory(Type t) {
+  std::vector<std::pair<uint64_t, Type>> parts;
+  flatten(t, 0, parts);
+  unsigned ngp = 0, nfp = 0;
+  for (auto &p : parts) (isFloat(p.second) ? nfp : ngp)++;
+  return ngp > 8 || nfp > 8;
+}
 
 // ---- module level ----
 
@@ -172,10 +252,14 @@ struct ConstVal {
 void putInt(std::vector<uint8_t> &b, uint64_t off, uint64_t v, uint64_t n) {
   for (uint64_t i = 0; i < n; i++) b[off + i] = uint8_t(v >> (8 * i));
 }
+void putAPInt(std::vector<uint8_t> &b, uint64_t off, const APInt &v, uint64_t n) {
+  for (uint64_t i = 0; i < n; i += 8)
+    putInt(b, off + i, v.zextOrTrunc(128).extractBitsAsZExtValue(64, unsigned(8 * i)), std::min<uint64_t>(8, n - i));
+}
 
 void attrBytes(Attribute a, Type t, std::vector<uint8_t> &b, uint64_t off) {
   if (auto i = dyn_cast<IntegerAttr>(a)) {
-    putInt(b, off, i.getValue().getZExtValue(), sizeOf(t));
+    putAPInt(b, off, i.getValue(), sizeOf(t));
     return;
   }
   if (auto f = dyn_cast<FloatAttr>(a)) {
@@ -193,7 +277,7 @@ void attrBytes(Attribute a, Type t, std::vector<uint8_t> &b, uint64_t off) {
     Type et = at.getElementType();
     uint64_t es = sizeOf(et), i = 0;
     if (isa<IntegerType>(et)) {
-      for (const APInt &v : d.getValues<APInt>()) putInt(b, off + es * i++, v.getZExtValue(), es);
+      for (const APInt &v : d.getValues<APInt>()) putAPInt(b, off + es * i++, v, es);
     } else if (isFloat(et)) {
       for (const APFloat &v : d.getValues<APFloat>())
         putInt(b, off + es * i++, v.bitcastToAPInt().getZExtValue(), es);
@@ -346,6 +430,8 @@ private:
   };
   std::vector<Fixup> fixups;
   uint64_t frameSize = 0, tempArea = 0, tempSize = 0;
+  uint64_t sretSlot = 0;  // where the incoming x8 is kept, when the result is returned in memory
+  bool sret = false;
 
   // Frame layout.
   uint64_t alloc(uint64_t size, uint64_t align) {
@@ -378,7 +464,10 @@ private:
 
   void emitOp(Operation &op);
   void emitCall(LL::CallOp call);
+  void emitIntrinsic(LL::CallIntrinsicOp c);
+  bool emitWide(Operation &op);
   void emitReturn(LL::ReturnOp ret);
+  void stackAddr(unsigned rd, unsigned base, uint64_t off);  // rd = base + off
   void edgeMoves(Block *dest, OperandRange args);
   void branchTo(Block *dest);
   void prologue();
@@ -387,6 +476,19 @@ private:
 
 void FuncGen::layout() {
   frameSize = 0;
+  // Outgoing stack arguments at the bottom of the frame.
+  uint64_t out = 0;
+  fn.walk([&](LL::CallOp c) {
+    uint64_t n = 0;
+    assignArgs(c.getArgOperands().getTypes(), n);
+    out = std::max(out, n);
+  });
+  alloc(out, 16);
+  auto rt = fn.getFunctionType().getReturnType();
+  if (!isa<LL::LLVMVoidType>(rt) && returnsInMemory(rt)) {
+    sret = true;
+    sretSlot = alloc(8, 8);
+  }
   // Function arguments are the entry block's arguments.
   for (Block &b : fn.getBody()) {
     for (BlockArgument a : b.getArguments()) slot[a] = alloc(sizeOf(a.getType()) < 8 ? 8 : sizeOf(a.getType()), 8);
@@ -507,7 +609,10 @@ void FuncGen::normalize(unsigned r, Type t) {
   if (wdt < 64) e(ubfx0(r, r, wdt));
 }
 
-void FuncGen::get(unsigned r, Value v) { ldSlot(r, of(v), 8); }
+void FuncGen::get(unsigned r, Value v) {
+  if (sizeOf(v.getType()) > 8) unsupported("i128 operation");
+  ldSlot(r, of(v), 8);
+}
 
 void FuncGen::getSigned(unsigned r, Value v) {
   get(r, v);
@@ -516,6 +621,7 @@ void FuncGen::getSigned(unsigned r, Value v) {
 }
 
 void FuncGen::put(unsigned r, Value v) {
+  if (sizeOf(v.getType()) > 8) unsupported("i128 operation");
   if (isFloat(v.getType())) {
     stSlot(r, of(v), 8);
     return;
@@ -549,35 +655,37 @@ void FuncGen::prologue() {
     }
   }
   // Incoming arguments, split as LLVM splits them, into the entry block's
-  // argument slots.
-  unsigned ngp = 0, nfp = 0;
-  for (BlockArgument a : fn.getBody().front().getArguments()) {
-    std::vector<std::pair<uint64_t, Type>> parts;
-    flatten(a.getType(), 0, parts);
-    for (auto [off, t] : parts) {
-      if (isFloat(t)) {
-        if (nfp >= 8) unsupported("arguments on the stack");
-        e(fmovToGp(R1, nfp++, t.isF64()));
-        if (t.isF32()) e(uxtw(R1, R1));
-        if (isAggregate(a.getType())) {
-          addrOf(R2, of(a) + off);
-          memStore(R1, R2, sizeOf(t));
-        } else {
-          stSlot(R1, of(a), 8);
-        }
-      } else {
-        if (ngp >= 8) unsupported("arguments on the stack");
-        unsigned r = ngp++;
-        if (isAggregate(a.getType())) {
-          addrOf(R2, of(a) + off);
-          memStore(r, R2, sizeOf(t));
-        } else {
-          e(movReg(R1, r));
-          normalize(R1, t);
-          stSlot(R1, of(a), 8);
-        }
-      }
+  // argument slots. Stack arguments start at the caller's sp, fp + 16.
+  if (sret) stSlot(X8, sretSlot, 8);
+  auto params = fn.getBody().front().getArguments();
+  uint64_t stackSize = 0;
+  for (const ArgLoc &l : assignArgs(TypeRange(fn.getFunctionType().getParams()), stackSize)) {
+    BlockArgument a = params[l.arg];
+    if (l.reg < 0) {
+      stackAddr(R2, FP, 16 + l.stack);
+      memLoad(R1, R2, sizeOf(l.t));
+    } else if (l.fp) {
+      e(fmovToGp(R1, unsigned(l.reg), l.t.isF64()));
+      if (l.t.isF32()) e(uxtw(R1, R1));
+    } else {
+      e(movReg(R1, unsigned(l.reg)));
     }
+    if (isAggregate(a.getType())) {
+      addrOf(R2, of(a) + l.off);
+      memStore(R1, R2, sizeOf(l.t));
+    } else {
+      if (!l.fp) normalize(R1, l.t);
+      stSlot(R1, of(a), 8);
+    }
+  }
+}
+
+void FuncGen::stackAddr(unsigned rd, unsigned base, uint64_t off) {
+  if (off < 4096) {
+    e(addImm(rd, base, uint32_t(off)));
+  } else {
+    movImm(rd, off);
+    e(addReg(rd, base, rd));
   }
 }
 
@@ -613,42 +721,35 @@ void FuncGen::branchTo(Block *dest) {
 void FuncGen::emitCall(LL::CallOp call) {
   if (call.getVarCalleeType()) unsupported("variadic call");
   auto args = call.getArgOperands();
-  // Arguments split into register pieces, as LLVM's calling convention
-  // lowering assigns them.
-  struct Piece {
-    Value v;
-    uint64_t off;
-    Type t;
-  };
-  std::vector<Piece> gp, fp;
-  for (Value a : args) {
-    std::vector<std::pair<uint64_t, Type>> parts;
-    flatten(a.getType(), 0, parts);
-    for (auto [off, t] : parts) (isFloat(t) ? fp : gp).push_back({a, off, t});
-  }
-  if (gp.size() > 8 || fp.size() > 8) unsupported("arguments on the stack");
-  for (unsigned i = 0; i < fp.size(); i++) {
-    Piece &p = fp[i];
-    if (isAggregate(p.v.getType())) {
-      addrOf(R2, of(p.v) + p.off);
-      memLoad(R1, R2, sizeOf(p.t));
+  uint64_t stackSize = 0;
+  std::vector<ArgLoc> locs = assignArgs(args.getTypes(), stackSize);
+  auto load = [&](unsigned r, const ArgLoc &l) {
+    Value v = args[l.arg];
+    if (isAggregate(v.getType())) {
+      addrOf(R2, of(v) + l.off);
+      memLoad(r, R2, sizeOf(l.t));
     } else {
-      get(R1, p.v);
+      get(r, v);
     }
-    e(fmovFromGp(i, R1, p.t.isF64()));
+  };
+  // Stack and floating point pieces first, through x9 and x10.
+  for (const ArgLoc &l : locs) {
+    if (l.reg >= 0 && !l.fp) continue;
+    load(R1, l);
+    if (l.reg >= 0) {
+      e(fmovFromGp(unsigned(l.reg), R1, l.t.isF64()));
+    } else {
+      addrOf(R2, l.stack);
+      memStore(R1, R2, sizeOf(l.t));
+    }
   }
-  // Indirect callee first (into x16, not an argument register).
+  // Indirect callee next (into x17, not an argument register).
   bool indirect = !call.getCallee();
   if (indirect) get(17, call.getCalleeOperands().front());
-  for (unsigned i = 0; i < gp.size(); i++) {
-    Piece &p = gp[i];
-    if (isAggregate(p.v.getType())) {
-      addrOf(R2, of(p.v) + p.off);
-      memLoad(i, R2, sizeOf(p.t));
-    } else {
-      get(i, p.v);
-    }
-  }
+  for (const ArgLoc &l : locs)
+    if (l.reg >= 0 && !l.fp) load(unsigned(l.reg), l);
+  bool memResult = call.getNumResults() == 1 && returnsInMemory(call.getResult().getType());
+  if (memResult) addrOf(X8, of(call.getResult()));
   if (indirect) {
     e(blr(17));
   } else {
@@ -662,7 +763,7 @@ void FuncGen::emitCall(LL::CallOp call) {
       w.reloc(Sect::Text, at, Reloc::Branch26, w.symbol(machoName(callee)));
     }
   }
-  if (call.getNumResults() == 0) return;
+  if (call.getNumResults() == 0 || memResult) return;
   Value r = call.getResult();
   std::vector<std::pair<uint64_t, Type>> parts;
   flatten(r.getType(), 0, parts);
@@ -686,7 +787,11 @@ void FuncGen::emitCall(LL::CallOp call) {
 }
 
 void FuncGen::emitReturn(LL::ReturnOp ret) {
-  if (ret.getNumOperands() == 1) {
+  if (sret) {
+    Value v = ret.getOperand(0);
+    ldSlot(R1, sretSlot, 8);
+    copyBytes(R1, 0, SP, of(v), sizeOf(v.getType()));
+  } else if (ret.getNumOperands() == 1) {
     Value v = ret.getOperand(0);
     std::vector<std::pair<uint64_t, Type>> parts;
     flatten(v.getType(), 0, parts);
@@ -729,7 +834,122 @@ bool isSignedPred(LL::ICmpPredicate p) {
          p == LL::ICmpPredicate::sge;
 }
 
+bool isWide(Type t) { return isa<IntegerType>(t) && cast<IntegerType>(t).getWidth() == 128; }
+
+// i128 values live in 16-byte slots (low word first) and are supported for
+// local arithmetic, the shape math/bits produces.
+bool FuncGen::emitWide(Operation &op) {
+  bool wide = false;
+  for (Type t : op.getOperandTypes()) wide |= isWide(t);
+  for (Type t : op.getResultTypes()) wide |= isWide(t);
+  if (!wide) return false;
+  auto lo = [&](unsigned r, Value v) { ldSlot(r, of(v), 8); };
+  auto hi = [&](unsigned r, Value v) { ldSlot(r, of(v) + 8, 8); };
+  auto store = [&](unsigned l, unsigned h, Value v) {
+    stSlot(l, of(v), 8);
+    stSlot(h, of(v) + 8, 8);
+  };
+  auto pair = [&](auto encLo, auto encHi) {
+    lo(R1, op.getOperand(0));
+    hi(R2, op.getOperand(0));
+    lo(R3, op.getOperand(1));
+    hi(R4, op.getOperand(1));
+    e(encLo(R1, R1, R3));
+    e(encHi(R2, R2, R4));
+    store(R1, R2, op.getResult(0));
+  };
+  constexpr unsigned X14 = 14, X15 = 15;
+  // Shift of a:b (R1 low, R2 high) by R3 in [0, 128).
+  auto shift = [&](bool left, bool arith) {
+    lo(R1, op.getOperand(0));
+    hi(R2, op.getOperand(0));
+    lo(R3, op.getOperand(1));
+    movImm(R4, 63);
+    e(eorReg(RA, R3, R4));  // 63 - s for s < 64
+    movImm(X14, 1);
+    if (!left) {
+      // small: lo = lo >> s | (hi << 1) << (63 - s); hi = hi >> s
+      e(lsrv(X15, R1, R3));
+      e(lslv(X14, R2, X14));
+      e(lslv(X14, X14, RA));
+      e(orrReg(X15, X15, X14));            // small lo
+      e(arith ? asrv(X14, R2, R3) : lsrv(X14, R2, R3));  // small hi, also big lo (shift mod 64)
+      movImm(RA, 63);
+      if (arith) e(asrv(RA, R2, RA)); else movImm(RA, 0);  // big hi
+      e(cmpImm(R3, 64));
+      e(csel(R1, X14, X15, HS));
+      e(csel(R2, RA, X14, HS));
+    } else {
+      // small: hi = hi << s | (lo >> 1) >> (63 - s); lo = lo << s
+      e(lslv(X15, R2, R3));
+      e(lsrv(X14, R1, X14));
+      e(lsrv(X14, X14, RA));
+      e(orrReg(X15, X15, X14));            // small hi
+      e(lslv(X14, R1, R3));                // small lo, also big hi
+      e(cmpImm(R3, 64));
+      e(csel(R2, X14, X15, HS));
+      e(csel(R1, XZR, X14, HS));
+    }
+    store(R1, R2, op.getResult(0));
+  };
+  llvm::TypeSwitch<Operation *>(&op)
+      .Case<LL::ConstantOp>([&](auto c) {
+        auto ia = dyn_cast<IntegerAttr>(c.getValue());
+        if (!ia) unsupported("i128 constant");
+        APInt v = ia.getValue().zextOrTrunc(128);
+        movImm(R1, v.extractBitsAsZExtValue(64, 0));
+        movImm(R2, v.extractBitsAsZExtValue(64, 64));
+        store(R1, R2, c.getResult());
+      })
+      .Case<LL::ZExtOp>([&](auto c) {
+        get(R1, c.getArg());
+        store(R1, XZR, c.getResult());
+      })
+      .Case<LL::SExtOp>([&](auto c) {
+        getSigned(R1, c.getArg());
+        movImm(R3, 63);
+        e(asrv(R2, R1, R3));
+        store(R1, R2, c.getResult());
+      })
+      .Case<LL::TruncOp>([&](auto c) {
+        if (isWide(c.getResult().getType())) unsupported("i128 operation");
+        lo(R1, c.getArg());
+        put(R1, c.getResult());
+      })
+      .Case<LL::AddOp>([&](auto) { pair(adds, adc); })
+      .Case<LL::SubOp>([&](auto) { pair(subs, sbc); })
+      .Case<LL::AndOp>([&](auto) {
+        pair([](unsigned d, unsigned n, unsigned m) { return andReg(d, n, m); },
+             [](unsigned d, unsigned n, unsigned m) { return andReg(d, n, m); });
+      })
+      .Case<LL::OrOp>([&](auto) {
+        pair([](unsigned d, unsigned n, unsigned m) { return orrReg(d, n, m); },
+             [](unsigned d, unsigned n, unsigned m) { return orrReg(d, n, m); });
+      })
+      .Case<LL::XOrOp>([&](auto) {
+        pair([](unsigned d, unsigned n, unsigned m) { return eorReg(d, n, m); },
+             [](unsigned d, unsigned n, unsigned m) { return eorReg(d, n, m); });
+      })
+      .Case<LL::MulOp>([&](auto) {
+        lo(R1, op.getOperand(0));
+        hi(R2, op.getOperand(0));
+        lo(R3, op.getOperand(1));
+        hi(R4, op.getOperand(1));
+        e(umulh(RA, R1, R3));
+        e(madd(RA, R1, R4, RA));
+        e(madd(RA, R2, R3, RA));
+        e(mul(R1, R1, R3));
+        store(R1, RA, op.getResult(0));
+      })
+      .Case<LL::LShrOp>([&](auto) { shift(false, false); })
+      .Case<LL::AShrOp>([&](auto) { shift(false, true); })
+      .Case<LL::ShlOp>([&](auto) { shift(true, false); })
+      .Default([&](Operation *o) { unsupported("i128 " + o->getName().getStringRef().str()); });
+  return true;
+}
+
 void FuncGen::emitOp(Operation &op) {
+  if (emitWide(op)) return;
   auto bin = [&](auto enc) {
     get(R1, op.getOperand(0));
     get(R2, op.getOperand(1));
@@ -1150,7 +1370,113 @@ void FuncGen::emitOp(Operation &op) {
         edgeMoves(s.getDefaultDestination(), s.getDefaultOperands());
         branchTo(s.getDefaultDestination());
       })
+      .Case<LL::CallIntrinsicOp>([&](auto c) { emitIntrinsic(c); })
       .Default([&](Operation *o) { unsupported("op " + o->getName().getStringRef().str()); });
+}
+
+// The intrinsics the front end emits as llvm.call_intrinsic. Integers are
+// kept zero extended in 64 bits, so an iN operation runs on the 64-bit value
+// and shifts the result into place.
+void FuncGen::emitIntrinsic(LL::CallIntrinsicOp c) {
+  StringRef name = c.getIntrin();
+  auto args = c.getArgs();
+  if (c.getNumResults() != 1) unsupported("intrinsic " + name.str());
+  Value res = c.getResult(0);
+  Type rt = res.getType();
+  auto shiftDown = [&](unsigned r, unsigned n) {  // r >>= 64 - n
+    if (n == 64) return;
+    movImm(R3, 64 - n);
+    e(lsrv(r, r, R3));
+  };
+  if (name.starts_with("llvm.ctlz.")) {
+    unsigned n = intWidth(rt);
+    get(R1, args[0]);
+    e(clz(R1, R1));
+    if (n < 64) e(subImm(R1, R1, 64 - n));
+    put(R1, res);
+  } else if (name.starts_with("llvm.cttz.")) {
+    unsigned n = intWidth(rt);
+    get(R1, args[0]);
+    if (n < 64) {  // a zero input counts n
+      movImm(R2, uint64_t(1) << n);
+      e(orrReg(R1, R1, R2));
+    }
+    e(rbit(R1, R1));
+    e(clz(R1, R1));
+    put(R1, res);
+  } else if (name.starts_with("llvm.ctpop.")) {
+    get(R1, args[0]);
+    e(fmovFromGp(F1, R1, true));
+    e(cnt8b(F1, F1));
+    e(addv8b(F1, F1));
+    e(fmovToGp(R1, F1, true));
+    put(R1, res);
+  } else if (name.starts_with("llvm.bswap.")) {
+    get(R1, args[0]);
+    e(rev(R1, R1));
+    shiftDown(R1, intWidth(rt));
+    put(R1, res);
+  } else if (name.starts_with("llvm.bitreverse.")) {
+    get(R1, args[0]);
+    e(rbit(R1, R1));
+    shiftDown(R1, intWidth(rt));
+    put(R1, res);
+  } else if (name.starts_with("llvm.fshl.") || name.starts_with("llvm.fshr.")) {
+    bool left = name.starts_with("llvm.fshl.");
+    unsigned n = intWidth(rt);
+    get(R1, args[0]);
+    get(R2, args[1]);
+    get(R3, args[2]);
+    if (n == 64) {
+      // fshl: a << s | (b >> 1) >> (63 - s); fshr: (a << 1) << (63 - s) | b >> s.
+      movImm(R4, 63);
+      e(andReg(R3, R3, R4));
+      e(eorReg(R4, R3, R4));  // 63 - s
+      if (left) {
+        e(lslv(R1, R1, R3));
+        movImm(RA, 1);
+        e(lsrv(R2, R2, RA));
+        e(lsrv(R2, R2, R4));
+      } else {
+        e(lsrv(R2, R2, R3));
+        movImm(RA, 1);
+        e(lslv(R1, R1, RA));
+        e(lslv(R1, R1, R4));
+      }
+      e(orrReg(R1, R1, R2));
+    } else if (n <= 32) {
+      // Concatenate a:b in 64 bits, shift by s mod n, take the high or low n bits.
+      movImm(R4, n);
+      e(udiv(RA, R3, R4));
+      e(msub(R3, RA, R4, R3));  // s mod n
+      e(lslv(R1, R1, R4));
+      e(orrReg(R1, R1, R2));
+      if (left) {
+        e(lslv(R1, R1, R3));
+        e(lsrv(R1, R1, R4));
+      } else {
+        e(lsrv(R1, R1, R3));
+      }
+    } else {
+      unsupported("intrinsic " + name.str());
+    }
+    put(R1, res);
+  } else if (name == "llvm.fptosi.sat.i64.f64" || name == "llvm.fptoui.sat.i64.f64" ||
+             name == "llvm.fptosi.sat.i64.f32" || name == "llvm.fptoui.sat.i64.f32") {
+    // FCVTZS/FCVTZU saturate and turn NaN into 0, as the intrinsics require.
+    bool dbl = args[0].getType().isF64();
+    getF(F1, args[0]);
+    e(name.starts_with("llvm.fptosi") ? fcvtzs(R1, F1, dbl) : fcvtzu(R1, F1, dbl));
+    put(R1, res);
+  } else if (name == "llvm.frameaddress.p0") {
+    auto k = args[0].getDefiningOp<LL::ConstantOp>();
+    auto ia = k ? dyn_cast<IntegerAttr>(k.getValue()) : IntegerAttr();
+    if (!ia || ia.getInt() != 0) unsupported("frameaddress above level 0");
+    e(movSp(R1, FP));
+    put(R1, res);
+  } else {
+    unsupported("intrinsic " + name.str());
+  }
 }
 
 void FuncGen::run() {

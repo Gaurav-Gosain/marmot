@@ -52,6 +52,16 @@ inline uint32_t eorReg(unsigned rd, unsigned rn, unsigned rm, bool x64 = true) {
 inline uint32_t movReg(unsigned rd, unsigned rm, bool x64 = true) { return orrReg(rd, XZR, rm, x64); }
 // MOV to or from sp (ADD #0).
 inline uint32_t movSp(unsigned rd, unsigned rn) { return addImm(rd, rn, 0); }
+// With carry: ADDS/ADC and SUBS/SBC (64-bit).
+inline uint32_t adds(unsigned rd, unsigned rn, unsigned rm) { return 0xAB000000u | (rm << 16) | (rn << 5) | rd; }
+inline uint32_t adc(unsigned rd, unsigned rn, unsigned rm) { return 0x9A000000u | (rm << 16) | (rn << 5) | rd; }
+inline uint32_t subs(unsigned rd, unsigned rn, unsigned rm) { return 0xEB000000u | (rm << 16) | (rn << 5) | rd; }
+inline uint32_t sbc(unsigned rd, unsigned rn, unsigned rm) { return 0xDA000000u | (rm << 16) | (rn << 5) | rd; }
+// rd = rn * rm + ra, and the high 64 bits of an unsigned 64x64 product.
+inline uint32_t madd(unsigned rd, unsigned rn, unsigned rm, unsigned ra) {
+  return 0x9B000000u | (rm << 16) | (ra << 10) | (rn << 5) | rd;
+}
+inline uint32_t umulh(unsigned rd, unsigned rn, unsigned rm) { return 0x9BC07C00u | (rm << 16) | (rn << 5) | rd; }
 // Multiply and divide.
 inline uint32_t mul(unsigned rd, unsigned rn, unsigned rm, bool x64 = true) {
   return sf(x64) | 0x1B007C00u | (rm << 16) | (rn << 5) | rd;  // MADD with xzr
@@ -167,6 +177,13 @@ inline uint32_t ubfx0(unsigned rd, unsigned rn, unsigned width) {
 inline uint32_t sbfx0(unsigned rd, unsigned rn, unsigned width) {
   return 0x93400000u | ((width - 1) << 10) | (rn << 5) | rd;
 }
+// Bit operations (data processing, one source).
+inline uint32_t clz(unsigned rd, unsigned rn, bool x64 = true) { return sf(x64) | 0x5AC01000u | (rn << 5) | rd; }
+inline uint32_t rbit(unsigned rd, unsigned rn, bool x64 = true) { return sf(x64) | 0x5AC00000u | (rn << 5) | rd; }
+inline uint32_t rev(unsigned rd, unsigned rn) { return 0xDAC00C00u | (rn << 5) | rd; }  // 64-bit byte reverse
+// Population count: CNT v.8B then ADDV b over the 8 bytes.
+inline uint32_t cnt8b(unsigned d, unsigned n) { return 0x0E205800u | (n << 5) | d; }
+inline uint32_t addv8b(unsigned d, unsigned n) { return 0x0E31B800u | (n << 5) | d; }
 inline uint32_t neg(unsigned rd, unsigned rm, bool x64 = true) { return subReg(rd, XZR, rm, x64); }
 inline uint32_t mvn(unsigned rd, unsigned rm, bool x64 = true) {
   return sf(x64) | 0x2A200000u | (rm << 16) | (XZR << 5) | rd;  // ORN
