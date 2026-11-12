@@ -113,10 +113,33 @@ type tally struct{ pass, total int }
 
 func main() {
 	flag.Parse()
-	rep := load(*flResults)
-	if rep == nil {
-		fmt.Fprintln(os.Stderr, "support: cannot read", *flResults)
-		os.Exit(1)
+	// -results takes a comma separated list; later files override earlier ones per test name,
+	// so partial runs (one tier at a time) can be combined.
+	rep := &report{}
+	seen := map[string]int{}
+	var shas []string
+	for _, f := range strings.Split(*flResults, ",") {
+		r := load(f)
+		if r == nil {
+			fmt.Fprintln(os.Stderr, "support: cannot read", f)
+			os.Exit(1)
+		}
+		shas = append(shas, r.Git)
+		for _, x := range r.Results {
+			if n, m := split(x.Name); m == "dev" {
+				x.Name = n // "NAME@dev" and "NAME" are the same test
+			}
+			if i, ok := seen[x.Name]; ok {
+				rep.Results[i] = x
+			} else {
+				seen[x.Name] = len(rep.Results)
+				rep.Results = append(rep.Results, x)
+			}
+		}
+	}
+	rep.Git = shas[len(shas)-1]
+	if len(shas) > 1 {
+		rep.Git = strings.Join(uniq(shas), ", ")
 	}
 	dev := map[string]bool{} // test name -> pass, dev mode only
 	modes := map[string]*tally{}
@@ -147,7 +170,7 @@ func main() {
 	w("| Tier | Passing | Total | What it covers |\n| --- | --- | --- | --- |\n")
 	tiers := []struct{ prefix, what string }{
 		{"run/core/", "language core, no imports, `println` only"}, {"run/gc/", "allocation heavy programs"}, {"run/sched/", "goroutines, channels, deadlock"},
-		{"run/std/", "standard library by package"}, {"run/opt/", "optimizer and specializer targets"}, {"run/apps/", "200 to 600 line real programs"},
+		{"run/std/", "standard library by package"}, {"run/opt/", "optimizer and specializer targets"}, {"run/mem/", "use after free and lifetime hunting (every way a slice stays reachable)"}, {"run/layout/", "struct layouts: every field mix, every access path"}, {"run/audit/", "counterexamples from the spec and verify audits"}, {"run/apps/", "200 to 600 line real programs"},
 		{"goroot/", "single file programs from the Go project's own test suite"}, {"world/", "real open source modules (vendored, pinned)"},
 	}
 	all := tally{}
@@ -256,7 +279,48 @@ func main() {
 		}
 		w("| %s | %s | %d of %d |\n", p, st, t.pass, t.total)
 	}
-	w("\nThe stock standard library test suites are run with `marmot test`; their pass rates are in `docs/status/rtgo.md` when available.\n\n")
+	w("\n### Stock standard library tests under `marmot test`\n\n")
+	if rb, err := os.ReadFile("docs/status/rtgo.md"); err == nil {
+		in, header := false, false
+		var rows []string
+		date := ""
+		for _, l := range strings.Split(string(rb), "\n") {
+			if strings.HasPrefix(l, "## Stock std tests under marmot test") {
+				in = true
+				continue
+			}
+			if !in {
+				continue
+			}
+			if strings.HasPrefix(l, "## ") {
+				break
+			}
+			if strings.HasPrefix(l, "`marmot test -short`") {
+				date = l
+			}
+			if strings.HasPrefix(l, "| package |") {
+				header = true
+				continue
+			}
+			if header && strings.HasPrefix(l, "| ---") {
+				continue
+			}
+			if header && strings.HasPrefix(l, "|") {
+				c := strings.Split(l, "|")
+				if len(c) > 6 {
+					rows = append(rows, fmt.Sprintf("| %s | %s | %s | %s | %s |", strings.TrimSpace(c[1]), strings.TrimSpace(c[2]), strings.TrimSpace(c[3]), strings.TrimSpace(c[4]), strings.TrimSpace(c[5])))
+				}
+			} else if header {
+				break
+			}
+		}
+		if len(rows) > 0 {
+			w("From `docs/status/rtgo.md` (%s). \"alloc counts only\" means every failure is a `testing.AllocsPerRun` count.\n\n", strings.TrimSpace(strings.TrimPrefix(date, "`marmot test -short` of the GOROOT package,")))
+			w("| package | result | pass | fail | rate |\n| --- | --- | --- | --- | --- |\n%s\n\n", strings.Join(rows, "\n"))
+		}
+	} else {
+		w("Pass rates are in `docs/status/rtgo.md`.\n\n")
+	}
 
 	w("## Real world modules\n\nVendored at a pinned version under `tests/world` (see `tests/world/README.md`), each with a small deterministic program checked against stock Go.\n\n")
 	w("| Module test | Status |\n| --- | --- |\n")
@@ -281,6 +345,36 @@ func main() {
 		w("\n%d of %d world programs pass.\n", wp, len(wn))
 	}
 	w("\n")
+
+	w("## Build modes\n\n")
+	w("- **dev** (default, `-O2`): the safe pipeline; every transform below that is marked off stays off.\n")
+	w("- **`-release`**: whole program optimization, `-O3`, loop and library specializations.\n")
+	w("- **`-O0` `-O1` `-O2` `-O3` `-Os` `-Oz`**: LLVM level; the conformance runner can run any program in `-O0`, `-O2`, `-Oz` and `-release` (`-modes`).\n")
+	w("- **Opt-in lifetime and memory transforms**, each behind a switch, enabled by default only when verify has signed it off and a full matrix plus fuzz round passed with it on (SPEC rule 11). Status from `docs/verify.md`:\n\n")
+	w("| Transform | Switch | Verify status |\n| --- | --- | --- |\n")
+	if vb, err := os.ReadFile("docs/verify.md"); err == nil {
+		in := false
+		for _, l := range strings.Split(string(vb), "\n") {
+			if strings.HasPrefix(l, "| Transform |") {
+				in = true
+				continue
+			}
+			if !in {
+				continue
+			}
+			if !strings.HasPrefix(l, "|") {
+				break
+			}
+			if strings.HasPrefix(l, "| ---") {
+				continue
+			}
+			c := strings.Split(l, "|")
+			if len(c) > 4 {
+				w("| %s | %s | %s |\n", strings.TrimSpace(c[1]), strings.TrimSpace(c[2]), strings.TrimSpace(c[3]))
+			}
+		}
+	}
+	w("\nStress modes used by the conformance runner: `gcstress` (`MARMOT_GCSTRESS=1`), `poison` (`MARMOT_POISON=1`), `lifetime` (`MARMOT_LIFETIME=all`).\n\n")
 
 	w("## Targets\n\n| Target | Status | Tested |\n| --- | --- | --- |\n")
 	w("| darwin/arm64 | primary | all tiers above, every commit |\n")
@@ -313,6 +407,8 @@ func main() {
 	w("- `runtime.Caller` and friends work from a pc table; binaries built with `-s` have none.\n")
 	w("- **NaN payloads.** Where the Go specification only says the result is a NaN, marmot may return a different NaN (payload and sign bits) than gc: the builtin `min` and `max` (also over slices, so `slices.Min` and `slices.Max`), `math.Max`, `math.Min`, and `math.Floor`, `Ceil`, `Trunc`, `Round` and `RoundToEven` of a signaling NaN (gc quiets it, marmot may return it unchanged). The value is a NaN in every case; only `math.Float64bits`, `math.Float32bits` or `unsafe` shows the difference, and gc itself differs here across architectures. Values that are not NaN are bit identical to gc on the same architecture; a difference there is a bug. Programs: `tests/run/audit/minmax_nan_payload`, `tests/run/audit/math_exp_log_bits`.\n")
 	w("- Slice growth capacities and map iteration order are not guaranteed to equal gc's.\n")
+	w("- Evaluation order: variables are read after the calls of the same expression; open cases are tracked in `tests/run/audit/evalorder_gaps`.\n")
+	w("- Unexported methods of embedded types from different packages with the same name: see `world/audit_unexported` under open failures.\n")
 	w("- cgo, the race detector, plugins, DWARF and Windows are not supported.\n")
 	w("- `reflect`: see the open failures below for the current gaps.\n\n")
 
@@ -339,4 +435,16 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("wrote %s (%d tests, tree %s)\n", *flOut, all.total, rep.Git)
+}
+
+func uniq(a []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, x := range a {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
 }
