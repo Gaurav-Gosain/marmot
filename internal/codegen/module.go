@@ -17,20 +17,21 @@ type moduleGen struct {
 	pkg *ssa.Package // nil for the entry module
 	tm  *typeMapper
 
-	defs        textBuf        // definitions: globals and functions
-	used        []cv           // llvm.used entries
-	tlinks      []string       // unnamed composite type descriptors defined here
-	locs        map[string]int // location aliases (locs.go)
-	locDefs     strings.Builder
-	decls       map[string]string
-	defined     map[string]bool
-	queue       []*ssa.Function
-	strs        map[string]string
-	nstr        int
-	nthunk      int
-	regionQueue []*ssa.Function
-	static      *staticInit
-	errs        []error
+	defs         textBuf        // definitions: globals and functions
+	used         []cv           // llvm.used entries
+	compilerUsed []cv           // llvm.compiler.used entries (kept by LLVM, not by ld)
+	tlinks       []string       // unnamed composite type descriptors defined here
+	locs         map[string]int // location aliases (locs.go)
+	locDefs      strings.Builder
+	decls        map[string]string
+	defined      map[string]bool
+	queue        []*ssa.Function
+	strs         map[string]string
+	nstr         int
+	nthunk       int
+	regionQueue  []*ssa.Function
+	static       *staticInit
+	errs         []error
 }
 
 func (p *Program) newModule(pkg *ssa.Package) *moduleGen {
@@ -504,14 +505,19 @@ func (m *moduleGen) keepWriteOnlyGlobals(pkg *ssa.Package, names []string) {
 // emitUsed writes llvm.used (kept from dead stripping and whole program
 // optimization) once per module.
 func (m *moduleGen) emitUsed() {
-	if len(m.used) == 0 {
+	m.emitUsedList("llvm.used", m.used)
+	m.emitUsedList("llvm.compiler.used", m.compilerUsed)
+}
+
+func (m *moduleGen) emitUsedList(name string, es []cv) {
+	if len(es) == 0 {
 		return
 	}
 	var b strings.Builder
-	t := mlir.Array(int64(len(m.used)), mlir.Ptr)
-	fmt.Fprintf(&b, "  llvm.mlir.global appending @llvm.used() {addr_space = 0 : i32, section = \"llvm.metadata\"} : %s {\n", t)
+	t := mlir.Array(int64(len(es)), mlir.Ptr)
+	fmt.Fprintf(&b, "  llvm.mlir.global appending @%s() {addr_space = 0 : i32, section = \"llvm.metadata\"} : %s {\n", name, t)
 	n := 0
-	v := writeCV(&b, &n, cAgg(t, m.used...))
+	v := writeCV(&b, &n, cAgg(t, es...))
 	fmt.Fprintf(&b, "    llvm.return %s : %s\n  }\n", v, t)
 	m.defs.WriteString(b.String())
 }
@@ -525,10 +531,26 @@ func (m *moduleGen) emitTypelinks() {
 	if len(m.tlinks) == 0 || m.p.prog.ImportedPackage("reflect") == nil {
 		return
 	}
-	sec := "marmot_tlinks"
 	if m.p.opts.GOOS == "darwin" {
-		sec = "__DATA,__marmot_tlinks"
+		// One entry per global in a live_support section: ld keeps an entry
+		// only when the descriptor it points to is live for another reason,
+		// so the table does not keep every descriptor (and the method code
+		// it names) alive. A descriptor nothing else uses has no values and
+		// needs no identity with one reflect builds. llvm.compiler.used
+		// keeps the entries in LLVM without marking them no_dead_strip.
+		var b strings.Builder
+		for i, s := range m.tlinks {
+			name := fmt.Sprintf("marmot.tlink.%d", i)
+			fmt.Fprintf(&b, "  llvm.mlir.global internal constant @%s() {addr_space = 0 : i32, alignment = 8 : i64, section = \"__DATA,__marmot_tlinks,regular,live_support\"} : !llvm.ptr {\n", name)
+			n := 0
+			v := writeCV(&b, &n, cAddr(s))
+			fmt.Fprintf(&b, "    llvm.return %s : !llvm.ptr\n  }\n", v)
+			m.compilerUsed = append(m.compilerUsed, cAddr(name))
+		}
+		m.defs.WriteString(b.String())
+		return
 	}
+	sec := "marmot_tlinks"
 	es := make([]cv, len(m.tlinks))
 	for i, s := range m.tlinks {
 		es[i] = cAddr(s)
