@@ -10,6 +10,31 @@ import (
 	"syscall"
 )
 
+// eachParallel runs f(0) to f(n-1) on up to maxJobs goroutines.
+func eachParallel(n int, f func(i int)) {
+	w := min(maxJobs(), n)
+	var next sync.Mutex
+	i := 0
+	var wg sync.WaitGroup
+	for range w {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				next.Lock()
+				j := i
+				i++
+				next.Unlock()
+				if j >= n {
+					return
+				}
+				f(j)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 // maxJobs is the parallelism for backend compiles (at most 4).
 func maxJobs() int {
 	n := runtime.NumCPU()

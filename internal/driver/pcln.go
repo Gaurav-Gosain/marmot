@@ -73,6 +73,11 @@ func (b *build) backendBuildArgs(emit string) []string {
 			a = append(a, "-split-large="+split)
 		}
 	}
+	// MARMOT_TIER0=1: dev builds through the tier0 code generator (LLVM -O0
+	// for the functions it leaves). Off by default until it passes the gate.
+	if !b.wpo() && os.Getenv("MARMOT_TIER0") == "1" && (emit == "exe" || emit == "obj") {
+		a = append(a, "-tier0")
+	}
 	if b.pclnFrags() {
 		a = append(a, "-pcln-frags")
 	}

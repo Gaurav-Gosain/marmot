@@ -78,8 +78,8 @@ func llvmTool(name string) string {
 
 type build struct {
 	cfg        Config
-	keepLocals bool   // link without -x (the first link of a pc table build)
-	lastOutput string // combined output of the last tool run (run)
+	keepLocals bool     // link without -x (the first link of a pc table build)
+	lastOutput string   // combined output of the last tool run (run)
 	modKeys    []string // per module: a key of its text, or ""
 	work       string
 	start      time.Time
@@ -286,11 +286,13 @@ func (b *build) run1() (string, error) {
 	if err := gen(func(i int) bool { return mods[i].Path == "" }); err != nil {
 		return "", err
 	}
-	for i := 0; i < len(pkgs); i++ {
+	// In parallel: the type aliasing and the write take about 1 s on a large
+	// program's 350 MB of text.
+	eachParallel(len(pkgs), func(i int) {
 		if cacheable(i) && mods[i].Path == "" {
 			mods[i].Path = b.saveModule(pkgKeys[i], mods[i].Text)
 		}
-	}
+	})
 	b.logf("generated %d modules", len(mods))
 	// The package key stands for a module's text (the MLIR cache relies on
 	// that too), so the backend need not read and hash unchanged modules.
@@ -370,7 +372,9 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 	}
 	objs := make([]string, len(mods))
 	ins := make([]string, len(mods))
-	for i, m := range mods {
+	werrs := make([]error, len(mods))
+	eachParallel(len(mods), func(i int) {
+		m := mods[i]
 		ins[i] = m.Path
 		if m.Text != "" {
 			ins[i] = filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", i))
@@ -378,11 +382,14 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 			if b.cfg.Work {
 				text = "// " + m.Name + "\n" + text
 			}
-			if err := os.WriteFile(ins[i], []byte(text), 0o644); err != nil {
-				return nil, err
-			}
+			werrs[i] = os.WriteFile(ins[i], []byte(text), 0o644)
 		}
 		objs[i] = filepath.Join(b.work, fmt.Sprintf("m%03d%s", i, ext))
+	})
+	for _, err := range werrs {
+		if err != nil {
+			return nil, err
+		}
 	}
 	if haveBackend {
 		// The backend caches every step ("Batch driver and
