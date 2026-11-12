@@ -2,12 +2,16 @@
 ROOT := $(abspath .)
 export MARMOT_ROOT := $(ROOT)
 
-.PHONY: install diagrams all frontend backend rtcore test conform bench clean
+.PHONY: install diagrams all frontend check-tool backend rtcore test conform bench clean
 
-all: frontend backend rtcore
+all: frontend check-tool backend rtcore
 
 frontend:
 	go build -o build/bin/marmot ./cmd/marmot
+
+# The analyzers of marmot check, a separate binary that marmot runs.
+check-tool:
+	go build -o build/bin/marmot-check ./cmd/marmot-check
 
 backend:
 	./backend/build.sh
