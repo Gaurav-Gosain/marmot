@@ -1,7 +1,7 @@
 // -tier0: the batch compiles each module with tier0; a function it cannot
 // compile goes to LLVM -O0 in OUT.1.o, listed with OUT in OUT.parts. Both
 // objects come from the cache on the next build.
-// UNSUPPORTED: x86_64, aarch64
+// UNSUPPORTED: aarch64
 // RUN: rm -rf %t.cache %t.d && mkdir -p %t.d && cp %s %t.d/a.mlir
 // RUN: printf '%t.d/a.mlir %t.a.o\n' > %t.jobs
 // RUN: %backend -O2 -tier0 -batch %t.jobs -cache-dir %t.cache -time 2>&1 | %FileCheck %s --check-prefix=COLD
@@ -42,7 +42,8 @@ module {
   }
   // BEGIN-ASM
   llvm.func internal @asm_one() -> i64 {
-    %r = llvm.inline_asm "mov $0, #1", "=r" : () -> i64
+    %c = llvm.mlir.constant(1 : i64) : i64
+    %r = llvm.inline_asm "", "=r,0" %c : (i64) -> i64
     llvm.return %r : i64
   }
   // END-ASM

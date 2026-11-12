@@ -909,8 +909,38 @@ bool compileTier0(const std::function<bool(WpoJob &)> &next, const CompileOption
     std::string frag;
     std::vector<std::string> fallback, reasons;
     tier0::Stats st;
+    // tier0's targets: arm64 Mach-O and x86-64 ELF. Any other target gets
+    // the whole module from LLVM -O0 in OUT.
+    const Triple &tt = tm->getTargetTriple();
+    std::optional<tier0::Target> target;
+    if (tt.isAArch64() && tt.isOSBinFormatMachO())
+      target = tier0::Target::Arm64MachO;
+    else if (tt.getArch() == Triple::x86_64 && tt.isOSBinFormatELF())
+      target = tier0::Target::X64Elf;
+    if (!target) {
+      LLVMContext ctx;
+      auto lm = translateLowered(*pm, j.in, *tm, ctx, t, es);
+      if (!lm || !optimizeAndEmit(*lm, *tm, j.in, out0, opts, t, es))
+        return;
+      pm = nullptr;
+      auto o0 = MemoryBuffer::getFile(out0);
+      if (!o0) {
+        es << j.out << ": cannot read the object back\n";
+        return;
+      }
+      ++stats.compiled;
+      fragment(j.out, (*o0)->getBuffer(), key);
+      if (cacheObjects) {
+        cache.put(key, "o", (*o0)->getBuffer());
+        cache.put(key, "t0parts", "1");
+      }
+      if (opts.prepareOnly)
+        sys::fs::remove(out0);
+      writeParts(false);
+      return;
+    }
     auto tc = std::chrono::steady_clock::now();
-    if (!tier0::emit(module, key.substr(0, 16), out0, frag, fallback, reasons, st, err)) {
+    if (!tier0::emit(module, key.substr(0, 16), out0, frag, fallback, reasons, st, err, *target)) {
       es << j.in << ": tier0: " << err << "\n";
       return;
     }
