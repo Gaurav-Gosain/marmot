@@ -44,6 +44,35 @@ type Facts struct {
 	Dynamic   map[string]string `json:",omitempty"` // cgo_import_dynamic local -> symbol
 	Dylibs    []string          `json:",omitempty"`
 	Recover   []string          `json:",omitempty"` // "F" or "T.M" of functions that call recover
+	Bodyless  []string          `json:",omitempty"` // "F" or "T.M" of functions declared without a body
+	// Uses of reflect outside package reflect that need code for every
+	// program: Value.Call or CallSlice (call adapters), Method or
+	// MethodByName lookups (every exported method), NewAt (any access may
+	// alias).
+	ReflectCall  bool `json:",omitempty"`
+	MethodLookup bool `json:",omitempty"`
+	NewAt        bool `json:",omitempty"`
+}
+
+// reflectUses sets the reflect facts of a package from its type information.
+func reflectUses(p *packages.Package, info *types.Info, f *Facts) {
+	if p.PkgPath == "reflect" || p.PkgPath == "internal/reflectlite" {
+		return
+	}
+	for _, obj := range info.Uses {
+		fn, ok := obj.(*types.Func)
+		if !ok || fn.Pkg() == nil || fn.Pkg().Path() != "reflect" {
+			continue
+		}
+		switch fn.Name() {
+		case "Call", "CallSlice":
+			f.ReflectCall = true
+		case "Method", "MethodByName":
+			f.MethodLookup = true
+		case "NewAt":
+			f.NewAt = true
+		}
+	}
 }
 
 type pkgMeta struct {
@@ -142,19 +171,37 @@ func (st *incrState) writeCache(key string, tpkg *types.Package, m *pkgMeta) err
 	h := sha256.Sum256(data)
 	m.ExportHash = hex.EncodeToString(h[:16])
 	os.MkdirAll(st.cacheDir, 0o755)
-	tmp := st.exportPath(key) + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, st.exportPath(key)); err != nil {
+	if err := writeAtomic(st.exportPath(key), data); err != nil {
 		return err
 	}
 	js, _ := json.Marshal(m)
-	tmp = st.metaPath(key) + ".tmp"
-	if err := os.WriteFile(tmp, js, 0o644); err != nil {
+	return writeAtomic(st.metaPath(key), js)
+}
+
+// WriteAtomic writes path as writeAtomic does.
+func WriteAtomic(path string, data []byte) error { return writeAtomic(path, data) }
+
+// writeAtomic writes path through a temporary file of its own, so that
+// builds sharing the cache never see or rename each other's partial files.
+func writeAtomic(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, st.metaPath(key))
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(f.Name(), 0o644)
+	}
+	if err == nil {
+		err = os.Rename(f.Name(), path)
+	}
+	if err != nil {
+		os.Remove(f.Name())
+	}
+	return err
 }
 
 // importFromCache reads the export data of p.
@@ -292,14 +339,18 @@ func factsOf(p *packages.Package, files []*ast.File) *Facts {
 		}
 		for _, d := range file.Decls {
 			fd, ok := d.(*ast.FuncDecl)
-			if !ok || fd.Body == nil || !callsRecoverAST(fd.Body) {
+			if !ok {
 				continue
 			}
 			name := fd.Name.Name
 			if fd.Recv != nil && len(fd.Recv.List) > 0 {
 				name = recvTypeName(fd.Recv.List[0].Type) + "." + name
 			}
-			f.Recover = append(f.Recover, name)
+			if fd.Body == nil {
+				f.Bodyless = append(f.Bodyless, name)
+			} else if callsRecoverAST(fd.Body) {
+				f.Recover = append(f.Recover, name)
+			}
 		}
 	}
 	return f
@@ -479,7 +530,7 @@ func (st *incrState) saveGenericDeps(path string, all, g []string) {
 	p := st.genDepsPath(path)
 	os.MkdirAll(filepath.Dir(p), 0o755)
 	data, _ := json.Marshal(genericDepsFile{all, g})
-	os.WriteFile(p, data, 0o644)
+	writeAtomic(p, data)
 }
 
 // run loads every package from source or export data. Packages are
@@ -601,6 +652,7 @@ func (st *incrState) loadOne(p *packages.Package, exportMu *sync.Mutex) error {
 	st.mu.Unlock()
 	p.Types, p.TypesInfo, p.Syntax, p.Fset, p.TypesSizes = tpkg, info, files, st.fset, st.sizes
 	nm := &pkgMeta{Generic: hasGenerics(tpkg), Facts: factsOf(p, files)}
+	reflectUses(p, info, nm.Facts)
 	nm.GenericDeps, nm.GenericDepsG = genericDeps(tpkg, info, files)
 	needCode := !cached || (st.needSrc != nil && st.needSrc(p, k))
 	deps := nm.GenericDeps

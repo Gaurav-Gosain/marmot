@@ -1,6 +1,8 @@
 package driver
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -24,6 +26,10 @@ import (
 //
 //	MARMOT_INCREMENTAL=0  load every package from source
 
+// errFlagsChanged reports that the program's reflect facts differ from
+// those of the previous build, which the module keys of this build assumed.
+var errFlagsChanged = errors.New("incremental: program reflect facts changed")
+
 // errIncrementalMiss reports that the module of a package loaded without
 // syntax was not in the cache after all (removed during the build).
 var errIncrementalMiss = errors.New("incremental: cached module missing")
@@ -37,6 +43,46 @@ func (b *build) incremental() bool {
 	c := b.cfg
 	return !c.Release && !b.wpo() && c.Dialect != "go" && !c.Test && !c.NoCache &&
 		(c.Emit == "exe" || c.Emit == "obj") && !specialize.Enabled(false)
+}
+
+// progFlagsPath holds the program flags of the last incremental build of
+// this configuration.
+func (b *build) progFlagsPath() string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\n%q\n%s/%s\n", b.cfg.Dir, b.cfg.Patterns, b.goos, b.goarch)
+	return filepath.Join(b.typesCache(), "flags-"+hex.EncodeToString(h.Sum(nil))[:24])
+}
+
+// lastProgFlags returns the program flags the previous build found.
+func (b *build) lastProgFlags() string {
+	data, err := os.ReadFile(b.progFlagsPath())
+	if err != nil {
+		return "unknown"
+	}
+	return string(data)
+}
+
+// progFlags computes the program flags from every package's facts.
+func progFlags(lp *loader.Program) (s string, keepExported, reflectCall bool) {
+	for _, ip := range lp.Incremental {
+		if f := ip.Facts; f != nil {
+			keepExported = keepExported || f.MethodLookup
+			reflectCall = reflectCall || f.ReflectCall
+		}
+	}
+	return fmt.Sprintf("ke=%v rc=%v", keepExported, reflectCall), keepExported, reflectCall
+}
+
+// checkProgFlags fails with errFlagsChanged, after saving the new flags,
+// when the loaded program's flags are not those the keys assumed.
+func (b *build) checkProgFlags(lp *loader.Program) (keepExported, reflectCall bool, err error) {
+	s, ke, rc := progFlags(lp)
+	if s != b.progFlags {
+		os.MkdirAll(b.typesCache(), 0o755)
+		loader.WriteAtomic(b.progFlagsPath(), []byte(s))
+		return false, false, fmt.Errorf("%w: %s, was %s", errFlagsChanged, s, b.progFlags)
+	}
+	return ke, rc, nil
 }
 
 // moduleCached reports whether the module of p is in the MLIR cache.
@@ -53,6 +99,7 @@ func (b *build) typesCache() string { return filepath.Join(b.cfg.Root, "build", 
 // incrementalConfig sets up cfg for an incremental load.
 func (b *build) incrementalConfig(cfg *loader.Config) {
 	cfg.Incremental = true
+	b.progFlags = b.lastProgFlags()
 	cfg.CacheDir = b.typesCache()
 	// Keys come from the go list graph, before the loader adds files
 	// (embed helpers) to packages loaded from source.
@@ -61,7 +108,9 @@ func (b *build) incrementalConfig(cfg *loader.Config) {
 			b.srcKey(p)
 		}
 	}
-	cfg.NeedSource = func(p *packages.Package, key string) bool { return !b.moduleCached(p) }
+	// Code generation looks up runtime functions and types by name,
+	// unexported ones included, which export data leaves out.
+	cfg.NeedSource = func(p *packages.Package, key string) bool { return p.PkgPath == "runtime" || !b.moduleCached(p) }
 }
 
 // incrementalFacts returns the facts of the packages loaded without syntax.

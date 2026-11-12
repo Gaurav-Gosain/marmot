@@ -43,7 +43,7 @@ func (f *funcGen) intrinsic(fn *ssa.Function, args []string) (res string, ok boo
 			return r, true
 		}
 	}
-	if len(fn.Blocks) > 0 || fn.Pkg == nil {
+	if !f.m.p.bodyless(fn) || fn.Pkg == nil {
 		return "", false
 	}
 	if fn.Pkg.Pkg.Path() == "runtime" && fn.Name() == "getcallerfp" {
@@ -96,7 +96,7 @@ func (f *funcGen) funcPC() string {
 	if mi, ok := arg.(*ssa.MakeInterface); ok {
 		if fn, ok := mi.X.(*ssa.Function); ok && len(fn.FreeVars) == 0 {
 			sym := ""
-			if len(fn.Blocks) == 0 && fn.Pkg != nil && strings.HasSuffix(fn.Name(), "_trampoline") {
+			if f.m.p.bodyless(fn) && fn.Pkg != nil && strings.HasSuffix(fn.Name(), "_trampoline") {
 				local := strings.TrimSuffix(fn.Name(), "_trampoline")
 				if c, ok := f.m.p.dynamic[fn.Pkg.Pkg.Path()+"."+local]; ok {
 					sym = c

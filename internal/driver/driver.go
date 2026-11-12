@@ -95,6 +95,7 @@ type build struct {
 	keyMu      sync.Mutex
 	keyMemo    map[string]string // srcKey by package path
 	keyBase    string
+	progFlags  string // incremental builds: program flags the module keys assume
 	partMu     sync.Mutex
 	parts      []codegen.Module // modules after the first of packages split in parts
 	partKeys   []string
@@ -134,6 +135,11 @@ func Build(cfg Config) (string, error) {
 func build1(cfg Config) (*build, error) {
 	b := &build{cfg: cfg}
 	out, err := b.run1()
+	if errors.Is(err, errFlagsChanged) {
+		b.logf("%v; building again", err)
+		b = &build{cfg: cfg}
+		out, err = b.run1()
+	}
 	if errors.Is(err, errIncrementalMiss) {
 		b.logf("%v; loading every package from source", err)
 		b = &build{cfg: cfg, noIncr: true}
@@ -224,6 +230,12 @@ func (b *build) run1() (string, error) {
 		return "", fmt.Errorf("%s is not a main package", root.PkgPath)
 	}
 
+	var keepExported, reflectCall bool
+	if b.incr {
+		if keepExported, reflectCall, err = b.checkProgFlags(lp); err != nil {
+			return "", err
+		}
+	}
 	files := map[*types.Package][]*ast.File{}
 	var ssaPkgs []*ssa.Package
 	for _, p := range lp.All {
@@ -233,7 +245,7 @@ func (b *build) run1() (string, error) {
 		}
 	}
 	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, GoDialect: cfg.Dialect == "go", Release: cfg.Release, MergedGOROOT: lp.GOROOT, XDefs: b.xdefs(),
-		Separate: b.incr, Facts: incrementalFacts(lp)})
+		Separate: b.incr, Facts: incrementalFacts(lp), KeepExported: keepExported, ReflectCall: reflectCall})
 	if err != nil {
 		return "", err
 	}

@@ -145,7 +145,7 @@ func (b *build) packageKeys(lp *loader.Program, cg *codegen.Program, pkgs []*ssa
 // no whole-program facts enter a module.
 func (b *build) moduleKey(p *packages.Package) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\nseparate\n", b.srcKey(p))
+	fmt.Fprintf(h, "%s\nseparate %s\n", b.srcKey(p), b.progFlags)
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }
 
@@ -220,7 +220,7 @@ func (b *build) saveModule(k, text string) string {
 		n := strings.IndexByte(text, '\n') + 1
 		head, text = text[:n], text[n:]
 	}
-	if os.WriteFile(p+".tmp", []byte(head+aliasTypes(text)), 0o644) == nil && os.Rename(p+".tmp", p) == nil {
+	if loader.WriteAtomic(p, []byte(head+aliasTypes(text))) == nil {
 		return p
 	}
 	return ""

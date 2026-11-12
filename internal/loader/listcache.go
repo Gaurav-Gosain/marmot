@@ -250,10 +250,7 @@ func writeListCache(path, sig string, roots []*packages.Package, dir string) {
 		return
 	}
 	os.MkdirAll(filepath.Dir(path), 0o755)
-	tmp := path + ".tmp"
-	if os.WriteFile(tmp, data, 0o644) == nil {
-		os.Rename(tmp, path)
-	}
+	writeAtomic(path, data)
 }
 
 // lightConfig is pcfg for the package graph only (no syntax or types).

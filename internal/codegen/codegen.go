@@ -40,6 +40,10 @@ type Options struct {
 	// types it imports only: no whole-program method pruning, dead globals
 	// or devirtualization (incremental builds cache modules by source).
 	Separate bool
+	// In Separate mode, what whole-program analysis would find from reflect
+	// uses (see loader.Facts): every exported method kept, call adapters,
+	// every access possibly aliased.
+	KeepExported, ReflectCall, PunAll bool
 }
 
 // Module is the MLIR text for one Go package (or the synthetic entry module).
@@ -76,11 +80,15 @@ type Program struct {
 	files   map[*types.Package][]*ast.File
 	infos   map[*types.Package]*types.Info
 
-	owner    map[*ssa.Function]*ssa.Package // functions emitted as strong definitions
-	byPkg    map[*ssa.Package][]*ssa.Function
-	linkname map[*ssa.Function]string // symbol overrides from //go:linkname
-	dynamic  map[string]string        // pkgpath.local -> C symbol from //go:cgo_import_dynamic
-	pragmas  map[*ssa.Function]pragma
+	owner map[*ssa.Function]*ssa.Package // functions emitted as strong definitions
+	byPkg map[*ssa.Package][]*ssa.Function
+	// Packages loaded from export data, and their functions declared
+	// without a body (bodyless).
+	exportPkg    map[*ssa.Package]bool
+	bodylessDecl map[*ssa.Function]bool
+	linkname     map[*ssa.Function]string // symbol overrides from //go:linkname
+	dynamic      map[string]string        // pkgpath.local -> C symbol from //go:cgo_import_dynamic
+	pragmas      map[*ssa.Function]pragma
 
 	mu   sync.Mutex
 	syms map[*ssa.Function]string
@@ -133,20 +141,22 @@ func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package
 		}
 	}
 	p := &Program{
-		files:       files,
-		mainPath:    mainPath,
-		opts:        opts,
-		prog:        prog,
-		fset:        prog.Fset,
-		owner:       map[*ssa.Function]*ssa.Package{},
-		byPkg:       map[*ssa.Package][]*ssa.Function{},
-		linkname:    map[*ssa.Function]string{},
-		dynamic:     map[string]string{},
-		varLinkname: map[string]bool{},
-		globalLink:  map[*ssa.Global]string{},
-		dylibs:      map[string]bool{},
-		pragmas:     map[*ssa.Function]pragma{},
-		syms:        map[*ssa.Function]string{},
+		files:        files,
+		mainPath:     mainPath,
+		opts:         opts,
+		prog:         prog,
+		fset:         prog.Fset,
+		owner:        map[*ssa.Function]*ssa.Package{},
+		byPkg:        map[*ssa.Package][]*ssa.Function{},
+		exportPkg:    map[*ssa.Package]bool{},
+		bodylessDecl: map[*ssa.Function]bool{},
+		linkname:     map[*ssa.Function]string{},
+		dynamic:      map[string]string{},
+		varLinkname:  map[string]bool{},
+		globalLink:   map[*ssa.Global]string{},
+		dylibs:       map[string]bool{},
+		pragmas:      map[*ssa.Function]pragma{},
+		syms:         map[*ssa.Function]string{},
 	}
 	for _, pkg := range pkgs {
 		if pkg.Pkg.Path() == "runtime" {
@@ -165,8 +175,8 @@ func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package
 	if !p.opts.Separate {
 		p.computeUsedMethods()
 	} else {
-		p.keepExported = true
-		p.reflectCall = true
+		p.keepExported = p.opts.KeepExported
+		p.reflectCall = p.opts.ReflectCall
 		p.punAll = true // no whole-program pun analysis: every access may alias
 	}
 	p.collectFMABlocks()
@@ -315,7 +325,7 @@ func (p *Program) computeSymbol(fn *ssa.Function) string {
 	// A body-less libc_X_trampoline (darwin syscall packages) is the C
 	// symbol its //go:cgo_import_dynamic directive names: every reference,
 	// including function values, goes straight to it.
-	if len(fn.Blocks) == 0 && fn.Pkg != nil && strings.HasSuffix(fn.Name(), "_trampoline") {
+	if p.bodyless(fn) && fn.Pkg != nil && strings.HasSuffix(fn.Name(), "_trampoline") {
 		if c, ok := p.dynamic[fn.Pkg.Pkg.Path()+"."+strings.TrimSuffix(fn.Name(), "_trampoline")]; ok {
 			return c
 		}
@@ -430,6 +440,26 @@ func (p *Program) applyFacts(pkg *ssa.Package, f *loader.Facts) {
 			externalRecover.Store(fn, true)
 		}
 	}
+	p.exportPkg[pkg] = true
+	for _, name := range f.Bodyless {
+		if fn := lookupFunc(p.prog, pkg, name); fn != nil {
+			p.bodylessDecl[fn] = true
+		}
+	}
+}
+
+// bodyless reports whether fn is declared without a body (assembly, or
+// provided by the C runtime core). Functions of packages loaded from export
+// data have no SSA body either; the facts tell which of them were declared
+// without one.
+func (p *Program) bodyless(fn *ssa.Function) bool {
+	if len(fn.Blocks) > 0 {
+		return false
+	}
+	if fn.Pkg != nil && p.exportPkg[fn.Pkg] {
+		return p.bodylessDecl[fn]
+	}
+	return true
 }
 
 // lookupFunc finds "F" or "T.M" in pkg (value or pointer receiver).
