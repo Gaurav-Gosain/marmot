@@ -641,7 +641,7 @@ func (s *Sources) scopeNames(f *srcFile, pos token.Pos) []string {
 // A candidate that differs only in case always wins.
 func closest(name string, cands []string) string {
 	best, bestD := "", 1<<30
-	limit := max(1, (len(name)+2)/3)
+	limit := max(1, (len(name)+1)/4)
 	sort.Strings(cands)
 	for _, c := range cands {
 		if c == name {
@@ -653,7 +653,7 @@ func closest(name string, cands []string) string {
 		if abs(len(c)-len(name)) > limit {
 			continue
 		}
-		d := editDistance(name, c)
+		d := editDistance(strings.ToLower(name), strings.ToLower(c))
 		if d > limit {
 			continue
 		}
