@@ -440,6 +440,9 @@ int main(int argc, char **argv) {
       wjobs.push_back({j.in, j.out, j.key});
     marmot::CompileOptions o = opts;
     o.singleThreaded = true;
+    // The thread budget (-j), also when fewer jobs than threads run: a
+    // large module parses with the threads other jobs leave (tier0).
+    o.parseThreads = std::max(1u, std::min(jobs ? unsigned(jobs) : std::thread::hardware_concurrency(), cap));
     marmot::WpoStats st;
     if (stream) {
       n = std::max(1u, std::min(jobs ? unsigned(jobs) : std::thread::hardware_concurrency(), cap));

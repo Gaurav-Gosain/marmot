@@ -839,6 +839,14 @@ bool compileTier0(const std::function<bool(WpoJob &)> &next, const CompileOption
       cv.notify_all();
     }
   };
+  // A large module parses with the threads of the budget (opts.parseThreads
+  // or the pool) that no other job parsing uses: a deep edit recompiles a
+  // few modules, one of them large. At most 4 (parseFile).
+  // MARMOT_PARSE_THREADS caps them; 1 parses every module serially.
+  unsigned parseCap = 4;
+  if (const char *e = std::getenv("MARMOT_PARSE_THREADS"))
+    parseCap = std::max(1, std::atoi(e));
+  std::atomic<unsigned> busy{0};
   auto compileJob = [&](const WpoJob &j, raw_ostream &es, PhaseTimes &t) {
     auto t0 = std::chrono::steady_clock::now();
     std::string inHash;
@@ -890,8 +898,13 @@ bool compileTier0(const std::function<bool(WpoJob &)> &next, const CompileOption
     Admit admit(admitMu, admitCv, inFlight, textSize, textBudget);
     ParsedModulePtr pm;
     {
+      unsigned others = busy++;
       auto tp = std::chrono::steady_clock::now();
-      pm = parseFile(j.in, opts, es);
+      CompileOptions po = opts;
+      po.parseThreads = std::clamp(int(std::max(threads, opts.parseThreads)) - int(others), 1,
+                                   int(parseCap));
+      pm = parseFile(j.in, po, es);
+      busy--;
       t.parse += msSince(tp);
     }
     if (!pm)

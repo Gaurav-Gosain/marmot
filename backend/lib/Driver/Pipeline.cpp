@@ -42,6 +42,9 @@
 #include "llvm/Support/Format.h"
 
 #include <chrono>
+#include <thread>
+#include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/StringMap.h"
 
 namespace marmot {
 
@@ -308,6 +311,175 @@ void ParsedModuleDeleter::operator()(ParsedModule *p) const { delete p; }
 
 void *parsedModuleOp(ParsedModule &pm) { return pm.module->getOperation(); }
 
+namespace {
+// A large module parses in parallel (MLIR's parser is serial: a 16 MB module
+// took 0.4 s, the longest job of a deep edit). The body is cut at top-level
+// op boundaries into chunks; each is parsed as a module of its own in the
+// same context, with the text before the body (type aliases, the module
+// line) and the location aliases it uses, and the ops are moved into one
+// module, verified once. Text not in the shape the printer writes, or any
+// error, falls back to the serial parse (which gives the diagnostics).
+// The shared context's locks cost: 4 threads parse that module in 0.22 s
+// for 1.4x the CPU time of the serial parse, more threads gain nothing; so
+// only threads the batch has spare (CompileOptions::parseThreads).
+constexpr size_t kParallelParseMin = 2u << 20;
+constexpr size_t kParseChunk = 1u << 20;
+
+struct ModuleSplit {
+  llvm::StringRef head;                     // through the "module ... {" line
+  std::vector<llvm::StringRef> chunks;      // the body, cut between ops
+  llvm::StringMap<llvm::StringRef> aliases; // after the body: name -> line
+};
+
+bool aliasChar(char c) { return llvm::isAlnum(c) || c == '_' || c == '$' || c == '.' || c == '-'; }
+
+bool splitModule(llvm::StringRef text, unsigned n, ModuleSplit &out) {
+  size_t pos = 0;
+  for (;;) {
+    size_t eol = text.find('\n', pos);
+    if (eol == llvm::StringRef::npos)
+      return false;
+    llvm::StringRef line = text.slice(pos, eol);
+    pos = eol + 1;
+    if (line.starts_with("module")) {
+      if (!line.rtrim().ends_with("{"))
+        return false;
+      break;
+    }
+  }
+  out.head = text.take_front(pos);
+  size_t per = (text.size() - pos) / n + 1, start = pos, target = pos + per;
+  size_t end = llvm::StringRef::npos;
+  int depth = 0;
+  for (size_t i = pos; i < text.size() && end == llvm::StringRef::npos; ++i) {
+    char c = text[i];
+    switch (c) {
+    case '"':
+      for (++i; i < text.size() && text[i] != '"'; ++i)
+        if (text[i] == '\\')
+          ++i;
+      break;
+    case '/':
+      if (i + 1 < text.size() && text[i + 1] == '/') {
+        i = text.find('\n', i);
+        if (i == llvm::StringRef::npos)
+          return false;
+        --i; // the newline is a boundary
+      }
+      break;
+    case '{':
+      ++depth;
+      break;
+    case '}':
+      if (depth == 0)
+        end = i;
+      else
+        --depth;
+      break;
+    case '\n':
+      if (depth == 0 && i + 1 >= target) {
+        out.chunks.push_back(text.slice(start, i + 1));
+        start = i + 1;
+        target = start + per;
+      }
+      break;
+    }
+  }
+  if (end == llvm::StringRef::npos || (end > 0 && text[end - 1] != '\n'))
+    return false;
+  if (start < end)
+    out.chunks.push_back(text.slice(start, end));
+  llvm::StringRef rest = text.substr(end + 1);
+  while (!rest.empty()) {
+    auto [line, next] = rest.split('\n');
+    rest = next;
+    if (line.trim().empty())
+      continue;
+    size_t eq = line.find(" = ");
+    if (!line.starts_with("#") || eq == llvm::StringRef::npos)
+      return false;
+    out.aliases[line.take_front(eq)] = line;
+  }
+  return true;
+}
+
+// The text of chunk i as a module of its own.
+std::string chunkText(const ModuleSplit &sp, size_t i) {
+  llvm::StringRef chunk = sp.chunks[i];
+  std::vector<llvm::StringRef> used, work{chunk};
+  llvm::StringSet<> seen;
+  while (!work.empty()) {
+    llvm::StringRef t = work.back();
+    work.pop_back();
+    for (size_t h = t.find('#'); h != llvm::StringRef::npos; h = t.find('#', h + 1)) {
+      size_t j = h + 1;
+      while (j < t.size() && aliasChar(t[j]))
+        ++j;
+      auto it = sp.aliases.find(t.slice(h, j));
+      if (it != sp.aliases.end() && seen.insert(it->first()).second) {
+        used.push_back(it->second);
+        work.push_back(it->second.substr(it->first().size()));
+      }
+    }
+  }
+  // In the order of the file.
+  llvm::sort(used, [](llvm::StringRef a, llvm::StringRef b) { return a.data() < b.data(); });
+  size_t size = sp.head.size() + chunk.size() + 2;
+  for (llvm::StringRef u : used)
+    size += u.size() + 1;
+  std::string s;
+  s.reserve(size);
+  s.append(sp.head.data(), sp.head.size());
+  s.append(chunk.data(), chunk.size());
+  s += "}\n";
+  for (llvm::StringRef u : used) {
+    s.append(u.data(), u.size());
+    s += '\n';
+  }
+  return s;
+}
+
+// Parses text into one module in parallel; null if it cannot (the caller
+// parses serially).
+mlir::OwningOpRef<mlir::ModuleOp> parseParallel(mlir::MLIRContext *ctx, llvm::StringRef text,
+                                                llvm::StringRef name, unsigned threads) {
+  unsigned n = std::min<size_t>(threads, text.size() / kParseChunk);
+  ModuleSplit sp;
+  if (n < 2 || !splitModule(text, n, sp) || sp.chunks.size() < 2)
+    return nullptr;
+  // The parser loads dialects on first use, which is not thread safe.
+  ctx->loadAllAvailableDialects();
+  bool threaded = ctx->isMultithreadingEnabled();
+  if (!threaded)
+    ctx->enableMultithreading();
+  std::vector<mlir::OwningOpRef<mlir::ModuleOp>> mods(sp.chunks.size());
+  {
+    std::vector<std::thread> ts;
+    for (size_t i = 0; i < sp.chunks.size(); ++i)
+      ts.emplace_back([&, i] {
+        std::string t = chunkText(sp, i);
+        llvm::SourceMgr sm;
+        sm.AddNewSourceBuffer(llvm::MemoryBuffer::getMemBuffer(t, name, false), llvm::SMLoc());
+        mods[i] = mlir::parseSourceFile<mlir::ModuleOp>(
+            sm, mlir::ParserConfig(ctx, /*verifyAfterParse=*/false));
+      });
+    for (std::thread &t : ts)
+      t.join();
+  }
+  bool ok = llvm::all_of(mods, [](auto &m) { return bool(m); });
+  if (ok) {
+    mlir::Block *dst = mods[0]->getBody();
+    for (size_t i = 1; i < mods.size(); ++i)
+      dst->getOperations().splice(dst->end(), mods[i]->getBody()->getOperations());
+    mods.resize(1);
+    ok = mlir::succeeded(mlir::verify(*mods[0]));
+  }
+  if (!threaded)
+    ctx->disableMultithreading();
+  return ok ? std::move(mods[0]) : nullptr;
+}
+} // namespace
+
 ParsedModulePtr parseFile(const std::string &input, const CompileOptions &opts,
                           llvm::raw_ostream &errs) {
   ParsedModulePtr pm(new ParsedModule);
@@ -327,8 +499,16 @@ ParsedModulePtr parseFile(const std::string &input, const CompileOptions &opts,
   pm->diagStream = std::make_unique<llvm::raw_string_ostream>(pm->diagText);
   pm->diag = std::make_unique<mlir::SourceMgrDiagnosticHandler>(pm->sm, pm->ctx.get(),
                                                                  *pm->diagStream);
+  llvm::StringRef text = pm->sm.getMemoryBuffer(1)->getBuffer();
+  // Only tier0 batches size parseThreads to the threads other jobs leave.
+  if (opts.tier0 && opts.parseThreads > 1 && text.size() >= kParallelParseMin) {
+    pm->module = parseParallel(pm->ctx.get(), text, input, opts.parseThreads);
+    if (!pm->module)
+      pm->diagText.clear();
+  }
   // The parser verifies the module once.
-  pm->module = mlir::parseSourceFile<mlir::ModuleOp>(pm->sm, mlir::ParserConfig(pm->ctx.get()));
+  if (!pm->module)
+    pm->module = mlir::parseSourceFile<mlir::ModuleOp>(pm->sm, mlir::ParserConfig(pm->ctx.get()));
   if (!pm->module) {
     errs << pm->diagText << input << ": failed to parse\n";
     return nullptr;

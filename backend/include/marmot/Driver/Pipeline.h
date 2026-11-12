@@ -31,6 +31,7 @@ struct CompileOptions {
   bool verifyEach = false; // verify after every MLIR pass
   bool timePhases = false;
   bool singleThreaded = false; // disable MLIR context threading (batch mode)
+  unsigned parseThreads = 1;   // threads to parse a large module with (parseFile, tier0)
   bool initOptNone = true;     // compile package init functions with optnone
   bool wpoImport = true;       // -wpo: import small functions across modules
   // Dev batch: split a module above this many instructions into groups
