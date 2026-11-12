@@ -28,8 +28,6 @@ bench: all
 clean:
 	rm -rf build
 
-# Render docs/diagrams/*.mmd to light and dark SVG with sketch (go install tuios.dev/sketch/cmd/sketch@latest).
+# Render docs/diagrams/*.mmd to light and dark SVG with sketch.
 diagrams:
-	@for f in docs/diagrams/*.mmd; do n=$$(basename $$f .mmd); \
-	  sketch $$f -theme flexoki -o docs/img/$$n-light.svg; \
-	  sketch $$f -theme flexoki-dark -o docs/img/$$n-dark.svg; done
+	./scripts/diagrams.sh
