@@ -825,7 +825,11 @@ func (f *funcGen) goOps() bool { return f.m.p.opts.GoDialect }
 
 func (f *funcGen) fieldAddr(v *ssa.FieldAddr) {
 	x := f.value(v.X)
-	f.nilCheck(x)
+	// An allocation, a global or the address of a field or element (whose
+	// base was checked) is never nil.
+	if needsNilCheck(v.X) && !f.envPointer(v.X) {
+		f.nilCheck(x)
+	}
 	st := v.X.Type().Underlying().(*types.Pointer).Elem()
 	f.vals[v] = f.gep(x, f.tm.memType(st), 0, v.Field)
 }
