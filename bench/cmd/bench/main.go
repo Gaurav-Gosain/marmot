@@ -59,7 +59,7 @@ func toolchains() []Toolchain {
 		}
 	}
 	// dev is the default mode. release adds -release once the driver supports it; until then the
-	// default build (whole program step on) counts as release, as the maintainer decided.
+	// default build (whole program step on) counts as release.
 	releaseFlag := func(root string) []string {
 		out, _ := exec.Command(marmotBin(root), "build", "-h").CombinedOutput()
 		if bytes.Contains(out, []byte("-release")) {
@@ -661,7 +661,7 @@ func findRoot() (string, error) {
 		return "", err
 	}
 	for d := dir; d != "/"; d = filepath.Dir(d) {
-		if _, err := os.Stat(filepath.Join(d, "SPEC.md")); err == nil {
+		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
 			return d, nil
 		}
 	}
@@ -708,7 +708,7 @@ func runGroup(c *exec.Cmd, timeout time.Duration) ([]byte, error) {
 var snapDir string
 
 // makeSnapshot copies everything marmot needs (build/bin, build/lib, lib) into
-// .work/bench/snap-<sha> and points MARMOT_ROOT at it, so other workers editing the live tree
+// .work/bench/snap-<sha> and points MARMOT_ROOT at it, so edits in the live tree
 // cannot break a long run. Older snapshots are deleted. A hello world smoke test must pass.
 func makeSnapshot() {
 	sha := sh("git", "-C", root, "rev-parse", "--short", "HEAD")
