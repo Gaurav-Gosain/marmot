@@ -50,6 +50,9 @@ struct CompileOptions {
   int debugLevel = 1;
   // With debugLevel > 0, Go code keeps sibling calls only when this is set.
   bool keepTailCalls = false;
+  // No tail merging in code generation, so every call site keeps its own
+  // inlined frames (runtime.Caller through inlined calls).
+  bool keepCallSites = false;
   bool prepareOnly = false;    // batch: fill the cache (phase 1 for -wpo), write no outputs
   std::string gpuArch;         // -gpu=sm_86: PTX for "marmot-gpu-body" loops (docs/gpu.md)
   bool devirt = true;          // go-devirt at -O1 and up

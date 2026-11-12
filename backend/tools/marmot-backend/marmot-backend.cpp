@@ -95,6 +95,10 @@ static cl::opt<bool> pclnFrags(
 static cl::opt<bool> mergeFunctions(
     "merge-functions",
     cl::desc("MergeFunctions at -Os/-Oz (off by default: merged defer thunks break recover)"));
+static cl::opt<bool> keepCallSites(
+    "keep-call-sites",
+    cl::desc("No tail merging of calls, so runtime.Caller sees every inlined frame (dev builds, "
+             "-trace=full)"));
 static cl::opt<bool> stringsNoCopy(
     "strings-nocopy", cl::desc("go-strings rule S3: no-copy string(b) for transient uses"));
 static cl::opt<bool> noImport("no-import", cl::desc("-wpo without cross-module imports"),
@@ -202,6 +206,7 @@ int main(int argc, char **argv) {
   opts.wpoImport = !noImport;
   opts.splitInstrs = splitLarge;
   opts.stringsNoCopy = stringsNoCopy;
+  opts.keepCallSites = keepCallSites;
   opts.mergeFunctions = mergeFunctions;
   opts.pclnFragments = pclnFrags;
   opts.wpoClosedWorld = !noClosedWorld;

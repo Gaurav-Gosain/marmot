@@ -2,6 +2,7 @@
 // emit. Everything runs in-process. Each call owns its own MLIRContext and
 // LLVMContext, so calls are safe to run in parallel.
 #include "marmot/Driver/Pipeline.h"
+#include <mutex>
 #include "marmot/Driver/RuntimeBitcode.h"
 #include "marmot/Driver/Targets.h"
 #include "marmot/Driver/Gpu.h"
@@ -504,6 +505,22 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
   }
   setTargetAttrs(lmod, tm, opts.optLevel);
   keepRecoverFramesUnmerged(lmod);
+  // -keep-call-sites (dev builds and -release -trace=full, where the pc table
+  // has inlined frames): calls in Go code are nomerge, so neither SimplifyCFG
+  // (sinking, hoisting) nor code generation (tail merging) folds two calls to
+  // the same function from different call sites into one. A merged call keeps
+  // only the common scope of both locations, so runtime.Caller lost an
+  // inlined frame (log TestAll: Println and Printf, inlined into testPrint,
+  // both call output). gc never merges call sites. Set before the optimizer:
+  // calls the inliner copies keep the attribute.
+  if (opts.keepCallSites)
+    for (llvm::Function &f : lmod)
+      if (!f.isDeclaration() && f.getSubprogram())
+        for (llvm::BasicBlock &bb : f)
+          for (llvm::Instruction &inst : bb)
+            if (auto *cb = llvm::dyn_cast<llvm::CallBase>(&inst); cb && !cb->isInlineAsm() &&
+                !llvm::isa<llvm::IntrinsicInst>(cb))
+              cb->addFnAttr(llvm::Attribute::NoMerge);
   if (opts.initOptNone && opts.optLevel != '0')
     markInitOptNone(lmod);
   times.linkRt += timer.lap();
