@@ -114,7 +114,9 @@ func (m *moduleGen) finish(name string) (Module, error) {
 	}
 	var out strings.Builder
 	// Method pruning is whole-program: modules depend on its result.
-	fmt.Fprintf(&out, "// methods: %s\n", m.p.usedMethodsHash)
+	if m.p.usedMethodsHash != "" {
+		fmt.Fprintf(&out, "// methods: %s\n", m.p.usedMethodsHash)
+	}
 	out.WriteString("module {\n")
 	keys := make([]string, 0, len(m.decls))
 	for k := range m.decls {
@@ -307,6 +309,18 @@ func (m *moduleGen) global(g *ssa.Global) {
 	if img := m.static.images[g]; img != nil && !m.static.dynamic[g] {
 		m.constGlobal(sym, "external", false, m.static.value(img))
 		return
+	}
+	// libc_X_trampoline_addr: assembly (DATA) stores the address of the
+	// trampoline for libc_X there (golang.org/x/sys/unix on darwin); marmot
+	// calls the C symbol of libc_X's //go:cgo_import_dynamic directly.
+	if name := g.Name(); strings.HasSuffix(name, "_trampoline_addr") {
+		local := strings.TrimSuffix(name, "_trampoline_addr")
+		if c, ok := m.p.dynamic[g.Pkg.Pkg.Path()+"."+local]; ok && t == mlir.I64 {
+			m.declareRaw(c, nil, "", "")
+			fmt.Fprintf(&m.defs, "  llvm.mlir.global external %s() {addr_space = 0 : i32} : i64 {\n    %%0 = llvm.mlir.addressof %s : !llvm.ptr\n    %%1 = llvm.ptrtoint %%0 : !llvm.ptr to i64\n    llvm.return %%1 : i64\n  }\n",
+				mlir.Symbol(sym), mlir.Symbol(c))
+			return
+		}
 	}
 	linkage := "external"
 	if m.p.varLinkname[g.Pkg.Pkg.Path()+"."+g.Name()] || m.p.varLinkname[sym] {
