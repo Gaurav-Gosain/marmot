@@ -270,7 +270,7 @@ type edge struct {
 }
 
 type graph struct {
-	encoder objectpath.Encoder
+	encoder    objectpath.Encoder
 	pkg        *types.Package
 	info       *types.Info
 	files      []*ast.File
