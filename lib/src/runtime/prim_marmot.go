@@ -68,6 +68,19 @@ func mallocPrecise(size uintptr, bits *byte, elemsize uintptr) unsafe.Pointer {
 	return rt_alloc(size, rtAllocPrecise, unsafe.Pointer(bits), elemsize)
 }
 
+// mallocNoZero allocates size bytes without pointers and without zeroing
+// them; the caller overwrites every byte it exposes (gc's mallocgc with
+// needzero false).
+func mallocNoZero(size uintptr) unsafe.Pointer {
+	if size == 0 {
+		return unsafe.Pointer(&zerobase)
+	}
+	return rt_alloc_nozero(size)
+}
+
+//go:linkname rt_alloc_nozero rt_alloc_nozero
+func rt_alloc_nozero(size uintptr) unsafe.Pointer
+
 // mallocConservative allocates size bytes that are scanned conservatively.
 // Used for runtime structures that hold pointers and have no descriptor.
 func mallocConservative(size uintptr) unsafe.Pointer {
