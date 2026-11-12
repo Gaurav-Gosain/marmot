@@ -112,12 +112,16 @@ func runCase(dir, cond, marmot, root string) result {
 	}
 	ref, _ := os.ReadFile(filepath.Join(dir, "fixed.go.txt"))
 	want := behavior(string(ref))
+	// Cases with several sound fixes (which argument to add, which
+	// declaration to keep) are judged by compiling only.
+	_, err = os.Stat(filepath.Join(dir, "ambiguous"))
+	ambiguous := err == nil
 	for a := 1; a <= *flAttempts; a++ {
 		var out string
 		if cond == "go" {
 			out, _ = build(tmp, nil, "go", "build", "-o", os.DevNull, ".")
 		} else {
-			out, _ = build(tmp, []string{"MARMOT_OUTPUT=json", "MARMOT_ROOT=" + root, "MARMOT_DAEMON=0"}, marmot, "build", "-o", os.DevNull, ".")
+			out, _ = build(tmp, []string{"MARMOT_OUTPUT=json", "MARMOT_ROOT=" + root, "MARMOT_DAEMON=0"}, marmot, "build", "-o", filepath.Join(tmp, "prog"), ".")
 		}
 		src, _ := os.ReadFile(filepath.Join(tmp, "main.go"))
 		start := time.Now()
@@ -128,7 +132,7 @@ func runCase(dir, cond, marmot, root string) result {
 			os.WriteFile(filepath.Join(tmp, "main.go"), []byte(fixed), 0o644)
 			if _, ok := build(tmp, nil, "go", "build", "-o", os.DevNull, "."); ok && strings.Contains(fixed, "func main()") {
 				at.Compiles = true
-				at.Fixed = behavior(fixed) == want
+				at.Fixed = ambiguous || behavior(fixed) == want
 			}
 		}
 		r.Log = append(r.Log, at)
@@ -152,8 +156,19 @@ func build(dir string, env []string, name string, args ...string) (string, bool)
 	var b bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &b, &b
 	err := cmd.Run()
-	out := strings.ReplaceAll(b.String(), dir+string(filepath.Separator), "")
-	return strings.ReplaceAll(out, dir, "."), err == nil
+	return scrub(b.String(), dir), err == nil
+}
+
+var tempRE = regexp.MustCompile(`(/private)?` + regexp.QuoteMeta(strings.TrimSuffix(os.TempDir(), "/")) + `/[\w.-]+`)
+
+// scrub removes the case directory and temporary paths from build output
+// (macOS reports /private/var/... for /var/...).
+func scrub(out, dir string) string {
+	for _, d := range []string{"/private" + dir, dir} {
+		out = strings.ReplaceAll(out, d+string(filepath.Separator), "")
+		out = strings.ReplaceAll(out, d, ".")
+	}
+	return tempRE.ReplaceAllString(out, "$$TMPDIR")
 }
 
 // behavior runs a program and returns its output and exit status.

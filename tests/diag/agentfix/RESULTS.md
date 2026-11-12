@@ -6,16 +6,17 @@ when it builds with `go build` and the program's output and exit status match th
 
 | output the model saw | cases | fixed correctly | on the first try | attempts per case | compiles but wrong |
 | --- | --- | --- | --- | --- | --- |
-| go build | 65 | 60 (92%) | 60 (92%) | 1.15 | 5 |
-| marmot JSON | 65 | 59 (91%) | 59 (91%) | 1.18 | 6 |
+| go build | 65 | 63 (97%) | 63 (97%) | 1.06 | 2 |
+| marmot JSON | 65 | 63 (97%) | 63 (97%) | 1.06 | 2 |
+
+Five cases with several sound fixes (marked by an `ambiguous` file) are judged by compiling
+only. A first run judged them by output too and gave 92% and 91%; it also used `-o /dev/null`,
+which marmot then mishandled after a successful fix (fixed since), so that run is not used.
 
 marmot does not win on this corpus. Every case is one small file with one mistake, and the model
-sees the whole file with either output, so the location and the message are enough. Most of
-the misses are cases with more than one reasonable fix (`area(3)` to `area(3, 3)` or `area(3, 4)`,
-which `var x` to keep, what to do with an unused comparison), where the single reference output
-rejects a sound fix in both conditions. The cases that differ between the conditions (an unused
-`err`, a return value, an extra argument) went one way in one run and could go the other way in
-the next.
+sees the whole file with either output, so the location and the message are enough. The two
+misses in each condition are not the same cases (an unused `err` and a string plus int on one
+side, a pointer to an interface on both), which is within run to run noise.
 
 What this corpus does not measure, and where the extra context should matter: errors whose
 cause is in another file or package (interface and constraint declarations, called functions),

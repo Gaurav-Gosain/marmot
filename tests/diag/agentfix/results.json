@@ -22,10 +22,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: totl\",\"span\":{\"file\":\"/privatemain.go\",\"line\":7,\"col\":14,\"endLine\":7,\"endCol\":18},\"fixes\":[{\"title\":\"use `total`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":7,\"col\":14,\"endLine\":7,\"endCol\":18},\"newText\":\"total\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\ttotal := 0\"},{\"line\":7,\"text\":\"\\tfmt.Println(totl)\"},{\"line\":8,\"text\":\"\\t_ = total\"},{\"line\":9,\"text\":\"}\"}]},\"label\":\"not declared in this scope\",\"rendered\":\"error[M0002]: undefined: totl\\n --\u003e ./main.go:7:14\\n  |\\n7 |     fmt.Println(totl)\\n  |                 ^^^^ not declared in this scope\\n  |\\nhelp: use `total` (check it)\\n  |\\n7 -     fmt.Println(totl)\\n7 +     fmt.Println(total)\\n  |\\n\",\"explain\":\"marmot explain M0002\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":210,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: totl\",\"span\":{\"file\":\"main.go\",\"line\":7,\"col\":14,\"endLine\":7,\"endCol\":18},\"fixes\":[{\"title\":\"use `total`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":7,\"col\":14,\"endLine\":7,\"endCol\":18},\"newText\":\"total\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\ttotal := 0\"},{\"line\":7,\"text\":\"\\tfmt.Println(totl)\"},{\"line\":8,\"text\":\"\\t_ = total\"},{\"line\":9,\"text\":\"}\"}]},\"label\":\"not declared in this scope\",\"rendered\":\"error[M0002]: undefined: totl\\n --\u003e ./main.go:7:14\\n  |\\n7 |     fmt.Println(totl)\\n  |                 ^^^^ not declared in this scope\\n  |\\nhelp: use `total` (check it)\\n  |\\n7 -     fmt.Println(totl)\\n7 +     fmt.Println(total)\\n  |\\n\",\"explain\":\"marmot explain M0002\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":307,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 2
       }
     ]
   },
@@ -40,7 +40,7 @@
         "output": "# example.com/undefined_func_typo\n./main.go:6:10: undefined: compte\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 2
       }
     ]
   },
@@ -52,7 +52,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: compte\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":10,\"endLine\":6,\"endCol\":16},\"fixes\":[{\"title\":\"use `compute`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":10,\"endLine\":6,\"endCol\":16},\"newText\":\"compute\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tprintln(compte(3))\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"not declared in this scope\",\"rendered\":\"error[M0002]: undefined: compte\\n --\u003e ./main.go:6:10\\n  |\\n6 |     println(compte(3))\\n  |             ^^^^^^ not declared in this scope\\n  |\\nhelp: use `compute` (check it)\\n  |\\n6 -     println(compte(3))\\n6 +     println(compute(3))\\n  |\\n\",\"explain\":\"marmot explain M0002\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":102,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: compte\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":10,\"endLine\":6,\"endCol\":16},\"fixes\":[{\"title\":\"use `compute`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":10,\"endLine\":6,\"endCol\":16},\"newText\":\"compute\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tprintln(compte(3))\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"not declared in this scope\",\"rendered\":\"error[M0002]: undefined: compte\\n --\u003e ./main.go:6:10\\n  |\\n6 |     println(compte(3))\\n  |             ^^^^^^ not declared in this scope\\n  |\\nhelp: use `compute` (check it)\\n  |\\n6 -     println(compte(3))\\n6 +     println(compute(3))\\n  |\\n\",\"explain\":\"marmot explain M0002\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":192,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -82,7 +82,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: fmt.Printn\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":6,\"endLine\":6,\"endCol\":12},\"fixes\":[{\"title\":\"use `fmt.Println`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":6,\"endLine\":6,\"endCol\":12},\"newText\":\"Println\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tfmt.Printn(\\\"hello\\\")\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"not declared by package `fmt`\",\"rendered\":\"error[M0002]: undefined: fmt.Printn\\n --\u003e ./main.go:6:6\\n  |\\n6 |     fmt.Printn(\\\"hello\\\")\\n  |         ^^^^^^ not declared by package `fmt`\\n  |\\nhelp: use `fmt.Println` (check it)\\n  |\\n6 -     fmt.Printn(\\\"hello\\\")\\n6 +     fmt.Println(\\\"hello\\\")\\n  |\\n\",\"explain\":\"marmot explain M0002\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":758,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: fmt.Printn\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":6,\"endLine\":6,\"endCol\":12},\"fixes\":[{\"title\":\"use `fmt.Println`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":6,\"endLine\":6,\"endCol\":12},\"newText\":\"Println\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tfmt.Printn(\\\"hello\\\")\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"not declared by package `fmt`\",\"rendered\":\"error[M0002]: undefined: fmt.Printn\\n --\u003e ./main.go:6:6\\n  |\\n6 |     fmt.Printn(\\\"hello\\\")\\n  |         ^^^^^^ not declared by package `fmt`\\n  |\\nhelp: use `fmt.Println` (check it)\\n  |\\n6 -     fmt.Printn(\\\"hello\\\")\\n6 +     fmt.Println(\\\"hello\\\")\\n  |\\n\",\"explain\":\"marmot explain M0002\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":379,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -100,7 +100,7 @@
         "output": "# example.com/missing_import_strings\n./main.go:6:14: undefined: strings\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 2
       }
     ]
   },
@@ -112,7 +112,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: strings\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":14,\"endLine\":6,\"endCol\":21},\"fixes\":[{\"title\":\"add `import \\\"strings\\\"`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":4,\"col\":1,\"endLine\":4,\"endCol\":1},\"newText\":\"import \\\"strings\\\"\\n\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tfmt.Println(strings.ToUpper(\\\"hi\\\"))\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"package `strings` is not imported\",\"rendered\":\"error[M0002]: undefined: strings\\n --\u003e ./main.go:6:14\\n  |\\n6 |     fmt.Println(strings.ToUpper(\\\"hi\\\"))\\n  |                 ^^^^^^^ package `strings` is not imported\\n  |\\nhelp: add `import \\\"strings\\\"`\\n  |\\n4 + import \\\"strings\\\"\\n  |\\n\",\"explain\":\"marmot explain M0002\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":242,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: strings\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":14,\"endLine\":6,\"endCol\":21},\"fixes\":[{\"title\":\"add `import \\\"strings\\\"`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":4,\"col\":1,\"endLine\":4,\"endCol\":1},\"newText\":\"import \\\"strings\\\"\\n\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tfmt.Println(strings.ToUpper(\\\"hi\\\"))\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"package `strings` is not imported\",\"rendered\":\"error[M0002]: undefined: strings\\n --\u003e ./main.go:6:14\\n  |\\n6 |     fmt.Println(strings.ToUpper(\\\"hi\\\"))\\n  |                 ^^^^^^^ package `strings` is not imported\\n  |\\nhelp: add `import \\\"strings\\\"`\\n  |\\n4 + import \\\"strings\\\"\\n  |\\n\",\"explain\":\"marmot explain M0002\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":281,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -142,7 +142,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: filepath\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":14,\"endLine\":6,\"endCol\":22},\"fixes\":[{\"title\":\"add `import \\\"path/filepath\\\"`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":4,\"col\":1,\"endLine\":4,\"endCol\":1},\"newText\":\"import \\\"path/filepath\\\"\\n\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tfmt.Println(filepath.Join(\\\"a\\\", \\\"b\\\"))\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"package `filepath` is not imported\",\"rendered\":\"error[M0002]: undefined: filepath\\n --\u003e ./main.go:6:14\\n  |\\n6 |     fmt.Println(filepath.Join(\\\"a\\\", \\\"b\\\"))\\n  |                 ^^^^^^^^ package `filepath` is not imported\\n  |\\nhelp: add `import \\\"path/filepath\\\"`\\n  |\\n4 + import \\\"path/filepath\\\"\\n  |\\n\",\"explain\":\"marmot explain M0002\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":243,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: filepath\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":14,\"endLine\":6,\"endCol\":22},\"fixes\":[{\"title\":\"add `import \\\"path/filepath\\\"`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":4,\"col\":1,\"endLine\":4,\"endCol\":1},\"newText\":\"import \\\"path/filepath\\\"\\n\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tfmt.Println(filepath.Join(\\\"a\\\", \\\"b\\\"))\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"package `filepath` is not imported\",\"rendered\":\"error[M0002]: undefined: filepath\\n --\u003e ./main.go:6:14\\n  |\\n6 |     fmt.Println(filepath.Join(\\\"a\\\", \\\"b\\\"))\\n  |                 ^^^^^^^^ package `filepath` is not imported\\n  |\\nhelp: add `import \\\"path/filepath\\\"`\\n  |\\n4 + import \\\"path/filepath\\\"\\n  |\\n\",\"explain\":\"marmot explain M0002\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":341,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -172,7 +172,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: tmplate\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":7,\"endLine\":6,\"endCol\":14},\"help\":[\"the standard library package `template` (`import \\\"text/template\\\"`) declares `New`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tt := tmplate.New(\\\"x\\\")\"},{\"line\":7,\"text\":\"\\t_ = t\"},{\"line\":8,\"text\":\"\\t_ = template.New\"}]},\"label\":\"not declared in this scope\",\"rendered\":\"error[M0002]: undefined: tmplate\\n --\u003e ./main.go:6:7\\n  |\\n6 |     t := tmplate.New(\\\"x\\\")\\n  |          ^^^^^^^ not declared in this scope\\n  |\\n  = help: the standard library package `template` (`import \\\"text/template\\\"`) declares `New`\\n\",\"explain\":\"marmot explain M0002\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":264,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: tmplate\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":7,\"endLine\":6,\"endCol\":14},\"help\":[\"the standard library package `template` (`import \\\"text/template\\\"`) declares `New`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tt := tmplate.New(\\\"x\\\")\"},{\"line\":7,\"text\":\"\\t_ = t\"},{\"line\":8,\"text\":\"\\t_ = template.New\"}]},\"label\":\"not declared in this scope\",\"rendered\":\"error[M0002]: undefined: tmplate\\n --\u003e ./main.go:6:7\\n  |\\n6 |     t := tmplate.New(\\\"x\\\")\\n  |          ^^^^^^^ not declared in this scope\\n  |\\n  = help: the standard library package `template` (`import \\\"text/template\\\"`) declares `New`\\n\",\"explain\":\"marmot explain M0002\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":461,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -190,7 +190,7 @@
         "output": "# example.com/unexported_name\n./main.go:6:6: undefined: fmt.println (but have Println)\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 2
       }
     ]
   },
@@ -202,10 +202,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: fmt.println (but have Println)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":6,\"endLine\":6,\"endCol\":13},\"fixes\":[{\"title\":\"use `fmt.Println`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":6,\"endLine\":6,\"endCol\":13},\"newText\":\"Println\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tfmt.println(\\\"hi\\\")\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"not exported by package `fmt`\",\"rendered\":\"error[M0002]: undefined: fmt.println (but have Println)\\n --\u003e ./main.go:6:6\\n  |\\n6 |     fmt.println(\\\"hi\\\")\\n  |         ^^^^^^^ not exported by package `fmt`\\n  |\\nhelp: use `fmt.Println`\\n  |\\n6 -     fmt.println(\\\"hi\\\")\\n6 +     fmt.Println(\\\"hi\\\")\\n  |\\n\",\"explain\":\"marmot explain M0002\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":235,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: fmt.println (but have Println)\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":6,\"endLine\":6,\"endCol\":13},\"fixes\":[{\"title\":\"use `fmt.Println`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":6,\"endLine\":6,\"endCol\":13},\"newText\":\"Println\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tfmt.println(\\\"hi\\\")\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"not exported by package `fmt`\",\"rendered\":\"error[M0002]: undefined: fmt.println (but have Println)\\n --\u003e ./main.go:6:6\\n  |\\n6 |     fmt.println(\\\"hi\\\")\\n  |         ^^^^^^^ not exported by package `fmt`\\n  |\\nhelp: use `fmt.Println`\\n  |\\n6 -     fmt.println(\\\"hi\\\")\\n6 +     fmt.Println(\\\"hi\\\")\\n  |\\n\",\"explain\":\"marmot explain M0002\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":343,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 2
       }
     ]
   },
@@ -232,7 +232,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0004\",\"message\":\"declared and not used: count\",\"span\":{\"file\":\"/privatemain.go\",\"line\":4,\"col\":2,\"endLine\":4,\"endCol\":7},\"fixes\":[{\"title\":\"remove `count`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":4,\"col\":1,\"endLine\":5,\"endCol\":1},\"newText\":\"\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tcount := 3\"},{\"line\":5,\"text\":\"}\"},{\"line\":6,\"text\":\"\"}]},\"label\":\"declared here but never used\",\"rendered\":\"error[M0004]: declared and not used: count\\n --\u003e ./main.go:4:2\\n  |\\n4 |     count := 3\\n  |     ^^^^^ declared here but never used\\n  |\\nhelp: remove `count`\\n  |\\n4 -     count := 3\\n  |\\n\",\"explain\":\"marmot explain M0004\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":134,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0004\",\"message\":\"declared and not used: count\",\"span\":{\"file\":\"main.go\",\"line\":4,\"col\":2,\"endLine\":4,\"endCol\":7},\"fixes\":[{\"title\":\"remove `count`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":4,\"col\":1,\"endLine\":5,\"endCol\":1},\"newText\":\"\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tcount := 3\"},{\"line\":5,\"text\":\"}\"},{\"line\":6,\"text\":\"\"}]},\"label\":\"declared here but never used\",\"rendered\":\"error[M0004]: declared and not used: count\\n --\u003e ./main.go:4:2\\n  |\\n4 |     count := 3\\n  |     ^^^^^ declared here but never used\\n  |\\nhelp: remove `count`\\n  |\\n4 -     count := 3\\n  |\\n\",\"explain\":\"marmot explain M0004\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":228,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -242,26 +242,14 @@
   {
     "case": "09_unused_var_call",
     "condition": "go",
-    "fixed": false,
+    "fixed": true,
     "compiles": true,
-    "attempts": 3,
+    "attempts": 1,
     "log": [
       {
         "output": "# example.com/unused_var_call\n./main.go:6:8: declared and not used: err\n",
         "compiles": true,
-        "fixed": false,
-        "seconds": 3
-      },
-      {
-        "output": "",
-        "compiles": true,
-        "fixed": false,
-        "seconds": 2
-      },
-      {
-        "output": "",
-        "compiles": true,
-        "fixed": false,
+        "fixed": true,
         "seconds": 2
       }
     ]
@@ -269,14 +257,26 @@
   {
     "case": "09_unused_var_call",
     "condition": "marmot",
-    "fixed": true,
+    "fixed": false,
     "compiles": true,
-    "attempts": 1,
+    "attempts": 3,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0004\",\"message\":\"declared and not used: err\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":8,\"endLine\":6,\"endCol\":11},\"fixes\":[{\"title\":\"replace `err` with `_`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":8,\"endLine\":6,\"endCol\":11},\"newText\":\"_\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tdata, err := os.ReadFile(\\\"x\\\")\"},{\"line\":7,\"text\":\"\\t_ = data\"},{\"line\":8,\"text\":\"}\"}]},\"label\":\"declared here but never used\",\"rendered\":\"error[M0004]: declared and not used: err\\n --\u003e ./main.go:6:8\\n  |\\n6 |     data, err := os.ReadFile(\\\"x\\\")\\n  |           ^^^ declared here but never used\\n  |\\nhelp: replace `err` with `_` (check it)\\n  |\\n6 -     data, err := os.ReadFile(\\\"x\\\")\\n6 +     data, _ := os.ReadFile(\\\"x\\\")\\n  |\\n\",\"explain\":\"marmot explain M0004\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":244,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0004\",\"message\":\"declared and not used: err\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":8,\"endLine\":6,\"endCol\":11},\"fixes\":[{\"title\":\"replace `err` with `_`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":8,\"endLine\":6,\"endCol\":11},\"newText\":\"_\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tdata, err := os.ReadFile(\\\"x\\\")\"},{\"line\":7,\"text\":\"\\t_ = data\"},{\"line\":8,\"text\":\"}\"}]},\"label\":\"declared here but never used\",\"rendered\":\"error[M0004]: declared and not used: err\\n --\u003e ./main.go:6:8\\n  |\\n6 |     data, err := os.ReadFile(\\\"x\\\")\\n  |           ^^^ declared here but never used\\n  |\\nhelp: replace `err` with `_` (check it)\\n  |\\n6 -     data, err := os.ReadFile(\\\"x\\\")\\n6 +     data, _ := os.ReadFile(\\\"x\\\")\\n  |\\n\",\"explain\":\"marmot explain M0004\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":369,\"exitCode\":1}\n",
         "compiles": true,
-        "fixed": true,
+        "fixed": false,
+        "seconds": 3
+      },
+      {
+        "output": "{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":true,\"errors\":0,\"warnings\":0,\"output\":\"prog\",\"durationMs\":1193}\n",
+        "compiles": true,
+        "fixed": false,
+        "seconds": 2
+      },
+      {
+        "output": "{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":true,\"errors\":0,\"warnings\":0,\"output\":\"prog\",\"durationMs\":475}\n",
+        "compiles": true,
+        "fixed": false,
         "seconds": 3
       }
     ]
@@ -304,10 +304,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0004\",\"message\":\"declared and not used: i\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":6,\"endLine\":6,\"endCol\":7},\"fixes\":[{\"title\":\"replace `i` with `_`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":6,\"endLine\":6,\"endCol\":7},\"newText\":\"_\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tfor i, v := range []string{\\\"a\\\"} {\"},{\"line\":7,\"text\":\"\\t\\tfmt.Println(v)\"},{\"line\":8,\"text\":\"\\t}\"}]},\"label\":\"declared here but never used\",\"rendered\":\"error[M0004]: declared and not used: i\\n --\u003e ./main.go:6:6\\n  |\\n6 |     for i, v := range []string{\\\"a\\\"} {\\n  |         ^ declared here but never used\\n  |\\nhelp: replace `i` with `_` (check it)\\n  |\\n6 -     for i, v := range []string{\\\"a\\\"} {\\n6 +     for _, v := range []string{\\\"a\\\"} {\\n  |\\n\",\"explain\":\"marmot explain M0004\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":253,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0004\",\"message\":\"declared and not used: i\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":6,\"endLine\":6,\"endCol\":7},\"fixes\":[{\"title\":\"replace `i` with `_`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":6,\"endLine\":6,\"endCol\":7},\"newText\":\"_\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tfor i, v := range []string{\\\"a\\\"} {\"},{\"line\":7,\"text\":\"\\t\\tfmt.Println(v)\"},{\"line\":8,\"text\":\"\\t}\"}]},\"label\":\"declared here but never used\",\"rendered\":\"error[M0004]: declared and not used: i\\n --\u003e ./main.go:6:6\\n  |\\n6 |     for i, v := range []string{\\\"a\\\"} {\\n  |         ^ declared here but never used\\n  |\\nhelp: replace `i` with `_` (check it)\\n  |\\n6 -     for i, v := range []string{\\\"a\\\"} {\\n6 +     for _, v := range []string{\\\"a\\\"} {\\n  |\\n\",\"explain\":\"marmot explain M0004\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":359,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 2
       }
     ]
   },
@@ -334,7 +334,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0004\",\"message\":\"declared and not used: k\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":6,\"endLine\":5,\"endCol\":7},\"fixes\":[{\"title\":\"remove `k`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":6,\"endLine\":5,\"endCol\":11},\"newText\":\"\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tn := 0\"},{\"line\":5,\"text\":\"\\tfor k := range map[string]int{\\\"a\\\": 1} {\"},{\"line\":6,\"text\":\"\\t\\tn++\"},{\"line\":7,\"text\":\"\\t}\"}]},\"label\":\"declared here but never used\",\"rendered\":\"error[M0004]: declared and not used: k\\n --\u003e ./main.go:5:6\\n  |\\n5 |     for k := range map[string]int{\\\"a\\\": 1} {\\n  |         ^ declared here but never used\\n  |\\nhelp: remove `k`\\n  |\\n5 -     for k := range map[string]int{\\\"a\\\": 1} {\\n5 +     for range map[string]int{\\\"a\\\": 1} {\\n  |\\n\",\"explain\":\"marmot explain M0004\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":181,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0004\",\"message\":\"declared and not used: k\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":6,\"endLine\":5,\"endCol\":7},\"fixes\":[{\"title\":\"remove `k`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":6,\"endLine\":5,\"endCol\":11},\"newText\":\"\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tn := 0\"},{\"line\":5,\"text\":\"\\tfor k := range map[string]int{\\\"a\\\": 1} {\"},{\"line\":6,\"text\":\"\\t\\tn++\"},{\"line\":7,\"text\":\"\\t}\"}]},\"label\":\"declared here but never used\",\"rendered\":\"error[M0004]: declared and not used: k\\n --\u003e ./main.go:5:6\\n  |\\n5 |     for k := range map[string]int{\\\"a\\\": 1} {\\n  |         ^ declared here but never used\\n  |\\nhelp: remove `k`\\n  |\\n5 -     for k := range map[string]int{\\\"a\\\": 1} {\\n5 +     for range map[string]int{\\\"a\\\": 1} {\\n  |\\n\",\"explain\":\"marmot explain M0004\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":107,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -352,7 +352,7 @@
         "output": "# example.com/unused_import\n./main.go:5:2: \"os\" imported and not used\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 2
       }
     ]
   },
@@ -364,10 +364,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0005\",\"message\":\"\\\"os\\\" imported and not used\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":2,\"endLine\":5,\"endCol\":6},\"help\":[\"if it is imported only for its side effects, write `import _ \\\"os\\\"`\"],\"fixes\":[{\"title\":\"remove the import of `\\\"os\\\"`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":1,\"endLine\":6,\"endCol\":1},\"newText\":\"\"}]}],\"context\":{\"lines\":[{\"line\":3,\"text\":\"import (\"},{\"line\":4,\"text\":\"\\t\\\"fmt\\\"\"},{\"line\":5,\"text\":\"\\t\\\"os\\\"\"},{\"line\":6,\"text\":\")\"},{\"line\":7,\"text\":\"\"}]},\"label\":\"imported here but not used\",\"rendered\":\"error[M0005]: \\\"os\\\" imported and not used\\n --\u003e ./main.go:5:2\\n  |\\n5 |     \\\"os\\\"\\n  |     ^^^^ imported here but not used\\n  |\\n  = help: if it is imported only for its side effects, write `import _ \\\"os\\\"`\\nhelp: remove the import of `\\\"os\\\"`\\n  |\\n5 -     \\\"os\\\"\\n  |\\n\",\"explain\":\"marmot explain M0005\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":286,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0005\",\"message\":\"\\\"os\\\" imported and not used\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":2,\"endLine\":5,\"endCol\":6},\"help\":[\"if it is imported only for its side effects, write `import _ \\\"os\\\"`\"],\"fixes\":[{\"title\":\"remove the import of `\\\"os\\\"`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":1,\"endLine\":6,\"endCol\":1},\"newText\":\"\"}]}],\"context\":{\"lines\":[{\"line\":3,\"text\":\"import (\"},{\"line\":4,\"text\":\"\\t\\\"fmt\\\"\"},{\"line\":5,\"text\":\"\\t\\\"os\\\"\"},{\"line\":6,\"text\":\")\"},{\"line\":7,\"text\":\"\"}]},\"label\":\"imported here but not used\",\"rendered\":\"error[M0005]: \\\"os\\\" imported and not used\\n --\u003e ./main.go:5:2\\n  |\\n5 |     \\\"os\\\"\\n  |     ^^^^ imported here but not used\\n  |\\n  = help: if it is imported only for its side effects, write `import _ \\\"os\\\"`\\nhelp: remove the import of `\\\"os\\\"`\\n  |\\n5 -     \\\"os\\\"\\n  |\\n\",\"explain\":\"marmot explain M0005\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":262,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 2
       }
     ]
   },
@@ -394,7 +394,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0005\",\"message\":\"\\\"strings\\\" imported as str and not used\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":2,\"endLine\":5,\"endCol\":15},\"help\":[\"if it is imported only for its side effects, write `import _ \\\"strings\\\"`\"],\"fixes\":[{\"title\":\"remove the import of `\\\"strings\\\"`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":1,\"endLine\":6,\"endCol\":1},\"newText\":\"\"}]}],\"context\":{\"lines\":[{\"line\":3,\"text\":\"import (\"},{\"line\":4,\"text\":\"\\t\\\"fmt\\\"\"},{\"line\":5,\"text\":\"\\tstr \\\"strings\\\"\"},{\"line\":6,\"text\":\")\"},{\"line\":7,\"text\":\"\"}]},\"label\":\"imported here but not used\",\"rendered\":\"error[M0005]: \\\"strings\\\" imported as str and not used\\n --\u003e ./main.go:5:2\\n  |\\n5 |     str \\\"strings\\\"\\n  |     ^^^^^^^^^^^^^ imported here but not used\\n  |\\n  = help: if it is imported only for its side effects, write `import _ \\\"strings\\\"`\\nhelp: remove the import of `\\\"strings\\\"`\\n  |\\n5 -     str \\\"strings\\\"\\n  |\\n\",\"explain\":\"marmot explain M0005\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":274,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0005\",\"message\":\"\\\"strings\\\" imported as str and not used\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":2,\"endLine\":5,\"endCol\":15},\"help\":[\"if it is imported only for its side effects, write `import _ \\\"strings\\\"`\"],\"fixes\":[{\"title\":\"remove the import of `\\\"strings\\\"`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":1,\"endLine\":6,\"endCol\":1},\"newText\":\"\"}]}],\"context\":{\"lines\":[{\"line\":3,\"text\":\"import (\"},{\"line\":4,\"text\":\"\\t\\\"fmt\\\"\"},{\"line\":5,\"text\":\"\\tstr \\\"strings\\\"\"},{\"line\":6,\"text\":\")\"},{\"line\":7,\"text\":\"\"}]},\"label\":\"imported here but not used\",\"rendered\":\"error[M0005]: \\\"strings\\\" imported as str and not used\\n --\u003e ./main.go:5:2\\n  |\\n5 |     str \\\"strings\\\"\\n  |     ^^^^^^^^^^^^^ imported here but not used\\n  |\\n  = help: if it is imported only for its side effects, write `import _ \\\"strings\\\"`\\nhelp: remove the import of `\\\"strings\\\"`\\n  |\\n5 -     str \\\"strings\\\"\\n  |\\n\",\"explain\":\"marmot explain M0005\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":1283,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -424,10 +424,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0013\",\"message\":\"no new variables on left side of :=\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":4,\"endLine\":5,\"endCol\":6},\"fixes\":[{\"title\":\"use `=` instead of `:=`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":4,\"endLine\":5,\"endCol\":6},\"newText\":\"=\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tx := 1\"},{\"line\":5,\"text\":\"\\tx := 2\"},{\"line\":6,\"text\":\"\\tprintln(x)\"},{\"line\":7,\"text\":\"}\"}]},\"label\":\"no new variables on the left\",\"rendered\":\"error[M0013]: no new variables on left side of :=\\n --\u003e ./main.go:5:4\\n  |\\n5 |     x := 2\\n  |       ^^ no new variables on the left\\n  |\\nhelp: use `=` instead of `:=`\\n  |\\n5 -     x := 2\\n5 +     x = 2\\n  |\\n\",\"explain\":\"marmot explain M0013\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":162,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0013\",\"message\":\"no new variables on left side of :=\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":4,\"endLine\":5,\"endCol\":6},\"fixes\":[{\"title\":\"use `=` instead of `:=`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":4,\"endLine\":5,\"endCol\":6},\"newText\":\"=\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tx := 1\"},{\"line\":5,\"text\":\"\\tx := 2\"},{\"line\":6,\"text\":\"\\tprintln(x)\"},{\"line\":7,\"text\":\"}\"}]},\"label\":\"no new variables on the left\",\"rendered\":\"error[M0013]: no new variables on left side of :=\\n --\u003e ./main.go:5:4\\n  |\\n5 |     x := 2\\n  |       ^^ no new variables on the left\\n  |\\nhelp: use `=` instead of `:=`\\n  |\\n5 -     x := 2\\n5 +     x = 2\\n  |\\n\",\"explain\":\"marmot explain M0013\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":376,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 2
       }
     ]
   },
@@ -454,7 +454,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0007\",\"message\":\"invalid operation: n + f (mismatched types int and float64)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":12,\"endLine\":6,\"endCol\":13},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":10,\"endLine\":6,\"endCol\":11},\"text\":\"`int`\"},{\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":14,\"endLine\":6,\"endCol\":15},\"text\":\"`float64`\"}],\"help\":[\"convert one operand, for example `float64(n) + f`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\\tn := 3\"},{\"line\":5,\"text\":\"\\tf := 1.5\"},{\"line\":6,\"text\":\"\\tprintln(n + f)\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"rendered\":\"error[M0007]: invalid operation: n + f (mismatched types int and float64)\\n --\u003e ./main.go:6:12\\n  |\\n6 |     println(n + f)\\n  |             - ^ - `float64`\\n  |             |\\n  |             `int`\\n  |\\n  = help: convert one operand, for example `float64(n) + f`\\n\",\"explain\":\"marmot explain M0007\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":93,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0007\",\"message\":\"invalid operation: n + f (mismatched types int and float64)\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":12,\"endLine\":6,\"endCol\":13},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":10,\"endLine\":6,\"endCol\":11},\"text\":\"`int`\"},{\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":14,\"endLine\":6,\"endCol\":15},\"text\":\"`float64`\"}],\"help\":[\"convert one operand, for example `float64(n) + f`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\\tn := 3\"},{\"line\":5,\"text\":\"\\tf := 1.5\"},{\"line\":6,\"text\":\"\\tprintln(n + f)\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"rendered\":\"error[M0007]: invalid operation: n + f (mismatched types int and float64)\\n --\u003e ./main.go:6:12\\n  |\\n6 |     println(n + f)\\n  |             - ^ - `float64`\\n  |             |\\n  |             `int`\\n  |\\n  = help: convert one operand, for example `float64(n) + f`\\n\",\"explain\":\"marmot explain M0007\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":111,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -464,15 +464,27 @@
   {
     "case": "16_mismatched_int_string",
     "condition": "go",
-    "fixed": true,
+    "fixed": false,
     "compiles": true,
-    "attempts": 1,
+    "attempts": 3,
     "log": [
       {
         "output": "# example.com/mismatched_int_string\n./main.go:6:10: invalid operation: s + n (mismatched types string and int)\n",
         "compiles": true,
-        "fixed": true,
+        "fixed": false,
         "seconds": 2
+      },
+      {
+        "output": "",
+        "compiles": true,
+        "fixed": false,
+        "seconds": 3
+      },
+      {
+        "output": "",
+        "compiles": true,
+        "fixed": false,
+        "seconds": 3
       }
     ]
   },
@@ -484,7 +496,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0007\",\"message\":\"invalid operation: s + n (mismatched types string and int)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":12,\"endLine\":6,\"endCol\":13},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":10,\"endLine\":6,\"endCol\":11},\"text\":\"`string`\"},{\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":14,\"endLine\":6,\"endCol\":15},\"text\":\"`int`\"}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\\tn := 3\"},{\"line\":5,\"text\":\"\\ts := \\\"x\\\"\"},{\"line\":6,\"text\":\"\\tprintln(s + n)\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"rendered\":\"error[M0007]: invalid operation: s + n (mismatched types string and int)\\n --\u003e ./main.go:6:12\\n  |\\n6 |     println(s + n)\\n  |             - ^ - `int`\\n  |             |\\n  |             `string`\\n\",\"explain\":\"marmot explain M0007\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":90,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0007\",\"message\":\"invalid operation: s + n (mismatched types string and int)\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":12,\"endLine\":6,\"endCol\":13},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":10,\"endLine\":6,\"endCol\":11},\"text\":\"`string`\"},{\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":14,\"endLine\":6,\"endCol\":15},\"text\":\"`int`\"}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\\tn := 3\"},{\"line\":5,\"text\":\"\\ts := \\\"x\\\"\"},{\"line\":6,\"text\":\"\\tprintln(s + n)\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"rendered\":\"error[M0007]: invalid operation: s + n (mismatched types string and int)\\n --\u003e ./main.go:6:12\\n  |\\n6 |     println(s + n)\\n  |             - ^ - `int`\\n  |             |\\n  |             `string`\\n\",\"explain\":\"marmot explain M0007\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":141,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -514,7 +526,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0006\",\"message\":\"cannot use \\\"two\\\" (untyped string constant) as int value in argument to add\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":17,\"endLine\":6,\"endCol\":22},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":3,\"col\":15,\"endLine\":3,\"endCol\":18},\"text\":\"expected because of parameter `b`\"}],\"help\":[\"to parse a number from text, use `strconv.Atoi(\\\"two\\\")`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tprintln(add(1, \\\"two\\\"))\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"expected `int`, found `untyped string`\",\"rendered\":\"error[M0006]: cannot use \\\"two\\\" (untyped string constant) as int value in argument to add\\n --\u003e ./main.go:6:17\\n  |\\n3 | func add(a, b int) int { return a + b }\\n  |               --- expected because of parameter `b`\\n...\\n6 |     println(add(1, \\\"two\\\"))\\n  |                    ^^^^^ expected `int`, found `untyped string`\\n  |\\n  = help: to parse a number from text, use `strconv.Atoi(\\\"two\\\")`\\n\",\"explain\":\"marmot explain M0006\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":236,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0006\",\"message\":\"cannot use \\\"two\\\" (untyped string constant) as int value in argument to add\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":17,\"endLine\":6,\"endCol\":22},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":3,\"col\":15,\"endLine\":3,\"endCol\":18},\"text\":\"expected because of parameter `b`\"}],\"help\":[\"to parse a number from text, use `strconv.Atoi(\\\"two\\\")`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tprintln(add(1, \\\"two\\\"))\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"expected `int`, found `untyped string`\",\"rendered\":\"error[M0006]: cannot use \\\"two\\\" (untyped string constant) as int value in argument to add\\n --\u003e ./main.go:6:17\\n  |\\n3 | func add(a, b int) int { return a + b }\\n  |               --- expected because of parameter `b`\\n...\\n6 |     println(add(1, \\\"two\\\"))\\n  |                    ^^^^^ expected `int`, found `untyped string`\\n  |\\n  = help: to parse a number from text, use `strconv.Atoi(\\\"two\\\")`\\n\",\"explain\":\"marmot explain M0006\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":101,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -544,7 +556,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0006\",\"message\":\"cannot use 42 (untyped int constant) as string value in return statement\",\"span\":{\"file\":\"/privatemain.go\",\"line\":4,\"col\":9,\"endLine\":4,\"endCol\":11},\"help\":[\"to format a number as text, use `strconv.Itoa(42)` (`string(42)` gives the character with that code point)\"],\"context\":{\"function\":\"func name() string\",\"lines\":[{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"func name() string {\"},{\"line\":4,\"text\":\"\\treturn 42\"},{\"line\":5,\"text\":\"}\"},{\"line\":6,\"text\":\"\"}]},\"label\":\"expected `string`, found `untyped int`\",\"rendered\":\"error[M0006]: cannot use 42 (untyped int constant) as string value in return statement\\n --\u003e ./main.go:4:9\\n  |\\n4 |     return 42\\n  |            ^^ expected `string`, found `untyped int`\\n  |\\n  = help: to format a number as text, use `strconv.Itoa(42)` (`string(42)` gives the character with that code point)\\n\",\"explain\":\"marmot explain M0006\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":109,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0006\",\"message\":\"cannot use 42 (untyped int constant) as string value in return statement\",\"span\":{\"file\":\"main.go\",\"line\":4,\"col\":9,\"endLine\":4,\"endCol\":11},\"help\":[\"to format a number as text, use `strconv.Itoa(42)` (`string(42)` gives the character with that code point)\"],\"context\":{\"function\":\"func name() string\",\"lines\":[{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"func name() string {\"},{\"line\":4,\"text\":\"\\treturn 42\"},{\"line\":5,\"text\":\"}\"},{\"line\":6,\"text\":\"\"}]},\"label\":\"expected `string`, found `untyped int`\",\"rendered\":\"error[M0006]: cannot use 42 (untyped int constant) as string value in return statement\\n --\u003e ./main.go:4:9\\n  |\\n4 |     return 42\\n  |            ^^ expected `string`, found `untyped int`\\n  |\\n  = help: to format a number as text, use `strconv.Itoa(42)` (`string(42)` gives the character with that code point)\\n\",\"explain\":\"marmot explain M0006\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":155,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -574,10 +586,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0006\",\"message\":\"cannot use \\\"three\\\" (untyped string constant) as int value in assignment\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":10,\"endLine\":5,\"endCol\":17},\"help\":[\"to parse a number from text, use `strconv.Atoi(\\\"three\\\")`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tvar count int\"},{\"line\":5,\"text\":\"\\tcount = \\\"three\\\"\"},{\"line\":6,\"text\":\"\\tprintln(count)\"},{\"line\":7,\"text\":\"}\"}]},\"label\":\"expected `int`, found `untyped string`\",\"rendered\":\"error[M0006]: cannot use \\\"three\\\" (untyped string constant) as int value in assignment\\n --\u003e ./main.go:5:10\\n  |\\n5 |     count = \\\"three\\\"\\n  |             ^^^^^^^ expected `int`, found `untyped string`\\n  |\\n  = help: to parse a number from text, use `strconv.Atoi(\\\"three\\\")`\\n\",\"explain\":\"marmot explain M0006\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":184,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0006\",\"message\":\"cannot use \\\"three\\\" (untyped string constant) as int value in assignment\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":10,\"endLine\":5,\"endCol\":17},\"help\":[\"to parse a number from text, use `strconv.Atoi(\\\"three\\\")`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tvar count int\"},{\"line\":5,\"text\":\"\\tcount = \\\"three\\\"\"},{\"line\":6,\"text\":\"\\tprintln(count)\"},{\"line\":7,\"text\":\"}\"}]},\"label\":\"expected `int`, found `untyped string`\",\"rendered\":\"error[M0006]: cannot use \\\"three\\\" (untyped string constant) as int value in assignment\\n --\u003e ./main.go:5:10\\n  |\\n5 |     count = \\\"three\\\"\\n  |             ^^^^^^^ expected `int`, found `untyped string`\\n  |\\n  = help: to parse a number from text, use `strconv.Atoi(\\\"three\\\")`\\n\",\"explain\":\"marmot explain M0006\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":195,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 4
+        "seconds": 3
       }
     ]
   },
@@ -592,7 +604,7 @@
         "output": "# example.com/struct_field_type\n./main.go:9:28: cannot use \"ten\" (untyped string constant) as int value in struct literal\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -604,10 +616,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0006\",\"message\":\"cannot use \\\"ten\\\" (untyped string constant) as int value in struct literal\",\"span\":{\"file\":\"/privatemain.go\",\"line\":9,\"col\":28,\"endLine\":9,\"endCol\":33},\"help\":[\"to parse a number from text, use `strconv.Atoi(\\\"ten\\\")`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":7,\"text\":\"\"},{\"line\":8,\"text\":\"func main() {\"},{\"line\":9,\"text\":\"\\tu := User{Name: \\\"a\\\", Age: \\\"ten\\\"}\"},{\"line\":10,\"text\":\"\\tprintln(u.Name)\"},{\"line\":11,\"text\":\"}\"}]},\"label\":\"expected `int`, found `untyped string`\",\"rendered\":\"error[M0006]: cannot use \\\"ten\\\" (untyped string constant) as int value in struct literal\\n --\u003e ./main.go:9:28\\n  |\\n9 |     u := User{Name: \\\"a\\\", Age: \\\"ten\\\"}\\n  |                               ^^^^^ expected `int`, found `untyped string`\\n  |\\n  = help: to parse a number from text, use `strconv.Atoi(\\\"ten\\\")`\\n\",\"explain\":\"marmot explain M0006\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":203,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0006\",\"message\":\"cannot use \\\"ten\\\" (untyped string constant) as int value in struct literal\",\"span\":{\"file\":\"main.go\",\"line\":9,\"col\":28,\"endLine\":9,\"endCol\":33},\"help\":[\"to parse a number from text, use `strconv.Atoi(\\\"ten\\\")`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":7,\"text\":\"\"},{\"line\":8,\"text\":\"func main() {\"},{\"line\":9,\"text\":\"\\tu := User{Name: \\\"a\\\", Age: \\\"ten\\\"}\"},{\"line\":10,\"text\":\"\\tprintln(u.Name)\"},{\"line\":11,\"text\":\"}\"}]},\"label\":\"expected `int`, found `untyped string`\",\"rendered\":\"error[M0006]: cannot use \\\"ten\\\" (untyped string constant) as int value in struct literal\\n --\u003e ./main.go:9:28\\n  |\\n9 |     u := User{Name: \\\"a\\\", Age: \\\"ten\\\"}\\n  |                               ^^^^^ expected `int`, found `untyped string`\\n  |\\n  = help: to parse a number from text, use `strconv.Atoi(\\\"ten\\\")`\\n\",\"explain\":\"marmot explain M0006\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":292,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -634,7 +646,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0010\",\"message\":\"missing return\",\"span\":{\"file\":\"/privatemain.go\",\"line\":9,\"col\":1,\"endLine\":9,\"endCol\":2},\"help\":[\"add a `return` at the end of the function, or `panic` if the end cannot be reached\"],\"context\":{\"function\":\"func sign(x int) int\",\"lines\":[{\"line\":7,\"text\":\"\\t\\treturn 1\"},{\"line\":8,\"text\":\"\\t}\"},{\"line\":9,\"text\":\"}\"},{\"line\":10,\"text\":\"\"},{\"line\":11,\"text\":\"func main() { println(sign(1)) }\"}]},\"rendered\":\"error[M0010]: missing return\\n --\u003e ./main.go:9:1\\n  |\\n9 | }\\n  | ^\\n  |\\n  = help: add a `return` at the end of the function, or `panic` if the end cannot be reached\\n\",\"explain\":\"marmot explain M0010\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":108,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0010\",\"message\":\"missing return\",\"span\":{\"file\":\"main.go\",\"line\":9,\"col\":1,\"endLine\":9,\"endCol\":2},\"help\":[\"add a `return` at the end of the function, or `panic` if the end cannot be reached\"],\"context\":{\"function\":\"func sign(x int) int\",\"lines\":[{\"line\":7,\"text\":\"\\t\\treturn 1\"},{\"line\":8,\"text\":\"\\t}\"},{\"line\":9,\"text\":\"}\"},{\"line\":10,\"text\":\"\"},{\"line\":11,\"text\":\"func main() { println(sign(1)) }\"}]},\"rendered\":\"error[M0010]: missing return\\n --\u003e ./main.go:9:1\\n  |\\n9 | }\\n  | ^\\n  |\\n  = help: add a `return` at the end of the function, or `panic` if the end cannot be reached\\n\",\"explain\":\"marmot explain M0010\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":165,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -664,10 +676,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0010\",\"message\":\"missing return\",\"span\":{\"file\":\"/privatemain.go\",\"line\":9,\"col\":1,\"endLine\":9,\"endCol\":2},\"help\":[\"add a `return` at the end of the function, or `panic` if the end cannot be reached\"],\"context\":{\"function\":\"func find(xs []int, v int) int\",\"lines\":[{\"line\":7,\"text\":\"\\t\\t}\"},{\"line\":8,\"text\":\"\\t}\"},{\"line\":9,\"text\":\"}\"},{\"line\":10,\"text\":\"\"},{\"line\":11,\"text\":\"func main() { println(find(nil, 1)) }\"}]},\"rendered\":\"error[M0010]: missing return\\n --\u003e ./main.go:9:1\\n  |\\n9 | }\\n  | ^\\n  |\\n  = help: add a `return` at the end of the function, or `panic` if the end cannot be reached\\n\",\"explain\":\"marmot explain M0010\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":165,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0010\",\"message\":\"missing return\",\"span\":{\"file\":\"main.go\",\"line\":9,\"col\":1,\"endLine\":9,\"endCol\":2},\"help\":[\"add a `return` at the end of the function, or `panic` if the end cannot be reached\"],\"context\":{\"function\":\"func find(xs []int, v int) int\",\"lines\":[{\"line\":7,\"text\":\"\\t\\t}\"},{\"line\":8,\"text\":\"\\t}\"},{\"line\":9,\"text\":\"}\"},{\"line\":10,\"text\":\"\"},{\"line\":11,\"text\":\"func main() { println(find(nil, 1)) }\"}]},\"rendered\":\"error[M0010]: missing return\\n --\u003e ./main.go:9:1\\n  |\\n9 | }\\n  | ^\\n  |\\n  = help: add a `return` at the end of the function, or `panic` if the end cannot be reached\\n\",\"explain\":\"marmot explain M0010\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":178,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 2
       }
     ]
   },
@@ -682,33 +694,21 @@
         "output": "# example.com/too_many_return_values\n./main.go:4:9: too many return values\n\thave (number)\n\twant ()\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
   {
     "case": "23_too_many_return_values",
     "condition": "marmot",
-    "fixed": false,
+    "fixed": true,
     "compiles": true,
-    "attempts": 3,
+    "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0008\",\"message\":\"too many return values\",\"span\":{\"file\":\"/privatemain.go\",\"line\":4,\"col\":9,\"endLine\":4,\"endCol\":10},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":3,\"col\":1,\"endLine\":3,\"endCol\":12},\"text\":\"`main` declares no results\"}],\"notes\":[\"expected `()`, found `(number)`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\treturn 1\"},{\"line\":5,\"text\":\"}\"},{\"line\":6,\"text\":\"\"}]},\"label\":\"returns a value\",\"rendered\":\"error[M0008]: too many return values\\n --\u003e ./main.go:4:9\\n  |\\n3 | func main() {\\n  | ----------- `main` declares no results\\n4 |     return 1\\n  |            ^ returns a value\\n  |\\n  = note: expected `()`, found `(number)`\\n\",\"explain\":\"marmot explain M0008\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":202,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0008\",\"message\":\"too many return values\",\"span\":{\"file\":\"main.go\",\"line\":4,\"col\":9,\"endLine\":4,\"endCol\":10},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":3,\"col\":1,\"endLine\":3,\"endCol\":12},\"text\":\"`main` declares no results\"}],\"notes\":[\"expected `()`, found `(number)`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\treturn 1\"},{\"line\":5,\"text\":\"}\"},{\"line\":6,\"text\":\"\"}]},\"label\":\"returns a value\",\"rendered\":\"error[M0008]: too many return values\\n --\u003e ./main.go:4:9\\n  |\\n3 | func main() {\\n  | ----------- `main` declares no results\\n4 |     return 1\\n  |            ^ returns a value\\n  |\\n  = note: expected `()`, found `(number)`\\n\",\"explain\":\"marmot explain M0008\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":134,\"exitCode\":1}\n",
         "compiles": true,
-        "fixed": false,
-        "seconds": 2
-      },
-      {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-848687147/nopcln.exe /dev/null: cross-device link\",\"span\":{\"file\":\"\",\"line\":0,\"col\":0,\"endLine\":0,\"endCol\":0},\"rendered\":\"error: rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-848687147/nopcln.exe /dev/null: cross-device link\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":1185,\"exitCode\":1}\n",
-        "compiles": true,
-        "fixed": false,
-        "seconds": 2
-      },
-      {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-927128620/nopcln.exe /dev/null: cross-device link\",\"span\":{\"file\":\"\",\"line\":0,\"col\":0,\"endLine\":0,\"endCol\":0},\"rendered\":\"error: rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-927128620/nopcln.exe /dev/null: cross-device link\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":641,\"exitCode\":1}\n",
-        "compiles": true,
-        "fixed": false,
+        "fixed": true,
         "seconds": 2
       }
     ]
@@ -736,7 +736,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0008\",\"message\":\"not enough return values\",\"span\":{\"file\":\"/privatemain.go\",\"line\":8,\"col\":10,\"endLine\":8,\"endCol\":13},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":22,\"endLine\":5,\"endCol\":34},\"text\":\"the signature declares these results\"}],\"notes\":[\"expected `(int, error)`, found `(error)`\"],\"context\":{\"function\":\"func parse(s string) (int, error)\",\"lines\":[{\"line\":6,\"text\":\"\\tn, err := strconv.Atoi(s)\"},{\"line\":7,\"text\":\"\\tif err != nil {\"},{\"line\":8,\"text\":\"\\t\\treturn err\"},{\"line\":9,\"text\":\"\\t}\"},{\"line\":10,\"text\":\"\\treturn n, nil\"}]},\"label\":\"returns a different number of values\",\"rendered\":\"error[M0008]: not enough return values\\n --\u003e ./main.go:8:10\\n  |\\n5 | func parse(s string) (int, error) {\\n  |                      ------------ the signature declares these results\\n...\\n8 |         return err\\n  |                ^^^ returns a different number of values\\n  |\\n  = note: expected `(int, error)`, found `(error)`\\n\",\"explain\":\"marmot explain M0008\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":128,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0008\",\"message\":\"not enough return values\",\"span\":{\"file\":\"main.go\",\"line\":8,\"col\":10,\"endLine\":8,\"endCol\":13},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":22,\"endLine\":5,\"endCol\":34},\"text\":\"the signature declares these results\"}],\"notes\":[\"expected `(int, error)`, found `(error)`\"],\"context\":{\"function\":\"func parse(s string) (int, error)\",\"lines\":[{\"line\":6,\"text\":\"\\tn, err := strconv.Atoi(s)\"},{\"line\":7,\"text\":\"\\tif err != nil {\"},{\"line\":8,\"text\":\"\\t\\treturn err\"},{\"line\":9,\"text\":\"\\t}\"},{\"line\":10,\"text\":\"\\treturn n, nil\"}]},\"label\":\"returns a different number of values\",\"rendered\":\"error[M0008]: not enough return values\\n --\u003e ./main.go:8:10\\n  |\\n5 | func parse(s string) (int, error) {\\n  |                      ------------ the signature declares these results\\n...\\n8 |         return err\\n  |                ^^^ returns a different number of values\\n  |\\n  = note: expected `(int, error)`, found `(error)`\\n\",\"explain\":\"marmot explain M0008\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":136,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 4
@@ -754,60 +754,36 @@
         "output": "# example.com/too_many_args\n./main.go:6:13: too many arguments in call to greet\n\thave (string, string)\n\twant (string)\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 3
+        "seconds": 2
       }
     ]
   },
   {
     "case": "25_too_many_args",
     "condition": "marmot",
-    "fixed": false,
+    "fixed": true,
     "compiles": true,
-    "attempts": 3,
+    "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0009\",\"message\":\"too many arguments in call to greet\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":13,\"endLine\":6,\"endCol\":16},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":3,\"col\":1,\"endLine\":3,\"endCol\":24},\"text\":\"`greet` is declared here\"}],\"notes\":[\"expected `(string)`, found `(string, string)`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tgreet(\\\"a\\\", \\\"b\\\")\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"unexpected argument\",\"rendered\":\"error[M0009]: too many arguments in call to greet\\n --\u003e ./main.go:6:13\\n  |\\n3 | func greet(name string) { println(\\\"hi\\\", name) }\\n  | ----------------------- `greet` is declared here\\n...\\n6 |     greet(\\\"a\\\", \\\"b\\\")\\n  |                ^^^ unexpected argument\\n  |\\n  = note: expected `(string)`, found `(string, string)`\\n\",\"explain\":\"marmot explain M0009\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":98,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0009\",\"message\":\"too many arguments in call to greet\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":13,\"endLine\":6,\"endCol\":16},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":3,\"col\":1,\"endLine\":3,\"endCol\":24},\"text\":\"`greet` is declared here\"}],\"notes\":[\"expected `(string)`, found `(string, string)`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tgreet(\\\"a\\\", \\\"b\\\")\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"unexpected argument\",\"rendered\":\"error[M0009]: too many arguments in call to greet\\n --\u003e ./main.go:6:13\\n  |\\n3 | func greet(name string) { println(\\\"hi\\\", name) }\\n  | ----------------------- `greet` is declared here\\n...\\n6 |     greet(\\\"a\\\", \\\"b\\\")\\n  |                ^^^ unexpected argument\\n  |\\n  = note: expected `(string)`, found `(string, string)`\\n\",\"explain\":\"marmot explain M0009\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":121,\"exitCode\":1}\n",
         "compiles": true,
-        "fixed": false,
-        "seconds": 1
-      },
-      {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-1826680963/nopcln.exe /dev/null: cross-device link\",\"span\":{\"file\":\"\",\"line\":0,\"col\":0,\"endLine\":0,\"endCol\":0},\"rendered\":\"error: rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-1826680963/nopcln.exe /dev/null: cross-device link\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":540,\"exitCode\":1}\n",
-        "compiles": true,
-        "fixed": false,
-        "seconds": 2
-      },
-      {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-3992850214/nopcln.exe /dev/null: cross-device link\",\"span\":{\"file\":\"\",\"line\":0,\"col\":0,\"endLine\":0,\"endCol\":0},\"rendered\":\"error: rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-3992850214/nopcln.exe /dev/null: cross-device link\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":345,\"exitCode\":1}\n",
-        "compiles": true,
-        "fixed": false,
-        "seconds": 2
+        "fixed": true,
+        "seconds": 3
       }
     ]
   },
   {
     "case": "26_not_enough_args",
     "condition": "go",
-    "fixed": false,
+    "fixed": true,
     "compiles": true,
-    "attempts": 3,
+    "attempts": 1,
     "log": [
       {
         "output": "# example.com/not_enough_args\n./main.go:6:15: not enough arguments in call to area\n\thave (number)\n\twant (int, int)\n",
         "compiles": true,
-        "fixed": false,
-        "seconds": 2
-      },
-      {
-        "output": "",
-        "compiles": true,
-        "fixed": false,
-        "seconds": 2
-      },
-      {
-        "output": "",
-        "compiles": true,
-        "fixed": false,
+        "fixed": true,
         "seconds": 2
       }
     ]
@@ -815,27 +791,15 @@
   {
     "case": "26_not_enough_args",
     "condition": "marmot",
-    "fixed": false,
+    "fixed": true,
     "compiles": true,
-    "attempts": 3,
+    "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0009\",\"message\":\"not enough arguments in call to area\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":16,\"endLine\":6,\"endCol\":17},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":3,\"col\":1,\"endLine\":3,\"endCol\":24},\"text\":\"`area` is declared here\"}],\"notes\":[\"expected `(int, int)`, found `(number)`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tprintln(area(3))\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"missing arguments\",\"rendered\":\"error[M0009]: not enough arguments in call to area\\n --\u003e ./main.go:6:16\\n  |\\n3 | func area(w, h int) int { return w * h }\\n  | ----------------------- `area` is declared here\\n...\\n6 |     println(area(3))\\n  |                   ^ missing arguments\\n  |\\n  = note: expected `(int, int)`, found `(number)`\\n\",\"explain\":\"marmot explain M0009\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":90,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0009\",\"message\":\"not enough arguments in call to area\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":16,\"endLine\":6,\"endCol\":17},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":3,\"col\":1,\"endLine\":3,\"endCol\":24},\"text\":\"`area` is declared here\"}],\"notes\":[\"expected `(int, int)`, found `(number)`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tprintln(area(3))\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"missing arguments\",\"rendered\":\"error[M0009]: not enough arguments in call to area\\n --\u003e ./main.go:6:16\\n  |\\n3 | func area(w, h int) int { return w * h }\\n  | ----------------------- `area` is declared here\\n...\\n6 |     println(area(3))\\n  |                   ^ missing arguments\\n  |\\n  = note: expected `(int, int)`, found `(number)`\\n\",\"explain\":\"marmot explain M0009\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":127,\"exitCode\":1}\n",
         "compiles": true,
-        "fixed": false,
+        "fixed": true,
         "seconds": 2
-      },
-      {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-3972740355/nopcln.exe /dev/null: cross-device link\",\"span\":{\"file\":\"\",\"line\":0,\"col\":0,\"endLine\":0,\"endCol\":0},\"rendered\":\"error: rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-3972740355/nopcln.exe /dev/null: cross-device link\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":268,\"exitCode\":1}\n",
-        "compiles": true,
-        "fixed": false,
-        "seconds": 3
-      },
-      {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-974867843/nopcln.exe /dev/null: cross-device link\",\"span\":{\"file\":\"\",\"line\":0,\"col\":0,\"endLine\":0,\"endCol\":0},\"rendered\":\"error: rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-974867843/nopcln.exe /dev/null: cross-device link\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":253,\"exitCode\":1}\n",
-        "compiles": true,
-        "fixed": false,
-        "seconds": 3
       }
     ]
   },
@@ -850,7 +814,7 @@
         "output": "# example.com/assign_mismatch_atoi\n./main.go:6:7: assignment mismatch: 1 variable but strconv.Atoi returns 2 values\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 2
       }
     ]
   },
@@ -862,10 +826,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0012\",\"message\":\"assignment mismatch: 1 variable but strconv.Atoi returns 2 values\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":7,\"endLine\":6,\"endCol\":19},\"help\":[\"receive every result: `n, err := strconv.Atoi(\\\"12\\\")`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tn := strconv.Atoi(\\\"12\\\")\"},{\"line\":7,\"text\":\"\\tprintln(n)\"},{\"line\":8,\"text\":\"}\"}]},\"label\":\"`strconv.Atoi` returns 2 values\",\"rendered\":\"error[M0012]: assignment mismatch: 1 variable but strconv.Atoi returns 2 values\\n --\u003e ./main.go:6:7\\n  |\\n6 |     n := strconv.Atoi(\\\"12\\\")\\n  |          ^^^^^^^^^^^^ `strconv.Atoi` returns 2 values\\n  |\\n  = help: receive every result: `n, err := strconv.Atoi(\\\"12\\\")`\\n\",\"explain\":\"marmot explain M0012\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":188,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0012\",\"message\":\"assignment mismatch: 1 variable but strconv.Atoi returns 2 values\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":7,\"endLine\":6,\"endCol\":19},\"help\":[\"receive every result: `n, err := strconv.Atoi(\\\"12\\\")`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tn := strconv.Atoi(\\\"12\\\")\"},{\"line\":7,\"text\":\"\\tprintln(n)\"},{\"line\":8,\"text\":\"}\"}]},\"label\":\"`strconv.Atoi` returns 2 values\",\"rendered\":\"error[M0012]: assignment mismatch: 1 variable but strconv.Atoi returns 2 values\\n --\u003e ./main.go:6:7\\n  |\\n6 |     n := strconv.Atoi(\\\"12\\\")\\n  |          ^^^^^^^^^^^^ `strconv.Atoi` returns 2 values\\n  |\\n  = help: receive every result: `n, err := strconv.Atoi(\\\"12\\\")`\\n\",\"explain\":\"marmot explain M0012\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":218,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 3
+        "seconds": 2
       }
     ]
   },
@@ -892,7 +856,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0012\",\"message\":\"multiple-value strconv.Atoi(\\\"12\\\") (value of type (int, error)) in single-value context\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":10,\"endLine\":6,\"endCol\":28},\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tprintln(strconv.Atoi(\\\"12\\\") + 1)\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"returns more than one value\",\"rendered\":\"error[M0012]: multiple-value strconv.Atoi(\\\"12\\\") (value of type (int, error)) in single-value context\\n --\u003e ./main.go:6:10\\n  |\\n6 |     println(strconv.Atoi(\\\"12\\\") + 1)\\n  |             ^^^^^^^^^^^^^^^^^^ returns more than one value\\n\",\"explain\":\"marmot explain M0012\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":113,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0012\",\"message\":\"multiple-value strconv.Atoi(\\\"12\\\") (value of type (int, error)) in single-value context\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":10,\"endLine\":6,\"endCol\":28},\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tprintln(strconv.Atoi(\\\"12\\\") + 1)\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}]},\"label\":\"returns more than one value\",\"rendered\":\"error[M0012]: multiple-value strconv.Atoi(\\\"12\\\") (value of type (int, error)) in single-value context\\n --\u003e ./main.go:6:10\\n  |\\n6 |     println(strconv.Atoi(\\\"12\\\") + 1)\\n  |             ^^^^^^^^^^^^^^^^^^ returns more than one value\\n\",\"explain\":\"marmot explain M0012\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":206,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -922,10 +886,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0014\",\"message\":\"cannot use Rect{…} (value of struct type Rect) as Shape value in argument to show: Rect does not implement Shape (missing method Perimeter)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":15,\"col\":7,\"endLine\":15,\"endCol\":17},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":3,\"col\":6,\"endLine\":3,\"endCol\":11},\"text\":\"`Shape` is declared here\"}],\"notes\":[\"`Rect` lacks 1 method of `Shape`:\",\"  `Perimeter() float64` is missing\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":13,\"text\":\"\"},{\"line\":14,\"text\":\"func main() {\"},{\"line\":15,\"text\":\"\\tshow(Rect{1, 2})\"},{\"line\":16,\"text\":\"}\"},{\"line\":17,\"text\":\"\"}],\"types\":[\"type Rect struct{ w, h float64 }\",\"type Shape interface { Area() float64 Perimeter() float64 }\"]},\"label\":\"`Rect` does not implement `Shape`\",\"rendered\":\"error[M0014]: cannot use Rect{…} (value of struct type Rect) as Shape value in argument to show: Rect does not implement Shape (missing method Perimeter)\\n  --\u003e ./main.go:15:7\\n   |\\n 3 | type Shape interface {\\n   |      ----- `Shape` is declared here\\n ...\\n15 |     show(Rect{1, 2})\\n   |          ^^^^^^^^^^ `Rect` does not implement `Shape`\\n   |\\n   = note: `Rect` lacks 1 method of `Shape`:\\n             `Perimeter() float64` is missing\\n\",\"explain\":\"marmot explain M0014\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":87,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0014\",\"message\":\"cannot use Rect{…} (value of struct type Rect) as Shape value in argument to show: Rect does not implement Shape (missing method Perimeter)\",\"span\":{\"file\":\"main.go\",\"line\":15,\"col\":7,\"endLine\":15,\"endCol\":17},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":3,\"col\":6,\"endLine\":3,\"endCol\":11},\"text\":\"`Shape` is declared here\"}],\"notes\":[\"`Rect` lacks 1 method of `Shape`:\",\"  `Perimeter() float64` is missing\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":13,\"text\":\"\"},{\"line\":14,\"text\":\"func main() {\"},{\"line\":15,\"text\":\"\\tshow(Rect{1, 2})\"},{\"line\":16,\"text\":\"}\"},{\"line\":17,\"text\":\"\"}],\"types\":[\"type Rect struct{ w, h float64 }\",\"type Shape interface { Area() float64 Perimeter() float64 }\"]},\"label\":\"`Rect` does not implement `Shape`\",\"rendered\":\"error[M0014]: cannot use Rect{…} (value of struct type Rect) as Shape value in argument to show: Rect does not implement Shape (missing method Perimeter)\\n  --\u003e ./main.go:15:7\\n   |\\n 3 | type Shape interface {\\n   |      ----- `Shape` is declared here\\n ...\\n15 |     show(Rect{1, 2})\\n   |          ^^^^^^^^^^ `Rect` does not implement `Shape`\\n   |\\n   = note: `Rect` lacks 1 method of `Shape`:\\n             `Perimeter() float64` is missing\\n\",\"explain\":\"marmot explain M0014\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":171,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -952,7 +916,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0014\",\"message\":\"cannot use c (variable of struct type C) as Counter value in argument to use: C does not implement Counter (method Inc has pointer receiver)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":13,\"col\":6,\"endLine\":13,\"endCol\":7},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":7,\"col\":9,\"endLine\":7,\"endCol\":11},\"text\":\"pointer receiver\"},{\"span\":{\"file\":\"/privatemain.go\",\"line\":3,\"col\":6,\"endLine\":3,\"endCol\":13},\"text\":\"`Counter` is declared here\"}],\"notes\":[\"`C` lacks 1 method of `Counter`:\",\"  `Inc` has a pointer receiver, so only `*C` has it\"],\"fixes\":[{\"title\":\"pass a pointer\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":13,\"col\":6,\"endLine\":13,\"endCol\":6},\"newText\":\"\u0026\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":11,\"text\":\"func main() {\"},{\"line\":12,\"text\":\"\\tvar c C\"},{\"line\":13,\"text\":\"\\tuse(c)\"},{\"line\":14,\"text\":\"}\"},{\"line\":15,\"text\":\"\"}],\"types\":[\"type C struct{ n int }\",\"type Counter interface{ Inc() }\"]},\"label\":\"`C` does not implement `Counter`\",\"rendered\":\"error[M0014]: cannot use c (variable of struct type C) as Counter value in argument to use: C does not implement Counter (method Inc has pointer receiver)\\n  --\u003e ./main.go:13:6\\n   |\\n 3 | type Counter interface{ Inc() }\\n   |      ------- `Counter` is declared here\\n ...\\n 7 | func (c *C) Inc() { c.n++ }\\n   |         -- pointer receiver\\n ...\\n13 |     use(c)\\n   |         ^ `C` does not implement `Counter`\\n   |\\n   = note: `C` lacks 1 method of `Counter`:\\n             `Inc` has a pointer receiver, so only `*C` has it\\nhelp: pass a pointer (check it)\\n   |\\n13 -     use(c)\\n13 +     use(\u0026c)\\n   |\\n\",\"explain\":\"marmot explain M0014\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":109,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0014\",\"message\":\"cannot use c (variable of struct type C) as Counter value in argument to use: C does not implement Counter (method Inc has pointer receiver)\",\"span\":{\"file\":\"main.go\",\"line\":13,\"col\":6,\"endLine\":13,\"endCol\":7},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":7,\"col\":9,\"endLine\":7,\"endCol\":11},\"text\":\"pointer receiver\"},{\"span\":{\"file\":\"main.go\",\"line\":3,\"col\":6,\"endLine\":3,\"endCol\":13},\"text\":\"`Counter` is declared here\"}],\"notes\":[\"`C` lacks 1 method of `Counter`:\",\"  `Inc` has a pointer receiver, so only `*C` has it\"],\"fixes\":[{\"title\":\"pass a pointer\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":13,\"col\":6,\"endLine\":13,\"endCol\":6},\"newText\":\"\u0026\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":11,\"text\":\"func main() {\"},{\"line\":12,\"text\":\"\\tvar c C\"},{\"line\":13,\"text\":\"\\tuse(c)\"},{\"line\":14,\"text\":\"}\"},{\"line\":15,\"text\":\"\"}],\"types\":[\"type C struct{ n int }\",\"type Counter interface{ Inc() }\"]},\"label\":\"`C` does not implement `Counter`\",\"rendered\":\"error[M0014]: cannot use c (variable of struct type C) as Counter value in argument to use: C does not implement Counter (method Inc has pointer receiver)\\n  --\u003e ./main.go:13:6\\n   |\\n 3 | type Counter interface{ Inc() }\\n   |      ------- `Counter` is declared here\\n ...\\n 7 | func (c *C) Inc() { c.n++ }\\n   |         -- pointer receiver\\n ...\\n13 |     use(c)\\n   |         ^ `C` does not implement `Counter`\\n   |\\n   = note: `C` lacks 1 method of `Counter`:\\n             `Inc` has a pointer receiver, so only `*C` has it\\nhelp: pass a pointer (check it)\\n   |\\n13 -     use(c)\\n13 +     use(\u0026c)\\n   |\\n\",\"explain\":\"marmot explain M0014\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":167,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -970,7 +934,7 @@
         "output": "# example.com/iface_wrong_type\n./main.go:10:16: cannot use Dog{} (value of struct type Dog) as Namer value in variable declaration: Dog does not implement Namer (wrong type for method Name)\n\t\thave Name() []byte\n\t\twant Name() string\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 4
       }
     ]
   },
@@ -982,7 +946,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0014\",\"message\":\"cannot use Dog{} (value of struct type Dog) as Namer value in variable declaration: Dog does not implement Namer (wrong type for method Name)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":10,\"col\":16,\"endLine\":10,\"endCol\":21},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":7,\"col\":12,\"endLine\":7,\"endCol\":16},\"text\":\"has the wrong type\"},{\"span\":{\"file\":\"/privatemain.go\",\"line\":3,\"col\":6,\"endLine\":3,\"endCol\":11},\"text\":\"`Namer` is declared here\"}],\"notes\":[\"`Dog` lacks 1 method of `Namer`:\",\"  `Name` has type `func() []byte`, `Namer` needs `func() string`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":8,\"text\":\"\"},{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\tvar n Namer = Dog{}\"},{\"line\":11,\"text\":\"\\tprintln(n.Name())\"},{\"line\":12,\"text\":\"}\"}],\"types\":[\"type Dog struct{}\",\"type Namer interface{ Name() string }\"]},\"label\":\"`Dog` does not implement `Namer`\",\"rendered\":\"error[M0014]: cannot use Dog{} (value of struct type Dog) as Namer value in variable declaration: Dog does not implement Namer (wrong type for method Name)\\n  --\u003e ./main.go:10:16\\n   |\\n 3 | type Namer interface{ Name() string }\\n   |      ----- `Namer` is declared here\\n ...\\n 7 | func (Dog) Name() []byte { return []byte(\\\"dog\\\") }\\n   |            ---- has the wrong type\\n ...\\n10 |     var n Namer = Dog{}\\n   |                   ^^^^^ `Dog` does not implement `Namer`\\n   |\\n   = note: `Dog` lacks 1 method of `Namer`:\\n             `Name` has type `func() []byte`, `Namer` needs `func() string`\\n\",\"explain\":\"marmot explain M0014\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":110,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0014\",\"message\":\"cannot use Dog{} (value of struct type Dog) as Namer value in variable declaration: Dog does not implement Namer (wrong type for method Name)\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":16,\"endLine\":10,\"endCol\":21},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":7,\"col\":12,\"endLine\":7,\"endCol\":16},\"text\":\"has the wrong type\"},{\"span\":{\"file\":\"main.go\",\"line\":3,\"col\":6,\"endLine\":3,\"endCol\":11},\"text\":\"`Namer` is declared here\"}],\"notes\":[\"`Dog` lacks 1 method of `Namer`:\",\"  `Name` has type `func() []byte`, `Namer` needs `func() string`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":8,\"text\":\"\"},{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\tvar n Namer = Dog{}\"},{\"line\":11,\"text\":\"\\tprintln(n.Name())\"},{\"line\":12,\"text\":\"}\"}],\"types\":[\"type Dog struct{}\",\"type Namer interface{ Name() string }\"]},\"label\":\"`Dog` does not implement `Namer`\",\"rendered\":\"error[M0014]: cannot use Dog{} (value of struct type Dog) as Namer value in variable declaration: Dog does not implement Namer (wrong type for method Name)\\n  --\u003e ./main.go:10:16\\n   |\\n 3 | type Namer interface{ Name() string }\\n   |      ----- `Namer` is declared here\\n ...\\n 7 | func (Dog) Name() []byte { return []byte(\\\"dog\\\") }\\n   |            ---- has the wrong type\\n ...\\n10 |     var n Namer = Dog{}\\n   |                   ^^^^^ `Dog` does not implement `Namer`\\n   |\\n   = note: `Dog` lacks 1 method of `Namer`:\\n             `Name` has type `func() []byte`, `Namer` needs `func() string`\\n\",\"explain\":\"marmot explain M0014\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":176,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -1012,7 +976,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0014\",\"message\":\"cannot use Temp(1) (constant 1 of float64 type Temp) as fmt.Stringer value in variable declaration: Temp does not implement fmt.Stringer (missing method String)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":10,\"col\":23,\"endLine\":10,\"endCol\":30},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":7,\"col\":15,\"endLine\":7,\"endCol\":20},\"text\":\"not `String`\"}],\"notes\":[\"`Temp` lacks 1 method of `fmt.Stringer`:\",\"  `String() string` is missing; `Temp` has `Strng`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":8,\"text\":\"\"},{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\tvar s fmt.Stringer = Temp(1)\"},{\"line\":11,\"text\":\"\\tfmt.Println(s)\"},{\"line\":12,\"text\":\"}\"}],\"types\":[\"type Temp float64\",\"fmt: type Stringer interface { String() string }\"]},\"label\":\"`Temp` does not implement `fmt.Stringer`\",\"rendered\":\"error[M0014]: cannot use Temp(1) (constant 1 of float64 type Temp) as fmt.Stringer value in variable declaration: Temp does not implement fmt.Stringer (missing method String)\\n  --\u003e ./main.go:10:23\\n   |\\n 7 | func (t Temp) Strng() string { return fmt.Sprintf(\\\"%.1f C\\\", float64(t)) }\\n   |               ----- not `String`\\n ...\\n10 |     var s fmt.Stringer = Temp(1)\\n   |                          ^^^^^^^ `Temp` does not implement `fmt.Stringer`\\n   |\\n   = note: `Temp` lacks 1 method of `fmt.Stringer`:\\n             `String() string` is missing; `Temp` has `Strng`\\n\",\"explain\":\"marmot explain M0014\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":273,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0014\",\"message\":\"cannot use Temp(1) (constant 1 of float64 type Temp) as fmt.Stringer value in variable declaration: Temp does not implement fmt.Stringer (missing method String)\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":23,\"endLine\":10,\"endCol\":30},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":7,\"col\":15,\"endLine\":7,\"endCol\":20},\"text\":\"not `String`\"}],\"notes\":[\"`Temp` lacks 1 method of `fmt.Stringer`:\",\"  `String() string` is missing; `Temp` has `Strng`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":8,\"text\":\"\"},{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\tvar s fmt.Stringer = Temp(1)\"},{\"line\":11,\"text\":\"\\tfmt.Println(s)\"},{\"line\":12,\"text\":\"}\"}],\"types\":[\"type Temp float64\",\"fmt: type Stringer interface { String() string }\"]},\"label\":\"`Temp` does not implement `fmt.Stringer`\",\"rendered\":\"error[M0014]: cannot use Temp(1) (constant 1 of float64 type Temp) as fmt.Stringer value in variable declaration: Temp does not implement fmt.Stringer (missing method String)\\n  --\u003e ./main.go:10:23\\n   |\\n 7 | func (t Temp) Strng() string { return fmt.Sprintf(\\\"%.1f C\\\", float64(t)) }\\n   |               ----- not `String`\\n ...\\n10 |     var s fmt.Stringer = Temp(1)\\n   |                          ^^^^^^^ `Temp` does not implement `fmt.Stringer`\\n   |\\n   = note: `Temp` lacks 1 method of `fmt.Stringer`:\\n             `String() string` is missing; `Temp` has `Strng`\\n\",\"explain\":\"marmot explain M0014\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":382,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -1042,10 +1006,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0014\",\"message\":\"cannot use MyErr{…} (value of struct type MyErr) as error value in return statement: MyErr does not implement error (method Error has pointer receiver)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":8,\"col\":9,\"endLine\":8,\"endCol\":21},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":9,\"endLine\":5,\"endCol\":15},\"text\":\"pointer receiver\"}],\"notes\":[\"`MyErr` lacks 1 method of `error`:\",\"  `Error` has a pointer receiver, so only `*MyErr` has it\"],\"fixes\":[{\"title\":\"pass a pointer\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":8,\"col\":9,\"endLine\":8,\"endCol\":9},\"newText\":\"\u0026\"}]}],\"context\":{\"function\":\"func run() error\",\"lines\":[{\"line\":6,\"text\":\"\"},{\"line\":7,\"text\":\"func run() error {\"},{\"line\":8,\"text\":\"\\treturn MyErr{\\\"bad\\\"}\"},{\"line\":9,\"text\":\"}\"},{\"line\":10,\"text\":\"\"}],\"types\":[\"type MyErr struct{ msg string }\"]},\"label\":\"`MyErr` does not implement `error`\",\"rendered\":\"error[M0014]: cannot use MyErr{…} (value of struct type MyErr) as error value in return statement: MyErr does not implement error (method Error has pointer receiver)\\n --\u003e ./main.go:8:9\\n  |\\n5 | func (e *MyErr) Error() string { return e.msg }\\n  |         ------ pointer receiver\\n...\\n8 |     return MyErr{\\\"bad\\\"}\\n  |            ^^^^^^^^^^^^ `MyErr` does not implement `error`\\n  |\\n  = note: `MyErr` lacks 1 method of `error`:\\n            `Error` has a pointer receiver, so only `*MyErr` has it\\nhelp: pass a pointer (check it)\\n  |\\n8 -     return MyErr{\\\"bad\\\"}\\n8 +     return \u0026MyErr{\\\"bad\\\"}\\n  |\\n\",\"explain\":\"marmot explain M0014\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":100,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0014\",\"message\":\"cannot use MyErr{…} (value of struct type MyErr) as error value in return statement: MyErr does not implement error (method Error has pointer receiver)\",\"span\":{\"file\":\"main.go\",\"line\":8,\"col\":9,\"endLine\":8,\"endCol\":21},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":9,\"endLine\":5,\"endCol\":15},\"text\":\"pointer receiver\"}],\"notes\":[\"`MyErr` lacks 1 method of `error`:\",\"  `Error` has a pointer receiver, so only `*MyErr` has it\"],\"fixes\":[{\"title\":\"pass a pointer\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":8,\"col\":9,\"endLine\":8,\"endCol\":9},\"newText\":\"\u0026\"}]}],\"context\":{\"function\":\"func run() error\",\"lines\":[{\"line\":6,\"text\":\"\"},{\"line\":7,\"text\":\"func run() error {\"},{\"line\":8,\"text\":\"\\treturn MyErr{\\\"bad\\\"}\"},{\"line\":9,\"text\":\"}\"},{\"line\":10,\"text\":\"\"}],\"types\":[\"type MyErr struct{ msg string }\"]},\"label\":\"`MyErr` does not implement `error`\",\"rendered\":\"error[M0014]: cannot use MyErr{…} (value of struct type MyErr) as error value in return statement: MyErr does not implement error (method Error has pointer receiver)\\n --\u003e ./main.go:8:9\\n  |\\n5 | func (e *MyErr) Error() string { return e.msg }\\n  |         ------ pointer receiver\\n...\\n8 |     return MyErr{\\\"bad\\\"}\\n  |            ^^^^^^^^^^^^ `MyErr` does not implement `error`\\n  |\\n  = note: `MyErr` lacks 1 method of `error`:\\n            `Error` has a pointer receiver, so only `*MyErr` has it\\nhelp: pass a pointer (check it)\\n  |\\n8 -     return MyErr{\\\"bad\\\"}\\n8 +     return \u0026MyErr{\\\"bad\\\"}\\n  |\\n\",\"explain\":\"marmot explain M0014\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":168,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 2
       }
     ]
   },
@@ -1072,10 +1036,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0026\",\"message\":\"string does not satisfy Number (string missing in ~int | ~int64 | ~float64)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":16,\"col\":10,\"endLine\":16,\"endCol\":13},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":16,\"col\":14,\"endLine\":16,\"endCol\":27},\"text\":\"the type argument is inferred as `string` from this\"},{\"span\":{\"file\":\"/privatemain.go\",\"line\":3,\"col\":6,\"endLine\":3,\"endCol\":12},\"text\":\"`Number` is declared here\"}],\"notes\":[\"the type set of `Number` is `~int | ~int64 | ~float64`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":14,\"text\":\"\"},{\"line\":15,\"text\":\"func main() {\"},{\"line\":16,\"text\":\"\\tprintln(Sum([]string{\\\"a\\\"}))\"},{\"line\":17,\"text\":\"}\"},{\"line\":18,\"text\":\"\"}],\"types\":[\"type Number interface { ~int | ~int64 | ~float64 }\"]},\"label\":\"`string` does not satisfy `Number`\",\"rendered\":\"error[M0026]: string does not satisfy Number (string missing in ~int | ~int64 | ~float64)\\n  --\u003e ./main.go:16:10\\n   |\\n 3 | type Number interface {\\n   |      ------ `Number` is declared here\\n ...\\n16 |     println(Sum([]string{\\\"a\\\"}))\\n   |             ^^^ ------------- the type argument is inferred as `string` from this\\n   |             |\\n   |             `string` does not satisfy `Number`\\n   |\\n   = note: the type set of `Number` is `~int | ~int64 | ~float64`\\n\",\"explain\":\"marmot explain M0026\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":86,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0026\",\"message\":\"string does not satisfy Number (string missing in ~int | ~int64 | ~float64)\",\"span\":{\"file\":\"main.go\",\"line\":16,\"col\":10,\"endLine\":16,\"endCol\":13},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":16,\"col\":14,\"endLine\":16,\"endCol\":27},\"text\":\"the type argument is inferred as `string` from this\"},{\"span\":{\"file\":\"main.go\",\"line\":3,\"col\":6,\"endLine\":3,\"endCol\":12},\"text\":\"`Number` is declared here\"}],\"notes\":[\"the type set of `Number` is `~int | ~int64 | ~float64`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":14,\"text\":\"\"},{\"line\":15,\"text\":\"func main() {\"},{\"line\":16,\"text\":\"\\tprintln(Sum([]string{\\\"a\\\"}))\"},{\"line\":17,\"text\":\"}\"},{\"line\":18,\"text\":\"\"}],\"types\":[\"type Number interface { ~int | ~int64 | ~float64 }\"]},\"label\":\"`string` does not satisfy `Number`\",\"rendered\":\"error[M0026]: string does not satisfy Number (string missing in ~int | ~int64 | ~float64)\\n  --\u003e ./main.go:16:10\\n   |\\n 3 | type Number interface {\\n   |      ------ `Number` is declared here\\n ...\\n16 |     println(Sum([]string{\\\"a\\\"}))\\n   |             ^^^ ------------- the type argument is inferred as `string` from this\\n   |             |\\n   |             `string` does not satisfy `Number`\\n   |\\n   = note: the type set of `Number` is `~int | ~int64 | ~float64`\\n\",\"explain\":\"marmot explain M0026\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":170,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -1090,7 +1054,7 @@
         "output": "# example.com/constraint_underlying\n./main.go:17:13: Meters does not satisfy Number (Meters missing in ~int | ~float64)\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -1102,7 +1066,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0026\",\"message\":\"Meters does not satisfy Number (Meters missing in ~int | ~float64)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":17,\"col\":10,\"endLine\":17,\"endCol\":13},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":17,\"col\":14,\"endLine\":17,\"endCol\":23},\"text\":\"the type argument is inferred as `Meters` from this\"},{\"span\":{\"file\":\"/privatemain.go\",\"line\":3,\"col\":6,\"endLine\":3,\"endCol\":12},\"text\":\"`Number` is declared here\"}],\"notes\":[\"the type set of `Number` is `~int | ~float64`\",\"`Meters` has underlying type `float32`, which the type set does not include\"],\"help\":[\"to accept it, add `~float32` to `Number`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":15,\"text\":\"\"},{\"line\":16,\"text\":\"func main() {\"},{\"line\":17,\"text\":\"\\tprintln(Max(Meters(1), Meters(2)))\"},{\"line\":18,\"text\":\"}\"},{\"line\":19,\"text\":\"\"}],\"types\":[\"type Meters float32\",\"type Number interface { ~int | ~float64 }\"]},\"label\":\"`Meters` does not satisfy `Number`\",\"rendered\":\"error[M0026]: Meters does not satisfy Number (Meters missing in ~int | ~float64)\\n  --\u003e ./main.go:17:10\\n   |\\n 3 | type Number interface {\\n   |      ------ `Number` is declared here\\n ...\\n17 |     println(Max(Meters(1), Meters(2)))\\n   |             ^^^ --------- the type argument is inferred as `Meters` from this\\n   |             |\\n   |             `Meters` does not satisfy `Number`\\n   |\\n   = note: the type set of `Number` is `~int | ~float64`\\n   = note: `Meters` has underlying type `float32`, which the type set does not include\\n   = help: to accept it, add `~float32` to `Number`\\n\",\"explain\":\"marmot explain M0026\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":172,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0026\",\"message\":\"Meters does not satisfy Number (Meters missing in ~int | ~float64)\",\"span\":{\"file\":\"main.go\",\"line\":17,\"col\":10,\"endLine\":17,\"endCol\":13},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":17,\"col\":14,\"endLine\":17,\"endCol\":23},\"text\":\"the type argument is inferred as `Meters` from this\"},{\"span\":{\"file\":\"main.go\",\"line\":3,\"col\":6,\"endLine\":3,\"endCol\":12},\"text\":\"`Number` is declared here\"}],\"notes\":[\"the type set of `Number` is `~int | ~float64`\",\"`Meters` has underlying type `float32`, which the type set does not include\"],\"help\":[\"to accept it, add `~float32` to `Number`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":15,\"text\":\"\"},{\"line\":16,\"text\":\"func main() {\"},{\"line\":17,\"text\":\"\\tprintln(Max(Meters(1), Meters(2)))\"},{\"line\":18,\"text\":\"}\"},{\"line\":19,\"text\":\"\"}],\"types\":[\"type Meters float32\",\"type Number interface { ~int | ~float64 }\"]},\"label\":\"`Meters` does not satisfy `Number`\",\"rendered\":\"error[M0026]: Meters does not satisfy Number (Meters missing in ~int | ~float64)\\n  --\u003e ./main.go:17:10\\n   |\\n 3 | type Number interface {\\n   |      ------ `Number` is declared here\\n ...\\n17 |     println(Max(Meters(1), Meters(2)))\\n   |             ^^^ --------- the type argument is inferred as `Meters` from this\\n   |             |\\n   |             `Meters` does not satisfy `Number`\\n   |\\n   = note: the type set of `Number` is `~int | ~float64`\\n   = note: `Meters` has underlying type `float32`, which the type set does not include\\n   = help: to accept it, add `~float32` to `Number`\\n\",\"explain\":\"marmot explain M0026\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":142,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -1120,7 +1084,7 @@
         "output": "# example.com/constraint_comparable\n./main.go:14:15: func() does not satisfy comparable\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 5
+        "seconds": 8
       }
     ]
   },
@@ -1132,10 +1096,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0026\",\"message\":\"func() does not satisfy comparable\",\"span\":{\"file\":\"/privatemain.go\",\"line\":14,\"col\":10,\"endLine\":14,\"endCol\":15},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":14,\"col\":16,\"endLine\":14,\"endCol\":27},\"text\":\"the type argument is inferred as `func()` from this\"}],\"notes\":[\"`comparable` holds the types that support `==`; function, slice and map types do not, nor structs and arrays that contain them\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":12,\"text\":\"func main() {\"},{\"line\":13,\"text\":\"\\tf := func() {}\"},{\"line\":14,\"text\":\"\\tprintln(Index([]func(){f}, f))\"},{\"line\":15,\"text\":\"}\"},{\"line\":16,\"text\":\"\"}]},\"label\":\"`func()` does not satisfy `comparable`\",\"rendered\":\"error[M0026]: func() does not satisfy comparable\\n  --\u003e ./main.go:14:10\\n   |\\n14 |     println(Index([]func(){f}, f))\\n   |             ^^^^^ ----------- the type argument is inferred as `func()` from this\\n   |             |\\n   |             `func()` does not satisfy `comparable`\\n   |\\n   = note: `comparable` holds the types that support `==`; function, slice and map types do not, nor structs and arrays that contain them\\n\",\"explain\":\"marmot explain M0026\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":86,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0026\",\"message\":\"func() does not satisfy comparable\",\"span\":{\"file\":\"main.go\",\"line\":14,\"col\":10,\"endLine\":14,\"endCol\":15},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":14,\"col\":16,\"endLine\":14,\"endCol\":27},\"text\":\"the type argument is inferred as `func()` from this\"}],\"notes\":[\"`comparable` holds the types that support `==`; function, slice and map types do not, nor structs and arrays that contain them\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":12,\"text\":\"func main() {\"},{\"line\":13,\"text\":\"\\tf := func() {}\"},{\"line\":14,\"text\":\"\\tprintln(Index([]func(){f}, f))\"},{\"line\":15,\"text\":\"}\"},{\"line\":16,\"text\":\"\"}]},\"label\":\"`func()` does not satisfy `comparable`\",\"rendered\":\"error[M0026]: func() does not satisfy comparable\\n  --\u003e ./main.go:14:10\\n   |\\n14 |     println(Index([]func(){f}, f))\\n   |             ^^^^^ ----------- the type argument is inferred as `func()` from this\\n   |             |\\n   |             `func()` does not satisfy `comparable`\\n   |\\n   = note: `comparable` holds the types that support `==`; function, slice and map types do not, nor structs and arrays that contain them\\n\",\"explain\":\"marmot explain M0026\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":145,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 5
+        "seconds": 8
       }
     ]
   },
@@ -1162,10 +1126,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0027\",\"message\":\"in call to Zero, cannot infer T (declared at /privatemain.go:3:11)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":9,\"col\":7,\"endLine\":9,\"endCol\":11},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":3,\"col\":11,\"endLine\":3,\"endCol\":12},\"text\":\"type parameter declared here\"}],\"help\":[\"give the type argument: `Zero[T]()`, with the type you want for `T`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":7,\"text\":\"\"},{\"line\":8,\"text\":\"func main() {\"},{\"line\":9,\"text\":\"\\tx := Zero()\"},{\"line\":10,\"text\":\"\\t_ = x\"},{\"line\":11,\"text\":\"}\"}]},\"label\":\"cannot infer the type arguments of this call\",\"rendered\":\"error[M0027]: in call to Zero, cannot infer T (declared at /privatemain.go:3:11)\\n --\u003e ./main.go:9:7\\n  |\\n3 | func Zero[T any]() T {\\n  |           - type parameter declared here\\n...\\n9 |     x := Zero()\\n  |          ^^^^ cannot infer the type arguments of this call\\n  |\\n  = help: give the type argument: `Zero[T]()`, with the type you want for `T`\\n\",\"explain\":\"marmot explain M0027\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":88,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0027\",\"message\":\"in call to Zero, cannot infer T (declared at main.go:3:11)\",\"span\":{\"file\":\"main.go\",\"line\":9,\"col\":7,\"endLine\":9,\"endCol\":11},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":3,\"col\":11,\"endLine\":3,\"endCol\":12},\"text\":\"type parameter declared here\"}],\"help\":[\"give the type argument: `Zero[T]()`, with the type you want for `T`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":7,\"text\":\"\"},{\"line\":8,\"text\":\"func main() {\"},{\"line\":9,\"text\":\"\\tx := Zero()\"},{\"line\":10,\"text\":\"\\t_ = x\"},{\"line\":11,\"text\":\"}\"}]},\"label\":\"cannot infer the type arguments of this call\",\"rendered\":\"error[M0027]: in call to Zero, cannot infer T (declared at main.go:3:11)\\n --\u003e ./main.go:9:7\\n  |\\n3 | func Zero[T any]() T {\\n  |           - type parameter declared here\\n...\\n9 |     x := Zero()\\n  |          ^^^^ cannot infer the type arguments of this call\\n  |\\n  = help: give the type argument: `Zero[T]()`, with the type you want for `T`\\n\",\"explain\":\"marmot explain M0027\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":141,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -1180,7 +1144,7 @@
         "output": "# example.com/method_typo\n./main.go:9:4: s.Puhs undefined (type Stack has no field or method Puhs)\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 3
       }
     ]
   },
@@ -1192,10 +1156,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0003\",\"message\":\"s.Puhs undefined (type Stack has no field or method Puhs)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":9,\"col\":4,\"endLine\":9,\"endCol\":8},\"notes\":[\"fields of `Stack`: `items`\",\"methods of `Stack`: `(*Stack) Push`\"],\"fixes\":[{\"title\":\"use `Push`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":9,\"col\":4,\"endLine\":9,\"endCol\":8},\"newText\":\"Push\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":7,\"text\":\"func main() {\"},{\"line\":8,\"text\":\"\\tvar s Stack\"},{\"line\":9,\"text\":\"\\ts.Puhs(1)\"},{\"line\":10,\"text\":\"}\"},{\"line\":11,\"text\":\"\"}],\"types\":[\"type Stack struct{ items []int }\"]},\"label\":\"`Stack` has no field or method `Puhs`\",\"rendered\":\"error[M0003]: s.Puhs undefined (type Stack has no field or method Puhs)\\n --\u003e ./main.go:9:4\\n  |\\n9 |     s.Puhs(1)\\n  |       ^^^^ `Stack` has no field or method `Puhs`\\n  |\\n  = note: fields of `Stack`: `items`\\n  = note: methods of `Stack`: `(*Stack) Push`\\nhelp: use `Push` (check it)\\n  |\\n9 -     s.Puhs(1)\\n9 +     s.Push(1)\\n  |\\n\",\"explain\":\"marmot explain M0003\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":103,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0003\",\"message\":\"s.Puhs undefined (type Stack has no field or method Puhs)\",\"span\":{\"file\":\"main.go\",\"line\":9,\"col\":4,\"endLine\":9,\"endCol\":8},\"notes\":[\"fields of `Stack`: `items`\",\"methods of `Stack`: `(*Stack) Push`\"],\"fixes\":[{\"title\":\"use `Push`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":9,\"col\":4,\"endLine\":9,\"endCol\":8},\"newText\":\"Push\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":7,\"text\":\"func main() {\"},{\"line\":8,\"text\":\"\\tvar s Stack\"},{\"line\":9,\"text\":\"\\ts.Puhs(1)\"},{\"line\":10,\"text\":\"}\"},{\"line\":11,\"text\":\"\"}],\"types\":[\"type Stack struct{ items []int }\"]},\"label\":\"`Stack` has no field or method `Puhs`\",\"rendered\":\"error[M0003]: s.Puhs undefined (type Stack has no field or method Puhs)\\n --\u003e ./main.go:9:4\\n  |\\n9 |     s.Puhs(1)\\n  |       ^^^^ `Stack` has no field or method `Puhs`\\n  |\\n  = note: fields of `Stack`: `items`\\n  = note: methods of `Stack`: `(*Stack) Push`\\nhelp: use `Push` (check it)\\n  |\\n9 -     s.Puhs(1)\\n9 +     s.Push(1)\\n  |\\n\",\"explain\":\"marmot explain M0003\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":170,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 3
       }
     ]
   },
@@ -1210,7 +1174,7 @@
         "output": "# example.com/field_typo\n./main.go:10:4: c.Prot undefined (type Config has no field or method Prot)\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 4
       }
     ]
   },
@@ -1222,10 +1186,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0003\",\"message\":\"c.Prot undefined (type Config has no field or method Prot)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":10,\"col\":4,\"endLine\":10,\"endCol\":8},\"notes\":[\"fields of `Config`: `Port`, `Host`\"],\"fixes\":[{\"title\":\"use `Port`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":10,\"col\":4,\"endLine\":10,\"endCol\":8},\"newText\":\"Port\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":8,\"text\":\"func main() {\"},{\"line\":9,\"text\":\"\\tc := Config{}\"},{\"line\":10,\"text\":\"\\tc.Prot = 80\"},{\"line\":11,\"text\":\"\\tprintln(c.Host)\"},{\"line\":12,\"text\":\"}\"}],\"types\":[\"type Config struct { Port int Host string }\"]},\"label\":\"`Config` has no field or method `Prot`\",\"rendered\":\"error[M0003]: c.Prot undefined (type Config has no field or method Prot)\\n  --\u003e ./main.go:10:4\\n   |\\n10 |     c.Prot = 80\\n   |       ^^^^ `Config` has no field or method `Prot`\\n   |\\n   = note: fields of `Config`: `Port`, `Host`\\nhelp: use `Port` (check it)\\n   |\\n10 -     c.Prot = 80\\n10 +     c.Port = 80\\n   |\\n\",\"explain\":\"marmot explain M0003\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":165,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0003\",\"message\":\"c.Prot undefined (type Config has no field or method Prot)\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":4,\"endLine\":10,\"endCol\":8},\"notes\":[\"fields of `Config`: `Port`, `Host`\"],\"fixes\":[{\"title\":\"use `Port`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":4,\"endLine\":10,\"endCol\":8},\"newText\":\"Port\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":8,\"text\":\"func main() {\"},{\"line\":9,\"text\":\"\\tc := Config{}\"},{\"line\":10,\"text\":\"\\tc.Prot = 80\"},{\"line\":11,\"text\":\"\\tprintln(c.Host)\"},{\"line\":12,\"text\":\"}\"}],\"types\":[\"type Config struct { Port int Host string }\"]},\"label\":\"`Config` has no field or method `Prot`\",\"rendered\":\"error[M0003]: c.Prot undefined (type Config has no field or method Prot)\\n  --\u003e ./main.go:10:4\\n   |\\n10 |     c.Prot = 80\\n   |       ^^^^ `Config` has no field or method `Prot`\\n   |\\n   = note: fields of `Config`: `Port`, `Host`\\nhelp: use `Port` (check it)\\n   |\\n10 -     c.Prot = 80\\n10 +     c.Port = 80\\n   |\\n\",\"explain\":\"marmot explain M0003\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":274,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 5
       }
     ]
   },
@@ -1240,7 +1204,7 @@
         "output": "# example.com/std_method_typo\n./main.go:7:4: b.WriteStrin undefined (type strings.Builder has no field or method WriteStrin)\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 4
       }
     ]
   },
@@ -1252,10 +1216,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0003\",\"message\":\"b.WriteStrin undefined (type strings.Builder has no field or method WriteStrin)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":7,\"col\":4,\"endLine\":7,\"endCol\":14},\"notes\":[\"methods of `strings.Builder`: `(*Builder) Cap`, `(*Builder) Grow`, `(*Builder) Len`, `(*Builder) Reset`, `(*Builder) String`, `(*Builder) Write`, `(*Builder) WriteByte`, `(*Builder) WriteRune`, `(*Builder) WriteString`\"],\"fixes\":[{\"title\":\"use `WriteString`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":7,\"col\":4,\"endLine\":7,\"endCol\":14},\"newText\":\"WriteString\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tvar b strings.Builder\"},{\"line\":7,\"text\":\"\\tb.WriteStrin(\\\"x\\\")\"},{\"line\":8,\"text\":\"\\tprintln(b.String())\"},{\"line\":9,\"text\":\"}\"}],\"types\":[\"strings: type Builder struct { addr *Builder // of receiver, to detect copies by value // External users should never get direct access to this buffer, since // the s...\"]},\"label\":\"`strings.Builder` has no field or method `WriteStrin`\",\"rendered\":\"error[M0003]: b.WriteStrin undefined (type strings.Builder has no field or method WriteStrin)\\n --\u003e ./main.go:7:4\\n  |\\n7 |     b.WriteStrin(\\\"x\\\")\\n  |       ^^^^^^^^^^ `strings.Builder` has no field or method `WriteStrin`\\n  |\\n  = note: methods of `strings.Builder`: `(*Builder) Cap`, `(*Builder) Grow`, `(*Builder) Len`, `(*Builder) Reset`, `(*Builder) String`, `(*Builder) Write`, `(*Builder) WriteByte`, `(*Builder) WriteRune`, `(*Builder) WriteString`\\nhelp: use `WriteString` (check it)\\n  |\\n7 -     b.WriteStrin(\\\"x\\\")\\n7 +     b.WriteString(\\\"x\\\")\\n  |\\n\",\"explain\":\"marmot explain M0003\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":173,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0003\",\"message\":\"b.WriteStrin undefined (type strings.Builder has no field or method WriteStrin)\",\"span\":{\"file\":\"main.go\",\"line\":7,\"col\":4,\"endLine\":7,\"endCol\":14},\"notes\":[\"methods of `strings.Builder`: `(*Builder) Cap`, `(*Builder) Grow`, `(*Builder) Len`, `(*Builder) Reset`, `(*Builder) String`, `(*Builder) Write`, `(*Builder) WriteByte`, `(*Builder) WriteRune`, `(*Builder) WriteString`\"],\"fixes\":[{\"title\":\"use `WriteString`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":7,\"col\":4,\"endLine\":7,\"endCol\":14},\"newText\":\"WriteString\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tvar b strings.Builder\"},{\"line\":7,\"text\":\"\\tb.WriteStrin(\\\"x\\\")\"},{\"line\":8,\"text\":\"\\tprintln(b.String())\"},{\"line\":9,\"text\":\"}\"}],\"types\":[\"strings: type Builder struct { addr *Builder // of receiver, to detect copies by value // External users should never get direct access to this buffer, since // the s...\"]},\"label\":\"`strings.Builder` has no field or method `WriteStrin`\",\"rendered\":\"error[M0003]: b.WriteStrin undefined (type strings.Builder has no field or method WriteStrin)\\n --\u003e ./main.go:7:4\\n  |\\n7 |     b.WriteStrin(\\\"x\\\")\\n  |       ^^^^^^^^^^ `strings.Builder` has no field or method `WriteStrin`\\n  |\\n  = note: methods of `strings.Builder`: `(*Builder) Cap`, `(*Builder) Grow`, `(*Builder) Len`, `(*Builder) Reset`, `(*Builder) String`, `(*Builder) Write`, `(*Builder) WriteByte`, `(*Builder) WriteRune`, `(*Builder) WriteString`\\nhelp: use `WriteString` (check it)\\n  |\\n7 -     b.WriteStrin(\\\"x\\\")\\n7 +     b.WriteString(\\\"x\\\")\\n  |\\n\",\"explain\":\"marmot explain M0003\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":667,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 5
       }
     ]
   },
@@ -1270,19 +1234,19 @@
         "output": "# example.com/field_on_pointer_to_iface\n./main.go:6:11: r.Read undefined (type *R is pointer to interface, not interface)\n",
         "compiles": true,
         "fixed": false,
-        "seconds": 2
-      },
-      {
-        "output": "",
-        "compiles": true,
-        "fixed": false,
         "seconds": 4
       },
       {
         "output": "",
         "compiles": true,
         "fixed": false,
-        "seconds": 4
+        "seconds": 5
+      },
+      {
+        "output": "",
+        "compiles": true,
+        "fixed": false,
+        "seconds": 3
       }
     ]
   },
@@ -1294,22 +1258,22 @@
     "attempts": 3,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0003\",\"message\":\"r.Read undefined (type *R is pointer to interface, not interface)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":11,\"endLine\":6,\"endCol\":15},\"help\":[\"use the interface type itself: an interface value already holds a pointer when the dynamic type is one\"],\"context\":{\"function\":\"func f(r *R) int\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func f(r *R) int {\"},{\"line\":6,\"text\":\"\\treturn r.Read()\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}],\"types\":[\"type R interface{ Read() int }\"]},\"label\":\"a pointer to an interface has no methods\",\"rendered\":\"error[M0003]: r.Read undefined (type *R is pointer to interface, not interface)\\n --\u003e ./main.go:6:11\\n  |\\n6 |     return r.Read()\\n  |              ^^^^ a pointer to an interface has no methods\\n  |\\n  = help: use the interface type itself: an interface value already holds a pointer when the dynamic type is one\\n\",\"explain\":\"marmot explain M0003\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":130,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0003\",\"message\":\"r.Read undefined (type *R is pointer to interface, not interface)\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":11,\"endLine\":6,\"endCol\":15},\"help\":[\"use the interface type itself: an interface value already holds a pointer when the dynamic type is one\"],\"context\":{\"function\":\"func f(r *R) int\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func f(r *R) int {\"},{\"line\":6,\"text\":\"\\treturn r.Read()\"},{\"line\":7,\"text\":\"}\"},{\"line\":8,\"text\":\"\"}],\"types\":[\"type R interface{ Read() int }\"]},\"label\":\"a pointer to an interface has no methods\",\"rendered\":\"error[M0003]: r.Read undefined (type *R is pointer to interface, not interface)\\n --\u003e ./main.go:6:11\\n  |\\n6 |     return r.Read()\\n  |              ^^^^ a pointer to an interface has no methods\\n  |\\n  = help: use the interface type itself: an interface value already holds a pointer when the dynamic type is one\\n\",\"explain\":\"marmot explain M0003\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":229,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": false,
-        "seconds": 2
+        "seconds": 4
       },
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-352631438/nopcln.exe /dev/null: cross-device link\",\"span\":{\"file\":\"\",\"line\":0,\"col\":0,\"endLine\":0,\"endCol\":0},\"rendered\":\"error: rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-352631438/nopcln.exe /dev/null: cross-device link\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":756,\"exitCode\":1}\n",
+        "output": "{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":true,\"errors\":0,\"warnings\":0,\"output\":\"prog\",\"durationMs\":1717}\n",
         "compiles": true,
         "fixed": false,
         "seconds": 3
       },
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-2071233516/nopcln.exe /dev/null: cross-device link\",\"span\":{\"file\":\"\",\"line\":0,\"col\":0,\"endLine\":0,\"endCol\":0},\"rendered\":\"error: rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-2071233516/nopcln.exe /dev/null: cross-device link\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":308,\"exitCode\":1}\n",
+        "output": "{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":true,\"errors\":0,\"warnings\":0,\"output\":\"prog\",\"durationMs\":484}\n",
         "compiles": true,
         "fixed": false,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -1324,7 +1288,7 @@
         "output": "# example.com/shadowed_err\n./main.go:8:9: declared and not used: err\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 3
+        "seconds": 4
       }
     ]
   },
@@ -1336,10 +1300,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0028\",\"message\":\"declared and not used: err\",\"span\":{\"file\":\"/privatemain.go\",\"line\":8,\"col\":9,\"endLine\":8,\"endCol\":12},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":6,\"endLine\":6,\"endCol\":9},\"text\":\"the outer `err` is declared here and is not assigned\"}],\"help\":[\"to assign the outer `err`, declare the other variables before the statement and use `=` instead of `:=`\"],\"context\":{\"function\":\"func load() error\",\"lines\":[{\"line\":6,\"text\":\"\\tvar err error\"},{\"line\":7,\"text\":\"\\tif true {\"},{\"line\":8,\"text\":\"\\t\\tdata, err := os.ReadFile(\\\"x\\\")\"},{\"line\":9,\"text\":\"\\t\\t_ = data\"},{\"line\":10,\"text\":\"\\t}\"}]},\"label\":\"this `err` is a new variable that shadows the outer one\",\"rendered\":\"error[M0028]: declared and not used: err\\n --\u003e ./main.go:8:9\\n  |\\n6 |     var err error\\n  |         --- the outer `err` is declared here and is not assigned\\n...\\n8 |         data, err := os.ReadFile(\\\"x\\\")\\n  |               ^^^ this `err` is a new variable that shadows the outer one\\n  |\\n  = help: to assign the outer `err`, declare the other variables before the statement and use `=` instead of `:=`\\n\",\"explain\":\"marmot explain M0028\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":176,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0028\",\"message\":\"declared and not used: err\",\"span\":{\"file\":\"main.go\",\"line\":8,\"col\":9,\"endLine\":8,\"endCol\":12},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":6,\"endLine\":6,\"endCol\":9},\"text\":\"the outer `err` is declared here and is not assigned\"}],\"help\":[\"to assign the outer `err`, declare the other variables before the statement and use `=` instead of `:=`\"],\"context\":{\"function\":\"func load() error\",\"lines\":[{\"line\":6,\"text\":\"\\tvar err error\"},{\"line\":7,\"text\":\"\\tif true {\"},{\"line\":8,\"text\":\"\\t\\tdata, err := os.ReadFile(\\\"x\\\")\"},{\"line\":9,\"text\":\"\\t\\t_ = data\"},{\"line\":10,\"text\":\"\\t}\"}]},\"label\":\"this `err` is a new variable that shadows the outer one\",\"rendered\":\"error[M0028]: declared and not used: err\\n --\u003e ./main.go:8:9\\n  |\\n6 |     var err error\\n  |         --- the outer `err` is declared here and is not assigned\\n...\\n8 |         data, err := os.ReadFile(\\\"x\\\")\\n  |               ^^^ this `err` is a new variable that shadows the outer one\\n  |\\n  = help: to assign the outer `err`, declare the other variables before the statement and use `=` instead of `:=`\\n\",\"explain\":\"marmot explain M0028\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":386,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -1354,7 +1318,7 @@
         "output": "# example.com/redeclared_func\n./main.go:5:6: helper redeclared in this block\n\t./main.go:3:6: other declaration of helper\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 4
       }
     ]
   },
@@ -1366,64 +1330,40 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0015\",\"message\":\"helper redeclared in this block\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":6,\"endLine\":5,\"endCol\":12},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":3,\"col\":6,\"endLine\":3,\"endCol\":12},\"text\":\"`helper` is first declared here\"}],\"context\":{\"function\":\"func helper()\",\"lines\":[{\"line\":3,\"text\":\"func helper() {}\"},{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func helper() {}\"},{\"line\":6,\"text\":\"\"},{\"line\":7,\"text\":\"func main() { helper() }\"}]},\"rendered\":\"error[M0015]: helper redeclared in this block\\n --\u003e ./main.go:5:6\\n  |\\n3 | func helper() {}\\n  |      ------ `helper` is first declared here\\n...\\n5 | func helper() {}\\n  |      ^^^^^^\\n\",\"explain\":\"marmot explain M0015\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":93,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0015\",\"message\":\"helper redeclared in this block\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":6,\"endLine\":5,\"endCol\":12},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":3,\"col\":6,\"endLine\":3,\"endCol\":12},\"text\":\"`helper` is first declared here\"}],\"context\":{\"function\":\"func helper()\",\"lines\":[{\"line\":3,\"text\":\"func helper() {}\"},{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func helper() {}\"},{\"line\":6,\"text\":\"\"},{\"line\":7,\"text\":\"func main() { helper() }\"}]},\"rendered\":\"error[M0015]: helper redeclared in this block\\n --\u003e ./main.go:5:6\\n  |\\n3 | func helper() {}\\n  |      ------ `helper` is first declared here\\n...\\n5 | func helper() {}\\n  |      ^^^^^^\\n\",\"explain\":\"marmot explain M0015\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":365,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
   {
     "case": "44_redeclared_var",
     "condition": "go",
-    "fixed": false,
+    "fixed": true,
     "compiles": true,
-    "attempts": 3,
+    "attempts": 1,
     "log": [
       {
         "output": "# example.com/redeclared_var\n./main.go:5:6: x redeclared in this block\n\t./main.go:4:6: other declaration of x\n",
         "compiles": true,
-        "fixed": false,
+        "fixed": true,
         "seconds": 4
-      },
-      {
-        "output": "",
-        "compiles": true,
-        "fixed": false,
-        "seconds": 3
-      },
-      {
-        "output": "",
-        "compiles": true,
-        "fixed": false,
-        "seconds": 2
       }
     ]
   },
   {
     "case": "44_redeclared_var",
     "condition": "marmot",
-    "fixed": false,
+    "fixed": true,
     "compiles": true,
-    "attempts": 3,
+    "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0015\",\"message\":\"x redeclared in this block\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":6,\"endLine\":5,\"endCol\":7},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":4,\"col\":6,\"endLine\":4,\"endCol\":7},\"text\":\"`x` is first declared here\"}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tvar x int\"},{\"line\":5,\"text\":\"\\tvar x string\"},{\"line\":6,\"text\":\"\\tprintln(x)\"},{\"line\":7,\"text\":\"}\"}]},\"rendered\":\"error[M0015]: x redeclared in this block\\n --\u003e ./main.go:5:6\\n  |\\n4 |     var x int\\n  |         - `x` is first declared here\\n5 |     var x string\\n  |         ^\\n\",\"explain\":\"marmot explain M0015\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":122,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0015\",\"message\":\"x redeclared in this block\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":6,\"endLine\":5,\"endCol\":7},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":4,\"col\":6,\"endLine\":4,\"endCol\":7},\"text\":\"`x` is first declared here\"}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tvar x int\"},{\"line\":5,\"text\":\"\\tvar x string\"},{\"line\":6,\"text\":\"\\tprintln(x)\"},{\"line\":7,\"text\":\"}\"}]},\"rendered\":\"error[M0015]: x redeclared in this block\\n --\u003e ./main.go:5:6\\n  |\\n4 |     var x int\\n  |         - `x` is first declared here\\n5 |     var x string\\n  |         ^\\n\",\"explain\":\"marmot explain M0015\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":281,\"exitCode\":1}\n",
         "compiles": true,
-        "fixed": false,
-        "seconds": 3
-      },
-      {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-1524404857/nopcln.exe /dev/null: cross-device link\",\"span\":{\"file\":\"\",\"line\":0,\"col\":0,\"endLine\":0,\"endCol\":0},\"rendered\":\"error: rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-1524404857/nopcln.exe /dev/null: cross-device link\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":274,\"exitCode\":1}\n",
-        "compiles": true,
-        "fixed": false,
-        "seconds": 3
-      },
-      {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-1138881870/nopcln.exe /dev/null: cross-device link\",\"span\":{\"file\":\"\",\"line\":0,\"col\":0,\"endLine\":0,\"endCol\":0},\"rendered\":\"error: rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-1138881870/nopcln.exe /dev/null: cross-device link\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":541,\"exitCode\":1}\n",
-        "compiles": true,
-        "fixed": false,
-        "seconds": 2
+        "fixed": true,
+        "seconds": 5
       }
     ]
   },
@@ -1438,7 +1378,7 @@
         "output": "# example.com/syntax_missing_operand\n./main.go:5:1: syntax error: unexpected }, expected expression\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -1450,7 +1390,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0001\",\"message\":\"expected operand, found '}'\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":1,\"endLine\":5,\"endCol\":2},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":4,\"col\":9,\"endLine\":4,\"endCol\":10},\"text\":\"this expression is not finished\"}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tx := 1 +\"},{\"line\":5,\"text\":\"}\"},{\"line\":6,\"text\":\"\"}]},\"label\":\"expected an operand here\",\"rendered\":\"error[M0001]: expected operand, found '}'\\n --\u003e ./main.go:5:1\\n  |\\n4 |     x := 1 +\\n  |            - this expression is not finished\\n5 | }\\n  | ^ expected an operand here\\n\",\"explain\":\"marmot explain M0001\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":115,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0001\",\"message\":\"expected operand, found '}'\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":1,\"endLine\":5,\"endCol\":2},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":4,\"col\":9,\"endLine\":4,\"endCol\":10},\"text\":\"this expression is not finished\"}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tx := 1 +\"},{\"line\":5,\"text\":\"}\"},{\"line\":6,\"text\":\"\"}]},\"label\":\"expected an operand here\",\"rendered\":\"error[M0001]: expected operand, found '}'\\n --\u003e ./main.go:5:1\\n  |\\n4 |     x := 1 +\\n  |            - this expression is not finished\\n5 | }\\n  | ^ expected an operand here\\n\",\"explain\":\"marmot explain M0001\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":263,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 3
@@ -1468,7 +1408,7 @@
         "output": "# example.com/syntax_missing_paren\n./main.go:4:18: syntax error: unexpected newline in argument list; possibly missing comma or )\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 5
       }
     ]
   },
@@ -1480,10 +1420,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0001\",\"message\":\"missing ',' before newline in argument list\",\"span\":{\"file\":\"/privatemain.go\",\"line\":4,\"col\":18,\"endLine\":4,\"endCol\":19},\"help\":[\"close the call with `)`, or put a `,` at the end of the line to continue the arguments\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tprintln(\\\"a\\\", \\\"b\\\"\"},{\"line\":5,\"text\":\"}\"},{\"line\":6,\"text\":\"\"}]},\"label\":\"expected `,` or `)` here\",\"rendered\":\"error[M0001]: missing ',' before newline in argument list\\n --\u003e ./main.go:4:18\\n  |\\n4 |     println(\\\"a\\\", \\\"b\\\"\\n  |                     ^ expected `,` or `)` here\\n  |\\n  = help: close the call with `)`, or put a `,` at the end of the line to continue the arguments\\n\",\"explain\":\"marmot explain M0001\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":143,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0001\",\"message\":\"missing ',' before newline in argument list\",\"span\":{\"file\":\"main.go\",\"line\":4,\"col\":18,\"endLine\":4,\"endCol\":19},\"help\":[\"close the call with `)`, or put a `,` at the end of the line to continue the arguments\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tprintln(\\\"a\\\", \\\"b\\\"\"},{\"line\":5,\"text\":\"}\"},{\"line\":6,\"text\":\"\"}]},\"label\":\"expected `,` or `)` here\",\"rendered\":\"error[M0001]: missing ',' before newline in argument list\\n --\u003e ./main.go:4:18\\n  |\\n4 |     println(\\\"a\\\", \\\"b\\\"\\n  |                     ^ expected `,` or `)` here\\n  |\\n  = help: close the call with `)`, or put a `,` at the end of the line to continue the arguments\\n\",\"explain\":\"marmot explain M0001\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":399,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 4
       }
     ]
   },
@@ -1498,7 +1438,7 @@
         "output": "# example.com/syntax_missing_brace\n./main.go:7:1: syntax error: unexpected EOF, expected }\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 3
       }
     ]
   },
@@ -1510,10 +1450,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0001\",\"message\":\"expected ';', found 'EOF'\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":3,\"endLine\":6,\"endCol\":4},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":3,\"col\":13,\"endLine\":3,\"endCol\":14},\"text\":\"this `{` is never closed\"}],\"context\":{\"lines\":[{\"line\":4,\"text\":\"\\tif true {\"},{\"line\":5,\"text\":\"\\t\\tprintln(\\\"x\\\")\"},{\"line\":6,\"text\":\"}\"},{\"line\":7,\"text\":\"\"}]},\"label\":\"the file ends here\",\"rendered\":\"error[M0001]: expected ';', found 'EOF'\\n --\u003e ./main.go:6:3\\n  |\\n3 | func main() {\\n  |             - this `{` is never closed\\n...\\n6 | }\\n  |   ^ the file ends here\\n\",\"explain\":\"marmot explain M0001\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":119,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0001\",\"message\":\"expected ';', found 'EOF'\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":3,\"endLine\":6,\"endCol\":4},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":3,\"col\":13,\"endLine\":3,\"endCol\":14},\"text\":\"this `{` is never closed\"}],\"context\":{\"lines\":[{\"line\":4,\"text\":\"\\tif true {\"},{\"line\":5,\"text\":\"\\t\\tprintln(\\\"x\\\")\"},{\"line\":6,\"text\":\"}\"},{\"line\":7,\"text\":\"\"}]},\"label\":\"the file ends here\",\"rendered\":\"error[M0001]: expected ';', found 'EOF'\\n --\u003e ./main.go:6:3\\n  |\\n3 | func main() {\\n  |             - this `{` is never closed\\n...\\n6 | }\\n  |   ^ the file ends here\\n\",\"explain\":\"marmot explain M0001\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":123,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 2
       }
     ]
   },
@@ -1528,7 +1468,7 @@
         "output": "# example.com/syntax_composite_comma\n./main.go:6:4: syntax error: unexpected newline in composite literal; possibly missing comma or }\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 2
       }
     ]
   },
@@ -1540,10 +1480,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0001\",\"message\":\"missing ',' before newline in composite literal\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":4,\"endLine\":6,\"endCol\":5},\"fixes\":[{\"title\":\"add `,` (every element of a multi-line literal ends with one)\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":4,\"endLine\":6,\"endCol\":4},\"newText\":\",\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\\txs := []int{\"},{\"line\":5,\"text\":\"\\t\\t1,\"},{\"line\":6,\"text\":\"\\t\\t2\"},{\"line\":7,\"text\":\"\\t}\"},{\"line\":8,\"text\":\"\\tprintln(len(xs))\"}]},\"label\":\"expected `,` here\",\"rendered\":\"error[M0001]: missing ',' before newline in composite literal\\n --\u003e ./main.go:6:4\\n  |\\n6 |         2\\n  |          ^ expected `,` here\\n  |\\nhelp: add `,` (every element of a multi-line literal ends with one)\\n  |\\n6 -         2\\n6 +         2,\\n  |\\n\",\"explain\":\"marmot explain M0001\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":100,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0001\",\"message\":\"missing ',' before newline in composite literal\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":4,\"endLine\":6,\"endCol\":5},\"fixes\":[{\"title\":\"add `,` (every element of a multi-line literal ends with one)\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":4,\"endLine\":6,\"endCol\":4},\"newText\":\",\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\\txs := []int{\"},{\"line\":5,\"text\":\"\\t\\t1,\"},{\"line\":6,\"text\":\"\\t\\t2\"},{\"line\":7,\"text\":\"\\t}\"},{\"line\":8,\"text\":\"\\tprintln(len(xs))\"}]},\"label\":\"expected `,` here\",\"rendered\":\"error[M0001]: missing ',' before newline in composite literal\\n --\u003e ./main.go:6:4\\n  |\\n6 |         2\\n  |          ^ expected `,` here\\n  |\\nhelp: add `,` (every element of a multi-line literal ends with one)\\n  |\\n6 -         2\\n6 +         2,\\n  |\\n\",\"explain\":\"marmot explain M0001\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":121,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 1
+        "seconds": 2
       }
     ]
   },
@@ -1570,7 +1510,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0001\",\"message\":\"expected statement, found 'else'\",\"span\":{\"file\":\"/privatemain.go\",\"line\":8,\"col\":2,\"endLine\":8,\"endCol\":6},\"fixes\":[{\"title\":\"move `else` up to the closing brace\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":7,\"col\":3,\"endLine\":8,\"endCol\":2},\"newText\":\" \"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":6,\"text\":\"\\t\\tprintln(\\\"pos\\\")\"},{\"line\":7,\"text\":\"\\t}\"},{\"line\":8,\"text\":\"\\telse {\"},{\"line\":9,\"text\":\"\\t\\tprintln(\\\"neg\\\")\"},{\"line\":10,\"text\":\"\\t}\"}]},\"label\":\"`else` must follow the `}` of the `if` on the same line\",\"rendered\":\"error[M0001]: expected statement, found 'else'\\n --\u003e ./main.go:8:2\\n  |\\n8 |     else {\\n  |     ^^^^ `else` must follow the `}` of the `if` on the same line\\n  |\\nhelp: move `else` up to the closing brace\\n  |\\n7 -     }\\n8 -     else {\\n7 +     } else {\\n  |\\n\",\"explain\":\"marmot explain M0001\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":99,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0001\",\"message\":\"expected statement, found 'else'\",\"span\":{\"file\":\"main.go\",\"line\":8,\"col\":2,\"endLine\":8,\"endCol\":6},\"fixes\":[{\"title\":\"move `else` up to the closing brace\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":7,\"col\":3,\"endLine\":8,\"endCol\":2},\"newText\":\" \"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":6,\"text\":\"\\t\\tprintln(\\\"pos\\\")\"},{\"line\":7,\"text\":\"\\t}\"},{\"line\":8,\"text\":\"\\telse {\"},{\"line\":9,\"text\":\"\\t\\tprintln(\\\"neg\\\")\"},{\"line\":10,\"text\":\"\\t}\"}]},\"label\":\"`else` must follow the `}` of the `if` on the same line\",\"rendered\":\"error[M0001]: expected statement, found 'else'\\n --\u003e ./main.go:8:2\\n  |\\n8 |     else {\\n  |     ^^^^ `else` must follow the `}` of the `if` on the same line\\n  |\\nhelp: move `else` up to the closing brace\\n  |\\n7 -     }\\n8 -     else {\\n7 +     } else {\\n  |\\n\",\"explain\":\"marmot explain M0001\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":157,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -1600,10 +1540,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0007\",\"message\":\"invalid operation: xs + 1 (mismatched types []int and untyped int)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":13,\"endLine\":5,\"endCol\":14},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":10,\"endLine\":5,\"endCol\":12},\"text\":\"`[]int`\"},{\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":15,\"endLine\":5,\"endCol\":16},\"text\":\"`untyped int`\"}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\txs := []int{1}\"},{\"line\":5,\"text\":\"\\tprintln(xs + 1)\"},{\"line\":6,\"text\":\"}\"},{\"line\":7,\"text\":\"\"}]},\"rendered\":\"error[M0007]: invalid operation: xs + 1 (mismatched types []int and untyped int)\\n --\u003e ./main.go:5:13\\n  |\\n5 |     println(xs + 1)\\n  |             -- ^ - `untyped int`\\n  |             |\\n  |             `[]int`\\n\",\"explain\":\"marmot explain M0007\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":106,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0007\",\"message\":\"invalid operation: xs + 1 (mismatched types []int and untyped int)\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":13,\"endLine\":5,\"endCol\":14},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":10,\"endLine\":5,\"endCol\":12},\"text\":\"`[]int`\"},{\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":15,\"endLine\":5,\"endCol\":16},\"text\":\"`untyped int`\"}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\txs := []int{1}\"},{\"line\":5,\"text\":\"\\tprintln(xs + 1)\"},{\"line\":6,\"text\":\"}\"},{\"line\":7,\"text\":\"\"}]},\"rendered\":\"error[M0007]: invalid operation: xs + 1 (mismatched types []int and untyped int)\\n --\u003e ./main.go:5:13\\n  |\\n5 |     println(xs + 1)\\n  |             -- ^ - `untyped int`\\n  |             |\\n  |             `[]int`\\n\",\"explain\":\"marmot explain M0007\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":309,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 4
       }
     ]
   },
@@ -1630,7 +1570,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0016\",\"message\":\"non-boolean condition in if statement\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":5,\"endLine\":5,\"endCol\":6},\"help\":[\"Go has no truthiness: compare explicitly, for example `x != 0`, `s != \\\"\\\"` or `p != nil`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tn := 1\"},{\"line\":5,\"text\":\"\\tif n {\"},{\"line\":6,\"text\":\"\\t\\tprintln(\\\"yes\\\")\"},{\"line\":7,\"text\":\"\\t}\"}]},\"label\":\"expected `bool`\",\"rendered\":\"error[M0016]: non-boolean condition in if statement\\n --\u003e ./main.go:5:5\\n  |\\n5 |     if n {\\n  |        ^ expected `bool`\\n  |\\n  = help: Go has no truthiness: compare explicitly, for example `x != 0`, `s != \\\"\\\"` or `p != nil`\\n\",\"explain\":\"marmot explain M0016\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":126,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0016\",\"message\":\"non-boolean condition in if statement\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":5,\"endLine\":5,\"endCol\":6},\"help\":[\"Go has no truthiness: compare explicitly, for example `x != 0`, `s != \\\"\\\"` or `p != nil`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tn := 1\"},{\"line\":5,\"text\":\"\\tif n {\"},{\"line\":6,\"text\":\"\\t\\tprintln(\\\"yes\\\")\"},{\"line\":7,\"text\":\"\\t}\"}]},\"label\":\"expected `bool`\",\"rendered\":\"error[M0016]: non-boolean condition in if statement\\n --\u003e ./main.go:5:5\\n  |\\n5 |     if n {\\n  |        ^ expected `bool`\\n  |\\n  = help: Go has no truthiness: compare explicitly, for example `x != 0`, `s != \\\"\\\"` or `p != nil`\\n\",\"explain\":\"marmot explain M0016\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":115,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -1648,7 +1588,7 @@
         "output": "# example.com/call_non_function\n./main.go:5:10: invalid operation: cannot call limit (variable of type int): int is not a function\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 5
+        "seconds": 4
       }
     ]
   },
@@ -1660,7 +1600,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0016\",\"message\":\"invalid operation: cannot call limit (variable of type int): int is not a function\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":10,\"endLine\":5,\"endCol\":15},\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tlimit := 10\"},{\"line\":5,\"text\":\"\\tprintln(limit(3))\"},{\"line\":6,\"text\":\"}\"},{\"line\":7,\"text\":\"\"}]},\"label\":\"`limit` is not a function\",\"rendered\":\"error[M0016]: invalid operation: cannot call limit (variable of type int): int is not a function\\n --\u003e ./main.go:5:10\\n  |\\n5 |     println(limit(3))\\n  |             ^^^^^ `limit` is not a function\\n\",\"explain\":\"marmot explain M0016\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":96,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0016\",\"message\":\"invalid operation: cannot call limit (variable of type int): int is not a function\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":10,\"endLine\":5,\"endCol\":15},\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tlimit := 10\"},{\"line\":5,\"text\":\"\\tprintln(limit(3))\"},{\"line\":6,\"text\":\"}\"},{\"line\":7,\"text\":\"\"}]},\"label\":\"`limit` is not a function\",\"rendered\":\"error[M0016]: invalid operation: cannot call limit (variable of type int): int is not a function\\n --\u003e ./main.go:5:10\\n  |\\n5 |     println(limit(3))\\n  |             ^^^^^ `limit` is not a function\\n\",\"explain\":\"marmot explain M0016\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":316,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 4
@@ -1678,7 +1618,7 @@
         "output": "# example.com/assign_to_constant\n./main.go:6:2: cannot assign to Max (neither addressable nor a map index expression)\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -1690,10 +1630,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0016\",\"message\":\"cannot assign to Max (neither addressable nor a map index expression)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":2,\"endLine\":6,\"endCol\":5},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":3,\"col\":7,\"endLine\":3,\"endCol\":10},\"text\":\"declared as a constant here\"}],\"help\":[\"to change the value at run time, declare it with `var`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tMax = 20\"},{\"line\":7,\"text\":\"\\tprintln(Max)\"},{\"line\":8,\"text\":\"}\"}]},\"label\":\"`Max` is a constant\",\"rendered\":\"error[M0016]: cannot assign to Max (neither addressable nor a map index expression)\\n --\u003e ./main.go:6:2\\n  |\\n3 | const Max = 10\\n  |       --- declared as a constant here\\n...\\n6 |     Max = 20\\n  |     ^^^ `Max` is a constant\\n  |\\n  = help: to change the value at run time, declare it with `var`\\n\",\"explain\":\"marmot explain M0016\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":156,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0016\",\"message\":\"cannot assign to Max (neither addressable nor a map index expression)\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":2,\"endLine\":6,\"endCol\":5},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":3,\"col\":7,\"endLine\":3,\"endCol\":10},\"text\":\"declared as a constant here\"}],\"help\":[\"to change the value at run time, declare it with `var`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tMax = 20\"},{\"line\":7,\"text\":\"\\tprintln(Max)\"},{\"line\":8,\"text\":\"}\"}]},\"label\":\"`Max` is a constant\",\"rendered\":\"error[M0016]: cannot assign to Max (neither addressable nor a map index expression)\\n --\u003e ./main.go:6:2\\n  |\\n3 | const Max = 10\\n  |       --- declared as a constant here\\n...\\n6 |     Max = 20\\n  |     ^^^ `Max` is a constant\\n  |\\n  = help: to change the value at run time, declare it with `var`\\n\",\"explain\":\"marmot explain M0016\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":206,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -1708,7 +1648,7 @@
         "output": "# example.com/string_index_assign\n./main.go:5:2: cannot assign to s[0] (neither addressable nor a map index expression)\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 3
+        "seconds": 2
       }
     ]
   },
@@ -1720,10 +1660,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0016\",\"message\":\"cannot assign to s[0] (neither addressable nor a map index expression)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":2,\"endLine\":5,\"endCol\":6},\"help\":[\"convert to bytes, change them, and convert back: `b := []byte(s); b[i] = ...; s = string(b)`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\ts := \\\"hello\\\"\"},{\"line\":5,\"text\":\"\\ts[0] = 'H'\"},{\"line\":6,\"text\":\"\\tprintln(s)\"},{\"line\":7,\"text\":\"}\"}]},\"label\":\"strings are immutable\",\"rendered\":\"error[M0016]: cannot assign to s[0] (neither addressable nor a map index expression)\\n --\u003e ./main.go:5:2\\n  |\\n5 |     s[0] = 'H'\\n  |     ^^^^ strings are immutable\\n  |\\n  = help: convert to bytes, change them, and convert back: `b := []byte(s); b[i] = ...; s = string(b)`\\n\",\"explain\":\"marmot explain M0016\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":224,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0016\",\"message\":\"cannot assign to s[0] (neither addressable nor a map index expression)\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":2,\"endLine\":5,\"endCol\":6},\"help\":[\"convert to bytes, change them, and convert back: `b := []byte(s); b[i] = ...; s = string(b)`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\ts := \\\"hello\\\"\"},{\"line\":5,\"text\":\"\\ts[0] = 'H'\"},{\"line\":6,\"text\":\"\\tprintln(s)\"},{\"line\":7,\"text\":\"}\"}]},\"label\":\"strings are immutable\",\"rendered\":\"error[M0016]: cannot assign to s[0] (neither addressable nor a map index expression)\\n --\u003e ./main.go:5:2\\n  |\\n5 |     s[0] = 'H'\\n  |     ^^^^ strings are immutable\\n  |\\n  = help: convert to bytes, change them, and convert back: `b := []byte(s); b[i] = ...; s = string(b)`\\n\",\"explain\":\"marmot explain M0016\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":181,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -1738,7 +1678,7 @@
         "output": "# example.com/break_outside_loop\n./main.go:5:3: break is not in a loop, switch, or select\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -1750,7 +1690,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"break not in for, switch, or select statement\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":3,\"endLine\":5,\"endCol\":8},\"help\":[\"to leave a function early, use `return`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tif true {\"},{\"line\":5,\"text\":\"\\t\\tbreak\"},{\"line\":6,\"text\":\"\\t}\"},{\"line\":7,\"text\":\"}\"}]},\"label\":\"not inside a loop\",\"rendered\":\"error: break not in for, switch, or select statement\\n --\u003e ./main.go:5:3\\n  |\\n5 |         break\\n  |         ^^^^^ not inside a loop\\n  |\\n  = help: to leave a function early, use `return`\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":89,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"break not in for, switch, or select statement\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":3,\"endLine\":5,\"endCol\":8},\"help\":[\"to leave a function early, use `return`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tif true {\"},{\"line\":5,\"text\":\"\\t\\tbreak\"},{\"line\":6,\"text\":\"\\t}\"},{\"line\":7,\"text\":\"}\"}]},\"label\":\"not inside a loop\",\"rendered\":\"error: break not in for, switch, or select statement\\n --\u003e ./main.go:5:3\\n  |\\n5 |         break\\n  |         ^^^^^ not inside a loop\\n  |\\n  = help: to leave a function early, use `return`\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":151,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -1780,10 +1720,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"duplicate case 1 (constant of type int) in expression switch\",\"span\":{\"file\":\"/privatemain.go\",\"line\":8,\"col\":7,\"endLine\":8,\"endCol\":8},\"labels\":[{\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":7,\"endLine\":6,\"endCol\":8},\"text\":\"first used here\"}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":6,\"text\":\"\\tcase 1:\"},{\"line\":7,\"text\":\"\\t\\tprintln(\\\"one\\\")\"},{\"line\":8,\"text\":\"\\tcase 1:\"},{\"line\":9,\"text\":\"\\t\\tprintln(\\\"uno\\\")\"},{\"line\":10,\"text\":\"\\t}\"}]},\"rendered\":\"error: duplicate case 1 (constant of type int) in expression switch\\n --\u003e ./main.go:8:7\\n  |\\n6 |     case 1:\\n  |          - first used here\\n...\\n8 |     case 1:\\n  |          ^\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":146,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"duplicate case 1 (constant of type int) in expression switch\",\"span\":{\"file\":\"main.go\",\"line\":8,\"col\":7,\"endLine\":8,\"endCol\":8},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":7,\"endLine\":6,\"endCol\":8},\"text\":\"first used here\"}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":6,\"text\":\"\\tcase 1:\"},{\"line\":7,\"text\":\"\\t\\tprintln(\\\"one\\\")\"},{\"line\":8,\"text\":\"\\tcase 1:\"},{\"line\":9,\"text\":\"\\t\\tprintln(\\\"uno\\\")\"},{\"line\":10,\"text\":\"\\t}\"}]},\"rendered\":\"error: duplicate case 1 (constant of type int) in expression switch\\n --\u003e ./main.go:8:7\\n  |\\n6 |     case 1:\\n  |          - first used here\\n...\\n8 |     case 1:\\n  |          ^\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":200,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -1810,7 +1750,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0011\",\"message\":\"no required module provides package example.com/nowhere/lib\",\"span\":{\"file\":\"/privatemain.go\",\"line\":3,\"col\":8,\"endLine\":3,\"endCol\":33},\"help\":[\"add the module: `go get example.com/nowhere/lib`\"],\"context\":{\"lines\":[{\"line\":1,\"text\":\"package main\"},{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"import \\\"example.com/nowhere/lib\\\"\"},{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() { lib.Run() }\"}]},\"rendered\":\"error[M0011]: no required module provides package example.com/nowhere/lib\\n --\u003e ./main.go:3:8\\n  |\\n3 | import \\\"example.com/nowhere/lib\\\"\\n  |        ^^^^^^^^^^^^^^^^^^^^^^^^^\\n  |\\n  = help: add the module: `go get example.com/nowhere/lib`\\n\",\"explain\":\"marmot explain M0011\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":148,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0011\",\"message\":\"no required module provides package example.com/nowhere/lib\",\"span\":{\"file\":\"main.go\",\"line\":3,\"col\":8,\"endLine\":3,\"endCol\":33},\"help\":[\"add the module: `go get example.com/nowhere/lib`\"],\"context\":{\"lines\":[{\"line\":1,\"text\":\"package main\"},{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"import \\\"example.com/nowhere/lib\\\"\"},{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() { lib.Run() }\"}]},\"rendered\":\"error[M0011]: no required module provides package example.com/nowhere/lib\\n --\u003e ./main.go:3:8\\n  |\\n3 | import \\\"example.com/nowhere/lib\\\"\\n  |        ^^^^^^^^^^^^^^^^^^^^^^^^^\\n  |\\n  = help: add the module: `go get example.com/nowhere/lib`\\n\",\"explain\":\"marmot explain M0011\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":170,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 3
@@ -1840,10 +1780,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0006\",\"message\":\"cannot use nil as int value in variable declaration\",\"span\":{\"file\":\"/privatemain.go\",\"line\":4,\"col\":14,\"endLine\":4,\"endCol\":17},\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tvar n int = nil\"},{\"line\":5,\"text\":\"\\tprintln(n)\"},{\"line\":6,\"text\":\"}\"}]},\"rendered\":\"error[M0006]: cannot use nil as int value in variable declaration\\n --\u003e ./main.go:4:14\\n  |\\n4 |     var n int = nil\\n  |                 ^^^\\n\",\"explain\":\"marmot explain M0006\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":117,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0006\",\"message\":\"cannot use nil as int value in variable declaration\",\"span\":{\"file\":\"main.go\",\"line\":4,\"col\":14,\"endLine\":4,\"endCol\":17},\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tvar n int = nil\"},{\"line\":5,\"text\":\"\\tprintln(n)\"},{\"line\":6,\"text\":\"}\"}]},\"rendered\":\"error[M0006]: cannot use nil as int value in variable declaration\\n --\u003e ./main.go:4:14\\n  |\\n4 |     var n int = nil\\n  |                 ^^^\\n\",\"explain\":\"marmot explain M0006\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":189,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -1870,7 +1810,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0006\",\"message\":\"cannot use 300 (untyped int constant) as byte value in variable declaration (overflows)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":4,\"col\":15,\"endLine\":4,\"endCol\":18},\"notes\":[\"`byte` holds 0 to 255\"],\"help\":[\"use a wider type, such as `int`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tvar b byte = 300\"},{\"line\":5,\"text\":\"\\tprintln(b)\"},{\"line\":6,\"text\":\"}\"}]},\"label\":\"`300` does not fit in `byte`\",\"rendered\":\"error[M0006]: cannot use 300 (untyped int constant) as byte value in variable declaration (overflows)\\n --\u003e ./main.go:4:15\\n  |\\n4 |     var b byte = 300\\n  |                  ^^^ `300` does not fit in `byte`\\n  |\\n  = note: `byte` holds 0 to 255\\n  = help: use a wider type, such as `int`\\n\",\"explain\":\"marmot explain M0006\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":206,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0006\",\"message\":\"cannot use 300 (untyped int constant) as byte value in variable declaration (overflows)\",\"span\":{\"file\":\"main.go\",\"line\":4,\"col\":15,\"endLine\":4,\"endCol\":18},\"notes\":[\"`byte` holds 0 to 255\"],\"help\":[\"use a wider type, such as `int`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tvar b byte = 300\"},{\"line\":5,\"text\":\"\\tprintln(b)\"},{\"line\":6,\"text\":\"}\"}]},\"label\":\"`300` does not fit in `byte`\",\"rendered\":\"error[M0006]: cannot use 300 (untyped int constant) as byte value in variable declaration (overflows)\\n --\u003e ./main.go:4:15\\n  |\\n4 |     var b byte = 300\\n  |                  ^^^ `300` does not fit in `byte`\\n  |\\n  = note: `byte` holds 0 to 255\\n  = help: use a wider type, such as `int`\\n\",\"explain\":\"marmot explain M0006\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":138,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -1900,7 +1840,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0016\",\"message\":\"invalid operation: cannot indirect n (variable of type int)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":11,\"endLine\":5,\"endCol\":12},\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tn := 5\"},{\"line\":5,\"text\":\"\\tprintln(*n)\"},{\"line\":6,\"text\":\"}\"},{\"line\":7,\"text\":\"\"}]},\"rendered\":\"error[M0016]: invalid operation: cannot indirect n (variable of type int)\\n --\u003e ./main.go:5:11\\n  |\\n5 |     println(*n)\\n  |              ^\\n\",\"explain\":\"marmot explain M0016\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":172,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0016\",\"message\":\"invalid operation: cannot indirect n (variable of type int)\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":11,\"endLine\":5,\"endCol\":12},\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tn := 5\"},{\"line\":5,\"text\":\"\\tprintln(*n)\"},{\"line\":6,\"text\":\"}\"},{\"line\":7,\"text\":\"\"}]},\"rendered\":\"error[M0016]: invalid operation: cannot indirect n (variable of type int)\\n --\u003e ./main.go:5:11\\n  |\\n5 |     println(*n)\\n  |              ^\\n\",\"explain\":\"marmot explain M0016\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":160,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -1918,7 +1858,7 @@
         "output": "# example.com/method_value_receiver_missing\n./main.go:7:4: t.Close undefined (type T has no field or method Close)\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -1930,7 +1870,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0003\",\"message\":\"t.Close undefined (type T has no field or method Close)\",\"span\":{\"file\":\"/privatemain.go\",\"line\":7,\"col\":4,\"endLine\":7,\"endCol\":9},\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tvar t T\"},{\"line\":7,\"text\":\"\\tt.Close()\"},{\"line\":8,\"text\":\"}\"},{\"line\":9,\"text\":\"\"}],\"types\":[\"type T struct{}\"]},\"label\":\"`T` has no field or method `Close`\",\"rendered\":\"error[M0003]: t.Close undefined (type T has no field or method Close)\\n --\u003e ./main.go:7:4\\n  |\\n7 |     t.Close()\\n  |       ^^^^^ `T` has no field or method `Close`\\n\",\"explain\":\"marmot explain M0003\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":121,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0003\",\"message\":\"t.Close undefined (type T has no field or method Close)\",\"span\":{\"file\":\"main.go\",\"line\":7,\"col\":4,\"endLine\":7,\"endCol\":9},\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tvar t T\"},{\"line\":7,\"text\":\"\\tt.Close()\"},{\"line\":8,\"text\":\"}\"},{\"line\":9,\"text\":\"\"}],\"types\":[\"type T struct{}\"]},\"label\":\"`T` has no field or method `Close`\",\"rendered\":\"error[M0003]: t.Close undefined (type T has no field or method Close)\\n --\u003e ./main.go:7:4\\n  |\\n7 |     t.Close()\\n  |       ^^^^^ `T` has no field or method `Close`\\n\",\"explain\":\"marmot explain M0003\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":353,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -1960,10 +1900,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"invalid map key type []int\",\"span\":{\"file\":\"/privatemain.go\",\"line\":4,\"col\":11,\"endLine\":4,\"endCol\":16},\"help\":[\"map keys must support `==`: use a string, a struct of comparable fields, or an array such as `[4]int`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tm := map[[]int]string{}\"},{\"line\":5,\"text\":\"\\tprintln(len(m))\"},{\"line\":6,\"text\":\"}\"}]},\"label\":\"not comparable, so it cannot be a map key\",\"rendered\":\"error: invalid map key type []int\\n --\u003e ./main.go:4:11\\n  |\\n4 |     m := map[[]int]string{}\\n  |              ^^^^^ not comparable, so it cannot be a map key\\n  |\\n  = help: map keys must support `==`: use a string, a struct of comparable fields, or an array such as `[4]int`\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":118,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"invalid map key type []int\",\"span\":{\"file\":\"main.go\",\"line\":4,\"col\":11,\"endLine\":4,\"endCol\":16},\"help\":[\"map keys must support `==`: use a string, a struct of comparable fields, or an array such as `[4]int`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tm := map[[]int]string{}\"},{\"line\":5,\"text\":\"\\tprintln(len(m))\"},{\"line\":6,\"text\":\"}\"}]},\"label\":\"not comparable, so it cannot be a map key\",\"rendered\":\"error: invalid map key type []int\\n --\u003e ./main.go:4:11\\n  |\\n4 |     m := map[[]int]string{}\\n  |              ^^^^^ not comparable, so it cannot be a map key\\n  |\\n  = help: map keys must support `==`: use a string, a struct of comparable fields, or an array such as `[4]int`\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":154,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 1
       }
     ]
   },
@@ -1978,7 +1918,7 @@
         "output": "# example.com/range_over_int_func\n./main.go:6:17: cannot range over count (value of type func() int): func must be func(yield func(...) bool): wrong argument count\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -1990,10 +1930,10 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0016\",\"message\":\"cannot range over count (value of type func() int): func must be func(yield func(...) bool): wrong argument count\",\"span\":{\"file\":\"/privatemain.go\",\"line\":6,\"col\":17,\"endLine\":6,\"endCol\":22},\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tfor i := range count {\"},{\"line\":7,\"text\":\"\\t\\tprintln(i)\"},{\"line\":8,\"text\":\"\\t}\"}]},\"rendered\":\"error[M0016]: cannot range over count (value of type func() int): func must be func(yield func(...) bool): wrong argument count\\n --\u003e ./main.go:6:17\\n  |\\n6 |     for i := range count {\\n  |                    ^^^^^\\n\",\"explain\":\"marmot explain M0016\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":113,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0016\",\"message\":\"cannot range over count (value of type func() int): func must be func(yield func(...) bool): wrong argument count\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":17,\"endLine\":6,\"endCol\":22},\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tfor i := range count {\"},{\"line\":7,\"text\":\"\\t\\tprintln(i)\"},{\"line\":8,\"text\":\"\\t}\"}]},\"rendered\":\"error[M0016]: cannot range over count (value of type func() int): func must be func(yield func(...) bool): wrong argument count\\n --\u003e ./main.go:6:17\\n  |\\n6 |     for i := range count {\\n  |                    ^^^^^\\n\",\"explain\":\"marmot explain M0016\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":158,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
-        "seconds": 2
+        "seconds": 3
       }
     ]
   },
@@ -2020,7 +1960,7 @@
     "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0004\",\"message\":\"label outer declared and not used\",\"span\":{\"file\":\"/privatemain.go\",\"line\":4,\"col\":1,\"endLine\":4,\"endCol\":7},\"fixes\":[{\"title\":\"remove the label\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":4,\"col\":1,\"endLine\":5,\"endCol\":1},\"newText\":\"\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"outer:\"},{\"line\":5,\"text\":\"\\tfor i := 0; i \u003c 2; i++ {\"},{\"line\":6,\"text\":\"\\t\\tprintln(i)\"}]},\"label\":\"declared here but never used\",\"rendered\":\"error[M0004]: label outer declared and not used\\n --\u003e ./main.go:4:1\\n  |\\n4 | outer:\\n  | ^^^^^^ declared here but never used\\n  |\\nhelp: remove the label\\n  |\\n4 - outer:\\n  |\\n\",\"explain\":\"marmot explain M0004\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":89,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0004\",\"message\":\"label outer declared and not used\",\"span\":{\"file\":\"main.go\",\"line\":4,\"col\":1,\"endLine\":4,\"endCol\":7},\"fixes\":[{\"title\":\"remove the label\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":4,\"col\":1,\"endLine\":5,\"endCol\":1},\"newText\":\"\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":2,\"text\":\"\"},{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"outer:\"},{\"line\":5,\"text\":\"\\tfor i := 0; i \u003c 2; i++ {\"},{\"line\":6,\"text\":\"\\t\\tprintln(i)\"}]},\"label\":\"declared here but never used\",\"rendered\":\"error[M0004]: label outer declared and not used\\n --\u003e ./main.go:4:1\\n  |\\n4 | outer:\\n  | ^^^^^^ declared here but never used\\n  |\\nhelp: remove the label\\n  |\\n4 - outer:\\n  |\\n\",\"explain\":\"marmot explain M0004\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":163,\"exitCode\":1}\n",
         "compiles": true,
         "fixed": true,
         "seconds": 2
@@ -2030,26 +1970,14 @@
   {
     "case": "65_return_value_unused_call",
     "condition": "go",
-    "fixed": false,
+    "fixed": true,
     "compiles": true,
-    "attempts": 3,
+    "attempts": 1,
     "log": [
       {
         "output": "# example.com/return_value_unused_call\n./main.go:5:2: x == 2 (untyped bool value) is not used\n",
         "compiles": true,
-        "fixed": false,
-        "seconds": 2
-      },
-      {
-        "output": "",
-        "compiles": true,
-        "fixed": false,
-        "seconds": 2
-      },
-      {
-        "output": "",
-        "compiles": true,
-        "fixed": false,
+        "fixed": true,
         "seconds": 2
       }
     ]
@@ -2057,26 +1985,14 @@
   {
     "case": "65_return_value_unused_call",
     "condition": "marmot",
-    "fixed": false,
+    "fixed": true,
     "compiles": true,
-    "attempts": 3,
+    "attempts": 1,
     "log": [
       {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"x == 2 (untyped bool value) is not used\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":2,\"endLine\":5,\"endCol\":8},\"fixes\":[{\"title\":\"to assign, use `=`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"/privatemain.go\",\"span\":{\"file\":\"/privatemain.go\",\"line\":5,\"col\":4,\"endLine\":5,\"endCol\":6},\"newText\":\"=\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tx := 1\"},{\"line\":5,\"text\":\"\\tx == 2\"},{\"line\":6,\"text\":\"}\"},{\"line\":7,\"text\":\"\"}]},\"label\":\"this value is not used\",\"rendered\":\"error: x == 2 (untyped bool value) is not used\\n --\u003e ./main.go:5:2\\n  |\\n5 |     x == 2\\n  |     ^^^^^^ this value is not used\\n  |\\nhelp: to assign, use `=` (check it)\\n  |\\n5 -     x == 2\\n5 +     x = 2\\n  |\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":252,\"exitCode\":1}\n",
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"x == 2 (untyped bool value) is not used\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":2,\"endLine\":5,\"endCol\":8},\"fixes\":[{\"title\":\"to assign, use `=`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":4,\"endLine\":5,\"endCol\":6},\"newText\":\"=\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":3,\"text\":\"func main() {\"},{\"line\":4,\"text\":\"\\tx := 1\"},{\"line\":5,\"text\":\"\\tx == 2\"},{\"line\":6,\"text\":\"}\"},{\"line\":7,\"text\":\"\"}]},\"label\":\"this value is not used\",\"rendered\":\"error: x == 2 (untyped bool value) is not used\\n --\u003e ./main.go:5:2\\n  |\\n5 |     x == 2\\n  |     ^^^^^^ this value is not used\\n  |\\nhelp: to assign, use `=` (check it)\\n  |\\n5 -     x == 2\\n5 +     x = 2\\n  |\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":178,\"exitCode\":1}\n",
         "compiles": true,
-        "fixed": false,
-        "seconds": 3
-      },
-      {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-534078078/nopcln.exe /dev/null: cross-device link\",\"span\":{\"file\":\"\",\"line\":0,\"col\":0,\"endLine\":0,\"endCol\":0},\"rendered\":\"error: rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-534078078/nopcln.exe /dev/null: cross-device link\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":1290,\"exitCode\":1}\n",
-        "compiles": true,
-        "fixed": false,
-        "seconds": 3
-      },
-      {
-        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0000\",\"message\":\"rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-991506939/nopcln.exe /dev/null: cross-device link\",\"span\":{\"file\":\"\",\"line\":0,\"col\":0,\"endLine\":0,\"endCol\":0},\"rendered\":\"error: rename /var/folders/w6/hzb0jzqd647bzm2v_kg5k6k80000gn/T/marmot-991506939/nopcln.exe /dev/null: cross-device link\\n\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":364,\"exitCode\":1}\n",
-        "compiles": true,
-        "fixed": false,
+        "fixed": true,
         "seconds": 3
       }
     ]
