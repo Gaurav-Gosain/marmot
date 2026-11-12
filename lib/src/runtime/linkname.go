@@ -403,20 +403,53 @@ func subtle_setDITEnabled() bool { return false }
 //go:linkname subtle_setDITDisabled crypto/subtle.setDITDisabled
 func subtle_setDITDisabled() {}
 
-// weak. The collector has no weak references yet, so a weak pointer is a
-// strong one: Value never returns nil, which is allowed (the object may
-// simply never be collected).
+// weak. A weak pointer is a handle: a word in pointer free memory that
+// holds the object's address and that the collector zeroes, during the
+// collection that finds the object unreachable (rt_gc_weak_register).
+// Handles are unique per address, so weak pointers made from the same
+// pointer compare equal. weakTable keys are inverted addresses so that
+// the table does not keep objects alive; an entry whose handle was zeroed
+// is replaced when its address is used again.
+
+//go:linkname rt_gc_weak_register rt_gc_weak_register
+func rt_gc_weak_register(slot *uintptr)
+
+var (
+	weakLock  mutex
+	weakTable map[uintptr]*uintptr
+)
 
 //go:linkname weak_runtime_registerWeakPointer weak.runtime_registerWeakPointer
 func weak_runtime_registerWeakPointer(p unsafe.Pointer) unsafe.Pointer {
-	h := (*unsafe.Pointer)(mallocConservative(ptrSize))
-	*h = p
+	key := ^uintptr(p)
+	lock(&weakLock)
+	defer unlock(&weakLock)
+	if h := weakTable[key]; h != nil && atomicLoad64((*uint64)(unsafe.Pointer(h))) == uint64(uintptr(p)) {
+		return unsafe.Pointer(h)
+	}
+	if weakTable == nil {
+		weakTable = make(map[uintptr]*uintptr)
+	}
+	if len(weakTable) >= 1024 && len(weakTable)&(len(weakTable)-1) == 0 {
+		// Drop entries of collected objects now and then.
+		for k, h := range weakTable {
+			if atomicLoad64((*uint64)(unsafe.Pointer(h))) == 0 {
+				delete(weakTable, k)
+			}
+		}
+	}
+	h := (*uintptr)(mallocgc(ptrSize, nil))
+	*h = uintptr(p)
+	// p is still referenced by the caller (weak.Make keeps it alive), so
+	// no collection can free the object before it is registered.
+	rt_gc_weak_register(h)
+	weakTable[key] = h
 	return unsafe.Pointer(h)
 }
 
 //go:linkname weak_runtime_makeStrongFromWeak weak.runtime_makeStrongFromWeak
 func weak_runtime_makeStrongFromWeak(h unsafe.Pointer) unsafe.Pointer {
-	return *(*unsafe.Pointer)(h)
+	return unsafe.Pointer(uintptr(atomicLoad64((*uint64)(h))))
 }
 
 // crypto/rand and crypto/internal/boring/bcache.
