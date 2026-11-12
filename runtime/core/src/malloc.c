@@ -648,15 +648,20 @@ void *rt_alloc_slow(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintpt
   return alloc_slow(size, kind, ptrmap, elemsize, true);
 }
 
+// MARMOT_POISON: rt_alloc_nozero memory is filled with 0xFB (0xFA marks
+// freed memory), so a caller that reads a byte it did not write sees a
+// nonzero value in tests instead of a lucky zero.
 NOINLINE void *rt_alloc_nozero_slow(uintptr_t size) {
-  return alloc_slow(size, RT_ALLOC_NOSCAN, NULL, 0, false);
+  void *p = alloc_slow(size, RT_ALLOC_NOSCAN, NULL, 0, false);
+  if (UNLIKELY(rt_poison) && size) __builtin_memset(p, 0xFB, size);
+  return p;
 }
 
 // A NOSCAN object whose contents are not zeroed: the caller overwrites all
 // of it before reading (string and slice copies, conversion buffers).
 // Inlinable from rtcore.bc.
 RT_API void *rt_alloc_nozero(uintptr_t size) {
-  if (LIKELY(size - 1 < MAX_SMALL)) {
+  if (LIKELY(size - 1 < MAX_SMALL) && LIKELY(!rt_poison)) {
     uint32_t cls = size <= 1024 ? rt_size_to_class8[(size + 7) >> 3]
                                 : rt_size_to_class128[(size - 1024 + 127) >> 7];
     rt_m *m = getm();

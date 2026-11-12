@@ -50,7 +50,8 @@ char **rt_envp(void);
 void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintptr_t elemsize);
 // As rt_alloc(size, RT_ALLOC_NOSCAN, NULL, 0) but the memory is not zeroed:
 // for objects without pointers that the caller overwrites completely before
-// reading (string and slice copies, conversion buffers). Inlinable.
+// reading (string and slice copies, conversion buffers). Inlinable. Under
+// MARMOT_POISON=1 the memory is filled with 0xFB, so a missed byte shows.
 void *rt_alloc_nozero(uintptr_t size);
 
 // Free a heap object the compiler proved dead: nothing may use it or point
