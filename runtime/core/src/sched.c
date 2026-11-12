@@ -1494,7 +1494,7 @@ void sched_dump(void) {
   for (uint32_t i = 0; i < n && shown < 200; i++) {
     rt_g *g = gchunks[i / GCHUNK]->g[i % GCHUNK];
     uint32_t st = atomic_load(&g->status);
-    if (st == G_DEAD || st == G_IDLE) continue;
+    if ((st == G_DEAD || st == G_IDLE) && !g->stack_hi) continue;
     shown++;
     rt_print("G");
     rt_printi(g->id);
@@ -1504,6 +1504,12 @@ void sched_dump(void) {
     kv("m", gm ? gm->id : -1);
     if (g->system) rt_print(" system");
     if (g == rt_main_g) rt_print(" main");
+    rt_print(" stack=");
+    rt_printx(g->stack_lo);
+    rt_print("-");
+    rt_printx(g->stack_hi);
+    rt_print(" sp=");
+    rt_printx((uintptr_t)g->sp);
     rt_print("\n");
   }
   rt_print("== end\n");
