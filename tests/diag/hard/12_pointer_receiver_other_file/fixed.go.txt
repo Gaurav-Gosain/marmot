@@ -1,0 +1,16 @@
+package main
+
+import "fmt"
+
+func bump(i Incrementer, times int) int {
+	v := 0
+	for range times {
+		v = i.Inc()
+	}
+	return v
+}
+
+func main() {
+	c := Counter{}
+	fmt.Println(bump(&c, 3))
+}

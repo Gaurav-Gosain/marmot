@@ -1,0 +1,12 @@
+package main
+
+import (
+	"fmt"
+
+	"example.com/app/models"
+)
+
+func main() {
+	u := models.User{FirstName: "Ada", LastName: "Lovelace", Email: "ada@example.com", Age: 36}
+	fmt.Println(u.FirstName, u.Email)
+}

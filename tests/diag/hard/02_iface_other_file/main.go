@@ -1,0 +1,12 @@
+package main
+
+import "fmt"
+
+func describe(s Shape) string {
+	return fmt.Sprintf("%s %.1f %.1f", s.Name(), s.Area(), s.Perimeter())
+}
+
+func main() {
+	sq := Square{Side: 2}
+	fmt.Println(describe(sq))
+}

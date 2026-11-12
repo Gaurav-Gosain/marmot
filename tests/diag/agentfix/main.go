@@ -38,7 +38,8 @@ var (
 	flJ        = flag.Int("j", 3, "parallel cases")
 	flRun      = flag.String("run", "", "regexp: only cases whose name matches")
 	flMarmot   = flag.String("marmot", "", "marmot binary (default build/bin/marmot)")
-	flOut      = flag.String("o", "tests/diag/agentfix/results.json", "results file")
+	flOut      = flag.String("o", "", "results file (default tests/diag/agentfix/results.json, or results-hard.json with -hard)")
+	flHard     = flag.Bool("hard", false, "use tests/diag/hard: modules of several files and packages; the model sees only the failing file")
 )
 
 type attempt struct {
@@ -65,7 +66,17 @@ func main() {
 	if marmot == "" {
 		marmot = filepath.Join(root, "build", "bin", "marmot")
 	}
-	cases, _ := filepath.Glob(filepath.Join(root, "tests/diag/testdata/*/main.go"))
+	corpus := "tests/diag/testdata"
+	if *flHard {
+		corpus = "tests/diag/hard"
+	}
+	if *flOut == "" {
+		*flOut = "tests/diag/agentfix/results.json"
+		if *flHard {
+			*flOut = "tests/diag/agentfix/results-hard.json"
+		}
+	}
+	cases, _ := filepath.Glob(filepath.Join(root, corpus, "*/go.mod"))
 	var re *regexp.Regexp
 	if *flRun != "" {
 		re = regexp.MustCompile(*flRun)
@@ -106,12 +117,25 @@ func runCase(dir, cond, marmot, root string) result {
 		return r
 	}
 	defer os.RemoveAll(tmp)
-	for _, f := range []string{"main.go", "go.mod"} {
-		data, _ := os.ReadFile(filepath.Join(dir, f))
-		os.WriteFile(filepath.Join(tmp, f), data, 0o644)
+	// Copy the module (every .go file and go.mod, keeping directories).
+	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if n := d.Name(); n == "go.mod" || strings.HasSuffix(n, ".go") {
+			rel, _ := filepath.Rel(dir, p)
+			os.MkdirAll(filepath.Dir(filepath.Join(tmp, rel)), 0o755)
+			data, _ := os.ReadFile(p)
+			os.WriteFile(filepath.Join(tmp, rel), data, 0o644)
+		}
+		return nil
+	})
+	failing := "main.go"
+	if b, err := os.ReadFile(filepath.Join(dir, "failing")); err == nil {
+		failing = strings.TrimSpace(string(b))
 	}
 	ref, _ := os.ReadFile(filepath.Join(dir, "fixed.go.txt"))
-	want := behavior(string(ref))
+	want := behaviorIn(tmp, failing, string(ref))
 	// Cases with several sound fixes (which argument to add, which
 	// declaration to keep) are judged by compiling only.
 	_, err = os.Stat(filepath.Join(dir, "ambiguous"))
@@ -123,16 +147,16 @@ func runCase(dir, cond, marmot, root string) result {
 		} else {
 			out, _ = build(tmp, []string{"MARMOT_OUTPUT=json", "MARMOT_ROOT=" + root, "MARMOT_DAEMON=0"}, marmot, "build", "-o", filepath.Join(tmp, "prog"), ".")
 		}
-		src, _ := os.ReadFile(filepath.Join(tmp, "main.go"))
+		src, _ := os.ReadFile(filepath.Join(tmp, failing))
 		start := time.Now()
-		fixed := ask(out, string(src))
+		fixed := ask(out, failing, string(src), *flHard)
 		at := attempt{Output: out, Seconds: int(time.Since(start).Seconds())}
 		r.Attempts = a
 		if fixed != "" {
-			os.WriteFile(filepath.Join(tmp, "main.go"), []byte(fixed), 0o644)
+			os.WriteFile(filepath.Join(tmp, failing), []byte(fixed), 0o644)
 			if _, ok := build(tmp, nil, "go", "build", "-o", os.DevNull, "."); ok && strings.Contains(fixed, "func main()") {
 				at.Compiles = true
-				at.Fixed = ambiguous || behavior(fixed) == want
+				at.Fixed = ambiguous || behaviorIn(tmp, failing, fixed) == want
 			}
 		}
 		r.Log = append(r.Log, at)
@@ -171,15 +195,14 @@ func scrub(out, dir string) string {
 	return tempRE.ReplaceAllString(out, "$$TMPDIR")
 }
 
-// behavior runs a program and returns its output and exit status.
-func behavior(src string) string {
-	tmp, err := os.MkdirTemp("", "agentfix-run-")
-	if err != nil {
-		return ""
-	}
-	defer os.RemoveAll(tmp)
-	os.WriteFile(filepath.Join(tmp, "main.go"), []byte(src), 0o644)
-	os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module x\n\ngo 1.27\n"), 0o644)
+// behaviorIn runs the module in dir with file replaced by src and returns
+// the output and exit status; the file is restored after.
+func behaviorIn(dir, file, src string) string {
+	path := filepath.Join(dir, file)
+	old, _ := os.ReadFile(path)
+	os.WriteFile(path, []byte(src), 0o644)
+	defer os.WriteFile(path, old, 0o644)
+	tmp := dir
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "go", "run", ".")
@@ -187,7 +210,7 @@ func behavior(src string) string {
 	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOPROXY=off")
 	var b bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &b, &b
-	err = cmd.Run()
+	err := cmd.Run()
 	code := 0
 	if ee, ok := err.(*exec.ExitError); ok {
 		code = ee.ExitCode()
@@ -197,12 +220,15 @@ func behavior(src string) string {
 
 var codeBlock = regexp.MustCompile("(?s)```(?:go)?\\n(.*?)```")
 
-const system = "You fix Go programs that do not compile. Answer with the complete fixed main.go in one ```go code block and nothing else. Keep what the program is meant to do; change as little as you can."
+const system = "You fix Go programs that do not compile. Answer with the complete fixed file in one ```go code block and nothing else. Keep what the program is meant to do; change as little as you can."
 
 // ask gives the model the build output and the file and returns the fixed
 // file, or "".
-func ask(output, src string) string {
-	prompt := "The Go program main.go does not compile. Build output:\n\n```\n" + output + "```\n\nmain.go:\n\n```go\n" + src + "```\n"
+func ask(output, file, src string, partial bool) string {
+	prompt := "The Go program does not compile. Build output:\n\n```\n" + output + "```\n\n" + file + ":\n\n```go\n" + src + "```\n"
+	if partial {
+		prompt += "\nOnly " + file + " is shown and only " + file + " may change; the other files of the module stay as they are. Answer with the complete fixed " + file + ".\n"
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "claude", "-p", "--model", *flModel, "--tools", "", "--no-session-persistence",

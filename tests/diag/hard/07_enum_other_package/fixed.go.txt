@@ -1,0 +1,15 @@
+package main
+
+import (
+	"fmt"
+
+	"example.com/app/status"
+)
+
+func main() {
+	s := status.Active
+	if s == status.Suspended {
+		fmt.Println("no")
+	}
+	fmt.Println(s)
+}

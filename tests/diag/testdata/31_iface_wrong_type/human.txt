@@ -5,7 +5,7 @@ error[M0014]: cannot use Dog{} (value of struct type Dog) as Namer value in vari
    |      ----- `Namer` is declared here
  ...
  7 | func (Dog) Name() []byte { return []byte("dog") }
-   |            ---- has the wrong type
+   |            ---- `Name` has the wrong type
  ...
 10 |     var n Namer = Dog{}
    |                   ^^^^^ `Dog` does not implement `Namer`

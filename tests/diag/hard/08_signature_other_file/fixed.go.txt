@@ -1,0 +1,8 @@
+package main
+
+import "fmt"
+
+func main() {
+	n, _ := Save("k", []byte("hello"), "x")
+	fmt.Println(n)
+}

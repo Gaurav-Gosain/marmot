@@ -5,7 +5,7 @@ error[M0014]: cannot use c (variable of struct type C) as Counter value in argum
    |      ------- `Counter` is declared here
  ...
  7 | func (c *C) Inc() { c.n++ }
-   |         -- pointer receiver
+   |         -- `Inc` has a pointer receiver
  ...
 13 |     use(c)
    |         ^ `C` does not implement `Counter`

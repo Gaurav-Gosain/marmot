@@ -2,7 +2,7 @@ error[M0014]: cannot use Temp(1) (constant 1 of float64 type Temp) as fmt.String
   --> ./main.go:10:23
    |
  7 | func (t Temp) Strng() string { return fmt.Sprintf("%.1f C", float64(t)) }
-   |               ----- not `String`
+   |               ----- `Strng` is declared here; `fmt.Stringer` needs `String`
  ...
 10 |     var s fmt.Stringer = Temp(1)
    |                          ^^^^^^^ `Temp` does not implement `fmt.Stringer`

@@ -1,0 +1,11 @@
+package main
+
+import (
+	"fmt"
+
+	"example.com/app/textutil"
+)
+
+func main() {
+	fmt.Println(textutil.FormatFullName(" Ada", "Lovelace "), textutil.Initials("ada", "lovelace"))
+}

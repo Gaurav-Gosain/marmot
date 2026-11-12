@@ -111,6 +111,11 @@ func (s *Sources) enrich(d *Diagnostic, opt Options) {
 				if ce, ok := n.(*ast.CallExpr); ok && ce.Pos() == pos {
 					d.Span = f.spanOf(ce)
 					d.Primary = "returns more than one value"
+					name := f.text(ce.Fun)
+					if sig := s.funcSig(f, name); sig != "" {
+						d.Notes = append(d.Notes, fmt.Sprintf("`%s` is declared as `%s`", name, sig))
+					}
+					d.Help = append(d.Help, fmt.Sprintf("receive every result in a statement of its own, for example `v, err := %s`, and use `v` here", f.text(ce)))
 				}
 			}
 		}
@@ -140,9 +145,25 @@ func (s *Sources) enrich(d *Diagnostic, opt Options) {
 		d.Help = append(d.Help, "add a `return` at the end of the function, or `panic` if the end cannot be reached")
 	case CodeNotExported:
 		if m := reNotExported.FindStringSubmatch(d.Message); m != nil {
+			if f.at(d.Span, m[1]) {
+				setSpanLen(d, len(m[1]))
+			} else if f.at(d.Span, m[2]+"."+m[1]) {
+				d.Span.Col += len(m[2]) + 1
+				setSpanLen(d, len(m[1]))
+			}
+			d.Primary = "unexported: only package `" + m[2] + "` can use it"
 			up := strings.ToUpper(m[1][:1]) + m[1][1:]
-			d.Help = append(d.Help, fmt.Sprintf("only exported names (upper case first letter) of `%s` are visible here; the exported name would be `%s.%s`", m[2], m[2], up))
+			if ex := s.importedExports(f, m[2]); ex != nil {
+				if ex.names[up] != "" {
+					d.Fixes = append(d.Fixes, Fix{Title: "use `" + m[2] + "." + up + "`", Applicability: MaybeIncorrect,
+						Edits: []Edit{{File: f.path, Span: d.Span, NewText: up}}})
+				} else if note := exportsNote(m[2], ex); note != "" {
+					d.Notes = append(d.Notes, note)
+				}
+			}
 		}
+	case CodeUnknownField:
+		s.unknownField(d, f, pos)
 	}
 	if opt.Context {
 		s.context(d, f, pos, opt)
@@ -311,8 +332,9 @@ func (s *Sources) undefined(d *Diagnostic, f *srcFile, pos token.Pos) {
 			cands = append(cands, n)
 		}
 		if best := closest(sel, cands); best != "" {
-			d.Primary = "not declared by package `" + pkg + "`"
 			d.Fixes = append(d.Fixes, Fix{Title: "use `" + pkg + "." + best + "`", Applicability: MaybeIncorrect, Edits: []Edit{{File: f.path, Span: d.Span, NewText: best}}})
+		} else if note := exportsNote(pkg, ex); note != "" {
+			d.Notes = append(d.Notes, note)
 		}
 		return
 	}
@@ -649,6 +671,11 @@ func closest(name string, cands []string) string {
 		}
 		if strings.EqualFold(c, name) {
 			return c
+		}
+		if len(name) >= 4 && affix(name, c) >= len(name) && len(c) <= 2*len(name) && bestD > 1 {
+			// A word inserted in the middle: FormatName for FormatFullName.
+			best, bestD = c, 2
+			continue
 		}
 		if abs(len(c)-len(name)) > limit {
 			continue
@@ -1518,7 +1545,7 @@ func (s *Sources) notImplement(d *Diagnostic, f *srcFile, pos token.Pos) {
 		names = append(names, h.name)
 	}
 	var lacks []string
-	pointerOnly := false
+	pointerN := 0
 	for _, n := range need {
 		h, found := byName[n.name]
 		switch {
@@ -1526,16 +1553,18 @@ func (s *Sources) notImplement(d *Diagnostic, f *srcFile, pos token.Pos) {
 			why := "`" + n.name + n.sig + "` is missing"
 			if best := closest(n.name, names); best != "" {
 				why += "; `" + tname + "` has `" + best + "`"
-				labelOrRelated(d, byName[best].span, "not `"+n.name+"`")
+				labelOrRelated(d, byName[best].span, "`"+best+"` is declared here; `"+iface+"` needs `"+n.name+"`")
 			}
 			lacks = append(lacks, why)
 		case normSig(h.sig) != normSig(n.sig):
 			lacks = append(lacks, "`"+n.name+"` has type `func"+h.sig+"`, `"+iface+"` needs `func"+n.sig+"`")
-			labelOrRelated(d, h.span, "has the wrong type")
+			labelOrRelated(d, h.span, "`"+n.name+"` has the wrong type")
 		case h.ptr && !isPtr:
 			lacks = append(lacks, "`"+n.name+"` has a pointer receiver, so only `*"+tname+"` has it")
-			labelOrRelated(d, h.recv, "pointer receiver")
-			pointerOnly = true
+			if pointerN == 0 {
+				labelOrRelated(d, h.recv, "`"+n.name+"` has a pointer receiver")
+			}
+			pointerN++
 		}
 	}
 	if len(lacks) == 0 {
@@ -1553,7 +1582,7 @@ func (s *Sources) notImplement(d *Diagnostic, f *srcFile, pos token.Pos) {
 	for _, l := range lacks {
 		d.Notes = append(d.Notes, "  "+l)
 	}
-	if pointerOnly && len(lacks) == 1 && expr != "" && d.Span.Valid() {
+	if pointerN > 0 && pointerN == len(lacks) && expr != "" && d.Span.Valid() {
 		d.Fixes = append(d.Fixes, Fix{Title: "pass a pointer", Applicability: MaybeIncorrect,
 			Edits: []Edit{{File: f.path, Span: Span{File: f.path, Line: d.Span.Line, Col: d.Span.Col, EndLine: d.Span.Line, EndCol: d.Span.Col}, NewText: "&"}}})
 	}
@@ -1674,6 +1703,14 @@ func (s *Sources) notSatisfy(d *Diagnostic, f *srcFile, pos token.Pos) {
 				if numeric[under] {
 					d.Help = append(d.Help, fmt.Sprintf("to accept it, add `~%s` to `%s`", under, cons))
 				}
+			}
+		}
+	}
+	if numeric[typ] && set != "" {
+		for _, t := range []string{"float64", "int", "int64", "float32"} {
+			if strings.Contains(set, "~"+t) || strings.Contains(set, " "+t) {
+				d.Help = append(d.Help, fmt.Sprintf("use a type in the set, for example `%s` instead of `%s`", t, typ))
+				break
 			}
 		}
 	}
@@ -1824,4 +1861,51 @@ func (s *Sources) declSpan(f *srcFile, name string) (Span, bool) {
 		}
 	}
 	return Span{}, false
+}
+
+// exportsNote lists what a small package exports, functions first, or ""
+// for a large package.
+func exportsNote(pkg string, ex *exports) string {
+	if len(ex.names) == 0 || len(ex.names) > 16 {
+		return ""
+	}
+	var funcs, other []string
+	for n, k := range ex.names {
+		if k == "func" {
+			funcs = append(funcs, n)
+		} else {
+			other = append(other, n)
+		}
+	}
+	sort.Strings(funcs)
+	sort.Strings(other)
+	return fmt.Sprintf("package `%s` exports %s", pkg, backtickList(append(funcs, other...)))
+}
+
+var reUnknownField = lazy(`^unknown field (\w+) in struct literal of type (\S+)$`)
+
+// unknownField suggests the closest field of the struct, from its
+// declaration in this package or an imported one.
+func (s *Sources) unknownField(d *Diagnostic, f *srcFile, pos token.Pos) {
+	m := reUnknownField.FindStringSubmatch(d.Message)
+	if m == nil {
+		return
+	}
+	field, typ := m[1], strings.TrimPrefix(m[2], "*")
+	d.Primary = "`" + typ + "` has no field `" + field + "`"
+	ex := s.typeExports(f, typ)
+	if ex == nil {
+		return
+	}
+	tname := typ
+	if _, after, ok := strings.Cut(typ, "."); ok {
+		tname = after
+	}
+	fields := ex.fields[tname]
+	if best := closest(field, fields); best != "" {
+		d.Fixes = append(d.Fixes, Fix{Title: "use `" + best + "`", Applicability: MaybeIncorrect,
+			Edits: []Edit{{File: f.path, Span: d.Span, NewText: best}}})
+	} else if len(fields) > 0 {
+		d.Notes = append(d.Notes, fmt.Sprintf("fields of `%s`: %s", typ, backtickList(fields)))
+	}
 }

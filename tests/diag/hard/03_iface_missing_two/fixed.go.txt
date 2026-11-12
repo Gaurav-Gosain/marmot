@@ -1,0 +1,21 @@
+package main
+
+import "fmt"
+
+func use(s Store) {
+	s.Put("a", "1")
+	v, ok := s.Get("a")
+	fmt.Println(v, ok)
+	s.Delete("a")
+	_, ok = s.Get("a")
+	fmt.Println(ok)
+}
+
+type memStore struct{ *Mem }
+
+func (s memStore) Put(key, value string) { s.Set(key, value) }
+func (s memStore) Delete(key string)     { delete(s.m, key) }
+
+func main() {
+	use(memStore{NewMem()})
+}

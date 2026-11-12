@@ -36,6 +36,7 @@ const (
 	CodeNotSatisfy    = "M0026"
 	CodeCannotInfer   = "M0027"
 	CodeShadow        = "M0028"
+	CodeUnknownField  = "M0029"
 )
 
 // CodeInfo describes one code for marmot explain.
@@ -111,6 +112,12 @@ var codeTable = []CodeInfo{
 		Text:  "A type parameter appears in no argument, so the call does not say what it is. Give the type argument explicitly.",
 		Fix:   "Write the type arguments in brackets after the function name.",
 		match: lazy(`cannot infer `)},
+	{Code: CodeUnknownField, Title: "unknown struct field",
+		Wrong: "u := User{Nmae: \"ada\"}",
+		Right: "u := User{Name: \"ada\"}",
+		Text:  "A composite literal names a field the struct type does not have.",
+		Fix:   "Use one of the struct's fields.",
+		match: lazy(`^unknown field `)},
 	{Code: CodeShadow, Title: "shadowed variable",
 		Wrong: "var err error\nif ok {\n\tdata, err := load() // a new err\n\tuse(data)\n}\nreturn err // always nil",
 		Right: "var err error\nif ok {\n\tvar data []byte\n\tdata, err = load()\n\tuse(data)\n}\nreturn err",

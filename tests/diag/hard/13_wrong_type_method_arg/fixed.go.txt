@@ -1,0 +1,10 @@
+package main
+
+import "fmt"
+
+func main() {
+	l := &Logger{}
+	l.Write([]byte("started"))
+	l.Write([]byte("done"))
+	fmt.Println(l.Count())
+}

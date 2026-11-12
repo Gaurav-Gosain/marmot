@@ -1,0 +1,12 @@
+package main
+
+import (
+	"fmt"
+
+	"example.com/app/config"
+)
+
+func main() {
+	s := config.Server{Host: "localhost", Port: 8080, Timeout: 5, Tags: []string{"web"}}
+	fmt.Println(s.Addr(), len(s.Tags))
+}
