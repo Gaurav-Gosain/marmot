@@ -5,9 +5,6 @@ build/
 *.bc
 .DS_Store
 
-# Internal working notes, kept local.
-/SPEC.md
-/briefs/
 /docs/*
 !/docs/usage.md
 !/docs/design.md
@@ -16,22 +13,3 @@ build/
 !/docs/support-matrix.md
 !/docs/img/
 !/docs/diagrams/
-/scripts/linux/
-/bench/reasons/
-/bench/TARGETS*.md
-/bench/HISTORY.md
-/bench/REPORT*.md
-/bench/report.html
-/bench/loop.sh
-/bench/linux-loop.sh
-/bench/results/
-/bench/assets/
-/bench/report*.html
-/lib/hosttest/runtime/testdata/fmt_hello.want
-/lib/hosttest/runtime/testdata/fmt_hello.pcln
-/lib/hosttest/runtime/testdata/*.want
-/lib/hosttest/runtime/testdata/*.pcln
-/tests/results.json
-/tests/RESULTS.md
-/tests/watch/
-/bench/BUILD*.md
