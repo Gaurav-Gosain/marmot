@@ -32,6 +32,7 @@ type Config struct {
 	Dir      string // working directory
 	Output   string // -o
 	OptLevel string // -O
+	OptSet   bool   // -O was given: compile with LLVM at that level, not tier0
 	Emit     string // mlir, llvm, obj, exe
 	Work     bool   // keep the work directory
 	Verbose  bool

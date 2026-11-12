@@ -48,7 +48,7 @@ func (b *build) buildStamp(goos, goarch string) string {
 	}
 	sort.Strings(files)
 	h := sha256.New()
-	fmt.Fprintf(h, "stamp v1\n%s\n%s/%s\n%s %s %s %s %v\n%v\n", goroot, goos, goarch, b.cfg.OptLevel, b.cfg.Emit, b.cfg.Dialect, b.cfg.GC, b.cfg.Release, b.cfg.Tags)
+	fmt.Fprintf(h, "stamp v1\n%s\n%s/%s\n%s %s %s %s %v tier0=%v\n%v\n", goroot, goos, goarch, b.cfg.OptLevel, b.cfg.Emit, b.cfg.Dialect, b.cfg.GC, b.cfg.Release, b.tier0(), b.cfg.Tags)
 	if exe, err := os.Executable(); err == nil {
 		fileSig(h, exe)
 	}
@@ -160,7 +160,7 @@ func (b *build) srcKey(p *packages.Package) string {
 		if exe, err := os.Executable(); err == nil {
 			fileSig(exeSig, exe)
 		}
-		fmt.Fprintf(exeSig, "%s %s %s %s %v %s/%s\n", b.cfg.OptLevel, b.cfg.Emit, b.cfg.Dialect, b.cfg.GC, b.cfg.Release, b.goos, b.goarch)
+		fmt.Fprintf(exeSig, "%s %s %s %s %v tier0=%v %s/%s\n", b.cfg.OptLevel, b.cfg.Emit, b.cfg.Dialect, b.cfg.GC, b.cfg.Release, b.tier0(), b.goos, b.goarch)
 		for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_DIALECT", "MARMOT_SPEC"} {
 			fmt.Fprintf(exeSig, "%s=%s\n", k, os.Getenv(k))
 		}

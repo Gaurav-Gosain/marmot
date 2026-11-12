@@ -96,6 +96,7 @@ func cmdBuild(args []string, run bool) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	optSet := *opt != "" // an explicit -O level selects LLVM over tier0
 	if *opt == "" {
 		*opt = "2"
 		if *release {
@@ -155,7 +156,7 @@ func cmdBuild(args []string, run bool) int {
 	}
 	wd, _ := os.Getwd()
 	cfg := driver.Config{
-		Root: root, Dir: wd, Output: *out, OptLevel: *opt, Emit: *emit, Work: *work,
+		Root: root, Dir: wd, Output: *out, OptLevel: *opt, OptSet: optSet, Emit: *emit, Work: *work,
 		Verbose: *verbose, PrintCmd: *printCmd, NoCache: *nocache, GC: *gc, Target: *target,
 		Dialect: *dialect, Patterns: patterns, Stderr: os.Stderr, Release: *release, PGOGen: *pgoGen, PGO: *pgo, Strip: *strip, Trace: *trace,
 	}
@@ -280,6 +281,7 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 	if err := fs.Parse(buildArgs); err != nil {
 		return 2
 	}
+	optSet := *opt != "" // an explicit -O level selects LLVM over tier0
 	if *opt == "" {
 		*opt = "2"
 		if *release {
@@ -310,7 +312,7 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 		exe = filepath.Join(tmp, "pkg.test")
 	}
 	cfg := driver.Config{
-		Root: root, Dir: wd, Output: exe, OptLevel: *opt, Emit: "exe", Work: *work,
+		Root: root, Dir: wd, Output: exe, OptLevel: *opt, OptSet: optSet, Emit: "exe", Work: *work,
 		PrintCmd: *printCmd, Dialect: *dialect, Release: *release, Patterns: []string{pkg}, Stderr: os.Stderr,
 	}
 	if *tags != "" {
