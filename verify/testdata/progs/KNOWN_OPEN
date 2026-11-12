@@ -4,4 +4,3 @@ frameregionwrite
 regionpeek
 stackconcat
 nocopyconcat
-hexinplace
