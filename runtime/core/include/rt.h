@@ -72,6 +72,12 @@ void rt_gc_collect(void);
 // GC in single-goroutine programs passes -u rt_gc_parallel_enable
 // (Mach-O: -u _rt_gc_parallel_enable). Calling it is harmless.
 void rt_gc_parallel_enable(void);
+
+// 1 if p points into (or to the start of) an allocated heap object, 0 for
+// package variables, stacks, region memory and C memory. Lock free and
+// allocation free (internal/synctest.Associate: only heap objects join a
+// bubble).
+int32_t rt_heap_object(void *p);
 // Register [start, end) as a conservative root range (globals).
 void rt_gc_add_roots(void *start, void *end);
 // Run fn(obj) once before obj is freed. Used by runtime.SetFinalizer. obj

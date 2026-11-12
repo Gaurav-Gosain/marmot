@@ -795,6 +795,22 @@ void malloc_init(void) {
   }
 }
 
+// 1 if p points into an allocated heap object (as gc's spanOfHeap != nil):
+// a page map lookup and an allocation bit test, no locks. 0 for globals,
+// stacks, region memory and C memory.
+RT_API int32_t rt_heap_object(void *ptr) {
+  uintptr_t p = (uintptr_t)ptr;
+  if (p - rt_arena_start >= rt_arena_used - rt_arena_start) return 0;
+  mspan *s = rt_pagemap[(p - rt_arena_start) >> PAGE_SHIFT];
+  if (!s || s->state != SPAN_INUSE || p < s->base || p >= s->limit) return 0;
+  uintptr_t idx = s->cls ? (uintptr_t)(((uint64_t)(p - s->base) * s->divmul) >> 32) : 0;
+  if (idx >= s->nelems) return 0;
+  // A cached span's allocation bits lag behind its free index: everything
+  // below the free index has been handed out.
+  if (s->cached && idx < s->freeindex) return 1;
+  return (int32_t)((s->allocbits[idx / 64] >> (idx % 64)) & 1);
+}
+
 // Return a heap object the compiler proved dead. Small objects go on this
 // thread's list for their class and are handed out by the next allocation
 // of that class; large objects give their pages back at once. Pointers that
