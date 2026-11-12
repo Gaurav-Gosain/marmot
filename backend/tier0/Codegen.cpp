@@ -1742,7 +1742,8 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
   llvm::raw_string_ostream os(fragment);
   for (const std::string &f : files) os << "P\t" << f << "\n";
   for (const Lines &l : lines) {
-    os << "F\t" << l.size << "\t" << StringRef(w.name(l.sym)).drop_front() << "\n";
+    // Mach-O names carry a leading "_"; fragments use the IR name.
+    os << "F\t" << l.size << "\t" << StringRef(w.name(l.sym)).drop_front(x64 ? 0 : 1) << "\n";
     for (auto &[off, line, file] : l.rows) os << "R\t" << off << "\t" << line << "\t" << file << "\n";
   }
   os.flush();
