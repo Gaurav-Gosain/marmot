@@ -290,6 +290,14 @@ func (p *Program) computeSymbol(fn *ssa.Function) string {
 		// Anonymous function: name is parent$N.
 		return p.computeSymbol(fn.Parent()) + strings.TrimPrefix(fn.Name(), fn.Parent().Name())
 	}
+	// A body-less libc_X_trampoline (darwin syscall packages) is the C
+	// symbol its //go:cgo_import_dynamic directive names: every reference,
+	// including function values, goes straight to it.
+	if len(fn.Blocks) == 0 && fn.Pkg != nil && strings.HasSuffix(fn.Name(), "_trampoline") {
+		if c, ok := p.dynamic[fn.Pkg.Pkg.Path()+"."+strings.TrimSuffix(fn.Name(), "_trampoline")]; ok {
+			return c
+		}
+	}
 	if fn.Pkg != nil && fn.Synthetic == "" {
 		path := rtPath(fn.Pkg.Pkg)
 		if recv := fn.Signature.Recv(); recv != nil {
