@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
@@ -191,12 +190,16 @@ func (b *build) saveModule(k, text string) string {
 	return ""
 }
 
-// writeNoFlags hashes the MARMOT_NO_* switches that turn codegen passes off.
+// writeNoFlags hashes every MARMOT_* environment variable that can change
+// generated code: all of them except the few that only set paths, limits or
+// run time behavior. A new switch is then part of every cache key without
+// being listed here (a switch missing from a key once made cached objects
+// built without it look like a passing run with it).
 func writeNoFlags(w io.Writer) {
 	var kv []string
 	for _, e := range os.Environ() {
 		k, _, _ := strings.Cut(e, "=")
-		if strings.HasPrefix(e, "MARMOT_NO_") || slices.Contains(codegen.LifetimeEnv, k) {
+		if strings.HasPrefix(k, "MARMOT_") && !noCodeEffect[k] && !strings.HasPrefix(k, "MARMOT_DEBUG_") {
 			kv = append(kv, e)
 		}
 	}
@@ -204,4 +207,12 @@ func writeNoFlags(w io.Writer) {
 	for _, e := range kv {
 		fmt.Fprintln(w, e)
 	}
+}
+
+// noCodeEffect are MARMOT_* variables that do not change generated code.
+var noCodeEffect = map[string]bool{
+	"MARMOT_ROOT": true, "MARMOT_MAX_JOBS": true, "MARMOT_CACHE_MAX_MB": true,
+	"MARMOT_GOCACHE": true, "MARMOT_TOOL_TIMEOUT": true, "MARMOT_MAX_MEM_MB": true,
+	"MARMOT_MAX_SECONDS": true, "MARMOT_SPEC_DUMP": true, "MARMOT_SPEC_DEBUG": true,
+	"MARMOT_GPU": true, "MARMOT_GPUTRACE": true, "MARMOT_GPU_CACHE": true,
 }

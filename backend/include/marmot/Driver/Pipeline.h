@@ -53,6 +53,9 @@ struct CompileOptions {
   // No tail merging in code generation, so every call site keeps its own
   // inlined frames (runtime.Caller through inlined calls).
   bool keepCallSites = false;
+  // The code-changing options of the run as given (marmot-backend), part of
+  // every cache key.
+  std::string optionKey;
   bool prepareOnly = false;    // batch: fill the cache (phase 1 for -wpo), write no outputs
   std::string gpuArch;         // -gpu=sm_86: PTX for "marmot-gpu-body" loops
   bool devirt = true;          // go-devirt at -O1 and up

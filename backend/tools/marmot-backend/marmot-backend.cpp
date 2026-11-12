@@ -182,6 +182,41 @@ bool readJobs(const std::string &path, std::vector<Job> &out, std::string &err) 
 
 } // namespace
 
+// Every option of this run that can change generated code, for the cache
+// key: the command line and MARMOT_BACKEND_FLAGS as given, without the
+// options that only say where files are or how many threads run. This covers
+// options read directly by libraries (-loops-*, LLVM's own options), which
+// CompileOptions does not name.
+static std::string optionKey(int argc, char **argv) {
+  SmallVector<std::string, 32> toks;
+  for (int i = 1; i < argc; ++i)
+    toks.push_back(argv[i]);
+  if (const char *e = std::getenv("MARMOT_BACKEND_FLAGS")) {
+    SmallVector<StringRef, 16> parts;
+    StringRef(e).split(parts, ' ', -1, false);
+    for (StringRef t : parts)
+      toks.push_back(t.str());
+  }
+  // Options whose value is the next token when not written as -opt=value.
+  auto takesValue = [](StringRef n) {
+    return n == "j" || n == "batch" || n == "cache-dir" || n == "o" || n == "rt-bitcode";
+  };
+  std::string key;
+  for (size_t i = 0; i < toks.size(); ++i) {
+    StringRef t = toks[i];
+    if (!t.starts_with("-")) // an input file
+      continue;
+    StringRef name = t.ltrim('-').split('=').first;
+    if (takesValue(name) || name == "time" || name == "prepare-only") {
+      if (takesValue(name) && !t.contains('=') && i + 1 < toks.size())
+        ++i;
+      continue;
+    }
+    key += t.str() + "\n";
+  }
+  return key;
+}
+
 int main(int argc, char **argv) {
   InitLLVM init(argc, argv);
   marmot::startWatchdog();
@@ -207,6 +242,7 @@ int main(int argc, char **argv) {
   opts.splitInstrs = splitLarge;
   opts.stringsNoCopy = stringsNoCopy;
   opts.keepCallSites = keepCallSites;
+  opts.optionKey = optionKey(argc, argv);
   opts.mergeFunctions = mergeFunctions;
   opts.pclnFragments = pclnFrags;
   opts.wpoClosedWorld = !noClosedWorld;
