@@ -635,6 +635,60 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback) 
   if (anchor.empty())
     anchor = fallback.str();
   std::string suffix = ".g" + hashHex(anchor).substr(0, 8);
+  // Local constants (string literals, boxed values) are numbered in emission
+  // order (.str.302, .box.507): one more or less renumbers the rest and
+  // changes every group that uses them. Name them by their contents instead.
+  // unnamed_addr constants with equal contents become one; others keep their
+  // identity and get the ordinal among equal contents. Data arrays first,
+  // then constants that refer to other globals (printed after those have
+  // their final names).
+  {
+    std::map<std::string, GlobalVariable *> merged;
+    std::map<std::string, unsigned> seen;
+    auto canon = [&](GlobalVariable &v, const std::string &content) {
+      std::string key = typeString(v.getValueType()) + "|" +
+                        std::to_string(v.getAlign() ? v.getAlign()->value() : 0) + "|" + content;
+      if (v.hasGlobalUnnamedAddr()) {
+        auto [it, fresh] = merged.try_emplace(key, &v);
+        if (!fresh) {
+          v.replaceAllUsesWith(it->second);
+          return false; // erase v
+        }
+        v.setName(".k" + hashHex(key).substr(0, 16));
+      } else {
+        unsigned n = seen[key]++;
+        v.setName(".k" + hashHex(key).substr(0, 16) + "." + std::to_string(n));
+      }
+      return true;
+    };
+    auto eligible = [](GlobalVariable &v) {
+      return v.hasLocalLinkage() && v.isConstant() && v.hasInitializer() && !v.hasSection() &&
+             !v.isThreadLocal();
+    };
+    SmallVector<GlobalVariable *, 0> dead;
+    for (GlobalVariable &v : m.globals())
+      if (eligible(v))
+        if (auto *cds = dyn_cast<ConstantDataSequential>(v.getInitializer()))
+          if (!canon(v, "d" + cds->getRawDataValues().str()))
+            dead.push_back(&v);
+    for (GlobalVariable *v : dead)
+      v->eraseFromParent();
+    dead.clear();
+    SmallVector<GlobalVariable *, 0> rest;
+    for (GlobalVariable &v : m.globals())
+      if (eligible(v) && !isa<ConstantDataSequential>(v.getInitializer()))
+        rest.push_back(&v);
+    for (GlobalVariable *v : rest) {
+      std::string text;
+      raw_string_ostream os(text);
+      os << "c";
+      v->getInitializer()->print(os);
+      if (!canon(*v, text))
+        dead.push_back(v);
+    }
+    for (GlobalVariable *v : dead)
+      v->eraseFromParent();
+  }
   for (GlobalValue &gv : m.global_values()) {
     if (gv.isDeclaration() || !gv.hasLocalLinkage())
       continue;
