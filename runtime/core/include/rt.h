@@ -374,6 +374,11 @@ intptr_t rt_utf8_count(const void *p, intptr_t n);    // utf8.RuneCount
 // and their value in *out. A building block for strconv and JSON number
 // parsing; signs, bases and overflow are the caller's.
 intptr_t rt_parse_digits(const void *p, intptr_t n, uint64_t *out);
+// Overlap: rt_hex_encode/decode and rt_base64_encode/decode read and write
+// in vector blocks, so dst and src must not overlap; results for overlapping
+// buffers differ from gc's byte-by-byte loops (and rt_hex_decode writes the
+// valid pairs before an invalid character). Callers fall back to the Go loop
+// when the buffers overlap.
 // Lowercase hex of src[0:n] into dst[0:2n] [hex.Encode].
 void rt_hex_encode(uint8_t *dst, const void *src, intptr_t n);
 // Decode src[0:2n] into dst[0:n] [hex.Decode]: returns n, or -(i+1) for the
