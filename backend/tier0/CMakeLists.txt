@@ -2,7 +2,7 @@
 # (cmake -S backend/tier0 -B <dir> -DMLIR_DIR=... -DLLVM_DIR=...) as a library
 # and the tier0-run tool, or as a subdirectory of the backend build.
 cmake_minimum_required(VERSION 3.20)
-project(marmot-tier0 CXX)
+project(marmot-tier0 C CXX)
 
 if(NOT TARGET MLIRLLVMDialect)
   find_package(MLIR REQUIRED CONFIG)

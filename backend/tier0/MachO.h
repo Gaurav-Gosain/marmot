@@ -32,7 +32,9 @@ public:
   // Defines name at offset in sect. global: visible to other objects.
   // weak: may be defined in several objects (linkonce_odr / weak_odr), the
   // linker keeps one.
-  void define(const std::string &name, Sect sect, uint64_t offset, bool global, bool weak = false);
+  // hidden: global but not exported from the linked image (private extern).
+  void define(const std::string &name, Sect sect, uint64_t offset, bool global, bool weak = false,
+              bool hidden = false);
 
   // Section contents. Code is appended as instruction words.
   std::vector<uint8_t> &bytes(Sect s) { return sec_[unsigned(s)].data; }
@@ -67,7 +69,7 @@ public:
 private:
   struct Sym {
     std::string name;
-    bool defined = false, global = false, weak = false;
+    bool defined = false, global = false, weak = false, hidden = false;
     Sect sect = Sect::Text;
     uint64_t offset = 0;
   };

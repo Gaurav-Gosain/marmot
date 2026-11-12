@@ -60,11 +60,13 @@ unsigned MachOWriter::symbol(const std::string &name) {
   return i;
 }
 
-void MachOWriter::define(const std::string &name, Sect sect, uint64_t offset, bool global, bool weak) {
+void MachOWriter::define(const std::string &name, Sect sect, uint64_t offset, bool global, bool weak,
+                         bool hidden) {
   Sym &s = syms_[symbol(name)];
   s.defined = true;
-  s.global = global || weak;
+  s.global = global || weak || hidden;
   s.weak = weak;
+  s.hidden = hidden;
   s.sect = sect;
   s.offset = offset;
 }
@@ -286,7 +288,7 @@ std::string MachOWriter::serialize() const {
       o.u16(0);
       o.u64(0);
     } else {
-      o.u8(N_SECT | (s.global ? N_EXT : 0));
+      o.u8(N_SECT | (s.global ? N_EXT : 0) | (s.hidden ? 0x10 : 0));  // N_PEXT
       o.u8(uint8_t(unsigned(s.sect) + 1));
       o.u16(s.weak ? 0x80 : 0);  // N_WEAK_DEF
       o.u64(addr[unsigned(s.sect)] + s.offset);

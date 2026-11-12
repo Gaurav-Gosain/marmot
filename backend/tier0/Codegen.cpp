@@ -14,6 +14,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/AttrTypeSubElements.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -284,6 +285,7 @@ ConstVal evalInitializer(LL::GlobalOp g) {
 }
 
 bool isLocalLinkage(LL::Linkage l) { return l == LL::Linkage::Internal || l == LL::Linkage::Private; }
+template <class Op> bool isHidden(Op op) { return op.getVisibility_() == LL::Visibility::Hidden; }
 bool isWeakLinkage(LL::Linkage l) {
   return l == LL::Linkage::Linkonce || l == LL::Linkage::LinkonceODR || l == LL::Linkage::Weak ||
          l == LL::Linkage::WeakODR;
@@ -298,7 +300,7 @@ void ModuleGen::emitGlobal(LL::GlobalOp g) {
   bool local = isLocalLinkage(g.getLinkage()), weak = isWeakLinkage(g.getLinkage());
   if (zero && !g.getConstant() && !weak) {
     w.reserveBss(0, unsigned(align));
-    w.define(name, Sect::Bss, w.size(Sect::Bss), !local);
+    w.define(name, Sect::Bss, w.size(Sect::Bss), !local, false, isHidden(g));
     w.reserveBss(std::max<uint64_t>(cv.bytes.size(), 1), 1);
     return;
   }
@@ -307,7 +309,7 @@ void ModuleGen::emitGlobal(LL::GlobalOp g) {
   Sect s = g.getConstant() && cv.rels.empty() ? Sect::Const : Sect::Data;
   w.align(s, unsigned(align));
   uint64_t at = w.size(s);
-  w.define(name, s, at, !local, weak);
+  w.define(name, s, at, !local, weak, isHidden(g));
   w.emitData(s, cv.bytes.data(), cv.bytes.size());
   if (cv.bytes.empty()) {
     uint8_t z = 0;
@@ -1167,7 +1169,88 @@ void FuncGen::run() {
   }
   // Defined only now: a function that falls back leaves no symbol.
   auto lk = fn.getLinkage();
-  w.define(machoName(fn.getSymName()), Sect::Text, start, !isLocalLinkage(lk), isWeakLinkage(lk));
+  w.define(machoName(fn.getSymName()), Sect::Text, start, !isLocalLinkage(lk), isWeakLinkage(lk), isHidden(fn));
+}
+
+// Removes discardable definitions (linkonce, linkonce_odr, internal,
+// private) that no other definition reaches, as LLVM does: unused method
+// value thunks, for example, may refer to functions nothing defines.
+static void dropUnused(ModuleOp module) {
+  auto discardable = [](LL::Linkage l) {
+    return l == LL::Linkage::Linkonce || l == LL::Linkage::LinkonceODR || l == LL::Linkage::Internal ||
+           l == LL::Linkage::Private || l == LL::Linkage::AvailableExternally;
+  };
+  llvm::DenseMap<StringAttr, Operation *> syms;
+  std::vector<Operation *> work;
+  for (Operation &op : module.getBody()->getOperations()) {
+    LL::Linkage l;
+    StringAttr name;
+    if (auto f = dyn_cast<LL::LLVMFuncOp>(op)) {
+      l = f.getLinkage();
+      name = f.getSymNameAttr();
+    } else if (auto g = dyn_cast<LL::GlobalOp>(op)) {
+      l = g.getLinkage();
+      name = g.getSymNameAttr();
+    } else {
+      // Aliases, comdats and anything else stay, and keep what they use.
+      work.push_back(&op);
+      continue;
+    }
+    syms[name] = &op;
+    if (!discardable(l)) work.push_back(&op);
+  }
+  llvm::DenseMap<Operation *, bool> live;
+  for (Operation *op : work) live[op] = true;
+  while (!work.empty()) {
+    Operation *op = work.back();
+    work.pop_back();
+    op->walk([&](Operation *inner) {
+      for (NamedAttribute a : inner->getAttrs())
+        a.getValue().walk([&](FlatSymbolRefAttr r) {
+          auto it = syms.find(r.getAttr());
+          if (it != syms.end() && !live.count(it->second)) {
+            live[it->second] = true;
+            work.push_back(it->second);
+          }
+        });
+    });
+  }
+  std::vector<Operation *> dead;
+  for (auto &[name, op] : syms)
+    if (!live.count(op)) dead.push_back(op);
+  for (Operation *op : dead) op->dropAllReferences();
+  for (Operation *op : dead) op->erase();
+}
+
+// Internal and private symbols become hidden globals with names unique to
+// unit, so the tier0 object and the LLVM object of the fallback functions
+// can both refer to them.
+static void shareLocals(ModuleOp module, const std::string &unit) {
+  MLIRContext *ctx = module.getContext();
+  llvm::DenseMap<StringAttr, StringAttr> renamed;
+  auto share = [&](auto op) {
+    if (!isLocalLinkage(op.getLinkage())) return;
+    StringAttr old = op.getSymNameAttr();
+    StringAttr nu = StringAttr::get(ctx, old.getValue() + ".t0." + unit);
+    renamed[old] = nu;
+    op.setSymName(nu.getValue());
+    op.setLinkage(LL::Linkage::External);
+    op.setVisibility_(LL::Visibility::Hidden);
+  };
+  for (Operation &op : module.getBody()->getOperations()) {
+    if (auto f = dyn_cast<LL::LLVMFuncOp>(op))
+      share(f);
+    else if (auto g = dyn_cast<LL::GlobalOp>(op))
+      share(g);
+  }
+  if (renamed.empty()) return;
+  AttrTypeReplacer r;
+  r.addReplacement([&](FlatSymbolRefAttr a) -> std::optional<Attribute> {
+    auto it = renamed.find(a.getAttr());
+    if (it == renamed.end()) return std::nullopt;
+    return FlatSymbolRefAttr::get(it->second);
+  });
+  r.recursivelyReplaceElementsIn(module, /*replaceAttrs=*/true, /*replaceLocs=*/false, /*replaceTypes=*/false);
 }
 
 bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
@@ -1208,13 +1291,33 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
   }
   stats.codeBytes = w.size(Sect::Text);
   fragment.clear();  // line tables come later
+  // What stays for LLVM: the fallback functions, everything else declared.
+  llvm::DenseMap<StringAttr, bool> keep;
+  for (auto &n : fallback) keep[StringAttr::get(ctx, n)] = true;
+  for (Operation &op : module.getBody()->getOperations()) {
+    if (auto f = dyn_cast<LL::LLVMFuncOp>(op)) {
+      if (f.isExternal() || keep.count(f.getSymNameAttr())) continue;
+      f.getBody().dropAllReferences();
+      f.getBody().getBlocks().clear();
+      if (isWeakLinkage(f.getLinkage())) f.setLinkage(LL::Linkage::External);
+    } else if (auto g = dyn_cast<LL::GlobalOp>(op)) {
+      if (!definedData.count(g.getSymNameAttr())) continue;
+      g.getInitializerRegion().dropAllReferences();
+      g.getInitializerRegion().getBlocks().clear();
+      g.removeValueAttr();
+      g.setLinkage(LL::Linkage::External);
+    }
+  }
   return true;
 }
 
 } // namespace
 
-bool emit(ModuleOp module, const std::string &outObject, std::string &fragment, std::vector<std::string> &fallback,
-          std::vector<std::string> &reasons, Stats &stats, std::string &err) {
+bool emit(ModuleOp module, const std::string &unit, const std::string &outObject, std::string &fragment,
+          std::vector<std::string> &fallback, std::vector<std::string> &reasons, Stats &stats,
+          std::string &err) {
+  dropUnused(module);
+  shareLocals(module, unit);
   ModuleGen mg(module);
   if (!mg.run(fragment, fallback, reasons, stats, err)) return false;
   return mg.w.write(outObject, err);
