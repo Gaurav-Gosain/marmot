@@ -36,6 +36,10 @@ public:
   void define(const std::string &name, Sect sect, uint64_t offset, bool global, bool weak = false,
               bool hidden = false);
 
+  // A common symbol (tentative definition): the linker merges it with a real
+  // definition elsewhere, or allocates size zero bytes.
+  void common(const std::string &name, uint64_t size, unsigned log2Align);
+
   // Section contents. Code is appended as instruction words.
   std::vector<uint8_t> &bytes(Sect s) { return sec_[unsigned(s)].data; }
   uint64_t size(Sect s) const;
@@ -70,6 +74,8 @@ private:
   struct Sym {
     std::string name;
     bool defined = false, global = false, weak = false, hidden = false;
+    uint64_t commonSize = 0;  // nonzero for a common symbol (left undefined)
+    unsigned commonAlign = 0;
     Sect sect = Sect::Text;
     uint64_t offset = 0;
   };

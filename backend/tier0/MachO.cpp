@@ -71,6 +71,12 @@ void MachOWriter::define(const std::string &name, Sect sect, uint64_t offset, bo
   s.offset = offset;
 }
 
+void MachOWriter::common(const std::string &name, uint64_t size, unsigned log2Align) {
+  Sym &s = syms_[symbol(name)];
+  s.commonSize = size ? size : 1;
+  s.commonAlign = log2Align;
+}
+
 uint64_t MachOWriter::size(Sect s) const {
   const Section &x = sec_[unsigned(s)];
   return s == Sect::Bss ? x.bssSize : x.data.size();
@@ -285,8 +291,8 @@ std::string MachOWriter::serialize() const {
     if (!s.defined) {
       o.u8(N_UNDF | N_EXT);
       o.u8(0);
-      o.u16(0);
-      o.u64(0);
+      o.u16(uint16_t((s.commonAlign & 0xF) << 8));  // SET_COMM_ALIGN
+      o.u64(s.commonSize);
     } else {
       o.u8(N_SECT | (s.global ? N_EXT : 0) | (s.hidden ? 0x10 : 0));  // N_PEXT
       o.u8(uint8_t(unsigned(s.sect) + 1));

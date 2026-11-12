@@ -382,6 +382,12 @@ void ModuleGen::emitGlobal(LL::GlobalOp g) {
   uint64_t align = std::max<uint64_t>(g.getAlignment().value_or(0), alignOf(g.getGlobalType()));
   bool zero = cv.rels.empty() && std::all_of(cv.bytes.begin(), cv.bytes.end(), [](uint8_t b) { return b == 0; });
   bool local = isLocalLinkage(g.getLinkage()), weak = isWeakLinkage(g.getLinkage());
+  if (g.getLinkage() == LL::Linkage::Common && zero && !local) {
+    unsigned l2 = 0;
+    while ((uint64_t(1) << l2) < align) l2++;
+    w.common(name, cv.bytes.size(), l2);
+    return;
+  }
   if (zero && !g.getConstant() && !weak) {
     w.reserveBss(0, unsigned(align));
     w.define(name, Sect::Bss, w.size(Sect::Bss), !local, false, isHidden(g));
