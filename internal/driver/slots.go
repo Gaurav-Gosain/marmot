@@ -16,13 +16,14 @@ import (
 // drops the lock when the process dies, so a crash or kill frees the slot.
 // No-change builds return before taking a slot.
 //
-//	MARMOT_SLOTS      number of slots (default DefaultSlots; 0 turns slots off)
+//	MARMOT_SLOTS      number of slots (default DefaultSlots: off; 0 turns slots off)
 //	MARMOT_SLOTS_DIR  lock directory (default /tmp/marmot-slots)
 //
 // While slots are on, MARMOT_MAX_JOBS defaults to slotJobs.
 
-// DefaultSlots is the number of slots when MARMOT_SLOTS is unset.
-const DefaultSlots = 3
+// DefaultSlots is the number of slots when MARMOT_SLOTS is unset: none, so
+// a build uses the whole machine. Shared machines set MARMOT_SLOTS.
+const DefaultSlots = 0
 
 // slotJobs is the default parallelism per slot.
 const slotJobs = 2

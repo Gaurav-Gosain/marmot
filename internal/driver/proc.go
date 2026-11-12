@@ -35,14 +35,11 @@ func eachParallel(n int, f func(i int)) {
 	wg.Wait()
 }
 
-// maxJobs is the parallelism for backend compiles (at most 4).
+// maxJobs is the parallelism for backend compiles: every core (the
+// backend bounds its memory itself), or MARMOT_MAX_JOBS, or slotJobs while
+// build slots are on.
 func maxJobs() int {
 	n := runtime.NumCPU()
-	if n > 4 {
-		n = 4
-	}
-	// MARMOT_MAX_JOBS sets the number outright (above 4 too, for builds that
-	// may use every core).
 	if v, err := strconv.Atoi(os.Getenv("MARMOT_MAX_JOBS")); err == nil && v > 0 {
 		n = v
 	} else if slotCount() > 0 && slotJobs < n {
