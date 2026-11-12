@@ -80,20 +80,22 @@ Apple M3 Pro with 11 cores. The first build starts with empty caches on both sid
 one line to a package: "leaf" is the main package, "deep" is a package that most of the compiler
 uses.
 
-| Case | marmot, `MARMOT_TIER0=0` | marmot (default) | go |
+| Case | marmot | marmot, `MARMOT_INCREMENTAL=1` | go |
 | --- | --- | --- | --- |
-| First build, empty caches | 11.6 s | 5.2 s | 3.9 s |
-| Rebuild, nothing changed | 0.13 s | 0.13 s | 0.12 s |
-| One line edit, leaf package | 1.1 s | 0.9 s | 0.3 s |
-| One line edit, deep package | 2.8 s | 1.7 s | 0.7 s |
+| First build, empty caches | 3.2 s | 3.1 s | 3.9 s |
+| Rebuild, nothing changed | 0.13 s | 0.04 s | 0.12 s |
+| One line edit, leaf package | 0.75 s | 0.33 s | 0.32 s |
+| One line edit, deep package | 1.0 s | 0.62 s | 0.67 to 0.75 s |
 
-The fast code generator writes machine code directly, without LLVM. It is the default for dev
-builds (`MARMOT_TIER0=0` turns it off) and is never used with `-release`. Its code is not
-optimized; for fast binaries use `-release`.
+Best of two runs for the first build, the rest agree within 0.05 s.
 
-The next version, now in testing, generates MLIR on all cores and overlaps code generation with
-it. With it the first build takes 2.9 to 3.0 s against 3.9 to 4.4 s for go. Rebuilds after an
-edit are the remaining gap.
+Dev builds use a fast code generator that writes machine code directly, without LLVM
+(`MARMOT_TIER0=0` turns it off; then the first build takes 11.6 s). It is never used with
+`-release`. Its code is not optimized; for fast binaries use `-release`.
+
+The incremental front end (`MARMOT_INCREMENTAL=1`) type checks and compiles only the changed
+packages and the packages that import them. It will become the default once it passes the full
+test suite.
 
 ## Memory
 

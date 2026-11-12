@@ -25,11 +25,12 @@ Details and method in [docs/benchmarks.md](docs/benchmarks.md).
 
 | Build time, the compiler itself (182 packages) | marmot | go |
 | --- | --- | --- |
-| first build, empty caches | 5.2 s | 3.9 s |
-| rebuild, nothing changed | 0.13 s | 0.12 s |
-| rebuild after a one line edit | 0.9 to 1.7 s | 0.3 to 0.7 s |
+| first build, empty caches | 3.1 s | 3.9 s |
+| rebuild, nothing changed | 0.04 s | 0.12 s |
+| rebuild after a one line edit | 0.33 to 0.62 s | 0.32 to 0.75 s |
 
-Dev builds use the fast code generator by default (`MARMOT_TIER0=0` turns it off).
+Dev builds use a fast code generator by default (`MARMOT_TIER0=0` turns it off). Rebuild times
+are with the incremental front end, `MARMOT_INCREMENTAL=1`, which becomes the default soon.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/overview-dark.svg">
