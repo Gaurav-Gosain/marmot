@@ -135,7 +135,8 @@ func Build(cfg Config) (string, error) {
 func build1(cfg Config) (*build, error) {
 	b := &build{cfg: cfg}
 	out, err := b.run1()
-	if errors.Is(err, errFlagsChanged) {
+	if errors.Is(err, errIncrementalMiss) {
+		// The program flags changed, or a cached module was removed.
 		b.logf("%v; building again", err)
 		b = &build{cfg: cfg}
 		out, err = b.run1()
@@ -232,9 +233,7 @@ func (b *build) run1() (string, error) {
 
 	var keepExported, reflectCall bool
 	if b.incr {
-		if keepExported, reflectCall, err = b.checkProgFlags(lp); err != nil {
-			return "", err
-		}
+		keepExported, reflectCall = b.checkProgFlags(lp)
 	}
 	files := map[*types.Package][]*ast.File{}
 	var ssaPkgs []*ssa.Package

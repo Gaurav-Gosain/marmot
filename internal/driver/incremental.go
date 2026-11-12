@@ -26,10 +26,6 @@ import (
 //
 //	MARMOT_INCREMENTAL=0  load every package from source
 
-// errFlagsChanged reports that the program's reflect facts differ from
-// those of the previous build, which the module keys of this build assumed.
-var errFlagsChanged = errors.New("incremental: program reflect facts changed")
-
 // errIncrementalMiss reports that the module of a package loaded without
 // syntax was not in the cache after all (removed during the build).
 var errIncrementalMiss = errors.New("incremental: cached module missing")
@@ -73,16 +69,19 @@ func progFlags(lp *loader.Program) (s string, keepExported, reflectCall bool) {
 	return fmt.Sprintf("ke=%v rc=%v", keepExported, reflectCall), keepExported, reflectCall
 }
 
-// checkProgFlags fails with errFlagsChanged, after saving the new flags,
-// when the loaded program's flags are not those the keys assumed.
-func (b *build) checkProgFlags(lp *loader.Program) (keepExported, reflectCall bool, err error) {
+// checkProgFlags sets the program flags of the loaded program. When they
+// are not those the load assumed, packages loaded from export data may lack
+// a module under the new keys: checkIncremental then fails and the build
+// runs again.
+func (b *build) checkProgFlags(lp *loader.Program) (keepExported, reflectCall bool) {
 	s, ke, rc := progFlags(lp)
 	if s != b.progFlags {
+		b.logf("program flags %s (assumed %s)", s, b.progFlags)
 		os.MkdirAll(b.typesCache(), 0o755)
 		loader.WriteAtomic(b.progFlagsPath(), []byte(s))
-		return false, false, fmt.Errorf("%w: %s, was %s", errFlagsChanged, s, b.progFlags)
+		b.progFlags = s
 	}
-	return ke, rc, nil
+	return ke, rc
 }
 
 // moduleCached reports whether the module of p is in the MLIR cache.

@@ -674,9 +674,9 @@ func (st *incrState) loadOne(p *packages.Package, exportMu *sync.Mutex) error {
 		// hash (export data is not byte-stable) and so every importer's key.
 		nm.ExportHash = m.ExportHash
 	} else {
-		exportMu.Lock()
+		// Writing export data only reads the type-checked package, so
+		// packages write theirs in parallel.
 		err = st.writeCache(k, tpkg, nm)
-		exportMu.Unlock()
 		if err != nil {
 			return err
 		}

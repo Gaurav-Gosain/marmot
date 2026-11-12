@@ -262,18 +262,16 @@ func lightConfig(pcfg *packages.Config) *packages.Config {
 	return &light
 }
 
-// CachedInputFiles is InputFiles from the go list cache of an incremental
-// load (cfg.CacheDir), without running go list; ok is false when that cache
-// is missing or out of date.
+// CachedInputFiles is InputFiles from the go list cache of incremental
+// loads (cfg.CacheDir): it runs go list only when that cache is missing or
+// out of date, and then fills it for the load that follows.
 func CachedInputFiles(cfg Config) (files []string, goroot string, ok bool) {
 	pcfg, patterns, goroot, _, err := setup(cfg)
 	if err != nil {
 		return nil, "", false
 	}
-	light := lightConfig(pcfg)
-	sig := listSig(light, patterns)
-	roots, ok := readListCache(listCachePath(cfg.CacheDir, sig), sig, light.Dir)
-	if !ok {
+	roots, err := loadList(lightConfig(pcfg), patterns, cfg.CacheDir)
+	if err != nil {
 		return nil, "", false
 	}
 	packages.Visit(roots, nil, func(p *packages.Package) {
