@@ -190,7 +190,7 @@ type obj struct {
 type fact struct {
 	o                int
 	off, stride, cnt int64 // cnt: number of k values when known, 0 when unbounded
-	agg, rgn         bool
+	agg, rgn, ch     bool // ch: a channel whose buffer holds elements of o's descriptor
 }
 
 func gcd(a, b int64) int64 {
@@ -217,6 +217,9 @@ var (
 	reRgnAlloc  = regexp.MustCompile(`^llvm\.call @rt_region_alloc\((%[\w.$-]+),`)
 	reGoNew     = regexp.MustCompile(`^go\.new @"type:(.*?)", `)
 	reGoMkSl    = regexp.MustCompile(`^go\.make_slice @"type:(.*?)", `)
+	reGoMkChan  = regexp.MustCompile(`^go\.make_chan @"type:(.*?)", `)
+	reChanSend  = regexp.MustCompile(`^\s*go\.chan_send (%[\w.$-]+), %[\w.$-]+ : (.*?)(?: loc\(|$)`)
+	reChanRecv  = regexp.MustCompile(`^\s*%[\w.$-]+ = go\.chan_recv (%[\w.$-]+) : (.*?)(?: loc\(|$)`)
 	reExtract   = regexp.MustCompile(`^llvm\.extractvalue (%[\w.$-]+)\[0\] `)
 	reGEP       = regexp.MustCompile(`^llvm\.getelementptr (?:inbounds )?(%[\w.$-]+)\[(.*?)\] : \(.*?\) -> !llvm\.ptr, (.*?)(?: loc\(|$)`)
 	reSelect    = regexp.MustCompile(`^llvm\.select %[\w.$-]+, (%[\w.$-]+), (%[\w.$-]+) `)
@@ -350,6 +353,9 @@ func checkFnStores(fn fnBody, descs map[string]*tdesc, res *storesResult, seenBa
 			}
 			objs = append(objs, o)
 			add(v, fact{o: len(objs) - 1, agg: a[1] == "growslice"})
+		case reGoMkChan.MatchString(rhs):
+			objs = append(objs, obj{desc: reGoMkChan.FindStringSubmatch(rhs)[1], array: true, site: "go.make_chan"})
+			add(v, fact{o: len(objs) - 1, ch: true})
 		case reRgnNew.MatchString(rhs):
 			add(v, fact{o: -1, rgn: true})
 		}
@@ -392,7 +398,7 @@ func checkFnStores(fn fnBody, descs map[string]*tdesc, res *storesResult, seenBa
 						continue
 					}
 					for _, f := range fs {
-						if f.agg || f.rgn {
+						if f.agg || f.rgn || f.ch {
 							continue
 						}
 						n := fact{o: f.o, off: f.off + off, stride: f.stride, cnt: f.cnt}
@@ -433,7 +439,14 @@ func checkFnStores(fn fnBody, descs map[string]*tdesc, res *storesResult, seenBa
 	for _, l := range fn.lines {
 		m := reStore.FindStringSubmatch(l)
 		if m == nil {
-			continue
+			// a channel element moves through the buffer: the same rule as a store
+			if c := reChanSend.FindStringSubmatch(l); c != nil {
+				m = []string{"", "", c[1], c[2]}
+			} else if c := reChanRecv.FindStringSubmatch(l); c != nil {
+				m = []string{"", "", c[1], c[2]}
+			} else {
+				continue
+			}
 		}
 		fs := facts[m[2]]
 		if len(fs) == 0 {
@@ -450,7 +463,7 @@ func checkFnStores(fn fnBody, descs map[string]*tdesc, res *storesResult, seenBa
 			continue
 		}
 		for _, f := range fs {
-			if f.agg || f.rgn {
+			if f.agg || f.rgn || (f.ch != (m[0] == "")) {
 				continue
 			}
 			o := objs[f.o]

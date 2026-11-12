@@ -21,6 +21,7 @@ module {
     %a = go.new @"type:p.Ptr", !llvm.struct<(i64, ptr)>
     %b = go.new @"type:p.Num", !llvm.struct<(i64, ptr)>
     %c = go.new @"type:p.Ptr", !llvm.struct<(ptr, i64)>
+    go.map_update %m[%k] = %v, @"type:map[p.Num]p.Ptr" : !llvm.struct<(ptr, i64)>, !llvm.struct<(i64, ptr)>
     llvm.return
   }
 }

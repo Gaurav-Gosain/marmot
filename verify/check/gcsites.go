@@ -26,7 +26,47 @@ var (
 	reMkSlice = regexp.MustCompile(`go\.make_slice @"type:(.*?)", (.*?)\(%`)
 	reBox     = regexp.MustCompile(`go\.box @"type:(.*?)", %[\w.$-]+ : (.*?)(?: loc\(|$)`)
 	reClosure = regexp.MustCompile(`go\.make_closure @.*?, @"type:(.*?)" : \((.*?)\) -> !llvm\.ptr`)
+	reMapUpd  = regexp.MustCompile(`go\.map_update %[\w.$-]+\[%[\w.$-]+\] = %[\w.$-]+, @"type:(map\[.*?)" : (.*?)(?: loc\(|$)`)
+	reMapLook = regexp.MustCompile(`go\.map_lookup %[\w.$-]+\[%[\w.$-]+\], @"type:(map\[.*?)" : (.*?) -> (.*?)(?: loc\(|$)`)
 )
+
+// splitMapType splits "map[K]V" into K and V.
+func splitMapType(s string) (k, v string, ok bool) {
+	if !strings.HasPrefix(s, "map[") {
+		return "", "", false
+	}
+	depth := 0
+	for i := 3; i < len(s); i++ {
+		switch s[i] {
+		case '[', '(', '{':
+			depth++
+		case ']', ')', '}':
+			depth--
+			if depth == 0 && s[i] == ']' {
+				return s[4:i], s[i+1:], true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// splitTop splits "A, B" at the top-level comma of two LLVM types.
+func splitTop(s string) (a, b string, ok bool) {
+	depth := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '<', '(':
+			depth++
+		case '>', ')':
+			depth--
+		case ',':
+			if depth == 0 {
+				return strings.TrimSpace(s[:i]), strings.TrimSpace(s[i+1:]), true
+			}
+		}
+	}
+	return "", "", false
+}
 
 func readSites(path string) ([]site, error) {
 	fh, err := os.Open(path)
@@ -51,6 +91,20 @@ func readSites(path string) ([]site, error) {
 		case strings.Contains(l, "go.box @"):
 			if m := reBox.FindStringSubmatch(l); m != nil {
 				out = append(out, site{"go.box", m[1], strings.TrimSpace(m[2]), l})
+			}
+		case strings.Contains(l, "go.map_update "):
+			if m := reMapUpd.FindStringSubmatch(l); m != nil {
+				k, v, ok1 := splitMapType(m[1])
+				kt, vt, ok2 := splitTop(m[2])
+				if ok1 && ok2 {
+					out = append(out, site{"map key", k, kt, l}, site{"map element", v, vt, l})
+				}
+			}
+		case strings.Contains(l, "go.map_lookup "):
+			if m := reMapLook.FindStringSubmatch(l); m != nil {
+				if k, v, ok := splitMapType(m[1]); ok {
+					out = append(out, site{"map key", k, strings.TrimSpace(m[2]), l}, site{"map element", v, strings.TrimSpace(m[3]), l})
+				}
 			}
 		case strings.Contains(l, "go.make_closure @"):
 			if m := reClosure.FindStringSubmatch(l); m != nil {
@@ -233,10 +287,11 @@ func checkSites(mlirPath string) (*sitesResult, error) {
 		}
 		res.checked++
 		var problems []string
-		if l.size > d.size && s.op != "go.make_slice" {
+		elem := s.op == "go.make_slice" || strings.HasPrefix(s.op, "map ")
+		if l.size > d.size && !elem {
 			problems = append(problems, fmt.Sprintf("memory type %d bytes, descriptor %d", l.size, d.size))
 		}
-		if s.op == "go.make_slice" && l.size != d.size {
+		if elem && l.size != d.size {
 			problems = append(problems, fmt.Sprintf("element memory type %d bytes, descriptor %d (stride)", l.size, d.size))
 		}
 		for _, off := range l.ptrs {

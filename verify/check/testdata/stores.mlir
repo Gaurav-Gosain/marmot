@@ -32,6 +32,8 @@ module {
   ^b1(%q: !llvm.ptr):
     %e = llvm.getelementptr inbounds %q[%i, 1] : (!llvm.ptr, i64) -> !llvm.ptr, !llvm.struct<(i64, ptr)>
     llvm.store %x, %e {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr
+    %c = go.make_chan @"type:p.Ptr", %i
+    go.chan_send %c, %x : !llvm.struct<(i64, ptr)>
     llvm.return
   }
   llvm.func @bad(%x: !llvm.ptr, %i: i64) {
@@ -50,6 +52,10 @@ module {
     %c16 = llvm.mlir.constant(16 : i64) : i64
     %ro = llvm.call @rt_region_alloc(%r, %c16) : (!llvm.ptr, i64) -> !llvm.ptr
     llvm.store %x, %ro {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr
+    %c = go.make_chan @"type:p.Num", %i
+    llvm.br ^b2(%c : !llvm.ptr)
+  ^b2(%c2: !llvm.ptr):
+    go.chan_send %c2, %x : !llvm.ptr
     llvm.return
   }
 }
