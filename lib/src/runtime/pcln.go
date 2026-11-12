@@ -1,6 +1,6 @@
-// The pc table: function names, files and lines for code addresses, built
-// by the backend into the binary (docs/pcln.md, versions 2 and 3; version 3
-// adds the inline trees that give the frames of inlined calls). It serves
+// The pc table: function names, files and lines for code addresses, which
+// the compiler writes into the binary (versions 2 and 3; version 3 adds the
+// inline trees that give the frames of inlined calls). It serves
 // runtime.Caller, runtime.Callers frames, FuncForPC and panic tracebacks.
 //
 // The table is read in place; lookups allocate nothing except when a name

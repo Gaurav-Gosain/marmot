@@ -254,7 +254,7 @@ func chanrecvBuf(c *hchan, ep unsafe.Pointer, block bool) (selected, received bo
 		// plus the sender's wake-up costs microseconds: spin first while
 		// other threads run goroutines. 16 rounds (longer than the 4 of
 		// sync.Mutex) keep a steady producer from making the receiver
-		// park on every element (quiet linux-host and laptop A/B).
+		// park on every element (quiet Linux and macOS A/B).
 		if spin < chanSpinRounds && canSpin(0) {
 			spin++
 			procyield(30)

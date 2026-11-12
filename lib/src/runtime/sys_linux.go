@@ -1,5 +1,4 @@
 // System call glue for package syscall on linux. Compiled only by marmot.
-// Untested on hardware here; cross-checked by the linux worker.
 
 package runtime
 

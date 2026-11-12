@@ -1,6 +1,6 @@
 // Defer, panic, recover and Goexit.
 //
-// Protocol with the compiler (see docs/runtime-entry.md for the full text):
+// Protocol with the compiler:
 //
 //   - A function that contains a defer statement owns one _deferframe in its
 //     stack frame. On entry it calls rt_setjmp(&fr.jmpbuf) (a returns_twice

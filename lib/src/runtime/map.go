@@ -1053,7 +1053,7 @@ func mapdelete_faststr(t *maptype, m *hmap, key string) {
 }
 
 // Lookups of string keyed maps by a byte slice, without allocating the
-// key. The compiler and spec rewrites reach them by linkname (for example
+// key. Compiler source rewrites reach them by linkname (for example
 // m[strings.ToUpper(w)]++ built in a scratch buffer).
 
 // mapaccess_faststr_bytes returns the element slot of key string(b), or

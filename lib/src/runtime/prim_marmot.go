@@ -108,7 +108,7 @@ func rt_mem_equal(a, b unsafe.Pointer, n int) int32
 func rt_compare(a unsafe.Pointer, an int, b unsafe.Pointer, bn int) int32
 
 // memequal compares n bytes with the C core's SIMD primitive, which LLVM
-// inlines from rtcore.bc.
+// inlines from the core's bitcode.
 func memequal(a, b unsafe.Pointer, n uintptr) bool {
 	if a == b || n == 0 {
 		return true

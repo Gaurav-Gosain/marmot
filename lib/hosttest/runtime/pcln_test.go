@@ -15,6 +15,9 @@ import (
 // testdata/fmt_hello.want as "offset function file:line" lines.
 func TestPclnLookup(t *testing.T) {
 	data, err := os.ReadFile("testdata/fmt_hello.pcln")
+	if os.IsNotExist(err) {
+		t.Skip("testdata/fmt_hello.pcln is generated locally (a pc table of a marmot built program)")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +67,9 @@ func TestPclnLookup(t *testing.T) {
 // tab separated.
 func TestPclnInlineFrames(t *testing.T) {
 	data, err := os.ReadFile("testdata/fmt_hello_v3.pcln")
+	if os.IsNotExist(err) {
+		t.Skip("testdata/fmt_hello_v3.pcln is generated locally (a pc table of a marmot built program)")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

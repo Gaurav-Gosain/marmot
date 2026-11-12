@@ -1,6 +1,7 @@
 // marmot overlay of internal/bytealg: the assembly versions are replaced by
 // the C core's SIMD primitives (NEON on arm64, SSE2 on x86-64), which LLVM
-// can inline from rtcore.bc. Results are identical to the Go versions.
+// can inline from the core's bitcode. Results are identical to the Go
+// versions.
 // MaxLen and MaxBruteForce are set so that strings.Index and bytes.Index
 // hand every search to Index/IndexString.
 
