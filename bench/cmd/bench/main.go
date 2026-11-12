@@ -193,6 +193,7 @@ var (
 	resume     = flag.Bool("resume", false, "continue the results file of this label and date: skip program and toolchain pairs already measured without noise")
 	redo       = flag.String("redo", "", "with -resume: comma separated programs whose old rows are discarded and measured again")
 	redoMarmot = flag.Bool("redo-marmot", false, "with -resume: discard every marmot row so all marmot toolchains are measured again (go and tinygo rows are kept)")
+	prune      = flag.Bool("prune", false, "skip marmot-release-spec for nostd programs (identical to release there) and marmot-release-loops for std programs that are not class A")
 	noSnapshot = flag.Bool("no-snapshot", false, "use the live tree for marmot instead of a snapshot (do not use for long runs)")
 )
 
@@ -273,7 +274,7 @@ func main() {
 	}
 	for _, p := range progs {
 		for _, t := range tcl {
-			if done[p.Name+"|"+t.Name] {
+			if done[p.Name+"|"+t.Name] || (*prune && pruned(p, t)) {
 				continue
 			}
 			fmt.Fprintf(os.Stderr, "== %s / %s\n", p.Name, t.Name)
@@ -859,3 +860,28 @@ func holdAllSlots() func() {
 
 // benchRev is the git revision and snapshot name recorded on every row of this run.
 var benchRev string
+
+// pruned reports whether a toolchain adds nothing for a program: the spec toolchain only changes
+// programs that import the standard library, and the loop flags only matter for numeric code.
+func pruned(p Program, t Toolchain) bool {
+	switch t.Name {
+	case "marmot-release-spec":
+		return p.Tier == "nostd"
+	case "marmot-release-loops":
+		if p.Tier != "std" {
+			return false
+		}
+		data, err := os.ReadFile(filepath.Join(root, "bench", "classes.json"))
+		if err != nil {
+			return false
+		}
+		var cl struct {
+			Programs map[string]struct{ Class string } `json:"programs"`
+		}
+		if json.Unmarshal(data, &cl) != nil {
+			return false
+		}
+		return cl.Programs[p.Name].Class != "A"
+	}
+	return false
+}
