@@ -8,7 +8,7 @@ build/
 # Internal working notes, kept local.
 /SPEC.md
 /briefs/
-/docs/
+/docs/*
 !/docs/usage.md
 !/docs/design.md
 !/docs/benchmarks.md
