@@ -2,7 +2,9 @@
 // --emit=mlir) with tier0 into an object, and reports time, counts and the
 // reasons functions fell back to LLVM.
 //
-//   tier0-run in.mlir out.o [rest.mlir [frag]]
+//   tier0-run [-x64] in.mlir out.o [rest.mlir [frag]]
+//
+// -x64 writes an x86-64 ELF object instead of an arm64 Mach-O one.
 //
 // rest.mlir receives what is left for LLVM (the fallback functions, the rest
 // declared), to compile with marmot-backend and link next to out.o. frag
@@ -22,8 +24,14 @@
 #include <map>
 
 int main(int argc, char **argv) {
+  marmot::tier0::Target target = marmot::tier0::Target::Arm64MachO;
+  if (argc > 1 && std::string(argv[1]) == "-x64") {
+    target = marmot::tier0::Target::X64Elf;
+    argv++;
+    argc--;
+  }
   if (argc < 3 || argc > 5) {
-    llvm::errs() << "usage: tier0-run in.mlir out.o [rest.mlir [frag]]\n";
+    llvm::errs() << "usage: tier0-run [-x64] in.mlir out.o [rest.mlir [frag]]\n";
     return 2;
   }
   mlir::MLIRContext ctx;
@@ -37,7 +45,7 @@ int main(int argc, char **argv) {
   std::vector<std::string> fallback, reasons;
   marmot::tier0::Stats st;
   std::string unit = std::to_string(std::hash<std::string>{}(argv[2]) % 1000000007);
-  if (!marmot::tier0::emit(*m, unit, argv[2], frag, fallback, reasons, st, err)) {
+  if (!marmot::tier0::emit(*m, unit, argv[2], frag, fallback, reasons, st, err, target)) {
     llvm::errs() << "tier0: " << err << "\n";
     return 1;
   }

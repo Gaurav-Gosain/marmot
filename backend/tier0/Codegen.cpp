@@ -10,6 +10,7 @@
 
 #include "Arm64.h"
 #include "MachO.h"
+#include "X64.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
@@ -138,7 +139,10 @@ void flatten(Type t, uint64_t base, std::vector<std::pair<uint64_t, Type>> &out)
 
 unsigned log2Size(uint64_t n) { return n == 1 ? 0 : n == 2 ? 1 : n == 4 ? 2 : 3; }
 
-std::string machoName(StringRef sym) { return "_" + sym.str(); }
+// Symbol names: Mach-O prefixes C names with an underscore, ELF does not.
+thread_local bool elfNames = false;
+std::string symName(StringRef sym) { return (elfNames ? "" : "_") + sym.str(); }
+std::string machoName(StringRef sym) { return symName(sym); }
 
 // Where LLVM's Darwin arm64 lowering puts each register sized piece of a
 // call's arguments: x0-x7 and v0-v7, then the stack, packed at each piece's
@@ -223,7 +227,9 @@ bool returnsInMemory(Type t) {
 
 class ModuleGen {
 public:
-  ModuleGen(ModuleOp m, const std::string &unit) : module(m), ctx(m.getContext()), unit(unit) {}
+  ModuleGen(ModuleOp m, const std::string &unit, bool x64) : module(m), ctx(m.getContext()), unit(unit), x64(x64) {
+    if (x64) w.setElf();
+  }
   bool run(std::string &fragment, std::vector<std::string> &fallback, std::vector<std::string> &reasons,
            Stats &stats, std::string &err);
   MachOWriter w;
@@ -253,6 +259,7 @@ private:
   ModuleOp module;
   MLIRContext *ctx;
   std::string unit;
+  bool x64;
   void emitGlobal(LL::GlobalOp g);
 };
 
@@ -327,24 +334,33 @@ ConstVal evalInitializer(LL::GlobalOp g) {
   Region &r = g.getInitializerRegion();
   if (r.empty()) return out;
   llvm::DenseMap<Value, ConstVal> vals;
+  // A value's bytes, moved out when this is its only use, else copied.
+  auto take = [&](Value v) -> ConstVal {
+    auto it = vals.find(v);
+    if (it == vals.end()) return ConstVal();
+    if (!v.hasOneUse()) return it->second;
+    ConstVal c = std::move(it->second);
+    vals.erase(it);
+    return c;
+  };
   for (Operation &op : r.front()) {
     llvm::TypeSwitch<Operation *>(&op)
         .Case<LL::ConstantOp>([&](auto c) {
           ConstVal cv;
           cv.bytes.assign(sizeOf(c.getType()), 0);
           attrBytes(c.getValue(), c.getType(), cv.bytes, 0);
-          vals[c.getResult()] = cv;
+          vals[c.getResult()] = std::move(cv);
         })
         .Case<LL::ZeroOp, LL::UndefOp, LL::PoisonOp>([&](auto z) {
           ConstVal cv;
           cv.bytes.assign(sizeOf(z.getType()), 0);
-          vals[z.getResult()] = cv;
+          vals[z.getResult()] = std::move(cv);
         })
         .Case<LL::AddressOfOp>([&](auto a) {
           ConstVal cv;
           cv.bytes.assign(8, 0);
           cv.rels.push_back({0, machoName(a.getGlobalName()), 0});
-          vals[a.getResult()] = cv;
+          vals[a.getResult()] = std::move(cv);
         })
         .Case<LL::GEPOp>([&](auto gep) {
           auto base = vals.find(gep.getBase());
@@ -367,21 +383,23 @@ ConstVal evalInitializer(LL::GlobalOp g) {
               et = at.getElementType();
             }
           }
-          ConstVal cv = base->second;
+          ConstVal cv = take(gep.getBase());
           cv.rels[0].addend += off;
-          vals[gep.getResult()] = cv;
+          vals[gep.getResult()] = std::move(cv);
         })
         .Case<LL::InsertValueOp>([&](auto ins) {
-          ConstVal cv = vals.lookup(ins.getContainer());
+          // The container is moved along the chain when this is its only
+          // use: building a large table stays linear.
+          ConstVal cv = take(ins.getContainer());
           if (cv.bytes.empty()) cv.bytes.assign(sizeOf(ins.getType()), 0);
           auto [off, ft] = elementAt(ins.getType(), ins.getPosition());
-          const ConstVal &v = vals[ins.getValue()];
-          for (size_t i = 0; i < v.bytes.size(); i++) cv.bytes[off + i] = v.bytes[i];
-          for (auto rel : v.rels) cv.rels.push_back({off + rel.off, rel.sym, rel.addend});
+          ConstVal v = take(ins.getValue());
+          std::copy(v.bytes.begin(), v.bytes.end(), cv.bytes.begin() + off);
+          for (auto &rel : v.rels) cv.rels.push_back({off + rel.off, std::move(rel.sym), rel.addend});
           (void)ft;
-          vals[ins.getResult()] = cv;
+          vals[ins.getResult()] = std::move(cv);
         })
-        .Case<LL::ReturnOp>([&](auto ret) { out = vals[ret.getOperand(0)]; })
+        .Case<LL::ReturnOp>([&](auto ret) { out = take(ret.getOperand(0)); })
         .Default([&](Operation *o) { unsupported("initializer op " + o->getName().getStringRef().str()); });
   }
   return out;
@@ -1563,6 +1581,10 @@ void FuncGen::run() {
   mg.lines.push_back({w.symbol(sym), here() - start, std::move(rows)});
 }
 
+#include "CodegenX64.inc"
+
+void runX64(ModuleGen &mg, LL::LLVMFuncOp f) { FuncGenX64(mg, f).run(); }
+
 // Removes discardable definitions (linkonce, linkonce_odr, internal,
 // private) that no other definition reaches, as LLVM does: unused method
 // value thunks, for example, may refer to functions nothing defines.
@@ -1684,7 +1706,10 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
     // A function that falls back leaves no code or relocations behind.
     auto cp = w.checkpoint();
     try {
-      FuncGen(*this, f).run();
+      if (x64)
+        runX64(*this, f);
+      else
+        FuncGen(*this, f).run();
       stats.functions++;
     } catch (const Unsupported &u) {
       w.rollback(cp);
@@ -1733,9 +1758,11 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
 
 bool emit(ModuleOp module, const std::string &unit, const std::string &outObject, std::string &fragment,
           std::vector<std::string> &fallback, std::vector<std::string> &reasons, Stats &stats,
-          std::string &err) {
+          std::string &err, Target target) {
   dropUnused(module);
-  ModuleGen mg(module, unit);
+  bool x64 = target == Target::X64Elf;
+  elfNames = x64;
+  ModuleGen mg(module, unit, x64);
   if (!mg.run(fragment, fallback, reasons, stats, err)) return false;
   return mg.w.write(outObject, err);
 }

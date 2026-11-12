@@ -22,6 +22,10 @@ enum class Reloc : uint8_t {
   GotPage21,      // ADRP of the GOT slot's page
   GotPageOff12,   // LDR of the GOT slot
   Abs64,          // 64-bit pointer in data
+  // x86-64 (ELF): 32-bit pc-relative fields at the end of an instruction.
+  Call32,         // CALL rel32 (R_X86_64_PLT32)
+  Pc32,           // RIP-relative address of a symbol (R_X86_64_PC32)
+  GotPc32,        // RIP-relative load of its GOT slot (R_X86_64_REX_GOTPCRELX)
 };
 
 class MachOWriter {
@@ -71,9 +75,13 @@ public:
     sec_[0].rels.resize(c.rels);
   }
 
-  // Writes the object. False with err set on failure.
+  // Writes the object: Mach-O arm64, or ELF x86-64 after setElf(). False
+  // with err set on failure.
   bool write(const std::string &path, std::string &err) const;
   std::string serialize() const;
+  std::string serializeELF() const;  // ELF.cpp
+  void setElf() { elf_ = true; }
+  bool elf() const { return elf_; }
 
 private:
   struct Sym {
@@ -99,6 +107,7 @@ private:
   std::vector<Sym> syms_;
   std::unordered_map<std::string, unsigned> index_;
   Section sec_[4];
+  bool elf_ = false;
 };
 
 } // namespace tier0

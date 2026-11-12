@@ -13,6 +13,9 @@ class ModuleOp;
 namespace marmot {
 namespace tier0 {
 
+// The object kind: arm64 Mach-O (macOS) or x86-64 ELF (Linux).
+enum class Target { Arm64MachO, X64Elf };
+
 struct Stats {
   unsigned functions = 0;  // compiled by tier0
   unsigned fallbacks = 0;  // left to LLVM
@@ -34,7 +37,7 @@ struct Stats {
 // internal error.
 bool emit(mlir::ModuleOp module, const std::string &unit, const std::string &outObject,
           std::string &fragment, std::vector<std::string> &fallback, std::vector<std::string> &reasons,
-          Stats &stats, std::string &err);
+          Stats &stats, std::string &err, Target target = Target::Arm64MachO);
 
 } // namespace tier0
 } // namespace marmot

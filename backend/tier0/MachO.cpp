@@ -283,6 +283,7 @@ std::string MachOWriter::serialize() const {
       case Reloc::GotPage21: type = ARM64_RELOC_GOT_LOAD_PAGE21; pcrel = 1; break;
       case Reloc::GotPageOff12: type = ARM64_RELOC_GOT_LOAD_PAGEOFF12; break;
       case Reloc::Abs64: type = ARM64_RELOC_UNSIGNED; len = 3; break;
+      default: break;  // x86-64 kinds never reach a Mach-O arm64 object
       }
       if (r.addend != 0 && r.kind != Reloc::Abs64) {
         o.u32(uint32_t(r.offset));
@@ -315,7 +316,7 @@ std::string MachOWriter::serialize() const {
 }
 
 bool MachOWriter::write(const std::string &path, std::string &err) const {
-  std::string bytes = serialize();
+  std::string bytes = elf_ ? serializeELF() : serialize();
   FILE *f = std::fopen(path.c_str(), "wb");
   if (!f) {
     err = "cannot create " + path;
