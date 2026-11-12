@@ -133,7 +133,13 @@ func (s *evalSched) need(x ssa.Instruction) {
 			continue
 		}
 		v := *op
-		if !addrOnly {
+		// A store that writes a pointer to a literal under construction
+		// lets later code reach it: finish that literal first.
+		storedPtr := false
+		if st, ok := x.(*ssa.Store); ok && v == st.Val {
+			storedPtr = true
+		}
+		if !addrOnly || storedPtr {
 			// Something reads a literal under construction (directly or
 			// through a field or element address): finish it first.
 			root := v
