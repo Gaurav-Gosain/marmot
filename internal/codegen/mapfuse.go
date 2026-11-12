@@ -9,7 +9,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// Map read-modify-write fusion (docs/frontend-passes.md). For
+// Map read-modify-write fusion. For
 //
 //	v := m[k]; ...; m[k] = w        (m[k] op= x, m[k]++)
 //

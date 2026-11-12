@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// Source locations (docs/pcln.md). Every op of a function and the function
+// Source locations. Every op of a function and the function
 // itself carry loc("/abs/file.go":line:col) through #locN aliases defined
 // after the module, so the backend can emit DWARF line tables and
 // marmot-pcln can build the pc -> function, file:line table for

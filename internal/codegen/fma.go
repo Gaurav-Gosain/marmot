@@ -8,7 +8,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// Fused multiply-add, matching gc exactly (SPEC 3a rules): on arm64 gc
+// Fused multiply-add, matching gc exactly: on arm64 gc
 // rewrites a+x*y, a-x*y, x*y-a and the negated forms into FMADD, FMSUB,
 // FNMSUB, FNMADD (cmd/compile/internal/ssa/_gen/ARM64.rules), with no
 // single-use condition. An explicit conversion float64(x*y) rounds the

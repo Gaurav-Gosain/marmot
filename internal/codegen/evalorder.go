@@ -8,7 +8,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// Evaluation order of variable reads (docs/frontend-passes.md). The spec
+// Evaluation order of variable reads. The spec
 // leaves the order of a variable read and a function call in one
 // expression unspecified; gc evaluates the calls first and reads
 // variables that live in memory (address taken, captured, global, element

@@ -7,7 +7,7 @@ import (
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
 )
 
-// Types used for Go values. See SPEC 2.5.
+// Types used for Go values.
 var (
 	tString = mlir.Struct(mlir.Ptr, mlir.I64)
 	tSlice  = mlir.Struct(mlir.Ptr, mlir.I64, mlir.I64)

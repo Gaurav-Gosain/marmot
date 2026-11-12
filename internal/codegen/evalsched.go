@@ -8,7 +8,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// Evaluation order (docs/frontend-passes.md "Evaluation order"). gc
+// Evaluation order. gc
 // evaluates the calls, channel receives and type assertions of a statement
 // in source order and every other operand after them: variable, field,
 // element, map and pointer reads, divisions, conversions, len and cap,
@@ -30,9 +30,9 @@ type evalSched struct {
 	out     []ssa.Instruction
 	done    map[ssa.Instruction]bool
 	pending map[ssa.Instruction]bool
-	order   []ssa.Instruction           // pending, in source order
+	order   []ssa.Instruction          // pending, in source order
 	stores  map[ssa.Value][]*ssa.Store // pending stores by local allocation
-	local   map[ssa.Value]bool          // allocations of the current statement
+	local   map[ssa.Value]bool         // allocations of the current statement
 }
 
 func (f *funcGen) evalOrderOn() bool {

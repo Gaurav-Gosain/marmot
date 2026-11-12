@@ -461,8 +461,7 @@ func (f *funcGen) anyBig(vs []ssa.Value) bool {
 }
 
 // devirtualize turns an interface method call into direct calls guarded by
-// itab comparisons when the closed world has few implementers (SPEC 3a
-// lever 6). The indirect call stays as the fallback, so a dynamic type the
+// itab comparisons when the closed world has few implementers. The indirect call stays as the fallback, so a dynamic type the
 // analysis did not see (an itab built at run time) is still correct.
 func (f *funcGen) devirtualize(c *ssa.CallCommon) (string, bool) {
 	max := 1

@@ -1,5 +1,5 @@
 #!/bin/sh
-# M7 stage test (SPEC 3, M7).
+# Self-hosting stage test.
 #
 #   marmot-1 = go build ./cmd/marmot
 #   marmot-2 = marmot-1 build ./cmd/marmot
@@ -9,7 +9,7 @@
 # program and for cmd/marmot itself, and the core tier must pass with
 # marmot-2 as the compiler. Usage: scripts/selfhost.sh [core-test-regexp]
 # Sources (cmd, internal, lib/src) are frozen from git HEAD at the start.
-# Runs sequentially under nice (SPEC rule 10). Output: .work/selfhost/.
+# Runs sequentially under nice. Output: .work/selfhost/.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
@@ -19,7 +19,7 @@ FILTER="${1:-.}"
 rm -rf "$OUT"
 mkdir -p "$OUT/mlir2" "$OUT/mlir3" "$OUT/run" "$OUT/src"
 # Freeze the compiler sources and the runtime overlay so every stage
-# compiles the same program (other workers keep committing).
+# compiles the same program (the tree may change meanwhile).
 git archive HEAD cmd internal go.mod go.sum lib/src | tar -x -C "$OUT/src"
 export MARMOT_LIBSRC="$OUT/src/lib/src"
 T="timeout -k 10 300"

@@ -404,7 +404,7 @@ func (p *Program) implementers(iface types.Type, max int) ([]types.Type, bool) {
 	return out, len(out) <= max
 }
 
-// Type punning (for the loops component' alias analysis, docs/loops.md): every
+// Type punning (for the loop optimizer's alias analysis): every
 // type reached by a conversion unsafe.Pointer -> *T, with all its field and
 // element types. Loads and stores of such types carry go.unsafe, since the
 // memory behind them may hold values of another type.

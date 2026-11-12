@@ -21,7 +21,7 @@ import (
 type Options struct {
 	GOOS, GOARCH string
 	Sizes        types.Sizes
-	// GoDialect emits the go dialect (docs/dialect.md) instead of the
+	// GoDialect emits the go dialect instead of the
 	// equivalent llvm dialect sequences (Phase B, -dialect=go).
 	GoDialect bool
 	// Release enables release-only transforms (more devirtualization).

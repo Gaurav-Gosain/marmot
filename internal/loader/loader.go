@@ -31,7 +31,7 @@ type Config struct {
 	// root becomes the generated "pkg.test" main package (go list -test).
 	Tests bool
 	// BeforeSSA runs after type checking on every package, dependencies
-	// first; it may replace Syntax, Types and TypesInfo (the spec component).
+	// first; it may replace Syntax, Types and TypesInfo.
 	BeforeSSA func(all []*packages.Package) error
 	// AfterSSA runs after SSA is built, before code generation.
 	AfterSSA func(prog *ssa.Program, pkgs []*ssa.Package) error

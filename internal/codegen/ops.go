@@ -418,8 +418,8 @@ func readOnlyBytes(v *ssa.Convert) bool {
 // (gc's slicebytetostringtmp).
 func tempString(v *ssa.Convert) bool {
 	// The view aliases b: every use must follow the conversion in the same
-	// block with nothing in between that may write memory (loops audit
-	// tempstring_write: s := string(b); b[0] = 'x'; s == "abc").
+	// block with nothing in between that may write memory
+	// (s := string(b); b[0] = 'x'; s == "abc" must see the old bytes).
 	b := v.Block()
 	idx := -1
 	for i, x := range b.Instrs {

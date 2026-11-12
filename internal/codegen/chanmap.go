@@ -361,7 +361,7 @@ func (f *funcGen) fastMapKey(kt types.Type, k ssa.Value) (string, []string) {
 		return "", nil
 	}
 	if f.plain128(kt) && f.m.p.runtimeFunc("mapaccess1_fast128") != nil {
-		// Two words, passed by value (rtgo: k0, k1 uint64).
+		// Two words, passed by value (k0, k1 uint64).
 		p := f.spill(f.value(k), kt)
 		k0 := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> i64", p)
 		p1 := f.op("llvm.getelementptr %s[8] : (!llvm.ptr) -> !llvm.ptr, i8", p)
