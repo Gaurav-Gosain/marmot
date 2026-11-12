@@ -222,6 +222,13 @@ func (m *moduleGen) typeDescSym(t types.Type) string {
 	if m.defined[sym] {
 		return sym
 	}
+	if owner := m.p.descOwner(t); owner != nil && owner != m.pkg {
+		// Defined by the module of its package.
+		if _, ok := m.decls[sym]; !ok {
+			m.decls[sym] = fmt.Sprintf("  llvm.mlir.global external constant %s() {addr_space = 0 : i32} : !llvm.ptr\n", mlir.Symbol(sym))
+		}
+		return sym
+	}
 	m.defined[sym] = true
 	m.emitTypeDesc(sym, t)
 	switch t.(type) {
@@ -362,7 +369,52 @@ func (m *moduleGen) emitTypeDesc(sym string, t types.Type) {
 	default:
 		desc = header
 	}
-	m.constGlobal(sym, "linkonce_odr", true, desc)
+	linkage := "linkonce_odr"
+	if m.pkg != nil && m.p.descOwner(t) == m.pkg {
+		linkage = "weak_odr" // other modules refer to it
+	}
+	m.constGlobal(sym, linkage, true, desc)
+}
+
+// descOwner returns the package whose module defines the descriptor of t,
+// or nil when every module that needs it has its own linkonce copy. In dev
+// builds a package level named type of a package in the program (and the
+// pointer to it) belongs to its package, as in gc: modules would otherwise
+// repeat the descriptors of every type they reach, with method tables and
+// signatures, which dominated MLIR generation. Release builds keep the
+// copies, which LLVM may fold.
+func (p *Program) descOwner(t types.Type) *ssa.Package {
+	if p.opts.Release {
+		return nil
+	}
+	if pt, ok := t.(*types.Pointer); ok {
+		t = types.Unalias(pt.Elem())
+	}
+	n, ok := t.(*types.Named)
+	if !ok || n.TypeArgs().Len() > 0 || n.TypeParams().Len() > 0 {
+		return nil
+	}
+	obj := n.Obj()
+	if obj.Pkg() == nil || obj.Parent() != obj.Pkg().Scope() {
+		return nil
+	}
+	return p.pkgOf[obj.Pkg()]
+}
+
+// emitOwnTypes defines the descriptors that belong to pkg's module.
+func (m *moduleGen) emitOwnTypes(pkg *ssa.Package, names []string) {
+	for _, n := range names {
+		mt, ok := pkg.Members[n].(*ssa.Type)
+		if !ok {
+			continue
+		}
+		t := types.Unalias(mt.Type())
+		if m.p.descOwner(t) != pkg {
+			continue
+		}
+		m.typeDescSym(t)
+		m.typeDescSym(types.NewPointer(t))
+	}
 }
 
 func structFields(st *types.Struct) []*types.Var {

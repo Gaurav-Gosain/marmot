@@ -64,6 +64,7 @@ type Program struct {
 	fset    *token.FileSet
 	runtime *ssa.Package
 	pkgs    []*ssa.Package
+	pkgOf   map[*types.Package]*ssa.Package // the packages of pkgs
 	files   map[*types.Package][]*ast.File
 	infos   map[*types.Package]*types.Info
 
@@ -148,7 +149,9 @@ func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package
 	if p.runtime == nil {
 		return nil, fmt.Errorf("package runtime is not loaded")
 	}
+	p.pkgOf = map[*types.Package]*ssa.Package{}
 	for _, pkg := range p.pkgs {
+		p.pkgOf[pkg.Pkg] = pkg
 		p.collect(pkg)
 	}
 	p.computeUsedMethods()

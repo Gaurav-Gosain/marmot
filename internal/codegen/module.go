@@ -61,6 +61,7 @@ func (p *Program) Generate(pkg *ssa.Package) (Module, error) {
 	for _, fn := range p.byPkg[pkg] {
 		m.function(fn, false)
 	}
+	m.emitOwnTypes(pkg, names)
 	for m.drain(); len(m.regionQueue) > 0; m.drain() {
 		m.drainRegions()
 	}
