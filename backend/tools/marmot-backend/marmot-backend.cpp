@@ -57,7 +57,7 @@ static cl::opt<std::string> batchFile("batch",
                                       cl::desc("File with one \"in out\" pair per line"),
                                       cl::value_desc("path"), cl::cat(cat));
 static cl::opt<unsigned> jobs("j", cl::desc("Parallel jobs in batch mode (0: all cores, "
-                                             "capped by MARMOT_MAX_JOBS, default 4)"),
+                                             "capped by MARMOT_MAX_JOBS when set)"),
                               cl::init(0), cl::cat(cat));
 static cl::opt<bool> timePhases("time", cl::desc("Report time per phase"), cl::cat(cat));
 static cl::opt<bool> initOptNone(
@@ -316,8 +316,8 @@ int main(int argc, char **argv) {
   double prepMs = std::chrono::duration<double, std::milli>(
                       std::chrono::steady_clock::now() - start).count();
 
-  // At most MARMOT_MAX_JOBS (default 4) threads, whatever -j says.
-  unsigned cap = 4;
+  // -j threads (default: every core), at most MARMOT_MAX_JOBS when set.
+  unsigned cap = std::max(1u, std::thread::hardware_concurrency());
   if (const char *e = std::getenv("MARMOT_MAX_JOBS"))
     if (unsigned v = std::strtoul(e, nullptr, 10))
       cap = v;
