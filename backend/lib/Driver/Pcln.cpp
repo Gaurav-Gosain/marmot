@@ -76,7 +76,8 @@ const char *dieName(const DWARFDie &d) {
 // at address 0); elsewhere addresses are unique and section indices of rows
 // and functions need not agree.
 void readUnits(DWARFContext &dwarf, unsigned version, std::vector<Raw> &raws,
-               const std::function<uint32_t(const std::string &)> &fileId, bool useSections) {
+               const std::function<uint32_t(const std::string &)> &fileId, bool useSections,
+               std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> *orphans = nullptr) {
   auto normSec = [&](uint64_t s) {
     return !useSections || s == object::SectionedAddress::UndefSection ? 0 : s;
   };
@@ -143,16 +144,22 @@ void readUnits(DWARFContext &dwarf, unsigned version, std::vector<Raw> &raws,
         continue;
       uint64_t sec = normSec(row.Address.SectionIndex);
       auto it = byStart.upper_bound({sec, row.Address.Address});
-      if (it == byStart.begin())
-        continue;
-      --it;
-      Raw &r = raws[it->second];
-      if (it->first.first != sec || row.Address.Address >= r.hi)
+      Raw *r = nullptr;
+      if (it != byStart.begin()) {
+        --it;
+        Raw &c = raws[it->second];
+        if (it->first.first == sec && row.Address.Address < c.hi)
+          r = &c;
+      }
+      if (!r && !orphans)
         continue;
       std::string fname;
       lt->getFileNameByIndex(row.File, cu->getCompilationDir(),
                              DILineInfoSpecifier::FileLineInfoKind::AbsoluteFilePath, fname);
-      r.f.rows.push_back({row.Address.Address, row.Line, fileId(fname)});
+      if (r)
+        r->f.rows.push_back({row.Address.Address, row.Line, fileId(fname)});
+      else
+        orphans->push_back({row.Address.Address, row.Line, fileId(fname)});
     }
   }
 }
@@ -162,7 +169,9 @@ void readUnits(DWARFContext &dwarf, unsigned version, std::vector<Raw> &raws,
 void readDwarf(const ObjectFile &obj, unsigned version, Table &t) {
   std::unique_ptr<DWARFContext> dwarf = DWARFContext::create(obj);
   std::vector<Raw> raws;
-  readUnits(*dwarf, version, raws, [&](const std::string &f) { return t.fileId(f); }, false);
+  readUnits(
+      *dwarf, version, raws, [&](const std::string &f) { return t.fileId(f); }, false,
+      &t.orphans);
   for (Raw &r : raws)
     t.funcs[r.lo] = std::move(r.f);
 }
@@ -203,6 +212,16 @@ void addTextSymbols(const ObjectFile &obj, Table &t) {
     f.hi = syms[addr].second; // only for the end of the table; lookups stop at the next start
     f.name = syms[addr].first;
   }
+  // Rows without a DWARF subprogram belong to the function symbol before them.
+  for (auto &row : t.orphans) {
+    auto it = t.funcs.upper_bound(std::get<0>(row));
+    if (it == t.funcs.begin())
+      continue;
+    --it;
+    if (std::get<0>(row) < it->second.hi)
+      it->second.rows.push_back(row);
+  }
+  t.orphans.clear();
 }
 
 // Fragment text, one record per line, fields separated by tabs, names last:

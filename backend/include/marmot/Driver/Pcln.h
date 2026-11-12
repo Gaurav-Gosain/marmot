@@ -42,6 +42,10 @@ struct Table {
   std::map<uint64_t, Func> funcs;
   std::vector<std::string> files;
   std::map<std::string, uint32_t> fileIndex;
+  // Rows outside every DWARF subprogram: ELF line-tables-only debug info has
+  // no subprograms at all (LLVM 22, as clang -gline-tables-only); they go to
+  // the function symbols in addTextSymbols.
+  std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> orphans;
   uint32_t fileId(const std::string &f);
 };
 

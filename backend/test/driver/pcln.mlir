@@ -47,3 +47,10 @@
 // RUN: %clang %t.fr/a.o %t.main.o -Wl,-sectcreate,__TEXT,__marmot_pcln,%t.fr/ph2 -o %t.fr/exe2
 // RUN: %not %pcln -frags %t.fr/frags -patch %t.fr/exe2 2>&1 | %FileCheck %s --check-prefix=SMALL
 // SMALL: needs {{[0-9]+}} bytes
+// ELF line-tables-only debug info has no DW_TAG_subprogram (LLVM 22, as clang
+// -gline-tables-only): rows go to the function symbols. Before, every Linux
+// table had names but no lines (runtime.Caller gave "" and 0).
+// RUN: %backend -target linux/amd64 -O1 -o %t.elf.o %S/debuginfo.mlir
+// RUN: %pcln -o %t.elf.pcln %t.elf.o
+// RUN: python3 %S/Inputs/pcln_decode.py %t.elf.pcln 0 | %FileCheck %s --check-prefix=ELF
+// ELF: main.add /src/p/main.go:7
