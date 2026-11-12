@@ -1,0 +1,502 @@
+[
+  {
+    "case": "01_method_typo_other_file",
+    "condition": "go",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "# example.com/method_typo_other_file\n./main.go:9:16: l.Lenght undefined (type List has no field or method Lenght)\n./main.go:9:28: l.Contain undefined (type List has no field or method Contain)\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 3,
+        "fix": "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tvar l List\n\tl.Add(\"a\")\n\tl.Add(\"b\")\n\tfmt.Println(l.Length(), l.Contains(\"a\"))\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "01_method_typo_other_file",
+    "condition": "marmot",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0003\",\"message\":\"l.Lenght undefined (type List has no field or method Lenght)\",\"span\":{\"file\":\"main.go\",\"line\":9,\"col\":16,\"endLine\":9,\"endCol\":22},\"notes\":[\"fields of `List`: `items`\",\"methods of `List`: `(*List) Add`, `(*List) Contains`, `(*List) Length`\"],\"fixes\":[{\"title\":\"use `Length`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":9,\"col\":16,\"endLine\":9,\"endCol\":22},\"newText\":\"Length\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":7,\"text\":\"\\tl.Add(\\\"a\\\")\"},{\"line\":8,\"text\":\"\\tl.Add(\\\"b\\\")\"},{\"line\":9,\"text\":\"\\tfmt.Println(l.Lenght(), l.Contain(\\\"a\\\"))\"},{\"line\":10,\"text\":\"}\"},{\"line\":11,\"text\":\"\"}],\"types\":[\"type List struct{ items []string }\"]},\"label\":\"`List` has no field or method `Lenght`\",\"rendered\":\"error[M0003]: l.Lenght undefined (type List has no field or method Lenght)\\n --> ./main.go:9:16\\n  |\\n9 |     fmt.Println(l.Lenght(), l.Contain(\\\"a\\\"))\\n  |                   ^^^^^^ `List` has no field or method `Lenght`\\n  |\\n  = note: fields of `List`: `items`\\n  = note: methods of `List`: `(*List) Add`, `(*List) Contains`, `(*List) Length`\\nhelp: use `Length` (check it)\\n  |\\n9 -     fmt.Println(l.Lenght(), l.Contain(\\\"a\\\"))\\n9 +     fmt.Println(l.Length(), l.Contain(\\\"a\\\"))\\n  |\\n\",\"explain\":\"marmot explain M0003\"}\n{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0003\",\"message\":\"l.Contain undefined (type List has no field or method Contain)\",\"span\":{\"file\":\"main.go\",\"line\":9,\"col\":28,\"endLine\":9,\"endCol\":35},\"notes\":[\"fields of `List`: `items`\",\"methods of `List`: `(*List) Add`, `(*List) Contains`, `(*List) Length`\"],\"fixes\":[{\"title\":\"use `Contains`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":9,\"col\":28,\"endLine\":9,\"endCol\":35},\"newText\":\"Contains\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":7,\"text\":\"\\tl.Add(\\\"a\\\")\"},{\"line\":8,\"text\":\"\\tl.Add(\\\"b\\\")\"},{\"line\":9,\"text\":\"\\tfmt.Println(l.Lenght(), l.Contain(\\\"a\\\"))\"},{\"line\":10,\"text\":\"}\"},{\"line\":11,\"text\":\"\"}],\"types\":[\"type List struct{ items []string }\"]},\"label\":\"`List` has no field or method `Contain`\",\"rendered\":\"error[M0003]: l.Contain undefined (type List has no field or method Contain)\\n --> ./main.go:9:28\\n  |\\n9 |     fmt.Println(l.Lenght(), l.Contain(\\\"a\\\"))\\n  |                               ^^^^^^^ `List` has no field or method `Contain`\\n  |\\n  = note: fields of `List`: `items`\\n  = note: methods of `List`: `(*List) Add`, `(*List) Contains`, `(*List) Length`\\nhelp: use `Contains` (check it)\\n  |\\n9 -     fmt.Println(l.Lenght(), l.Contain(\\\"a\\\"))\\n9 +     fmt.Println(l.Lenght(), l.Contains(\\\"a\\\"))\\n  |\\n\",\"explain\":\"marmot explain M0003\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":2,\"warnings\":0,\"durationMs\":426,\"exitCode\":1}\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 2,
+        "fix": "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tvar l List\n\tl.Add(\"a\")\n\tl.Add(\"b\")\n\tfmt.Println(l.Length(), l.Contains(\"a\"))\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "02_iface_other_file",
+    "condition": "go",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "# example.com/iface_other_file\n./main.go:11:23: cannot use sq (variable of struct type Square) as Shape value in argument to describe: Square does not implement Shape (method Area has pointer receiver)\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 2,
+        "fix": "package main\n\nimport \"fmt\"\n\nfunc describe(s Shape) string {\n\treturn fmt.Sprintf(\"%s %.1f %.1f\", s.Name(), s.Area(), s.Perimeter())\n}\n\nfunc main() {\n\tsq := Square{Side: 2}\n\tfmt.Println(describe(&sq))\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "02_iface_other_file",
+    "condition": "marmot",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0014\",\"message\":\"cannot use sq (variable of struct type Square) as Shape value in argument to describe: Square does not implement Shape (method Area has pointer receiver)\",\"span\":{\"file\":\"main.go\",\"line\":11,\"col\":23,\"endLine\":11,\"endCol\":25},\"notes\":[\"`Square` lacks 3 methods of `Shape`:\",\"  `Area` has a pointer receiver, so only `*Square` has it\",\"  `Perimeter` has a pointer receiver, so only `*Square` has it\",\"  `Name` has a pointer receiver, so only `*Square` has it\"],\"fixes\":[{\"title\":\"pass a pointer\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":11,\"col\":23,\"endLine\":11,\"endCol\":23},\"newText\":\"&\"}]}],\"related\":[{\"span\":{\"file\":\"square.go\",\"line\":5,\"col\":9,\"endLine\":5,\"endCol\":16},\"message\":\"`Area` has a pointer receiver\"},{\"span\":{\"file\":\"shape.go\",\"line\":3,\"col\":6,\"endLine\":3,\"endCol\":11},\"message\":\"`Shape` is declared here\"}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\tsq := Square{Side: 2}\"},{\"line\":11,\"text\":\"\\tfmt.Println(describe(sq))\"},{\"line\":12,\"text\":\"}\"},{\"line\":13,\"text\":\"\"}],\"types\":[\"type Square struct{ Side float64 }\",\"type Shape interface { Area() float64 Perimeter() float64 Name() string }\"]},\"label\":\"`Square` does not implement `Shape`\",\"rendered\":\"error[M0014]: cannot use sq (variable of struct type Square) as Shape value in argument to describe: Square does not implement Shape (method Area has pointer receiver)\\n  --> ./main.go:11:23\\n   |\\n11 |     fmt.Println(describe(sq))\\n   |                          ^^ `Square` does not implement `Shape`\\n   |\\n   = note: `Square` lacks 3 methods of `Shape`:\\n             `Area` has a pointer receiver, so only `*Square` has it\\n             `Perimeter` has a pointer receiver, so only `*Square` has it\\n             `Name` has a pointer receiver, so only `*Square` has it\\n   = note: `Area` has a pointer receiver at ./square.go:5\\n   = note: `Shape` is declared here at ./shape.go:3\\nhelp: pass a pointer (check it)\\n   |\\n11 -     fmt.Println(describe(sq))\\n11 +     fmt.Println(describe(&sq))\\n   |\\n\",\"explain\":\"marmot explain M0014\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":240,\"exitCode\":1}\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 2,
+        "fix": "package main\n\nimport \"fmt\"\n\nfunc describe(s Shape) string {\n\treturn fmt.Sprintf(\"%s %.1f %.1f\", s.Name(), s.Area(), s.Perimeter())\n}\n\nfunc main() {\n\tsq := Square{Side: 2}\n\tfmt.Println(describe(&sq))\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "03_iface_missing_two",
+    "condition": "go",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 2,
+    "log": [
+      {
+        "output": "# example.com/iface_missing_two\n./main.go:15:6: cannot use NewMem() (value of type *Mem) as Store value in argument to use: *Mem does not implement Store (missing method Delete)\n",
+        "compiles": false,
+        "fixed": false,
+        "seconds": 10,
+        "fix": "package main\n\nimport \"fmt\"\n\n// store wraps *Mem and adds Delete, so the value satisfies Store.\n// Deleted keys are tracked as tombstones and hidden from Get.\ntype store struct {\n\t*Mem\n\tdeleted map[string]bool\n}\n\nfunc (s *store) Put(k, v string) {\n\tdelete(s.deleted, k)\n\ts.Mem.Put(k, v)\n}\n\nfunc (s *store) Get(k string) (string, bool) {\n\tif s.deleted[k] {\n\t\treturn \"\", false\n\t}\n\treturn s.Mem.Get(k)\n}\n\nfunc (s *store) Delete(k string) {\n\ts.deleted[k] = true\n}\n\nfunc use(s Store) {\n\ts.Put(\"a\", \"1\")\n\tv, ok := s.Get(\"a\")\n\tfmt.Println(v, ok)\n\ts.Delete(\"a\")\n\t_, ok = s.Get(\"a\")\n\tfmt.Println(ok)\n}\n\nfunc main() {\n\tuse(&store{Mem: NewMem(), deleted: map[string]bool{}})\n}\n"
+      },
+      {
+        "output": "# example.com/iface_missing_two\n./main.go:14:8: s.Mem.Put undefined (type *Mem has no field or method Put)\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 7,
+        "fix": "package main\n\nimport \"fmt\"\n\n// store wraps *Mem and adds Delete, so the value satisfies Store.\n// Deleted keys are tracked as tombstones and hidden from Get.\ntype store struct {\n\t*Mem\n\tdata    map[string]string\n\tdeleted map[string]bool\n}\n\nfunc (s *store) Put(k, v string) {\n\tdelete(s.deleted, k)\n\ts.data[k] = v\n}\n\nfunc (s *store) Get(k string) (string, bool) {\n\tif s.deleted[k] {\n\t\treturn \"\", false\n\t}\n\tv, ok := s.data[k]\n\treturn v, ok\n}\n\nfunc (s *store) Delete(k string) {\n\ts.deleted[k] = true\n}\n\nfunc use(s Store) {\n\ts.Put(\"a\", \"1\")\n\tv, ok := s.Get(\"a\")\n\tfmt.Println(v, ok)\n\ts.Delete(\"a\")\n\t_, ok = s.Get(\"a\")\n\tfmt.Println(ok)\n}\n\nfunc main() {\n\tuse(&store{\n\t\tMem:     NewMem(),\n\t\tdata:    map[string]string{},\n\t\tdeleted: map[string]bool{},\n\t})\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "03_iface_missing_two",
+    "condition": "marmot",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0014\",\"message\":\"cannot use NewMem() (value of type *Mem) as Store value in argument to use: *Mem does not implement Store (missing method Delete)\",\"span\":{\"file\":\"main.go\",\"line\":15,\"col\":6,\"endLine\":15,\"endCol\":14},\"notes\":[\"`*Mem` lacks 2 methods of `Store`:\",\"  `Put(string, string)` is missing\",\"  `Delete(string)` is missing\"],\"related\":[{\"span\":{\"file\":\"store.go\",\"line\":3,\"col\":6,\"endLine\":3,\"endCol\":11},\"message\":\"`Store` is declared here\"}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":13,\"text\":\"\"},{\"line\":14,\"text\":\"func main() {\"},{\"line\":15,\"text\":\"\\tuse(NewMem())\"},{\"line\":16,\"text\":\"}\"},{\"line\":17,\"text\":\"\"}],\"types\":[\"type Mem struct{ m map[string]string }\",\"type Store interface { Get(key string) (string, bool) Put(key, value string) Delete(key string) }\"]},\"label\":\"`*Mem` does not implement `Store`\",\"rendered\":\"error[M0014]: cannot use NewMem() (value of type *Mem) as Store value in argument to use: *Mem does not implement Store (missing method Delete)\\n  --> ./main.go:15:6\\n   |\\n15 |     use(NewMem())\\n   |         ^^^^^^^^ `*Mem` does not implement `Store`\\n   |\\n   = note: `*Mem` lacks 2 methods of `Store`:\\n             `Put(string, string)` is missing\\n             `Delete(string)` is missing\\n   = note: `Store` is declared here at ./store.go:3\\n\",\"explain\":\"marmot explain M0014\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":390,\"exitCode\":1}\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 4,
+        "fix": "package main\n\nimport \"fmt\"\n\nfunc use(s Store) {\n\ts.Put(\"a\", \"1\")\n\tv, ok := s.Get(\"a\")\n\tfmt.Println(v, ok)\n\ts.Delete(\"a\")\n\t_, ok = s.Get(\"a\")\n\tfmt.Println(ok)\n}\n\nfunc (m *Mem) Put(key, value string) {\n\tif m.m == nil {\n\t\tm.m = make(map[string]string)\n\t}\n\tm.m[key] = value\n}\n\nfunc (m *Mem) Delete(key string) {\n\tdelete(m.m, key)\n}\n\nfunc main() {\n\tuse(NewMem())\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "04_field_other_package",
+    "condition": "go",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "# example.com/app\n./main.go:10:19: unknown field FristName in struct literal of type models.User\n./main.go:10:59: unknown field Emial in struct literal of type models.User\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 2,
+        "fix": "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/app/models\"\n)\n\nfunc main() {\n\tu := models.User{FirstName: \"Ada\", LastName: \"Lovelace\", Email: \"ada@example.com\", Age: 36}\n\tfmt.Println(u.FirstName, u.Email)\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "04_field_other_package",
+    "condition": "marmot",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 2,
+    "log": [
+      {
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0029\",\"message\":\"unknown field FristName in struct literal of type models.User\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":19,\"endLine\":10,\"endCol\":28},\"fixes\":[{\"title\":\"use `FirstName`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":19,\"endLine\":10,\"endCol\":28},\"newText\":\"FirstName\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":8,\"text\":\"\"},{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\tu := models.User{FristName: \\\"Ada\\\", LastName: \\\"Lovelace\\\", Emial: \\\"ada@example.com\\\", Age: 36}\"},{\"line\":11,\"text\":\"\\tfmt.Println(u.FirstName, u.Email)\"},{\"line\":12,\"text\":\"}\"}],\"types\":[\"models: type User struct { FirstName string LastName string Email string Age int }\"]},\"label\":\"`models.User` has no field `FristName`\",\"rendered\":\"error[M0029]: unknown field FristName in struct literal of type models.User\\n  --> ./main.go:10:19\\n   |\\n10 |     u := models.User{FristName: \\\"Ada\\\", LastName: \\\"Lovelace\\\", Emial: \\\"ada@example.com\\\", Age: 36}\\n   |                      ^^^^^^^^^ `models.User` has no field `FristName`\\n   |\\nhelp: use `FirstName` (check it)\\n   |\\n10 -     u := models.User{FristName: \\\"Ada\\\", LastName: \\\"Lovelace\\\", Emial: \\\"ada@example.com\\\", Age: 36}\\n10 +     u := models.User{FirstName: \\\"Ada\\\", LastName: \\\"Lovelace\\\", Emial: \\\"ada@example.com\\\", Age: 36}\\n   |\\n\",\"explain\":\"marmot explain M0029\"}\n{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0029\",\"message\":\"unknown field Emial in struct literal of type models.User\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":59,\"endLine\":10,\"endCol\":64},\"fixes\":[{\"title\":\"use `Email`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":59,\"endLine\":10,\"endCol\":64},\"newText\":\"Email\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":8,\"text\":\"\"},{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\tu := models.User{FristName: \\\"Ada\\\", LastName: \\\"Lovelace\\\", Emial: \\\"ada@example.com\\\", Age: 36}\"},{\"line\":11,\"text\":\"\\tfmt.Println(u.FirstName, u.Email)\"},{\"line\":12,\"text\":\"}\"}],\"types\":[\"models: type User struct { FirstName string LastName string Email string Age int }\"]},\"label\":\"`models.User` has no field `Emial`\",\"rendered\":\"error[M0029]: unknown field Emial in struct literal of type models.User\\n  --> ./main.go:10:59\\n   |\\n10 |     u := models.User{FristName: \\\"Ada\\\", LastName: \\\"Lovelace\\\", Emial: \\\"ada@example.com\\\", Age: 36}\\n   |                                                              ^^^^^ `models.User` has no field `Emial`\\n   |\\nhelp: use `Email` (check it)\\n   |\\n10 -     u := models.User{FristName: \\\"Ada\\\", LastName: \\\"Lovelace\\\", Emial: \\\"ada@example.com\\\", Age: 36}\\n10 +     u := models.User{FristName: \\\"Ada\\\", LastName: \\\"Lovelace\\\", Email: \\\"ada@example.com\\\", Age: 36}\\n   |\\n\",\"explain\":\"marmot explain M0029\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":2,\"warnings\":0,\"durationMs\":242,\"exitCode\":1}\n",
+        "compiles": false,
+        "fixed": false,
+        "seconds": 1
+      },
+      {
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0029\",\"message\":\"unknown field FristName in struct literal of type models.User\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":19,\"endLine\":10,\"endCol\":28},\"fixes\":[{\"title\":\"use `FirstName`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":19,\"endLine\":10,\"endCol\":28},\"newText\":\"FirstName\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":8,\"text\":\"\"},{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\tu := models.User{FristName: \\\"Ada\\\", LastName: \\\"Lovelace\\\", Emial: \\\"ada@example.com\\\", Age: 36}\"},{\"line\":11,\"text\":\"\\tfmt.Println(u.FirstName, u.Email)\"},{\"line\":12,\"text\":\"}\"}],\"types\":[\"models: type User struct { FirstName string LastName string Email string Age int }\"]},\"label\":\"`models.User` has no field `FristName`\",\"rendered\":\"error[M0029]: unknown field FristName in struct literal of type models.User\\n  --> ./main.go:10:19\\n   |\\n10 |     u := models.User{FristName: \\\"Ada\\\", LastName: \\\"Lovelace\\\", Emial: \\\"ada@example.com\\\", Age: 36}\\n   |                      ^^^^^^^^^ `models.User` has no field `FristName`\\n   |\\nhelp: use `FirstName` (check it)\\n   |\\n10 -     u := models.User{FristName: \\\"Ada\\\", LastName: \\\"Lovelace\\\", Emial: \\\"ada@example.com\\\", Age: 36}\\n10 +     u := models.User{FirstName: \\\"Ada\\\", LastName: \\\"Lovelace\\\", Emial: \\\"ada@example.com\\\", Age: 36}\\n   |\\n\",\"explain\":\"marmot explain M0029\"}\n{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0029\",\"message\":\"unknown field Emial in struct literal of type models.User\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":59,\"endLine\":10,\"endCol\":64},\"fixes\":[{\"title\":\"use `Email`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":59,\"endLine\":10,\"endCol\":64},\"newText\":\"Email\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":8,\"text\":\"\"},{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\tu := models.User{FristName: \\\"Ada\\\", LastName: \\\"Lovelace\\\", Emial: \\\"ada@example.com\\\", Age: 36}\"},{\"line\":11,\"text\":\"\\tfmt.Println(u.FirstName, u.Email)\"},{\"line\":12,\"text\":\"}\"}],\"types\":[\"models: type User struct { FirstName string LastName string Email string Age int }\"]},\"label\":\"`models.User` has no field `Emial`\",\"rendered\":\"error[M0029]: unknown field Emial in struct literal of type models.User\\n  --> ./main.go:10:59\\n   |\\n10 |     u := models.User{FristName: \\\"Ada\\\", LastName: \\\"Lovelace\\\", Emial: \\\"ada@example.com\\\", Age: 36}\\n   |                                                              ^^^^^ `models.User` has no field `Emial`\\n   |\\nhelp: use `Email` (check it)\\n   |\\n10 -     u := models.User{FristName: \\\"Ada\\\", LastName: \\\"Lovelace\\\", Emial: \\\"ada@example.com\\\", Age: 36}\\n10 +     u := models.User{FristName: \\\"Ada\\\", LastName: \\\"Lovelace\\\", Email: \\\"ada@example.com\\\", Age: 36}\\n   |\\n\",\"explain\":\"marmot explain M0029\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":2,\"warnings\":0,\"durationMs\":206,\"exitCode\":1}\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 1,
+        "fix": "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/app/models\"\n)\n\nfunc main() {\n\tu := models.User{FirstName: \"Ada\", LastName: \"Lovelace\", Email: \"ada@example.com\", Age: 36}\n\tfmt.Println(u.FirstName, u.Email)\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "05_func_other_package_renamed",
+    "condition": "go",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "# example.com/app\n./main.go:10:23: undefined: textutil.FormatName\n./main.go:10:65: undefined: textutil.Initial\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 5,
+        "fix": "package main\n\nimport (\n\t\"fmt\"\n\t\"strings\"\n\t\"unicode\"\n\t\"unicode/utf8\"\n)\n\n// FormatName trims surrounding whitespace from each part and joins the\n// non-empty parts with a single space, e.g. \" Ada\", \"Lovelace \" -> \"Ada Lovelace\".\n// Defined locally because textutil.FormatName is not available in the module.\nfunc FormatName(parts ...string) string {\n\tvar out []string\n\tfor _, p := range parts {\n\t\tif t := strings.TrimSpace(p); t != \"\" {\n\t\t\tout = append(out, t)\n\t\t}\n\t}\n\treturn strings.Join(out, \" \")\n}\n\n// Initial returns the upper-cased first letter of each part concatenated,\n// e.g. \"ada\", \"lovelace\" -> \"AL\".\n// Defined locally because textutil.Initial is not available in the module.\nfunc Initial(parts ...string) string {\n\tvar b strings.Builder\n\tfor _, p := range parts {\n\t\tr, size := utf8.DecodeRuneInString(p)\n\t\tif size == 0 || r == utf8.RuneError {\n\t\t\tcontinue\n\t\t}\n\t\tb.WriteRune(unicode.ToUpper(r))\n\t}\n\treturn b.String()\n}\n\nfunc main() {\n\tfmt.Println(FormatName(\" Ada\", \"Lovelace \"), Initial(\"ada\", \"lovelace\"))\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "05_func_other_package_renamed",
+    "condition": "marmot",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: textutil.FormatName\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":23,\"endLine\":10,\"endCol\":33},\"fixes\":[{\"title\":\"use `textutil.FormatFullName`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":23,\"endLine\":10,\"endCol\":33},\"newText\":\"FormatFullName\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":8,\"text\":\"\"},{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\tfmt.Println(textutil.FormatName(\\\" Ada\\\", \\\"Lovelace \\\"), textutil.Initial(\\\"ada\\\", \\\"lovelace\\\"))\"},{\"line\":11,\"text\":\"}\"},{\"line\":12,\"text\":\"\"}]},\"label\":\"not declared by package `textutil`\",\"rendered\":\"error[M0002]: undefined: textutil.FormatName\\n  --> ./main.go:10:23\\n   |\\n10 |     fmt.Println(textutil.FormatName(\\\" Ada\\\", \\\"Lovelace \\\"), textutil.Initial(\\\"ada\\\", \\\"lovelace\\\"))\\n   |                          ^^^^^^^^^^ not declared by package `textutil`\\n   |\\nhelp: use `textutil.FormatFullName` (check it)\\n   |\\n10 -     fmt.Println(textutil.FormatName(\\\" Ada\\\", \\\"Lovelace \\\"), textutil.Initial(\\\"ada\\\", \\\"lovelace\\\"))\\n10 +     fmt.Println(textutil.FormatFullName(\\\" Ada\\\", \\\"Lovelace \\\"), textutil.Initial(\\\"ada\\\", \\\"lovelace\\\"))\\n   |\\n\",\"explain\":\"marmot explain M0002\"}\n{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: textutil.Initial\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":65,\"endLine\":10,\"endCol\":72},\"fixes\":[{\"title\":\"use `textutil.Initials`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":65,\"endLine\":10,\"endCol\":72},\"newText\":\"Initials\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":8,\"text\":\"\"},{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\tfmt.Println(textutil.FormatName(\\\" Ada\\\", \\\"Lovelace \\\"), textutil.Initial(\\\"ada\\\", \\\"lovelace\\\"))\"},{\"line\":11,\"text\":\"}\"},{\"line\":12,\"text\":\"\"}]},\"label\":\"not declared by package `textutil`\",\"rendered\":\"error[M0002]: undefined: textutil.Initial\\n  --> ./main.go:10:65\\n   |\\n10 |     fmt.Println(textutil.FormatName(\\\" Ada\\\", \\\"Lovelace \\\"), textutil.Initial(\\\"ada\\\", \\\"lovelace\\\"))\\n   |                                                                    ^^^^^^^ not declared by package `textutil`\\n   |\\nhelp: use `textutil.Initials` (check it)\\n   |\\n10 -     fmt.Println(textutil.FormatName(\\\" Ada\\\", \\\"Lovelace \\\"), textutil.Initial(\\\"ada\\\", \\\"lovelace\\\"))\\n10 +     fmt.Println(textutil.FormatName(\\\" Ada\\\", \\\"Lovelace \\\"), textutil.Initials(\\\"ada\\\", \\\"lovelace\\\"))\\n   |\\n\",\"explain\":\"marmot explain M0002\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":2,\"warnings\":0,\"durationMs\":243,\"exitCode\":1}\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 3,
+        "fix": "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/app/textutil\"\n)\n\nfunc main() {\n\tfmt.Println(textutil.FormatFullName(\" Ada\", \"Lovelace \"), textutil.Initials(\"ada\", \"lovelace\"))\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "06_unexported_constructor",
+    "condition": "go",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 2,
+    "log": [
+      {
+        "output": "# example.com/app\n./main.go:10:13: name newCache not exported by package cache\n",
+        "compiles": false,
+        "fixed": false,
+        "seconds": 2,
+        "fix": "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/app/cache\"\n)\n\nfunc main() {\n\tc := cache.NewCache(2)\n\tc.Put(\"a\", 1)\n\tc.Put(\"b\", 2)\n\tc.Put(\"c\", 3)\n\tfmt.Println(c.Len())\n}\n"
+      },
+      {
+        "output": "# example.com/app\n./main.go:10:13: undefined: cache.NewCache\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 5,
+        "fix": "package main\n\nimport (\n\t\"fmt\"\n)\n\ntype Cache struct {\n\tcapacity int\n\titems    map[string]int\n\torder    []string\n}\n\nfunc NewCache(capacity int) *Cache {\n\treturn &Cache{\n\t\tcapacity: capacity,\n\t\titems:    make(map[string]int),\n\t}\n}\n\nfunc (c *Cache) Put(key string, value int) {\n\tif _, ok := c.items[key]; ok {\n\t\tc.items[key] = value\n\t\treturn\n\t}\n\tif len(c.items) >= c.capacity && c.capacity > 0 {\n\t\toldest := c.order[0]\n\t\tc.order = c.order[1:]\n\t\tdelete(c.items, oldest)\n\t}\n\tif c.capacity > 0 {\n\t\tc.items[key] = value\n\t\tc.order = append(c.order, key)\n\t}\n}\n\nfunc (c *Cache) Len() int {\n\treturn len(c.items)\n}\n\nfunc main() {\n\tc := NewCache(2)\n\tc.Put(\"a\", 1)\n\tc.Put(\"b\", 2)\n\tc.Put(\"c\", 3)\n\tfmt.Println(c.Len())\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "06_unexported_constructor",
+    "condition": "marmot",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0024\",\"message\":\"name newCache not exported by package cache\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":13,\"endLine\":10,\"endCol\":21},\"notes\":[\"package `cache` exports `New`, `Cache`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":8,\"text\":\"\"},{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\tc := cache.newCache(2)\"},{\"line\":11,\"text\":\"\\tc.Put(\\\"a\\\", 1)\"},{\"line\":12,\"text\":\"\\tc.Put(\\\"b\\\", 2)\"}]},\"label\":\"unexported: only package `cache` can use it\",\"rendered\":\"error[M0024]: name newCache not exported by package cache\\n  --> ./main.go:10:13\\n   |\\n10 |     c := cache.newCache(2)\\n   |                ^^^^^^^^ unexported: only package `cache` can use it\\n   |\\n   = note: package `cache` exports `New`, `Cache`\\n\",\"explain\":\"marmot explain M0024\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":314,\"exitCode\":1}\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 3,
+        "fix": "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/app/cache\"\n)\n\nfunc main() {\n\tc := cache.New(2)\n\tc.Put(\"a\", 1)\n\tc.Put(\"b\", 2)\n\tc.Put(\"c\", 3)\n\tfmt.Println(c.Len())\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "07_enum_other_package",
+    "condition": "go",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "# example.com/app\n./main.go:10:14: undefined: status.Activ\n./main.go:11:17: undefined: status.Suspend\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 5,
+        "fix": "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/app/status\"\n)\n\nfunc main() {\n\ts := status.Active\n\tif s == status.Suspended {\n\t\tfmt.Println(\"no\")\n\t}\n\tfmt.Println(s)\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "07_enum_other_package",
+    "condition": "marmot",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: status.Activ\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":14,\"endLine\":10,\"endCol\":19},\"fixes\":[{\"title\":\"use `status.Active`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":14,\"endLine\":10,\"endCol\":19},\"newText\":\"Active\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":8,\"text\":\"\"},{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\ts := status.Activ\"},{\"line\":11,\"text\":\"\\tif s == status.Suspend {\"},{\"line\":12,\"text\":\"\\t\\tfmt.Println(\\\"no\\\")\"}]},\"label\":\"not declared by package `status`\",\"rendered\":\"error[M0002]: undefined: status.Activ\\n  --> ./main.go:10:14\\n   |\\n10 |     s := status.Activ\\n   |                 ^^^^^ not declared by package `status`\\n   |\\nhelp: use `status.Active` (check it)\\n   |\\n10 -     s := status.Activ\\n10 +     s := status.Active\\n   |\\n\",\"explain\":\"marmot explain M0002\"}\n{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: status.Suspend\",\"span\":{\"file\":\"main.go\",\"line\":11,\"col\":17,\"endLine\":11,\"endCol\":24},\"fixes\":[{\"title\":\"use `status.Suspended`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":11,\"col\":17,\"endLine\":11,\"endCol\":24},\"newText\":\"Suspended\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\ts := status.Activ\"},{\"line\":11,\"text\":\"\\tif s == status.Suspend {\"},{\"line\":12,\"text\":\"\\t\\tfmt.Println(\\\"no\\\")\"},{\"line\":13,\"text\":\"\\t}\"}]},\"label\":\"not declared by package `status`\",\"rendered\":\"error[M0002]: undefined: status.Suspend\\n  --> ./main.go:11:17\\n   |\\n11 |     if s == status.Suspend {\\n   |                    ^^^^^^^ not declared by package `status`\\n   |\\nhelp: use `status.Suspended` (check it)\\n   |\\n11 -     if s == status.Suspend {\\n11 +     if s == status.Suspended {\\n   |\\n\",\"explain\":\"marmot explain M0002\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":2,\"warnings\":0,\"durationMs\":736,\"exitCode\":1}\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 3,
+        "fix": "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/app/status\"\n)\n\nfunc main() {\n\ts := status.Active\n\tif s == status.Suspended {\n\t\tfmt.Println(\"no\")\n\t}\n\tfmt.Println(s)\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "08_signature_other_file",
+    "condition": "go",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "# example.com/signature_other_file\n./main.go:6:7: assignment mismatch: 1 variable but Save returns 2 values\n./main.go:6:17: cannot use \"hello\" (untyped string constant) as []byte value in argument to Save\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 4,
+        "fix": "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tn, err := Save(\"k\", []byte(\"hello\"), \"x\")\n\tfmt.Println(n, err)\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "08_signature_other_file",
+    "condition": "marmot",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0012\",\"message\":\"assignment mismatch: 1 variable but Save returns 2 values\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":7,\"endLine\":6,\"endCol\":11},\"help\":[\"receive every result: `n, err := Save(\\\"k\\\", \\\"hello\\\", \\\"x\\\")`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tn := Save(\\\"k\\\", \\\"hello\\\", \\\"x\\\")\"},{\"line\":7,\"text\":\"\\tfmt.Println(n)\"},{\"line\":8,\"text\":\"}\"}]},\"label\":\"`Save` returns 2 values\",\"rendered\":\"error[M0012]: assignment mismatch: 1 variable but Save returns 2 values\\n --> ./main.go:6:7\\n  |\\n6 |     n := Save(\\\"k\\\", \\\"hello\\\", \\\"x\\\")\\n  |          ^^^^ `Save` returns 2 values\\n  |\\n  = help: receive every result: `n, err := Save(\\\"k\\\", \\\"hello\\\", \\\"x\\\")`\\n\",\"explain\":\"marmot explain M0012\"}\n{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0006\",\"message\":\"cannot use \\\"hello\\\" (untyped string constant) as []byte value in argument to Save\",\"span\":{\"file\":\"main.go\",\"line\":6,\"col\":17,\"endLine\":6,\"endCol\":24},\"help\":[\"convert the string: `[]byte(\\\"hello\\\")`\"],\"related\":[{\"span\":{\"file\":\"save.go\",\"line\":6,\"col\":28,\"endLine\":6,\"endCol\":34},\"message\":\"expected because of parameter `data`\"}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":4,\"text\":\"\"},{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tn := Save(\\\"k\\\", \\\"hello\\\", \\\"x\\\")\"},{\"line\":7,\"text\":\"\\tfmt.Println(n)\"},{\"line\":8,\"text\":\"}\"}]},\"label\":\"expected `[]byte`, found `untyped string`\",\"rendered\":\"error[M0006]: cannot use \\\"hello\\\" (untyped string constant) as []byte value in argument to Save\\n --> ./main.go:6:17\\n  |\\n6 |     n := Save(\\\"k\\\", \\\"hello\\\", \\\"x\\\")\\n  |                    ^^^^^^^ expected `[]byte`, found `untyped string`\\n  |\\n  = note: expected because of parameter `data` at ./save.go:6\\n  = help: convert the string: `[]byte(\\\"hello\\\")`\\n\",\"explain\":\"marmot explain M0006\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":2,\"warnings\":0,\"durationMs\":1137,\"exitCode\":1}\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 4,
+        "fix": "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tn, err := Save(\"k\", []byte(\"hello\"), \"x\")\n\tfmt.Println(n, err)\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "09_refactor_returns_error",
+    "condition": "go",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "# example.com/app\n./main.go:11:20: multiple-value parse.Fields(s) (value of type (map[string]int, error)) in single-value context\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 4,
+        "fix": "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/app/parse\"\n)\n\nfunc total(s string) int {\n\tm, err := parse.Fields(s)\n\tif err != nil {\n\t\treturn 0\n\t}\n\tt := 0\n\tfor _, v := range m {\n\t\tt += v\n\t}\n\treturn t\n}\n\nfunc main() {\n\tfmt.Println(total(\"a=1,b=2\"))\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "09_refactor_returns_error",
+    "condition": "marmot",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0012\",\"message\":\"multiple-value parse.Fields(s) (value of type (map[string]int, error)) in single-value context\",\"span\":{\"file\":\"main.go\",\"line\":11,\"col\":20,\"endLine\":11,\"endCol\":35},\"notes\":[\"`parse.Fields` is declared as `func Fields(s string) (map[string]int, error)`\"],\"help\":[\"receive every result in a statement of its own, for example `v, err := parse.Fields(s)`, and use `v` here\"],\"context\":{\"function\":\"func total(s string) int\",\"lines\":[{\"line\":9,\"text\":\"func total(s string) int {\"},{\"line\":10,\"text\":\"\\tt := 0\"},{\"line\":11,\"text\":\"\\tfor _, v := range parse.Fields(s) {\"},{\"line\":12,\"text\":\"\\t\\tt += v\"},{\"line\":13,\"text\":\"\\t}\"}]},\"label\":\"returns more than one value\",\"rendered\":\"error[M0012]: multiple-value parse.Fields(s) (value of type (map[string]int, error)) in single-value context\\n  --> ./main.go:11:20\\n   |\\n11 |     for _, v := range parse.Fields(s) {\\n   |                       ^^^^^^^^^^^^^^^ returns more than one value\\n   |\\n   = note: `parse.Fields` is declared as `func Fields(s string) (map[string]int, error)`\\n   = help: receive every result in a statement of its own, for example `v, err := parse.Fields(s)`, and use `v` here\\n\",\"explain\":\"marmot explain M0012\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":205,\"exitCode\":1}\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 3,
+        "fix": "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/app/parse\"\n)\n\nfunc total(s string) int {\n\tt := 0\n\tfields, err := parse.Fields(s)\n\tif err != nil {\n\t\treturn 0\n\t}\n\tfor _, v := range fields {\n\t\tt += v\n\t}\n\treturn t\n}\n\nfunc main() {\n\tfmt.Println(total(\"a=1,b=2\"))\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "10_constraint_other_package",
+    "condition": "go",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "# example.com/app\n./main.go:11:23: float32 does not satisfy mathx.Number (float32 missing in ~int | ~int64 | ~float64)\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 2,
+        "fix": "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/app/mathx\"\n)\n\nfunc main() {\n\tprices := []float64{1.5, 2.5}\n\tfmt.Println(mathx.Sum(prices))\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "10_constraint_other_package",
+    "condition": "marmot",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0026\",\"message\":\"float32 does not satisfy mathx.Number (float32 missing in ~int | ~int64 | ~float64)\",\"span\":{\"file\":\"main.go\",\"line\":11,\"col\":14,\"endLine\":11,\"endCol\":23},\"labels\":[{\"span\":{\"file\":\"main.go\",\"line\":11,\"col\":24,\"endLine\":11,\"endCol\":30},\"text\":\"the type argument is inferred as `float32` from this\"}],\"notes\":[\"the type set of `mathx.Number` is `~int | ~int64 | ~float64`\"],\"help\":[\"use a type in the set, for example `float64` instead of `float32`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\tprices := []float32{1.5, 2.5}\"},{\"line\":11,\"text\":\"\\tfmt.Println(mathx.Sum(prices))\"},{\"line\":12,\"text\":\"}\"},{\"line\":13,\"text\":\"\"}],\"types\":[\"mathx: type Number interface { ~int | ~int64 | ~float64 }\"]},\"label\":\"`float32` does not satisfy `mathx.Number`\",\"rendered\":\"error[M0026]: float32 does not satisfy mathx.Number (float32 missing in ~int | ~int64 | ~float64)\\n  --> ./main.go:11:14\\n   |\\n11 |     fmt.Println(mathx.Sum(prices))\\n   |                 ^^^^^^^^^ ------ the type argument is inferred as `float32` from this\\n   |                 |\\n   |                 `float32` does not satisfy `mathx.Number`\\n   |\\n   = note: the type set of `mathx.Number` is `~int | ~int64 | ~float64`\\n   = help: use a type in the set, for example `float64` instead of `float32`\\n\",\"explain\":\"marmot explain M0026\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":262,\"exitCode\":1}\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 2,
+        "fix": "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/app/mathx\"\n)\n\nfunc main() {\n\tprices := []float64{1.5, 2.5}\n\tfmt.Println(mathx.Sum(prices))\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "11_several_errors",
+    "condition": "go",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "# example.com/several_errors\n./main.go:5:2: \"os\" imported and not used\n./main.go:10:61: unknown field Prise in struct literal of type Item\n./main.go:11:2: declared and not used: count\n./main.go:12:14: undefined: Totl\n./main.go:13:39: items[0].name undefined (type Item has no field or method name, but does have field Name)\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 5,
+        "fix": "package main\n\nimport (\n\t\"fmt\"\n\t\"strings\"\n)\n\nfunc main() {\n\titems := []Item{{Name: \"a\", Price: 2, Qty: 3}, {Name: \"b\", Price: 1.5, Qty: 2}}\n\tfmt.Println(Total(items))\n\tfmt.Println(strings.ToUpper(items[0].Name))\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "11_several_errors",
+    "condition": "marmot",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0005\",\"message\":\"\\\"os\\\" imported and not used\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":2,\"endLine\":5,\"endCol\":6},\"help\":[\"if it is imported only for its side effects, write `import _ \\\"os\\\"`\"],\"fixes\":[{\"title\":\"remove the import of `\\\"os\\\"`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":5,\"col\":1,\"endLine\":6,\"endCol\":1},\"newText\":\"\"}]}],\"context\":{\"lines\":[{\"line\":3,\"text\":\"import (\"},{\"line\":4,\"text\":\"\\t\\\"fmt\\\"\"},{\"line\":5,\"text\":\"\\t\\\"os\\\"\"},{\"line\":6,\"text\":\"\\t\\\"strings\\\"\"},{\"line\":7,\"text\":\")\"}]},\"label\":\"imported here but not used\",\"rendered\":\"error[M0005]: \\\"os\\\" imported and not used\\n --> ./main.go:5:2\\n  |\\n5 |     \\\"os\\\"\\n  |     ^^^^ imported here but not used\\n  |\\n  = help: if it is imported only for its side effects, write `import _ \\\"os\\\"`\\nhelp: remove the import of `\\\"os\\\"`\\n  |\\n5 -     \\\"os\\\"\\n  |\\n\",\"explain\":\"marmot explain M0005\"}\n{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0029\",\"message\":\"unknown field Prise in struct literal of type Item\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":61,\"endLine\":10,\"endCol\":66},\"fixes\":[{\"title\":\"use `Price`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":61,\"endLine\":10,\"endCol\":66},\"newText\":\"Price\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":8,\"text\":\"\"},{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\titems := []Item{{Name: \\\"a\\\", Price: 2, Qty: 3}, {Name: \\\"b\\\", Prise: 1.5, Qty: 2}}\"},{\"line\":11,\"text\":\"\\tcount := len(items)\"},{\"line\":12,\"text\":\"\\tfmt.Println(Totl(items))\"}],\"types\":[\"type Item struct { Name string Price float64 Qty int }\"]},\"label\":\"`Item` has no field `Prise`\",\"rendered\":\"error[M0029]: unknown field Prise in struct literal of type Item\\n  --> ./main.go:10:61\\n   |\\n10 |     items := []Item{{Name: \\\"a\\\", Price: 2, Qty: 3}, {Name: \\\"b\\\", Prise: 1.5, Qty: 2}}\\n   |                                                                ^^^^^ `Item` has no field `Prise`\\n   |\\nhelp: use `Price` (check it)\\n   |\\n10 -     items := []Item{{Name: \\\"a\\\", Price: 2, Qty: 3}, {Name: \\\"b\\\", Prise: 1.5, Qty: 2}}\\n10 +     items := []Item{{Name: \\\"a\\\", Price: 2, Qty: 3}, {Name: \\\"b\\\", Price: 1.5, Qty: 2}}\\n   |\\n\",\"explain\":\"marmot explain M0029\"}\n{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0004\",\"message\":\"declared and not used: count\",\"span\":{\"file\":\"main.go\",\"line\":11,\"col\":2,\"endLine\":11,\"endCol\":7},\"fixes\":[{\"title\":\"assign the value to `_`\",\"applicability\":\"machine-applicable\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":11,\"col\":2,\"endLine\":11,\"endCol\":10},\"newText\":\"_ =\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\titems := []Item{{Name: \\\"a\\\", Price: 2, Qty: 3}, {Name: \\\"b\\\", Prise: 1.5, Qty: 2}}\"},{\"line\":11,\"text\":\"\\tcount := len(items)\"},{\"line\":12,\"text\":\"\\tfmt.Println(Totl(items))\"},{\"line\":13,\"text\":\"\\tfmt.Println(strings.ToUpper(items[0].name))\"}]},\"label\":\"declared here but never used\",\"rendered\":\"error[M0004]: declared and not used: count\\n  --> ./main.go:11:2\\n   |\\n11 |     count := len(items)\\n   |     ^^^^^ declared here but never used\\n   |\\nhelp: assign the value to `_`\\n   |\\n11 -     count := len(items)\\n11 +     _ = len(items)\\n   |\\n\",\"explain\":\"marmot explain M0004\"}\n{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0002\",\"message\":\"undefined: Totl\",\"span\":{\"file\":\"main.go\",\"line\":12,\"col\":14,\"endLine\":12,\"endCol\":18},\"fixes\":[{\"title\":\"use `Total`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":12,\"col\":14,\"endLine\":12,\"endCol\":18},\"newText\":\"Total\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":10,\"text\":\"\\titems := []Item{{Name: \\\"a\\\", Price: 2, Qty: 3}, {Name: \\\"b\\\", Prise: 1.5, Qty: 2}}\"},{\"line\":11,\"text\":\"\\tcount := len(items)\"},{\"line\":12,\"text\":\"\\tfmt.Println(Totl(items))\"},{\"line\":13,\"text\":\"\\tfmt.Println(strings.ToUpper(items[0].name))\"},{\"line\":14,\"text\":\"}\"}]},\"label\":\"not declared in this scope\",\"rendered\":\"error[M0002]: undefined: Totl\\n  --> ./main.go:12:14\\n   |\\n12 |     fmt.Println(Totl(items))\\n   |                 ^^^^ not declared in this scope\\n   |\\nhelp: use `Total` (check it)\\n   |\\n12 -     fmt.Println(Totl(items))\\n12 +     fmt.Println(Total(items))\\n   |\\n\",\"explain\":\"marmot explain M0002\"}\n{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0003\",\"message\":\"items[0].name undefined (type Item has no field or method name, but does have field Name)\",\"span\":{\"file\":\"main.go\",\"line\":13,\"col\":39,\"endLine\":13,\"endCol\":43},\"fixes\":[{\"title\":\"use `Name`\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":13,\"col\":39,\"endLine\":13,\"endCol\":43},\"newText\":\"Name\"}]}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":11,\"text\":\"\\tcount := len(items)\"},{\"line\":12,\"text\":\"\\tfmt.Println(Totl(items))\"},{\"line\":13,\"text\":\"\\tfmt.Println(strings.ToUpper(items[0].name))\"},{\"line\":14,\"text\":\"}\"},{\"line\":15,\"text\":\"\"}],\"types\":[\"type Item struct { Name string Price float64 Qty int }\"]},\"label\":\"`Item` has no field or method `name`\",\"rendered\":\"error[M0003]: items[0].name undefined (type Item has no field or method name, but does have field Name)\\n  --> ./main.go:13:39\\n   |\\n13 |     fmt.Println(strings.ToUpper(items[0].name))\\n   |                                          ^^^^ `Item` has no field or method `name`\\n   |\\nhelp: use `Name` (check it)\\n   |\\n13 -     fmt.Println(strings.ToUpper(items[0].name))\\n13 +     fmt.Println(strings.ToUpper(items[0].Name))\\n   |\\n\",\"explain\":\"marmot explain M0003\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":5,\"warnings\":0,\"durationMs\":326,\"exitCode\":1}\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 3,
+        "fix": "package main\n\nimport (\n\t\"fmt\"\n\t\"strings\"\n)\n\nfunc main() {\n\titems := []Item{{Name: \"a\", Price: 2, Qty: 3}, {Name: \"b\", Price: 1.5, Qty: 2}}\n\t_ = len(items)\n\tfmt.Println(Total(items))\n\tfmt.Println(strings.ToUpper(items[0].Name))\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "12_pointer_receiver_other_file",
+    "condition": "go",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "# example.com/pointer_receiver_other_file\n./main.go:15:19: cannot use c (variable of struct type Counter) as Incrementer value in argument to bump: Counter does not implement Incrementer (method Inc has pointer receiver)\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 2,
+        "fix": "package main\n\nimport \"fmt\"\n\nfunc bump(i Incrementer, times int) int {\n\tv := 0\n\tfor range times {\n\t\tv = i.Inc()\n\t}\n\treturn v\n}\n\nfunc main() {\n\tc := Counter{}\n\tfmt.Println(bump(&c, 3))\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "12_pointer_receiver_other_file",
+    "condition": "marmot",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0014\",\"message\":\"cannot use c (variable of struct type Counter) as Incrementer value in argument to bump: Counter does not implement Incrementer (method Inc has pointer receiver)\",\"span\":{\"file\":\"main.go\",\"line\":15,\"col\":19,\"endLine\":15,\"endCol\":20},\"notes\":[\"`Counter` lacks 1 method of `Incrementer`:\",\"  `Inc` has a pointer receiver, so only `*Counter` has it\"],\"fixes\":[{\"title\":\"pass a pointer\",\"applicability\":\"maybe-incorrect\",\"edits\":[{\"file\":\"main.go\",\"span\":{\"file\":\"main.go\",\"line\":15,\"col\":19,\"endLine\":15,\"endCol\":19},\"newText\":\"&\"}]}],\"related\":[{\"span\":{\"file\":\"counter.go\",\"line\":7,\"col\":9,\"endLine\":7,\"endCol\":17},\"message\":\"`Inc` has a pointer receiver\"},{\"span\":{\"file\":\"counter.go\",\"line\":3,\"col\":6,\"endLine\":3,\"endCol\":17},\"message\":\"`Incrementer` is declared here\"}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":13,\"text\":\"func main() {\"},{\"line\":14,\"text\":\"\\tc := Counter{}\"},{\"line\":15,\"text\":\"\\tfmt.Println(bump(c, 3))\"},{\"line\":16,\"text\":\"}\"},{\"line\":17,\"text\":\"\"}],\"types\":[\"type Counter struct{ n int }\",\"type Incrementer interface{ Inc() int }\"]},\"label\":\"`Counter` does not implement `Incrementer`\",\"rendered\":\"error[M0014]: cannot use c (variable of struct type Counter) as Incrementer value in argument to bump: Counter does not implement Incrementer (method Inc has pointer receiver)\\n  --> ./main.go:15:19\\n   |\\n15 |     fmt.Println(bump(c, 3))\\n   |                      ^ `Counter` does not implement `Incrementer`\\n   |\\n   = note: `Counter` lacks 1 method of `Incrementer`:\\n             `Inc` has a pointer receiver, so only `*Counter` has it\\n   = note: `Inc` has a pointer receiver at ./counter.go:7\\n   = note: `Incrementer` is declared here at ./counter.go:3\\nhelp: pass a pointer (check it)\\n   |\\n15 -     fmt.Println(bump(c, 3))\\n15 +     fmt.Println(bump(&c, 3))\\n   |\\n\",\"explain\":\"marmot explain M0014\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":219,\"exitCode\":1}\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 2,
+        "fix": "package main\n\nimport \"fmt\"\n\nfunc bump(i Incrementer, times int) int {\n\tv := 0\n\tfor range times {\n\t\tv = i.Inc()\n\t}\n\treturn v\n}\n\nfunc main() {\n\tc := Counter{}\n\tfmt.Println(bump(&c, 3))\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "13_wrong_type_method_arg",
+    "condition": "go",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "# example.com/wrong_type_method_arg\n./main.go:7:10: cannot use \"started\" (untyped string constant) as []byte value in argument to l.Write\n./main.go:8:10: cannot use \"done\" (untyped string constant) as []byte value in argument to l.Write\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 2,
+        "fix": "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tl := &Logger{}\n\tl.Write([]byte(\"started\"))\n\tl.Write([]byte(\"done\"))\n\tfmt.Println(l.Count())\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "13_wrong_type_method_arg",
+    "condition": "marmot",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0006\",\"message\":\"cannot use \\\"started\\\" (untyped string constant) as []byte value in argument to l.Write\",\"span\":{\"file\":\"main.go\",\"line\":7,\"col\":10,\"endLine\":7,\"endCol\":19},\"help\":[\"convert the string: `[]byte(\\\"started\\\")`\"],\"related\":[{\"span\":{\"file\":\"log.go\",\"line\":7,\"col\":26,\"endLine\":7,\"endCol\":32},\"message\":\"expected because of parameter `p`\"}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":5,\"text\":\"func main() {\"},{\"line\":6,\"text\":\"\\tl := &Logger{}\"},{\"line\":7,\"text\":\"\\tl.Write(\\\"started\\\")\"},{\"line\":8,\"text\":\"\\tl.Write(\\\"done\\\")\"},{\"line\":9,\"text\":\"\\tfmt.Println(l.Count())\"}]},\"label\":\"expected `[]byte`, found `untyped string`\",\"rendered\":\"error[M0006]: cannot use \\\"started\\\" (untyped string constant) as []byte value in argument to l.Write\\n --> ./main.go:7:10\\n  |\\n7 |     l.Write(\\\"started\\\")\\n  |             ^^^^^^^^^ expected `[]byte`, found `untyped string`\\n  |\\n  = note: expected because of parameter `p` at ./log.go:7\\n  = help: convert the string: `[]byte(\\\"started\\\")`\\n\",\"explain\":\"marmot explain M0006\"}\n{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0006\",\"message\":\"cannot use \\\"done\\\" (untyped string constant) as []byte value in argument to l.Write\",\"span\":{\"file\":\"main.go\",\"line\":8,\"col\":10,\"endLine\":8,\"endCol\":16},\"help\":[\"convert the string: `[]byte(\\\"done\\\")`\"],\"related\":[{\"span\":{\"file\":\"log.go\",\"line\":7,\"col\":26,\"endLine\":7,\"endCol\":32},\"message\":\"expected because of parameter `p`\"}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":6,\"text\":\"\\tl := &Logger{}\"},{\"line\":7,\"text\":\"\\tl.Write(\\\"started\\\")\"},{\"line\":8,\"text\":\"\\tl.Write(\\\"done\\\")\"},{\"line\":9,\"text\":\"\\tfmt.Println(l.Count())\"},{\"line\":10,\"text\":\"}\"}]},\"label\":\"expected `[]byte`, found `untyped string`\",\"rendered\":\"error[M0006]: cannot use \\\"done\\\" (untyped string constant) as []byte value in argument to l.Write\\n --> ./main.go:8:10\\n  |\\n8 |     l.Write(\\\"done\\\")\\n  |             ^^^^^^ expected `[]byte`, found `untyped string`\\n  |\\n  = note: expected because of parameter `p` at ./log.go:7\\n  = help: convert the string: `[]byte(\\\"done\\\")`\\n\",\"explain\":\"marmot explain M0006\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":2,\"warnings\":0,\"durationMs\":344,\"exitCode\":1}\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 2,
+        "fix": "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tl := &Logger{}\n\tl.Write([]byte(\"started\"))\n\tl.Write([]byte(\"done\"))\n\tfmt.Println(l.Count())\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "14_embedded_iface_other_file",
+    "condition": "go",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "# example.com/embedded_iface_other_file\n./main.go:11:19: cannot use &Buf{} (value of type *Buf) as ReadWriter value in argument to echo: *Buf does not implement ReadWriter (missing method Read)\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 6,
+        "fix": "package main\n\nimport \"fmt\"\n\nfunc echo(rw ReadWriter) string {\n\trw.Write(\"hi\")\n\treturn rw.Read()\n}\n\n// Read supplies the method that *Buf was missing for ReadWriter.\n// It returns an empty string because Buf's internal storage is defined in another file.\nfunc (b *Buf) Read() string {\n\treturn \"\"\n}\n\nfunc main() {\n\tfmt.Println(echo(&Buf{}))\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "14_embedded_iface_other_file",
+    "condition": "marmot",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0014\",\"message\":\"cannot use &Buf{} (value of type *Buf) as ReadWriter value in argument to echo: *Buf does not implement ReadWriter (missing method Read)\",\"span\":{\"file\":\"main.go\",\"line\":11,\"col\":19,\"endLine\":11,\"endCol\":25},\"notes\":[\"`*Buf` lacks 1 method of `ReadWriter`:\",\"  `Read() string` is missing; `Buf` has `Raed`\"],\"related\":[{\"span\":{\"file\":\"rw.go\",\"line\":13,\"col\":15,\"endLine\":13,\"endCol\":19},\"message\":\"`Raed` is declared here; `ReadWriter` needs `Read`\"},{\"span\":{\"file\":\"rw.go\",\"line\":5,\"col\":6,\"endLine\":5,\"endCol\":16},\"message\":\"`ReadWriter` is declared here\"}],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":9,\"text\":\"\"},{\"line\":10,\"text\":\"func main() {\"},{\"line\":11,\"text\":\"\\tfmt.Println(echo(&Buf{}))\"},{\"line\":12,\"text\":\"}\"},{\"line\":13,\"text\":\"\"}],\"types\":[\"type Buf struct{ data []string }\",\"type ReadWriter interface { Reader Writer }\"]},\"label\":\"`*Buf` does not implement `ReadWriter`\",\"rendered\":\"error[M0014]: cannot use &Buf{} (value of type *Buf) as ReadWriter value in argument to echo: *Buf does not implement ReadWriter (missing method Read)\\n  --> ./main.go:11:19\\n   |\\n11 |     fmt.Println(echo(&Buf{}))\\n   |                      ^^^^^^ `*Buf` does not implement `ReadWriter`\\n   |\\n   = note: `*Buf` lacks 1 method of `ReadWriter`:\\n             `Read() string` is missing; `Buf` has `Raed`\\n   = note: `Raed` is declared here; `ReadWriter` needs `Read` at ./rw.go:13\\n   = note: `ReadWriter` is declared here at ./rw.go:5\\n\",\"explain\":\"marmot explain M0014\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":1,\"warnings\":0,\"durationMs\":210,\"exitCode\":1}\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 4,
+        "fix": "package main\n\nimport \"fmt\"\n\nfunc echo(rw ReadWriter) string {\n\trw.Write(\"hi\")\n\treturn rw.Read()\n}\n\n// Read adapts Buf's existing Raed method to the ReadWriter interface.\nfunc (b *Buf) Read() string {\n\treturn b.Raed()\n}\n\nfunc main() {\n\tfmt.Println(echo(&Buf{}))\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "15_struct_literal_other_package_types",
+    "condition": "go",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "# example.com/app\n./main.go:10:46: cannot use \"8080\" (untyped string constant) as int value in struct literal\n./main.go:10:72: cannot use \"web\" (untyped string constant) as []string value in struct literal\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 2,
+        "fix": "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/app/config\"\n)\n\nfunc main() {\n\ts := config.Server{Host: \"localhost\", Port: 8080, Timeout: 5, Tags: []string{\"web\"}}\n\tfmt.Println(s.Addr(), len(s.Tags))\n}\n"
+      }
+    ]
+  },
+  {
+    "case": "15_struct_literal_other_package_types",
+    "condition": "marmot",
+    "fixed": true,
+    "compiles": true,
+    "attempts": 1,
+    "log": [
+      {
+        "output": "{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0006\",\"message\":\"cannot use \\\"8080\\\" (untyped string constant) as int value in struct literal\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":46,\"endLine\":10,\"endCol\":52},\"help\":[\"to parse a number from text, use `strconv.Atoi(\\\"8080\\\")`\"],\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":8,\"text\":\"\"},{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\ts := config.Server{Host: \\\"localhost\\\", Port: \\\"8080\\\", Timeout: 5, Tags: \\\"web\\\"}\"},{\"line\":11,\"text\":\"\\tfmt.Println(s.Addr(), len(s.Tags))\"},{\"line\":12,\"text\":\"}\"}]},\"label\":\"expected `int`, found `untyped string`\",\"rendered\":\"error[M0006]: cannot use \\\"8080\\\" (untyped string constant) as int value in struct literal\\n  --> ./main.go:10:46\\n   |\\n10 |     s := config.Server{Host: \\\"localhost\\\", Port: \\\"8080\\\", Timeout: 5, Tags: \\\"web\\\"}\\n   |                                                 ^^^^^^ expected `int`, found `untyped string`\\n   |\\n   = help: to parse a number from text, use `strconv.Atoi(\\\"8080\\\")`\\n\",\"explain\":\"marmot explain M0006\"}\n{\"schema\":1,\"kind\":\"diagnostic\",\"severity\":\"error\",\"code\":\"M0006\",\"message\":\"cannot use \\\"web\\\" (untyped string constant) as []string value in struct literal\",\"span\":{\"file\":\"main.go\",\"line\":10,\"col\":72,\"endLine\":10,\"endCol\":77},\"context\":{\"function\":\"func main()\",\"lines\":[{\"line\":8,\"text\":\"\"},{\"line\":9,\"text\":\"func main() {\"},{\"line\":10,\"text\":\"\\ts := config.Server{Host: \\\"localhost\\\", Port: \\\"8080\\\", Timeout: 5, Tags: \\\"web\\\"}\"},{\"line\":11,\"text\":\"\\tfmt.Println(s.Addr(), len(s.Tags))\"},{\"line\":12,\"text\":\"}\"}]},\"label\":\"expected `[]string`, found `untyped string`\",\"rendered\":\"error[M0006]: cannot use \\\"web\\\" (untyped string constant) as []string value in struct literal\\n  --> ./main.go:10:72\\n   |\\n10 |     s := config.Server{Host: \\\"localhost\\\", Port: \\\"8080\\\", Timeout: 5, Tags: \\\"web\\\"}\\n   |                                                                           ^^^^^ expected `[]string`, found `untyped string`\\n\",\"explain\":\"marmot explain M0006\"}\n{\"kind\":\"result\",\"schema\":1,\"command\":\"build\",\"ok\":false,\"errors\":2,\"warnings\":0,\"durationMs\":402,\"exitCode\":1}\n",
+        "compiles": true,
+        "fixed": true,
+        "seconds": 3,
+        "fix": "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/app/config\"\n)\n\nfunc main() {\n\ts := config.Server{Host: \"localhost\", Port: 8080, Timeout: 5, Tags: []string{\"web\"}}\n\tfmt.Println(s.Addr(), len(s.Tags))\n}\n"
+      }
+    ]
+  }
+]

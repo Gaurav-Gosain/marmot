@@ -8,7 +8,7 @@
 // and exit status must match those of the reference fix in fixed.go.txt, so
 // a fix that compiles but changes what the program does (or keeps the bug,
 // as with a shadowed err) does not count. A failed fix is retried with the
-// new build output, up to -attempts times.
+// new build output while it does not compile, up to -attempts times.
 //
 //	go run ./tests/diag/agentfix -model claude-haiku-5-5
 //
@@ -47,6 +47,7 @@ type attempt struct {
 	Compiles bool   `json:"compiles"`
 	Fixed    bool   `json:"fixed"` // compiles and behaves like the reference fix
 	Seconds  int    `json:"seconds"`
+	Fix      string `json:"fix,omitempty"` // the file the model answered with
 }
 
 type result struct {
@@ -150,7 +151,7 @@ func runCase(dir, cond, marmot, root string) result {
 		src, _ := os.ReadFile(filepath.Join(tmp, failing))
 		start := time.Now()
 		fixed := ask(out, failing, string(src), *flHard)
-		at := attempt{Output: out, Seconds: int(time.Since(start).Seconds())}
+		at := attempt{Output: out, Seconds: int(time.Since(start).Seconds()), Fix: fixed}
 		r.Attempts = a
 		if fixed != "" {
 			os.WriteFile(filepath.Join(tmp, failing), []byte(fixed), 0o644)
@@ -161,8 +162,10 @@ func runCase(dir, cond, marmot, root string) result {
 		}
 		r.Log = append(r.Log, at)
 		r.Compiles = at.Compiles
-		if at.Fixed {
-			r.Fixed = true
+		r.Fixed = at.Fixed
+		if at.Compiles {
+			// The model only sees build output: once the program builds
+			// there is nothing more to tell it.
 			break
 		}
 	}

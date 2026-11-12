@@ -1,24 +1,42 @@
 # Fix rate with go build output and with marmot JSON
 
-`go run ./tests/diag/agentfix -model claude-haiku-5-5`, 65 cases, up to 3 attempts. A fix counts
-when it builds with `go build` and the program's output and exit status match the reference fix
-(`fixed.go.txt`). Details per case and attempt are in `results.json`.
+`go run ./tests/diag/agentfix [-hard] -model claude-haiku-5-5`. The model gets the build output
+and the failing file and answers with the fixed file. A fix counts when the module builds with
+`go build` and the program's output and exit status match the reference fix (`fixed.go.txt`);
+cases marked `ambiguous` (several sound fixes) count when they build. The model is asked again,
+with the new build output, only while the program does not build (at most 3 attempts). Per case
+and attempt details, including the model's answer, are in `results.json` and
+`results-hard.json`.
 
-| output the model saw | cases | fixed correctly | on the first try | attempts per case | compiles but wrong |
-| --- | --- | --- | --- | --- | --- |
-| go build | 65 | 63 (97%) | 63 (97%) | 1.06 | 2 |
-| marmot JSON | 65 | 63 (97%) | 63 (97%) | 1.06 | 2 |
+## Corpus: 65 single-file programs, one mistake each (tests/diag/testdata)
 
-Five cases with several sound fixes (marked by an `ambiguous` file) are judged by compiling
-only. A first run judged them by output too and gave 92% and 91%; it also used `-o /dev/null`,
-which marmot then mishandled after a successful fix (fixed since), so that run is not used.
+| output the model saw | cases | fixed correctly | compiles but wrong | attempts per case |
+| --- | --- | --- | --- | --- |
+| go build | 65 | 61 (94%) | 4 | 1.00 |
+| marmot JSON | 65 | 64 (98%) | 1 | 1.00 |
 
-marmot does not win on this corpus. Every case is one small file with one mistake, and the model
-sees the whole file with either output, so the location and the message are enough. The two
-misses in each condition are not the same cases (an unused `err` and a string plus int on one
-side, a pointer to an interface on both), which is within run to run noise.
+## Hard: 15 modules, cause in another file or package, model sees only the failing file (tests/diag/hard)
 
-What this corpus does not measure, and where the extra context should matter: errors whose
-cause is in another file or package (interface and constraint declarations, called functions),
-several errors at once, larger files where the model is not given the whole package, and token
-cost per fix.
+| output the model saw | cases | fixed correctly | on the first try | attempts per case |
+| --- | --- | --- | --- | --- |
+| go build | 15 | 15 (100%) | 13 (87%) | 1.13 |
+| marmot JSON | 15 | 15 (100%) | 14 (93%) | 1.07 |
+
+## Reading the numbers
+
+These are single runs; a case can go either way between runs, so differences of one or two
+cases are noise. Earlier runs of the corpus with a stricter protocol gave 97% for both, and
+92% against 91%.
+
+Where marmot helped: a byte constant that overflows (marmot's help names a wider type; with the
+go output the model wrapped the value instead), the string assigned to an int, an unused `err`,
+and on the hard set fewer second attempts for an interface with two missing methods and for an
+unexported constructor (marmot lists what the package exports). The reference fixes and
+marmot's hints were written by the same author, so where a hint and the reference agree (the
+overflow case) the comparison favors marmot.
+
+Where it did not matter: a small model fixes almost every one of these mistakes from go's
+output alone, because go's messages already name the type, the method or the have and want
+signatures, and the failing file is small. The gap this benchmark can show is small by
+construction. Larger gains should show where the model cannot see the declarations at all
+(no file given, only the output), with several errors per build, and in token cost per fix.
