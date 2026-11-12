@@ -18,12 +18,17 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 LLVM = os.environ.get("LLVM_PREFIX", "/opt/homebrew/opt/llvm@22")
 BIN = os.path.join(LLVM, "bin")
 WORK = os.path.join(ROOT, ".work", "backend", "test")
+# The tools under test: the private build (SPEC rule 12), or build/bin.
+TOOLS = os.environ.get("BACKEND_BIN_DIR") or os.path.join(ROOT, ".work", "backend", "bin")
+if not os.path.exists(os.path.join(TOOLS, "marmot-backend")):
+    TOOLS = os.path.join(ROOT, "build", "bin")
+TOOLS = os.path.abspath(TOOLS)
 TIMEOUT = 120  # seconds per RUN line (SPEC rule 10)
 JOBS = 4
 
 SUBST = [
-    ("%backend", os.path.join(ROOT, "build", "bin", "marmot-backend")),
-    ("%marmot-opt", os.path.join(ROOT, "build", "bin", "marmot-opt")),
+    ("%backend", os.path.join(TOOLS, "marmot-backend")),
+    ("%marmot-opt", os.path.join(TOOLS, "marmot-opt")),
     ("%clang", os.path.join(BIN, "clang")),
     ("%opt", os.path.join(BIN, "opt")),
     ("%FileCheck", os.path.join(BIN, "FileCheck")),
@@ -37,7 +42,7 @@ SUBST = [
     ("%llvm-dwarfdump", os.path.join(BIN, "llvm-dwarfdump")),
     ("%llvm-objcopy", os.path.join(BIN, "llvm-objcopy")),
     ("%dsymutil", os.path.join(BIN, "dsymutil")),
-    ("%pcln", os.path.join(ROOT, "build", "bin", "marmot-pcln")),
+    ("%pcln", os.path.join(TOOLS, "marmot-pcln")),
 ]
 
 
