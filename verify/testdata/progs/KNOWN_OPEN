@@ -2,3 +2,5 @@ regionstore
 frameregion
 frameregionwrite
 regionpeek
+stackconcat
+nocopyconcat
