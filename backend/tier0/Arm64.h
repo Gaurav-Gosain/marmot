@@ -6,7 +6,9 @@
 
 #include <cstdint>
 
-namespace marmot::tier0::a64 {
+namespace marmot {
+namespace tier0 {
+namespace a64 {
 
 enum : unsigned { X0 = 0, X8 = 8, X16 = 16, X17 = 17, FP = 29, LR = 30, SP = 31, XZR = 31 };
 
@@ -157,6 +159,59 @@ inline uint32_t brk(uint32_t imm16) { return 0xD4200000u | ((imm16 & 0xFFFF) << 
 inline uint32_t adrp(unsigned rd) { return 0x90000000u | rd; }
 inline uint32_t nop() { return 0xD503201Fu; }
 
-} // namespace marmot::tier0::a64
+// Bitfield moves: UBFM/SBFM with immr 0 keep bits [0, width) zero or sign
+// extended (UXT/SXT and the width normalization of iN values).
+inline uint32_t ubfx0(unsigned rd, unsigned rn, unsigned width) {
+  return 0xD3400000u | ((width - 1) << 10) | (rn << 5) | rd;
+}
+inline uint32_t sbfx0(unsigned rd, unsigned rn, unsigned width) {
+  return 0x93400000u | ((width - 1) << 10) | (rn << 5) | rd;
+}
+inline uint32_t neg(unsigned rd, unsigned rm, bool x64 = true) { return subReg(rd, XZR, rm, x64); }
+inline uint32_t mvn(unsigned rd, unsigned rm, bool x64 = true) {
+  return sf(x64) | 0x2A200000u | (rm << 16) | (XZR << 5) | rd;  // ORN
+}
+
+// Floating point (d: double, s: single). Registers are v0..v31.
+inline uint32_t fpType(bool dbl) { return dbl ? 0x00400000u : 0; }
+inline uint32_t fadd(unsigned d, unsigned n, unsigned m, bool dbl) { return 0x1E202800u | fpType(dbl) | (m << 16) | (n << 5) | d; }
+inline uint32_t fsub(unsigned d, unsigned n, unsigned m, bool dbl) { return 0x1E203800u | fpType(dbl) | (m << 16) | (n << 5) | d; }
+inline uint32_t fmul(unsigned d, unsigned n, unsigned m, bool dbl) { return 0x1E200800u | fpType(dbl) | (m << 16) | (n << 5) | d; }
+inline uint32_t fdiv(unsigned d, unsigned n, unsigned m, bool dbl) { return 0x1E201800u | fpType(dbl) | (m << 16) | (n << 5) | d; }
+inline uint32_t fneg(unsigned d, unsigned n, bool dbl) { return 0x1E214000u | fpType(dbl) | (n << 5) | d; }
+inline uint32_t fabs_(unsigned d, unsigned n, bool dbl) { return 0x1E20C000u | fpType(dbl) | (n << 5) | d; }
+inline uint32_t fsqrt(unsigned d, unsigned n, bool dbl) { return 0x1E21C000u | fpType(dbl) | (n << 5) | d; }
+inline uint32_t fmadd(unsigned d, unsigned n, unsigned m, unsigned a, bool dbl) {
+  return 0x1F000000u | fpType(dbl) | (m << 16) | (a << 10) | (n << 5) | d;
+}
+inline uint32_t fcmp(unsigned n, unsigned m, bool dbl) { return 0x1E202000u | fpType(dbl) | (m << 16) | (n << 5); }
+inline uint32_t fcvtStoD(unsigned d, unsigned n) { return 0x1E22C000u | (n << 5) | d; }
+inline uint32_t fcvtDtoS(unsigned d, unsigned n) { return 0x1E624000u | (n << 5) | d; }
+// Integer (64-bit x) to float and back.
+inline uint32_t scvtf(unsigned d, unsigned xn, bool dbl) { return 0x9E220000u | fpType(dbl) | (xn << 5) | d; }
+inline uint32_t ucvtf(unsigned d, unsigned xn, bool dbl) { return 0x9E230000u | fpType(dbl) | (xn << 5) | d; }
+inline uint32_t fcvtzs(unsigned xd, unsigned n, bool dbl) { return 0x9E380000u | fpType(dbl) | (n << 5) | xd; }
+inline uint32_t fcvtzu(unsigned xd, unsigned n, bool dbl) { return 0x9E390000u | fpType(dbl) | (n << 5) | xd; }
+// Bit moves between general and FP registers: FMOV x<-d, d<-x, w<-s, s<-w.
+inline uint32_t fmovToGp(unsigned rd, unsigned vn, bool dbl) { return (dbl ? 0x9E660000u : 0x1E260000u) | (vn << 5) | rd; }
+inline uint32_t fmovFromGp(unsigned vd, unsigned rn, bool dbl) { return (dbl ? 0x9E670000u : 0x1E270000u) | (rn << 5) | vd; }
+
+// Acquire loads and release stores (size as for ldrImm), no offset.
+inline uint32_t ldar(unsigned rt, unsigned rn, unsigned size) { return (size << 30) | 0x08DFFC00u | (rn << 5) | rt; }
+inline uint32_t stlr(unsigned rt, unsigned rn, unsigned size) { return (size << 30) | 0x089FFC00u | (rn << 5) | rt; }
+// LSE atomics with acquire and release semantics: rt = old value at [rn],
+// memory = op(old, rs). size as for ldrImm.
+inline uint32_t ldaddal(unsigned rs, unsigned rt, unsigned rn, unsigned size) { return (size << 30) | 0x38E00000u | (rs << 16) | (rn << 5) | rt; }
+inline uint32_t ldclral(unsigned rs, unsigned rt, unsigned rn, unsigned size) { return (size << 30) | 0x38E01000u | (rs << 16) | (rn << 5) | rt; }
+inline uint32_t ldeoral(unsigned rs, unsigned rt, unsigned rn, unsigned size) { return (size << 30) | 0x38E02000u | (rs << 16) | (rn << 5) | rt; }
+inline uint32_t ldsetal(unsigned rs, unsigned rt, unsigned rn, unsigned size) { return (size << 30) | 0x38E03000u | (rs << 16) | (rn << 5) | rt; }
+inline uint32_t swpal(unsigned rs, unsigned rt, unsigned rn, unsigned size) { return (size << 30) | 0x38E08000u | (rs << 16) | (rn << 5) | rt; }
+// CASAL: compares [rn] with rs, stores rt if equal; rs receives the old value.
+inline uint32_t casal(unsigned rs, unsigned rt, unsigned rn, unsigned size) { return (size << 30) | 0x08E0FC00u | (rs << 16) | (rn << 5) | rt; }
+inline uint32_t dmbIsh() { return 0xD5033BBFu; }
+
+} // namespace a64
+} // namespace tier0
+} // namespace marmot
 
 #endif

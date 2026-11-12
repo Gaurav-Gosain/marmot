@@ -4,7 +4,8 @@
 #include <cstdio>
 #include <cstring>
 
-namespace marmot::tier0 {
+namespace marmot {
+namespace tier0 {
 
 namespace {
 
@@ -59,10 +60,11 @@ unsigned MachOWriter::symbol(const std::string &name) {
   return i;
 }
 
-void MachOWriter::define(const std::string &name, Sect sect, uint64_t offset, bool global) {
+void MachOWriter::define(const std::string &name, Sect sect, uint64_t offset, bool global, bool weak) {
   Sym &s = syms_[symbol(name)];
   s.defined = true;
-  s.global = global;
+  s.global = global || weak;
+  s.weak = weak;
   s.sect = sect;
   s.offset = offset;
 }
@@ -286,7 +288,7 @@ std::string MachOWriter::serialize() const {
     } else {
       o.u8(N_SECT | (s.global ? N_EXT : 0));
       o.u8(uint8_t(unsigned(s.sect) + 1));
-      o.u16(0);
+      o.u16(s.weak ? 0x80 : 0);  // N_WEAK_DEF
       o.u64(addr[unsigned(s.sect)] + s.offset);
     }
   }
@@ -307,4 +309,5 @@ bool MachOWriter::write(const std::string &path, std::string &err) const {
   return ok;
 }
 
-} // namespace marmot::tier0
+} // namespace tier0
+} // namespace marmot

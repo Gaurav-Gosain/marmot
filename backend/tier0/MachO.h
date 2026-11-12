@@ -10,7 +10,8 @@
 #include <unordered_map>
 #include <vector>
 
-namespace marmot::tier0 {
+namespace marmot {
+namespace tier0 {
 
 enum class Sect : uint8_t { Text, Data, Const, Bss };
 
@@ -29,7 +30,9 @@ public:
   // Returns the symbol index.
   unsigned symbol(const std::string &name);
   // Defines name at offset in sect. global: visible to other objects.
-  void define(const std::string &name, Sect sect, uint64_t offset, bool global);
+  // weak: may be defined in several objects (linkonce_odr / weak_odr), the
+  // linker keeps one.
+  void define(const std::string &name, Sect sect, uint64_t offset, bool global, bool weak = false);
 
   // Section contents. Code is appended as instruction words.
   std::vector<uint8_t> &bytes(Sect s) { return sec_[unsigned(s)].data; }
@@ -45,6 +48,18 @@ public:
   // A relocation at offset in sect against symbol sym with addend.
   void reloc(Sect s, uint64_t offset, Reloc kind, unsigned sym, int64_t addend = 0);
 
+  // Text size and relocation count, to drop a function that turned out
+  // unsupported (symbols it referenced stay, undefined and unused).
+  struct Checkpoint {
+    uint64_t text;
+    size_t rels;
+  };
+  Checkpoint checkpoint() const { return {sec_[0].data.size(), sec_[0].rels.size()}; }
+  void rollback(Checkpoint c) {
+    sec_[0].data.resize(c.text);
+    sec_[0].rels.resize(c.rels);
+  }
+
   // Writes the object. False with err set on failure.
   bool write(const std::string &path, std::string &err) const;
   std::string serialize() const;
@@ -52,7 +67,7 @@ public:
 private:
   struct Sym {
     std::string name;
-    bool defined = false, global = false;
+    bool defined = false, global = false, weak = false;
     Sect sect = Sect::Text;
     uint64_t offset = 0;
   };
@@ -73,6 +88,7 @@ private:
   Section sec_[4];
 };
 
-} // namespace marmot::tier0
+} // namespace tier0
+} // namespace marmot
 
 #endif
