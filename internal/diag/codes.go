@@ -49,6 +49,7 @@ const (
 	CodeCross      = "M0107"
 	CodeDeadcode   = "M0108"
 	CodeExhaustive = "M0109"
+	CodeNil        = "M0110"
 )
 
 // CodeInfo describes one code for marmot explain.
@@ -246,6 +247,11 @@ var codeTable = []CodeInfo{
 		Right: "switch c {\ncase Red, Green:\ncase Blue:\n\t// handled, or nothing to do\n}",
 		Text:  "A switch on an enum-like type (a defined integer or string type with package level constants of that type) does not handle every constant, or a type switch on a sealed interface (one with an unexported method, so only its package implements it) does not handle every implementation, and there is no default clause. A value added to the enum later then goes unnoticed.",
 		Fix:   "Handle the missing values, add a default clause, or write //exhaustive:ignore on the line before the switch. marmot fix adds the missing cases with empty bodies, which keeps the behavior."},
+	{Code: CodeNil, Title: "possible nil dereference",
+		Wrong: "func find(id int) (*User, error) {\n\tif id == 0 {\n\t\treturn nil, nil\n\t}\n\t...\n}\n\nu, err := find(id)\nif err != nil {\n\treturn err\n}\nfmt.Println(u.Name) // u is nil for id 0",
+		Right: "u, err := find(id)\nif err != nil {\n\treturn err\n}\nif u == nil {\n\treturn errNotFound\n}\nfmt.Println(u.Name)",
+		Text:  "A pointer is dereferenced, or a map written to, where it can be nil: it is nil on one path into the use (var p *T; if c { p = &T{} }; p.f), or it comes from a function that returns nil with a nil error (or with ok true), in this package or another. A use dominated by a nil check is not reported.",
+		Fix:   "Check for nil before the use, or make the function return an error instead of nil, nil."},
 	{Code: CodeOther, Title: "error",
 		Text: "An error without a more specific code. The message says what is wrong."},
 }
