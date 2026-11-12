@@ -95,7 +95,15 @@ func (b *build) ldCommand(args, objs []string, out string) ([]string, bool) {
 
 func expandLd(tmpl []string, sentinel string, objs []string, out, work string) []string {
 	var cmd []string
-	for _, a := range tmpl {
+	for i := 0; i < len(tmpl); i++ {
+		a := tmpl[i]
+		// No object is LLVM bitcode: without -lto_library ld does not load
+		// libLTO (16 ms of a 100 ms link of cmd/marmot), and the -mllvm
+		// options clang adds are for LTO code generation.
+		if (a == "-lto_library" || a == "-mllvm") && i+1 < len(tmpl) {
+			i++
+			continue
+		}
 		switch a {
 		case sentinel:
 			cmd = append(cmd, objs...)
