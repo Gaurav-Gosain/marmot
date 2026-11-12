@@ -11,6 +11,7 @@
 # Sources (cmd, internal, lib/src) are frozen from git HEAD at the start.
 # Runs sequentially under nice. Output: .work/selfhost/.
 set -u
+export MARMOT_OUTPUT=plain # plain compiler output whoever runs this
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 export MARMOT_ROOT="$ROOT" MARMOT_MAX_JOBS=2 GOCACHE="$ROOT/.work/gocache"

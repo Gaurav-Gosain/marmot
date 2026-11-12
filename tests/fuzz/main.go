@@ -462,6 +462,9 @@ func (rn *runner) shrink(src string) string {
 }
 
 func main() {
+	// Plain compiler output whoever runs the harness (marmot switches to
+	// JSON under coding agents).
+	os.Setenv("MARMOT_OUTPUT", "plain")
 	flag.Parse()
 	if *flGen != 0 {
 		fmt.Print(program(*flGen))

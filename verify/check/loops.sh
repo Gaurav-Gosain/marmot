@@ -3,6 +3,7 @@
 # every parallelized loop's claims against the proved rules.
 #   verify/check/loops.sh [file.go ...]   default: backend/test/loops/Inputs/*.go
 set -u
+export MARMOT_OUTPUT=plain # plain compiler output whoever runs this
 cd "$(dirname "$0")/../.."
 export GOCACHE="$PWD/.work/gocache" # build cache inside the repo
 W=$PWD/.work/verify/loops

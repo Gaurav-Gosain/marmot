@@ -4,6 +4,7 @@
 #   verify/check/gcbin.sh [dir ...]     default: tests/run/core
 # Programs are single files at any depth; extra marmot flags come from $GCBIN_FLAGS.
 set -u
+export MARMOT_OUTPUT=plain # plain compiler output whoever runs this
 cd "$(dirname "$0")/../.."
 export GOCACHE="$PWD/.work/gocache" # build cache inside the repo
 R=$(pwd)

@@ -7,6 +7,7 @@
 # A dir holding go.mod is built as one module (tests/world/NAME); any other dir is walked for
 # single-file programs (*.go at any depth).
 set -u
+export MARMOT_OUTPUT=plain # plain compiler output whoever runs this
 cd "$(dirname "$0")/../.."
 export GOCACHE="$PWD/.work/gocache" # build cache inside the repo
 R=$(pwd)

@@ -3,6 +3,7 @@
 # (fuzzing) are not disturbed by other workers editing the live tree. Smoke tests the copy.
 # Usage: tests/snapshot.sh   then   go run ./tests/fuzz -root "$(tests/snapshot.sh)"
 set -e
+export MARMOT_OUTPUT=plain # plain compiler output whoever runs this
 root=$(cd "$(dirname "$0")/.." && pwd)
 export GOCACHE=${GOCACHE:-$root/.work/gocache}
 dst="$root/.work/tests/tree-fuzz-$$"

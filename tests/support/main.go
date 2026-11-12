@@ -114,6 +114,9 @@ var pkgPaths = map[string]string{
 type tally struct{ pass, total int }
 
 func main() {
+	// Plain compiler output whoever runs the harness (marmot switches to
+	// JSON under coding agents).
+	os.Setenv("MARMOT_OUTPUT", "plain")
 	flag.Parse()
 	// -results takes a comma separated list; later files override earlier ones per test name,
 	// so partial runs (one tier at a time) can be combined.

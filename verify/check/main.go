@@ -22,6 +22,9 @@ import (
 )
 
 func main() {
+	// Plain compiler output whoever runs the harness (marmot switches to
+	// JSON under coding agents).
+	os.Setenv("MARMOT_OUTPUT", "plain")
 	before := flag.String("before", "", "go dialect MLIR before go-bce")
 	after := flag.String("after", "", "the same after go-bce")
 	verbose := flag.Bool("v", false, "print every justified removal")

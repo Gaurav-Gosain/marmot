@@ -89,6 +89,9 @@ type File struct {
 }
 
 func main() {
+	// Plain compiler output whoever runs the harness (marmot switches to
+	// JSON under coding agents).
+	os.Setenv("MARMOT_OUTPUT", "plain")
 	flag.Parse()
 	root = findRoot()
 	work = filepath.Join(root, ".work", "buildbench")

@@ -6,6 +6,7 @@
 # (the certificate), and verify/check validates every claimed removal and that the report
 # names exactly the checks that disappeared. Exit 1 if any removal is not justified.
 set -u
+export MARMOT_OUTPUT=plain # plain compiler output whoever runs this
 cd "$(dirname "$0")/../.."
 export GOCACHE="$PWD/.work/gocache" # build cache inside the repo
 W=.work/verify/corpus

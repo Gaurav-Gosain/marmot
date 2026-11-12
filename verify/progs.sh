@@ -8,6 +8,7 @@
 # Programs listed in verify/testdata/progs/KNOWN_OPEN are counterexamples whose fix is pending;
 # their failures are reported but do not fail the run.
 set -u
+export MARMOT_OUTPUT=plain # plain compiler output whoever runs this
 cd "$(dirname "$0")/.."
 export GOCACHE="$PWD/.work/gocache" # build cache inside the repo
 W=.work/verify/progs
