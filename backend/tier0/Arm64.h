@@ -21,6 +21,10 @@ inline uint32_t sf(bool x64) { return x64 ? 1u << 31 : 0; }
 inline uint32_t addReg(unsigned rd, unsigned rn, unsigned rm, bool x64 = true) {
   return sf(x64) | 0x0B000000u | (rm << 16) | (rn << 5) | rd;
 }
+// rd = rn + (rm << sh), sh < 64.
+inline uint32_t addLsl(unsigned rd, unsigned rn, unsigned rm, unsigned sh) {
+  return 0x8B000000u | (rm << 16) | ((sh & 63) << 10) | (rn << 5) | rd;
+}
 inline uint32_t subReg(unsigned rd, unsigned rn, unsigned rm, bool x64 = true) {
   return sf(x64) | 0x4B000000u | (rm << 16) | (rn << 5) | rd;
 }

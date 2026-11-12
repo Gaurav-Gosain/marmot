@@ -474,12 +474,17 @@ private:
   LL::LLVMFuncOp fn;
 
   llvm::DenseMap<Value, uint64_t> slot;        // value -> frame offset from sp
+  llvm::DenseMap<Value, unsigned> home;        // value -> callee saved register (x19..x28)
+  llvm::DenseSet<Operation *> fusedCmp;        // icmps that only set the flags for the next cond_br
+  Block *nextBlock = nullptr;                  // the block emitted after the current one
+  uint32_t calleeUsed = 0;                     // bit r: xr is a home, saved in the prologue
+  uint64_t saveArea = 0;
   llvm::DenseMap<Operation *, uint64_t> allocaStorage;
   llvm::DenseMap<Block *, uint64_t> blockStart;
   struct Fixup {
     uint64_t at;
     Block *dest;
-    enum { B, BCond, Cbnz } kind;
+    enum { B, BCond, Cbnz, Cbz } kind;
     Cond cond;
     unsigned reg;
   };
@@ -496,6 +501,8 @@ private:
     return at;
   }
   void layout();
+  void allocate();
+  bool constBits(Value v, uint64_t &bits);
 
   // Instructions.
   void e(uint32_t w32) { w.emit32(w32); }
@@ -513,6 +520,26 @@ private:
   void get(unsigned r, Value v);            // scalar into a general register, canonical
   void getSigned(unsigned r, Value v);      // sign extended to 64 bits
   void put(unsigned r, Value v);            // stores a scalar, normalizing the width
+  void putRaw(unsigned r, Value v);         // stores a scalar as it is
+  // Register operands: src is v's home register, or scratch loaded with v;
+  // dst is the register to compute v into (its home, or scratch); done
+  // normalizes it and stores it when it is not the home.
+  unsigned src(Value v, unsigned scratch) {
+    if (auto h = home.find(v); h != home.end()) return h->second;
+    get(scratch, v);
+    return scratch;
+  }
+  unsigned srcSigned(Value v, unsigned scratch) {
+    unsigned wdt = intWidth(v.getType());
+    if (wdt >= 64) return src(v, scratch);
+    getSigned(scratch, v);
+    return scratch;
+  }
+  unsigned dst(Value v, unsigned scratch) {
+    if (auto h = home.find(v); h != home.end()) return h->second;
+    return scratch;
+  }
+  void done(unsigned r, Value v) { put(r, v); }
   void getF(unsigned vr, Value v);          // float into an FP register
   void putF(unsigned vr, Value v);
   void normalize(unsigned r, Type t);
@@ -525,6 +552,7 @@ private:
   void stackAddr(unsigned rd, unsigned base, uint64_t off);  // rd = base + off
   void edgeMoves(Block *dest, OperandRange args);
   void branchTo(Block *dest);
+  void jumpIf(bool flags, Cond cc, unsigned reg, bool sense, Block *dest);
   void prologue();
   void epilogue();
 };
@@ -546,9 +574,12 @@ void FuncGen::layout() {
   }
   // Function arguments are the entry block's arguments.
   for (Block &b : fn.getBody()) {
-    for (BlockArgument a : b.getArguments()) slot[a] = alloc(sizeOf(a.getType()) < 8 ? 8 : sizeOf(a.getType()), 8);
+    for (BlockArgument a : b.getArguments())
+      if (!home.count(a)) slot[a] = alloc(sizeOf(a.getType()) < 8 ? 8 : sizeOf(a.getType()), 8);
     for (Operation &op : b) {
       for (Value r : op.getResults()) {
+        uint64_t bits;
+        if (home.count(r) || constBits(r, bits) || fusedCmp.count(&op)) continue;
         uint64_t sz = sizeOf(r.getType());
         slot[r] = alloc(sz < 8 ? 8 : sz, std::max<uint64_t>(8, alignOf(r.getType())));
       }
@@ -569,6 +600,7 @@ void FuncGen::layout() {
     tempSize = std::max(tempSize, n);
   }
   tempArea = alloc(tempSize, 8);
+  saveArea = alloc(8 * uint64_t(llvm::popcount(calleeUsed)), 8);
   frameSize = (frameSize + 15) & ~uint64_t(15);
 }
 
@@ -664,9 +696,47 @@ void FuncGen::normalize(unsigned r, Type t) {
   if (wdt < 64) e(ubfx0(r, r, wdt));
 }
 
+// A scalar constant has no slot: its canonical bits are made where it is used.
+bool FuncGen::constBits(Value v, uint64_t &bits) {
+  Operation *d = v.getDefiningOp();
+  if (!d || isAggregate(v.getType()) || sizeOf(v.getType()) > 8) return false;
+  if (isa<LL::ZeroOp, LL::UndefOp, LL::PoisonOp>(d)) {
+    bits = 0;
+    return true;
+  }
+  auto c = dyn_cast<LL::ConstantOp>(d);
+  if (!c) return false;
+  if (auto i = dyn_cast<IntegerAttr>(c.getValue()))
+    bits = i.getValue().getZExtValue();
+  else if (auto f = dyn_cast<FloatAttr>(c.getValue()))
+    bits = f.getValue().bitcastToAPInt().getZExtValue();
+  else
+    return false;
+  unsigned wdt = isFloat(v.getType()) ? unsigned(8 * sizeOf(v.getType())) : intWidth(v.getType());
+  if (wdt < 64) bits &= (uint64_t(1) << wdt) - 1;
+  return true;
+}
+
 void FuncGen::get(unsigned r, Value v) {
   if (sizeOf(v.getType()) > 8) unsupported("i128 operation");
+  uint64_t bits;
+  if (constBits(v, bits)) {
+    movImm(r, bits);
+    return;
+  }
+  if (auto h = home.find(v); h != home.end()) {
+    if (h->second != r) e(movReg(r, h->second));
+    return;
+  }
   ldSlot(r, of(v), 8);
+}
+
+void FuncGen::putRaw(unsigned r, Value v) {
+  if (auto h = home.find(v); h != home.end()) {
+    if (h->second != r) e(movReg(h->second, r));
+    return;
+  }
+  stSlot(r, of(v), 8);
 }
 
 void FuncGen::getSigned(unsigned r, Value v) {
@@ -677,25 +747,20 @@ void FuncGen::getSigned(unsigned r, Value v) {
 
 void FuncGen::put(unsigned r, Value v) {
   if (sizeOf(v.getType()) > 8) unsupported("i128 operation");
-  if (isFloat(v.getType())) {
-    stSlot(r, of(v), 8);
-    return;
-  }
-  normalize(r, v.getType());
-  stSlot(r, of(v), 8);
+  if (!isFloat(v.getType())) normalize(r, v.getType());
+  putRaw(r, v);
 }
 
 void FuncGen::getF(unsigned vr, Value v) {
   bool dbl = v.getType().isF64();
-  get(R1, v);
-  e(fmovFromGp(vr, R1, dbl));
+  e(fmovFromGp(vr, src(v, R1), dbl));
 }
 
 void FuncGen::putF(unsigned vr, Value v) {
   bool dbl = v.getType().isF64();
-  e(fmovToGp(R1, vr, dbl));
-  if (!dbl) e(uxtw(R1, R1));
-  stSlot(R1, of(v), 8);
+  unsigned d = dst(v, R1);
+  e(fmovToGp(d, vr, dbl));  // a 32-bit fmov zeroes the upper half
+  putRaw(d, v);
 }
 
 void FuncGen::prologue() {
@@ -708,6 +773,15 @@ void FuncGen::prologue() {
       e(subImm(SP, SP, uint32_t(frameSize >> 12), true, true));
       if (frameSize & 0xFFF) e(subImm(SP, SP, uint32_t(frameSize & 0xFFF)));
     }
+  }
+  // Callee saved registers that hold values.
+  {
+    uint64_t at = saveArea;
+    for (unsigned r = 19; r <= 28; r++)
+      if (calleeUsed >> r & 1) {
+        stSlot(r, at, 8);
+        at += 8;
+      }
   }
   // Incoming arguments, split as LLVM splits them, into the entry block's
   // argument slots. Stack arguments start at the caller's sp, fp + 16.
@@ -730,7 +804,7 @@ void FuncGen::prologue() {
       addrOf(R2, of(a) + l.off);
       memStore(R1, R2, sizeOf(l.t));
     } else {
-      stSlot(R1, of(a), 8);
+      putRaw(R1, a);
     }
   }
 }
@@ -745,6 +819,12 @@ void FuncGen::stackAddr(unsigned rd, unsigned base, uint64_t off) {
 }
 
 void FuncGen::epilogue() {
+  uint64_t at = saveArea;
+  for (unsigned r = 19; r <= 28; r++)
+    if (calleeUsed >> r & 1) {
+      ldSlot(r, at, 8);
+      at += 8;
+    }
   e(movSp(SP, FP));
   e(ldpPost(FP, LR, SP, 16));
   e(ret());
@@ -752,25 +832,49 @@ void FuncGen::epilogue() {
 
 void FuncGen::edgeMoves(Block *dest, OperandRange args) {
   if (args.empty()) return;
+  if (args.size() == 1 && !isAggregate(args[0].getType())) {
+    get(R1, args[0]);
+    putRaw(R1, dest->getArgument(0));
+    return;
+  }
   // Parallel move: sources to the temporary area, then to the arguments.
   uint64_t t = tempArea;
   std::vector<uint64_t> tmp;
   for (Value v : args) {
-    uint64_t sz = (sizeOf(v.getType()) + 7) & ~uint64_t(7);
-    copyBytes(SP, t, SP, of(v), std::max<uint64_t>(sz, 8));
+    uint64_t sz = std::max<uint64_t>((sizeOf(v.getType()) + 7) & ~uint64_t(7), 8);
+    if (isAggregate(v.getType())) {
+      copyBytes(SP, t, SP, of(v), sz);
+    } else {
+      get(R1, v);
+      stSlot(R1, t, 8);
+    }
     tmp.push_back(t);
-    t += std::max<uint64_t>(sz, 8);
+    t += sz;
   }
   for (unsigned i = 0; i < args.size(); i++) {
     BlockArgument a = dest->getArgument(i);
-    uint64_t sz = (sizeOf(a.getType()) + 7) & ~uint64_t(7);
-    copyBytes(SP, of(a), SP, tmp[i], std::max<uint64_t>(sz, 8));
+    uint64_t sz = std::max<uint64_t>((sizeOf(a.getType()) + 7) & ~uint64_t(7), 8);
+    if (isAggregate(a.getType())) {
+      copyBytes(SP, of(a), SP, tmp[i], sz);
+    } else {
+      ldSlot(R1, tmp[i], 8);
+      putRaw(R1, a);
+    }
   }
 }
 
 void FuncGen::branchTo(Block *dest) {
   fixups.push_back({here(), dest, Fixup::B, AL, 0});
   e(b(0));
+}
+
+// Jumps to dest when the condition is sense: on the flags (cc) or on reg.
+void FuncGen::jumpIf(bool flags, Cond cc, unsigned reg, bool sense, Block *dest) {
+  if (flags)
+    fixups.push_back({here(), dest, Fixup::BCond, sense ? cc : Cond(cc ^ 1), 0});
+  else
+    fixups.push_back({here(), dest, sense ? Fixup::Cbnz : Fixup::Cbz, AL, reg});
+  e(0);
 }
 
 void FuncGen::emitCall(LL::CallOp call) {
@@ -825,6 +929,17 @@ void FuncGen::emitCall(LL::CallOp call) {
   unsigned ngp = 0, nfp = 0;
   for (auto [off, t] : parts) {
     if (isFloat(t) ? nfp >= 8 : ngp >= 8) unsupported("result returned in memory");
+    if (!isAggregate(r.getType())) {
+      unsigned d = dst(r, R1);
+      if (isFloat(t)) {
+        e(fmovToGp(d, nfp++, t.isF64()));
+      } else {
+        e(movReg(d, ngp++));
+        normalize(d, t);
+      }
+      putRaw(d, r);
+      continue;
+    }
     if (isFloat(t)) {
       e(fmovToGp(R1, nfp++, t.isF64()));
       if (t.isF32()) e(uxtw(R1, R1));
@@ -836,7 +951,7 @@ void FuncGen::emitCall(LL::CallOp call) {
       addrOf(R2, of(r) + off);
       memStore(R1, R2, sizeOf(t));
     } else {
-      stSlot(R1, of(r), 8);
+      putRaw(R1, r);
     }
   }
 }
@@ -898,7 +1013,10 @@ bool FuncGen::emitWide(Operation &op) {
   for (Type t : op.getOperandTypes()) wide |= isWide(t);
   for (Type t : op.getResultTypes()) wide |= isWide(t);
   if (!wide) return false;
-  auto lo = [&](unsigned r, Value v) { ldSlot(r, of(v), 8); };
+  auto lo = [&](unsigned r, Value v) {
+    if (!isWide(v.getType())) return get(r, v);
+    ldSlot(r, of(v), 8);
+  };
   auto hi = [&](unsigned r, Value v) { ldSlot(r, of(v) + 8, 8); };
   auto store = [&](unsigned l, unsigned h, Value v) {
     stSlot(l, of(v), 8);
@@ -1006,10 +1124,9 @@ bool FuncGen::emitWide(Operation &op) {
 void FuncGen::emitOp(Operation &op) {
   if (emitWide(op)) return;
   auto bin = [&](auto enc) {
-    get(R1, op.getOperand(0));
-    get(R2, op.getOperand(1));
-    e(enc(R1, R1, R2));
-    put(R1, op.getResult(0));
+    unsigned a = src(op.getOperand(0), R1), b = src(op.getOperand(1), R2), d = dst(op.getResult(0), R1);
+    e(enc(d, a, b));
+    done(d, op.getResult(0));
   };
   auto fbin = [&](auto enc) {
     bool dbl = op.getResult(0).getType().isF64();
@@ -1029,11 +1146,11 @@ void FuncGen::emitOp(Operation &op) {
         else
           unsupported("constant kind");
         if (isAggregate(t)) unsupported("aggregate constant");
-        movImm(R1, bits);
-        put(R1, c.getResult());
+        (void)bits;  // made at each use (constBits)
       })
       .Case<LL::ZeroOp, LL::UndefOp, LL::PoisonOp>([&](auto z) {
         Type t = z.getType();
+        if (!isAggregate(t) && sizeOf(t) <= 8) return;  // made at each use
         uint64_t n = sizeOf(t);
         n = std::max<uint64_t>((n + 7) & ~uint64_t(7), 8);
         for (uint64_t i = 0; i < n; i += 8) stSlot(XZR, of(z.getResult()) + i, 8);
@@ -1092,20 +1209,23 @@ void FuncGen::emitOp(Operation &op) {
         put(R1, o.getResult());
       })
       .Case<LL::ICmpOp>([&](auto c) {
+        unsigned a, b;
         if (isSignedPred(c.getPredicate())) {
-          getSigned(R1, c.getLhs());
-          getSigned(R2, c.getRhs());
+          a = srcSigned(c.getLhs(), R1);
+          b = srcSigned(c.getRhs(), R2);
         } else {
-          get(R1, c.getLhs());
-          get(R2, c.getRhs());
+          a = src(c.getLhs(), R1);
+          b = src(c.getRhs(), R2);
         }
-        e(cmpReg(R1, R2));
-        e(cset(R1, icmpCond(c.getPredicate())));
-        put(R1, c.getResult());
+        e(cmpReg(a, b));
+        if (fusedCmp.count(c.getOperation())) return;  // the cond_br branches on the flags
+        unsigned d = dst(c.getResult(), R1);
+        e(cset(d, icmpCond(c.getPredicate())));
+        putRaw(d, c.getResult());
       })
       .Case<LL::SelectOp>([&](auto s) {
         Type t = s.getType();
-        get(R3, s.getCondition());
+        if (unsigned c = src(s.getCondition(), R3); c != R3) e(movReg(R3, c));
         if (isAggregate(t)) {
           // Copy whichever value the condition picks.
           uint64_t sz = std::max<uint64_t>((sizeOf(t) + 7) & ~uint64_t(7), 8);
@@ -1122,15 +1242,20 @@ void FuncGen::emitOp(Operation &op) {
           patch(skip, b(int32_t(end - skip)));
           return;
         }
-        get(R1, s.getTrueValue());
-        get(R2, s.getFalseValue());
+        unsigned a = src(s.getTrueValue(), R1), b = src(s.getFalseValue(), R2), d = dst(s.getResult(), R1);
         e(cmpImm(R3, 0));
-        e(csel(R1, R1, R2, NE));
-        put(R1, s.getResult());
+        e(csel(d, a, b, NE));
+        putRaw(d, s.getResult());
       })
       .Case<LL::ZExtOp, LL::TruncOp, LL::PtrToIntOp, LL::IntToPtrOp>([&](auto c) {
-        get(R1, c.getArg());
-        put(R1, c.getResult());
+        unsigned a = src(c.getArg(), R1), d = dst(c.getResult(), R1);
+        if (intWidth(c.getResult().getType()) < intWidth(c.getArg().getType())) {
+          e(ubfx0(d, a, intWidth(c.getResult().getType())));  // trunc: keep the low bits
+          putRaw(d, c.getResult());
+          return;
+        }
+        if (d != a) e(movReg(d, a));
+        putRaw(d, c.getResult());  // zext and pointer casts: already canonical
       })
       .Case<LL::SExtOp>([&](auto c) {
         getSigned(R1, c.getArg());
@@ -1139,7 +1264,7 @@ void FuncGen::emitOp(Operation &op) {
       .Case<LL::BitcastOp>([&](auto c) {
         if (isAggregate(c.getType())) unsupported("aggregate bitcast");
         get(R1, c.getArg());
-        stSlot(R1, of(c.getResult()), 8);
+        putRaw(R1, c.getResult());
       })
       .Case<LL::FAddOp>([&](auto) { fbin([](unsigned d, unsigned n, unsigned m, bool x) { return fadd(d, n, m, x); }); })
       .Case<LL::MaximumOp>([&](auto) { fbin([](unsigned d, unsigned n, unsigned m, bool x) { return fmax(d, n, m, x); }); })
@@ -1215,42 +1340,42 @@ void FuncGen::emitOp(Operation &op) {
       })
       .Case<LL::LoadOp>([&](auto l) {
         Type t = l.getType();
-        get(R2, l.getAddr());
+        if (unsigned ar = src(l.getAddr(), R2); ar != R2) e(movReg(R2, ar));
         if (isAggregate(t)) {
           copyBytes(SP, of(l.getResult()), R2, 0, sizeOf(t));
           return;
         }
         uint64_t sz = sizeOf(t);
+        unsigned d = dst(l.getResult(), R1);
         if (l.getOrdering() != LL::AtomicOrdering::not_atomic)
-          e(ldar(R1, R2, log2Size(sz)));
+          e(ldar(d, R2, log2Size(sz)));
         else
-          memLoad(R1, R2, sz);
-        stSlot(R1, of(l.getResult()), 8);
-        if (intWidth(t) == 1) {
-          e(ubfx0(R1, R1, 1));
-          stSlot(R1, of(l.getResult()), 8);
-        }
+          memLoad(d, R2, sz);
+        if (intWidth(t) == 1) e(ubfx0(d, d, 1));
+        putRaw(d, l.getResult());
       })
       .Case<LL::StoreOp>([&](auto s) {
         Type t = s.getValue().getType();
-        get(R2, s.getAddr());
+        if (unsigned ar = src(s.getAddr(), R2); ar != R2) e(movReg(R2, ar));
         if (isAggregate(t)) {
           copyBytes(R2, 0, SP, of(s.getValue()), sizeOf(t));
           return;
         }
-        get(R1, s.getValue());
+        unsigned v = src(s.getValue(), R1);
         uint64_t sz = sizeOf(t);
         if (s.getOrdering() != LL::AtomicOrdering::not_atomic)
-          e(stlr(R1, R2, log2Size(sz)));
+          e(stlr(v, R2, log2Size(sz)));
         else
-          memStore(R1, R2, sz);
+          memStore(v, R2, sz);
       })
       .Case<LL::AllocaOp>([&](auto a) {
-        addrOf(R1, allocaStorage[a.getOperation()]);
-        stSlot(R1, of(a.getResult()), 8);
+        unsigned d = dst(a.getResult(), R1);
+        addrOf(d, allocaStorage[a.getOperation()]);
+        putRaw(d, a.getResult());
       })
       .Case<LL::GEPOp>([&](auto g) {
-        get(R1, g.getBase());
+        unsigned acc = src(g.getBase(), R1);  // the address so far
+        unsigned d = dst(g.getResult(), R1);
         Type et = g.getElemType();
         bool first = true;
         int64_t constOff = 0;
@@ -1277,19 +1402,31 @@ void FuncGen::emitOp(Operation &op) {
             constOff += ia.getInt() * int64_t(scale);
           } else {
             Value iv = llvm::cast<Value>(idx);
-            getSigned(R2, iv);
-            if (scale != 1) {
+            unsigned ir = srcSigned(iv, R2);
+            if (scale == 0) continue;
+            if (llvm::isPowerOf2_64(scale)) {
+              e(addLsl(d, acc, ir, unsigned(llvm::Log2_64(scale))));
+            } else {
               movImm(R3, scale);
-              e(mul(R2, R2, R3));
+              e(mul(R3, ir, R3));
+              e(addReg(d, acc, R3));
             }
-            e(addReg(R1, R1, R2));
+            acc = d;
           }
         }
-        if (constOff) {
+        if (constOff > 0 && constOff < 4096) {
+          e(addImm(d, acc, uint32_t(constOff)));
+          acc = d;
+        } else if (constOff < 0 && constOff > -4096) {
+          e(subImm(d, acc, uint32_t(-constOff)));
+          acc = d;
+        } else if (constOff) {
           movImm(R2, uint64_t(constOff));
-          e(addReg(R1, R1, R2));
+          e(addReg(d, acc, R2));
+          acc = d;
         }
-        stSlot(R1, of(g.getResult()), 8);
+        if (acc != d) e(movReg(d, acc));
+        putRaw(d, g.getResult());
       })
       .Case<LL::ExtractValueOp>([&](auto x) {
         auto [off, t] = elementAt(x.getContainer().getType(), x.getPosition());
@@ -1300,7 +1437,7 @@ void FuncGen::emitOp(Operation &op) {
         }
         addrOf(R2, src);
         memLoad(R1, R2, sizeOf(t));
-        stSlot(R1, of(x.getResult()), 8);
+        putRaw(R1, x.getResult());
       })
       .Case<LL::InsertValueOp>([&](auto ins) {
         Type at = ins.getType();
@@ -1389,20 +1526,41 @@ void FuncGen::emitOp(Operation &op) {
       .Case<LL::ReturnOp>([&](auto r) { emitReturn(r); })
       .Case<LL::BrOp>([&](auto br_) {
         edgeMoves(br_.getDest(), br_.getDestOperands());
-        branchTo(br_.getDest());
+        if (br_.getDest() != nextBlock) branchTo(br_.getDest());
       })
       .Case<LL::CondBrOp>([&](auto c) {
-        get(R3, c.getCondition());
-        // cbnz to the true edge's moves, the false edge falls through.
-        uint64_t at = here();
-        e(cbnz(R3, 0));
-        edgeMoves(c.getFalseDest(), c.getFalseDestOperands());
-        branchTo(c.getFalseDest());
-        uint64_t trueAt = here();
-        uint32_t word = cbnz(R3, int32_t(trueAt - at));
-        std::memcpy(&w.bytes(Sect::Text)[at], &word, 4);
-        edgeMoves(c.getTrueDest(), c.getTrueDestOperands());
-        branchTo(c.getTrueDest());
+        bool flags = false;
+        Cond cc = AL;
+        unsigned cr = 0;
+        if (auto ic = c.getCondition().template getDefiningOp<LL::ICmpOp>(); ic && fusedCmp.count(ic)) {
+          flags = true;
+          cc = icmpCond(ic.getPredicate());
+        } else {
+          cr = src(c.getCondition(), R3);
+        }
+        Block *t = c.getTrueDest(), *f = c.getFalseDest();
+        if (c.getTrueDestOperands().empty()) {
+          jumpIf(flags, cc, cr, true, t);
+          edgeMoves(f, c.getFalseDestOperands());
+          if (f != nextBlock) branchTo(f);
+        } else if (c.getFalseDestOperands().empty()) {
+          jumpIf(flags, cc, cr, false, f);
+          edgeMoves(t, c.getTrueDestOperands());
+          if (t != nextBlock) branchTo(t);
+        } else {
+          // Both edges move values: to the true edge's moves when the
+          // condition holds, the false edge's moves fall through.
+          uint64_t at = here();
+          e(0);
+          edgeMoves(f, c.getFalseDestOperands());
+          branchTo(f);
+          uint64_t trueAt = here();
+          int32_t off = int32_t(trueAt - at);
+          uint32_t word = flags ? bcond(cc, off) : cbnz(cr, off);
+          std::memcpy(&w.bytes(Sect::Text)[at], &word, 4);
+          edgeMoves(t, c.getTrueDestOperands());
+          if (t != nextBlock) branchTo(t);
+        }
       })
       .Case<LL::SwitchOp>([&](auto s) {
         get(R3, s.getValue());
@@ -1559,8 +1717,160 @@ std::optional<std::pair<StringRef, unsigned>> lineOf(Location l) {
   return std::nullopt;
 }
 
+// Linear scan register allocation: scalar values (integers, pointers and
+// floats as bits, not constants) get one callee saved register for their
+// whole live interval, computed from block liveness over the emission order;
+// the rest keep their frame slots. No splitting, no coalescing. Functions
+// that call a returns_twice function (rt_setjmp for defer) keep every value
+// in memory, as a longjmp restores the callee saved registers.
+void FuncGen::allocate() {
+  static const bool off = [] {
+    const char *v = getenv("MARMOT_TIER0_NORA");
+    return v && *v && *v != '0';
+  }();
+  if (off) return;
+  bool twice = false;
+  fn.walk([&](LL::CallOp c) {
+    auto callee = c.getCallee();
+    if (!callee) return;
+    if (*callee == "rt_setjmp") twice = true;
+    if (auto f = SymbolTable::lookupNearestSymbolFrom<LL::LLVMFuncOp>(c, c.getCalleeAttr()))
+      if (auto pt = f.getPassthrough())
+        for (Attribute a : *pt)
+          if (auto sa = dyn_cast<StringAttr>(a); sa && sa.getValue() == "returns_twice") twice = true;
+  });
+  if (twice) return;
+  llvm::DenseMap<Value, unsigned> idx;
+  std::vector<Value> vals;
+  auto cand = [&](Value v) {
+    Type t = v.getType();
+    uint64_t bits;
+    if (isa<LL::LLVMVoidType>(t) || isAggregate(t) || isWide(t) || sizeOf(t) > 8 || constBits(v, bits)) return;
+    if (Operation *d = v.getDefiningOp(); d && fusedCmp.count(d)) return;
+    if (idx.try_emplace(v, unsigned(vals.size())).second) vals.push_back(v);
+  };
+  // Positions in emission order: a block's start, then each operation.
+  llvm::DenseMap<Operation *, unsigned> pos;
+  llvm::DenseMap<Block *, std::pair<unsigned, unsigned>> span;
+  std::vector<Block *> blocks;
+  unsigned p = 0;
+  for (Block &b : fn.getBody()) {
+    blocks.push_back(&b);
+    unsigned start = p++;
+    for (BlockArgument a : b.getArguments()) cand(a);
+    for (Operation &op : b) {
+      pos[&op] = p++;
+      for (Value r : op.getResults()) cand(r);
+    }
+    span[&b] = {start, p - 1};
+  }
+  if (vals.empty()) return;
+  unsigned n = unsigned(vals.size());
+  llvm::DenseMap<Block *, unsigned> bi;
+  for (unsigned i = 0; i < blocks.size(); i++) bi[blocks[i]] = i;
+  std::vector<llvm::BitVector> gen(blocks.size(), llvm::BitVector(n)), kill(gen), in(gen), out(gen);
+  for (unsigned i = 0; i < blocks.size(); i++) {
+    Block *b = blocks[i];
+    for (BlockArgument a : b->getArguments())
+      if (auto it = idx.find(a); it != idx.end()) kill[i].set(it->second);
+    for (Operation &op : *b) {
+      for (Value v : op.getOperands())
+        if (auto it = idx.find(v); it != idx.end() && !kill[i].test(it->second)) gen[i].set(it->second);
+      for (Value r : op.getResults())
+        if (auto it = idx.find(r); it != idx.end()) kill[i].set(it->second);
+    }
+  }
+  for (bool changed = true; changed;) {
+    changed = false;
+    for (unsigned i = unsigned(blocks.size()); i-- > 0;) {
+      llvm::BitVector o(n);
+      for (Block *s : blocks[i]->getSuccessors()) o |= in[bi[s]];
+      llvm::BitVector ni = o;
+      ni.reset(kill[i]);
+      ni |= gen[i];
+      if (ni != in[i] || o != out[i]) {
+        in[i] = std::move(ni);
+        out[i] = std::move(o);
+        changed = true;
+      }
+    }
+  }
+  std::vector<std::pair<unsigned, unsigned>> iv(n, {~0u, 0u});
+  auto ext = [&](unsigned v, unsigned at) {
+    iv[v].first = std::min(iv[v].first, at);
+    iv[v].second = std::max(iv[v].second, at);
+  };
+  for (unsigned i = 0; i < blocks.size(); i++) {
+    Block *b = blocks[i];
+    auto [bs, be] = span[b];
+    for (BlockArgument a : b->getArguments())
+      if (auto it = idx.find(a); it != idx.end()) {
+        ext(it->second, bs);
+        // Written by the edge moves at each predecessor's branch.
+        for (Block *pr : b->getPredecessors()) ext(it->second, span[pr].second);
+      }
+    for (Operation &op : *b) {
+      unsigned at = pos[&op];
+      for (Value v : op.getOperands())
+        if (auto it = idx.find(v); it != idx.end()) ext(it->second, at);
+      for (Value r : op.getResults())
+        if (auto it = idx.find(r); it != idx.end()) ext(it->second, at);
+    }
+    for (int v = in[i].find_first(); v >= 0; v = in[i].find_next(v)) ext(unsigned(v), bs);
+    for (int v = out[i].find_first(); v >= 0; v = out[i].find_next(v)) ext(unsigned(v), be);
+  }
+  std::vector<unsigned> order(n);
+  for (unsigned i = 0; i < n; i++) order[i] = i;
+  std::sort(order.begin(), order.end(), [&](unsigned a, unsigned b) { return iv[a].first < iv[b].first; });
+  std::vector<unsigned> active;  // value indices holding a register
+  llvm::DenseMap<unsigned, unsigned> reg;
+  uint32_t freeRegs = 0;
+  for (unsigned r = 19; r <= 28; r++) freeRegs |= 1u << r;
+  for (unsigned v : order) {
+    unsigned start = iv[v].first;
+    for (size_t k = 0; k < active.size();) {
+      unsigned a = active[k];
+      if (iv[a].second < start) {
+        freeRegs |= 1u << reg[a];
+        active[k] = active.back();
+        active.pop_back();
+      } else {
+        k++;
+      }
+    }
+    if (freeRegs) {
+      unsigned r = unsigned(llvm::countr_zero(freeRegs));
+      freeRegs &= ~(1u << r);
+      reg[v] = r;
+      active.push_back(v);
+      continue;
+    }
+    // Full: the interval that ends last stays in memory.
+    size_t far = 0;
+    for (size_t k = 1; k < active.size(); k++)
+      if (iv[active[k]].second > iv[active[far]].second) far = k;
+    unsigned a = active[far];
+    if (iv[a].second > iv[v].second) {
+      reg[v] = reg[a];
+      reg.erase(a);
+      active[far] = v;
+    }
+  }
+  for (auto [v, r] : reg) {
+    home[vals[v]] = r;
+    calleeUsed |= 1u << r;
+  }
+}
+
 void FuncGen::run() {
   if (fn.isVarArg()) unsupported("variadic function");
+  // An icmp right before the cond_br that is its only use sets the flags.
+  fn.walk([&](LL::CondBrOp c) {
+    auto ic = c.getCondition().getDefiningOp<LL::ICmpOp>();
+    if (ic && ic->getNextNode() == c.getOperation() && ic->hasOneUse() && !isWide(ic.getLhs().getType()))
+      fusedCmp.insert(ic.getOperation());
+  });
+  allocate();
   layout();
   uint64_t start = here();
   std::vector<ModuleGen::Row> rows;
@@ -1576,14 +1886,20 @@ void FuncGen::run() {
   prologue();
   for (Block &b : fn.getBody()) {
     blockStart[&b] = here();
+    nextBlock = b.getNextNode();
     for (Operation &op : b) {
       row(op.getLoc());
       emitOp(op);
     }
   }
   for (const Fixup &f : fixups) {
-    int32_t off = int32_t(int64_t(blockStart[f.dest]) - int64_t(f.at));
-    uint32_t word = b(off);
+    int64_t off = int64_t(blockStart[f.dest]) - int64_t(f.at);
+    if (f.kind != Fixup::B && (off >= (int64_t(1) << 20) || off < -(int64_t(1) << 20)))
+      unsupported("conditional branch out of range");
+    uint32_t word = f.kind == Fixup::B       ? b(int32_t(off))
+                    : f.kind == Fixup::BCond ? bcond(f.cond, int32_t(off))
+                    : f.kind == Fixup::Cbnz  ? cbnz(f.reg, int32_t(off))
+                                             : cbz(f.reg, int32_t(off));
     std::memcpy(&w.bytes(Sect::Text)[f.at], &word, 4);
   }
   // Defined only now: a function that falls back leaves no symbol.
