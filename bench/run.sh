@@ -6,4 +6,6 @@
 set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
+# One Go build cache per checkout, so the user cache does not grow.
+export GOCACHE=${GOCACHE:-$ROOT/.work/gocache}
 exec go run ./bench/cmd/bench "$@"

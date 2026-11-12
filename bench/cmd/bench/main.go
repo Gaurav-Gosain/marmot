@@ -45,9 +45,9 @@ func marmotBin(root string) string {
 }
 
 func toolchains() []Toolchain {
-	goClean := func(root, work string) string { return "rm -rf " + filepath.Join(work, "gocache") }
+	goClean := func(root, work string) string { return "rm -rf " + gocacheDir() }
 	tgClean := func(root, work string) string {
-		return "rm -rf " + filepath.Join(work, "gocache") + "; tinygo clean"
+		return "rm -rf " + gocacheDir() + "; tinygo clean"
 	}
 	marmot := func(opt string) func(root, pkg, out string, nocache bool) []string {
 		return func(root, pkg, out string, nocache bool) []string {
@@ -354,7 +354,7 @@ func measure(p Program, t Toolchain) Result {
 	check(os.MkdirAll(dir, 0o755))
 	out := filepath.Join(dir, p.Name)
 	os.Remove(out)
-	env := append(append(os.Environ(), "GOCACHE="+filepath.Join(work, "gocache"), "MARMOT_MAX_JOBS=2", "MARMOT_CACHE_MAX_MB=512"), t.Env...)
+	env := append(append(os.Environ(), "GOCACHE="+gocacheDir(), "MARMOT_MAX_JOBS=2", "MARMOT_CACHE_MAX_MB=512"), t.Env...)
 
 	if *sizeOnly {
 		c := exec.Command(t.Build(root, p.Pkg, out, false)[0], t.Build(root, p.Pkg, out, false)[1:]...)
@@ -916,4 +916,14 @@ func counters(bin string) (instr, cycles int64) {
 		cycles, _ = strconv.ParseInt(string(m[1]), 10, 64)
 	}
 	return
+}
+
+// gocacheDir is the Go build cache used by every build in a run. Warm runs share the project
+// cache under .work/gocache. Cold build timing wipes the cache before each sample, so it uses a
+// private directory that is removed when the run ends.
+func gocacheDir() string {
+	if *skipCold {
+		return filepath.Join(root, ".work", "gocache")
+	}
+	return filepath.Join(work, "gocache")
 }
