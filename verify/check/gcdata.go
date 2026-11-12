@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -423,7 +424,7 @@ func (r *resolver) conv(e ast.Expr, ph map[string]string) (types.Type, error) {
 
 // marmotEnv is the go list environment marmot builds with: its merged GOROOT (stock sources
 // with lib/src overlaid, so reflect, runtime and the other overlay packages have marmot's
-// types), its build tags, and GOARCH arm64 for the layout. The merge itself is file
+// types), its build tags, and the host's GOOS and GOARCH (marmot's default target). The merge itself is file
 // placement only (internal/loader/goroot.go); the layout is computed here.
 func marmotEnv() ([]string, error) {
 	root, err := os.Getwd()
@@ -448,7 +449,7 @@ func marmotEnv() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(os.Environ(), "GOROOT="+gr, "CGO_ENABLED=0", "GOOS=darwin", "GOARCH=arm64",
+	return append(os.Environ(), "GOROOT="+gr, "CGO_ENABLED=0", "GOOS="+runtime.GOOS, "GOARCH="+runtime.GOARCH,
 		"GOFLAGS=-tags=marmot,purego,math_big_pure_go", "GOTOOLCHAIN=local"), nil
 }
 
@@ -483,7 +484,7 @@ func checkGCData(mlirPath string, patterns []string) (*gcResult, error) {
 	pkgs = append(pkgs, rt...)
 	// the main package of a file-argument build is "command-line-arguments" in both tools
 	r := newResolver(pkgs)
-	gcSizes := types.SizesFor("gc", "arm64")
+	gcSizes := types.SizesFor("gc", runtime.GOARCH)
 	res := &gcResult{}
 	names := make([]string, 0, len(descs))
 	for n := range descs {
