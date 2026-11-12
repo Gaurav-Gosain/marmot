@@ -3,13 +3,13 @@
 // RUN: %backend -Os -emit=llvm -o - %s | %FileCheck %s --check-prefix=OS
 // RUN: %backend -O2 -emit=llvm -o - %s | %FileCheck %s --check-prefix=O2
 // OZ: define {{.*}}@f({{.*}}) {{.*}}#[[F:[0-9]+]]
-// OZ: define {{.*}}@{{"?}}p.init{{"?}}() {{.*}}#[[I:[0-9]+]]
 // OS: attributes #{{[0-9]+}} = { {{.*}}optsize
 // OS-NOT: minsize
 // O2-NOT: optsize
 // Two identical functions are not merged (MergeFunctions is off, see no-merge.mlir).
 // OZ: define {{.*}}@g(
 // OZ-NOT: tail call {{.*}}@f(
+// OZ: define {{.*}}@{{"?}}p.init{{"?}}() {{.*}}#[[I:[0-9]+]]
 // OZ-DAG: attributes #[[F]] = { {{.*}}minsize{{.*}}optsize
 // OZ-DAG: attributes #[[I]] = { {{.*}}optnone
 module {
