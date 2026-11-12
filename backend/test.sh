@@ -22,7 +22,8 @@ if [ "${BACKEND_HEAD:-}" = 1 ]; then
   mkdir -p "$H/tree/build/bin"
   [ -e "$H/tree/build/lib" ] || ln -s "$R/build/lib" "$H/tree/build/lib"
   [ -e "$H/tree/build/bin/marmot" ] || ln -s "$R/build/bin/marmot" "$H/tree/build/bin/marmot"
-  BACKEND_BIN_DIR=$H/bin BACKEND_BUILD_DIR=$H/cmake exec "$H/tree/backend/test.sh" "$@"
+  # The worktree's own test.sh runs in its normal mode there.
+  BACKEND_HEAD= BACKEND_BIN_DIR=$H/bin BACKEND_BUILD_DIR=$H/cmake exec "$H/tree/backend/test.sh" "$@"
 fi
 BIN=${BACKEND_BIN_DIR:-$PWD/build/backend-test/bin}
 BACKEND_BIN_DIR=$BIN BACKEND_BUILD_DIR=${BACKEND_BUILD_DIR:-$PWD/build/backend-test/cmake} \
