@@ -9,7 +9,7 @@ const maxAlloc = 1 << 47
 // rawstring allocates storage for a new string of size bytes and returns the
 // string and a byte slice over the same memory for filling it.
 func rawstring(size int) (s string, b []byte) {
-	p := mallocNoZero(uintptr(size)) // the caller fills all of b
+	p := mallocgc(uintptr(size), nil)
 	return unsafe.String((*byte)(p), size), unsafe.Slice((*byte)(p), size)
 }
 

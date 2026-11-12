@@ -286,7 +286,7 @@ func convT16(val uint16) unsafe.Pointer {
 	if val < uint16(len(staticuint64s)) {
 		return unsafe.Pointer(&staticuint64s[val])
 	}
-	x := mallocNoZero(2)
+	x := mallocgc(2, nil)
 	*(*uint16)(x) = val
 	return x
 }
@@ -296,7 +296,7 @@ func convT32(val uint32) unsafe.Pointer {
 	if val < uint32(len(staticuint64s)) {
 		return unsafe.Pointer(&staticuint64s[val])
 	}
-	x := mallocNoZero(4)
+	x := mallocgc(4, nil)
 	*(*uint32)(x) = val
 	return x
 }
@@ -306,7 +306,7 @@ func convT64(val uint64) unsafe.Pointer {
 	if val < uint64(len(staticuint64s)) {
 		return unsafe.Pointer(&staticuint64s[val])
 	}
-	x := mallocNoZero(8)
+	x := mallocgc(8, nil)
 	*(*uint64)(x) = val
 	return x
 }

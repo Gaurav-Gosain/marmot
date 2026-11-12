@@ -22,8 +22,6 @@ var zerobase uintptr
 
 // mallocgc allocates host memory. Memory that holds pointers is allocated
 // as []unsafe.Pointer so the host collector scans it.
-func mallocNoZero(size uintptr) unsafe.Pointer { return mallocgc(size, nil) }
-
 func mallocgc(size uintptr, typ *_type) unsafe.Pointer {
 	if size == 0 {
 		return unsafe.Pointer(&zerobase)
