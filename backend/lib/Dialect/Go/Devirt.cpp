@@ -1,5 +1,4 @@
-// Devirt.cpp: devirtualization on the go dialect. Rules in docs/passes.md
-// (section go-devirt).
+// Devirt.cpp: devirtualization on the go dialect.
 #include "marmot/Dialect/Go/Passes.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"

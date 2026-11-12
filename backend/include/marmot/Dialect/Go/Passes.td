@@ -16,7 +16,7 @@ def GoEscape : Pass<"go-escape", "::mlir::ModuleOp"> {
     the module: each llvm.func parameter that does not escape gets the
     `go.noescape` argument attribute, computed to a fixpoint. Calls to
     functions outside the module trust `go.noescape` or `llvm.nocapture` on
-    the declaration. See docs/passes.md.
+    the declaration.
   }];
   let options = [
     Option<"maxObjectSize", "max-object-size", "uint64_t", "8192",
@@ -35,7 +35,7 @@ def AggregateCopies : Pass<"aggregate-copies", "::mlir::ModuleOp"> {
     bytes: a load whose uses are stores into memmove calls, a load whose uses
     are extractvalue into element loads, and a store of a zero constant into
     memset. Any load, store, call argument or result of an aggregate of more
-    than `max-value-size` bytes that remains is an error. See docs/passes.md.
+    than `max-value-size` bytes that remains is an error.
   }];
   let options = [
     Option<"minSize", "min-size", "uint64_t", "256",
@@ -49,7 +49,7 @@ def GoBCE : Pass<"go-bce", "::mlir::ModuleOp"> {
   let summary = "Bounds check and nil check elimination";
   let description = [{
     Removes go.bounds_check and go.nil_check ops, and marks go.index
-    `nocheck`, when a rule in docs/passes.md proves the check cannot fail.
+    `nocheck`, when a rule of the pass proves the check cannot fail.
   }];
   let options = [
     Option<"report", "report", "std::string", /*default=*/"\"\"",

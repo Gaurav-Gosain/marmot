@@ -1,6 +1,6 @@
 // Parallel-for is opt-in (-par) until the loop optimizer's miscompiles of
-// parallelized loops are fixed (.work/env/probe7.go: a loop calling an
-// allocating function filled only element 0; sort_exact; std/exec/run).
+// parallelized loops are fixed (a loop calling an allocating function filled
+// only element 0; sort_exact; std/exec/run).
 // RUN: %backend -O2 -emit=llvm -o - %s | %FileCheck %s
 // RUN: %backend -O3 -emit=llvm -o - %s | %FileCheck %s
 // CHECK-NOT: rt_parallel_for

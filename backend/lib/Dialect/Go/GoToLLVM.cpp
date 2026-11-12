@@ -1,7 +1,7 @@
 // GoToLLVM.cpp: lowers go dialect ops to the llvm dialect plus runtime calls.
 //
-// The output is exactly the Phase A form documented per op in
-// docs/dialect.md. All values already have LLVM types, so no type conversion
+// The output is the llvm dialect form described for each op in GoOps.td.
+// All values already have LLVM types, so no type conversion
 // is needed: one walk collects the go ops, then each is rewritten in place.
 // This is much cheaper than the dialect conversion framework.
 //

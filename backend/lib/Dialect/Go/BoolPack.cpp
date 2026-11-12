@@ -1,6 +1,6 @@
 // BoolPack.cpp: a []bool made by make and used only through indexed loads
-// and stores in its function becomes a bit array (8x less memory). Rules in
-// docs/passes.md (section go-bool-pack).
+// and stores in its function becomes a bit array (8x less memory). Rules
+// P1-P3 in analyze.
 #include "marmot/Dialect/Go/Passes.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -22,7 +22,9 @@ struct Plan {
   SmallVector<IndexOp> indexes;
 };
 
-// P1..P3 of docs/passes.md.
+// P1: a heap make([]bool). P2: every use of the slice extracts its data
+// pointer or a length. P3: every use of the data pointer is a go.index of i8
+// whose address is only loaded or stored (i8, not volatile).
 std::optional<Plan> analyze(MakeSliceOp mk) {
   if (mk.getStack() || mk.getDesc() != "type:bool" || !mk.getElemType().isInteger(8))
     return std::nullopt;

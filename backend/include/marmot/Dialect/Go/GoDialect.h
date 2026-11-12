@@ -1,4 +1,4 @@
-// GoDialect.h: the go dialect. See docs/dialect.md.
+// GoDialect.h: the go dialect.
 #ifndef MARMOT_DIALECT_GO_GODIALECT_H
 #define MARMOT_DIALECT_GO_GODIALECT_H
 
@@ -31,7 +31,7 @@ bool isSliceType(mlir::Type t);
 namespace marmot::go {
 
 /// The LLVM type used to store a value of SSA type t in memory: i1 becomes
-/// i8 (SPEC 2.5), everything else is unchanged.
+/// i8, everything else is unchanged.
 mlir::Type memoryType(mlir::Type t);
 
 } // namespace marmot::go

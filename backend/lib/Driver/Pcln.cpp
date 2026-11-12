@@ -1,4 +1,4 @@
-// Pcln.cpp: see Pcln.h and docs/pcln.md.
+// Pcln.cpp: see Pcln.h.
 #include "marmot/Driver/Pcln.h"
 
 #include "llvm/DebugInfo/DWARF/DWARFContext.h"

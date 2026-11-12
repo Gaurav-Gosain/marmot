@@ -34,9 +34,9 @@ struct CompileOptions {
   bool initOptNone = true;     // compile package init functions with optnone
   bool wpoImport = true;       // -wpo: import small functions across modules
   // Dev batch: split a module above this many instructions into groups
-  // compiled in parallel (0: never). See docs/passes.md "Large modules".
+  // compiled in parallel (0: never).
   unsigned splitInstrs = 0;
-  // Batch: write a pc table fragment OUT.pcln next to each object (docs/pcln.md).
+  // Batch: write a pc table fragment OUT.pcln next to each object.
   bool pclnFragments = false;
   bool mergeFunctions = false; // MergeFunctions at -Os/-Oz (off: recover frames)
   bool stringsNoCopy = false; // go-strings rule S3 (off until the matrix passes with it)
@@ -54,7 +54,7 @@ struct CompileOptions {
   // inlined frames (runtime.Caller through inlined calls).
   bool keepCallSites = false;
   bool prepareOnly = false;    // batch: fill the cache (phase 1 for -wpo), write no outputs
-  std::string gpuArch;         // -gpu=sm_86: PTX for "marmot-gpu-body" loops (docs/gpu.md)
+  std::string gpuArch;         // -gpu=sm_86: PTX for "marmot-gpu-body" loops
   bool devirt = true;          // go-devirt at -O1 and up
   bool strings = true;         // go-strings at -O1 and up
   bool escape = true;          // go-escape at -O1 and up

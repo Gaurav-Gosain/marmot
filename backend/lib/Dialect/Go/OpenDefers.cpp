@@ -1,5 +1,5 @@
 // OpenDefers.cpp: marks go.defer_frame `norecover` when no deferred call of
-// the frame can recover a panic. Rules in docs/passes.md (go-open-defers).
+// the frame can recover a panic.
 #include "marmot/Dialect/Go/Passes.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"

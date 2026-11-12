@@ -1,10 +1,9 @@
 #!/bin/sh
-# Installs the backend tools from .work/backend/bin into build/bin (SPEC rule
-# 12): only from a committed backend tree, after the backend tests passed on
+# Installs the backend tools from the private build into build/bin: only from a committed backend tree, after the backend tests passed on
 # that build. Run backend/build.sh and backend/test.sh first.
 set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-SRC=${BACKEND_BIN_DIR:-$ROOT/.work/backend/bin}
+SRC=${BACKEND_BIN_DIR:-$ROOT/build/backend-test/bin}
 if ! git -C "$ROOT" diff --quiet HEAD -- backend; then
   echo "install.sh: backend/ has uncommitted changes; commit first" >&2
   exit 1

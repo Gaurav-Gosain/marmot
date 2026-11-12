@@ -13,7 +13,6 @@
 //     are never parsed), dead definitions become declarations, symbols nobody
 //     else uses become internal, imported functions are linked in as
 //     available_externally, then the normal optimize and emit step runs.
-// Rules and cache keys are in docs/passes.md (section "Batch driver").
 #include "marmot/Driver/WholeProgram.h"
 #include "marmot/Dialect/Go/Passes.h"
 #include "marmot/Driver/Pcln.h"
@@ -787,7 +786,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     perJob[i].add(t);
   };
 
-  // The pc table fragment of an object (docs/pcln.md "Fragments"): OUT.pcln,
+  // The pc table fragment of an object: OUT.pcln,
   // cached with the object. A failure only costs the table lines of the
   // object, so it is a warning.
   auto fragment = [&](const std::string &out, StringRef obj, const std::string &key) {
@@ -1058,7 +1057,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     auto partPath = [&](unsigned i, unsigned g) {
       return g == 0 ? jobs[i].out : jobs[i].out + "." + std::to_string(g) + ".o";
     };
-    // OUT.parts lists the objects of a split job (docs/passes.md).
+    // OUT.parts lists the objects of a split job.
     auto writeParts = [&](unsigned i, unsigned k, raw_ostream &es) {
       std::string list;
       for (unsigned g = 0; g < k; ++g)
@@ -1318,7 +1317,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         for (const std::string &r : d.refs)
           shared.insert(r);
 
-  // Reflection tables (docs/passes.md): with no reflect, reflectlite or
+  // Reflection tables: with no reflect, reflectlite or
   // rtabi code live, a type whose descriptor is used only to allocate needs
   // neither its fields table (typehash, typeequal) nor its methods table
   // (getitab).

@@ -1,4 +1,4 @@
-// Pcln.h: the compact pc table (docs/pcln.md). Reading DWARF line tables and
+// Pcln.h: the compact pc table. Reading DWARF line tables and
 // inlined calls, per-object fragments, encoding, and writing the table into a
 // linked binary.
 #ifndef MARMOT_DRIVER_PCLN_H
@@ -59,7 +59,7 @@ void readDwarf(const llvm::object::ObjectFile &obj, unsigned version, Table &t);
 void addTextSymbols(const llvm::object::ObjectFile &obj, Table &t);
 
 // A fragment: the functions of one relocatable object with pcs relative to
-// their own start, keyed by symbol name (docs/pcln.md, "Fragments"). The
+// their own start, keyed by symbol name. The
 // backend writes one next to each object; the linker step turns fragments
 // into a table without DWARF processing.
 bool makeFragment(llvm::MemoryBufferRef object, unsigned version, std::string &out,

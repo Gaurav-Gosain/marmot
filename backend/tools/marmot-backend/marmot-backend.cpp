@@ -1,5 +1,5 @@
 // marmot-backend: compiles MLIR modules produced by the marmot frontend to
-// object files. See SPEC.md section 2.3.
+// object files.
 //
 //   marmot-backend [-O2] [-emit=obj|asm|llvm|bc|mlir] [-rt-bitcode path] -o out in.mlir
 //   marmot-backend -batch jobs.txt -j N      (one "in out" pair per line)
@@ -294,7 +294,7 @@ int main(int argc, char **argv) {
     total.add(t);
   };
 
-  // SPEC rule 10: at most MARMOT_MAX_JOBS (default 4) threads, whatever -j says.
+  // At most MARMOT_MAX_JOBS (default 4) threads, whatever -j says.
   unsigned cap = 4;
   if (const char *e = std::getenv("MARMOT_MAX_JOBS"))
     if (unsigned v = std::strtoul(e, nullptr, 10))

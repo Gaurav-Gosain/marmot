@@ -1,9 +1,8 @@
 #!/bin/sh
 # Builds marmot-backend, marmot-opt and marmot-pcln into BACKEND_BIN_DIR
-# (default build/bin, as make backend and scripts/linux/native.sh expect).
-# SPEC rule 12: on the shared laptop tree, development builds go to a private
-# directory (backend/test.sh uses .work/backend/bin); build/bin is installed
-# only from a committed, tested state with backend/install.sh. Honors LLVM_DIR
+# (default build/bin, as make backend expects). backend/test.sh builds into a
+# private directory and tests that; backend/install.sh copies a tested build of
+# a committed tree into build/bin. Honors LLVM_DIR
 # and MLIR_DIR. Extra arguments go to cmake at configure time.
 set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

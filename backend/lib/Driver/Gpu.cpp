@@ -1,4 +1,4 @@
-// Gpu.cpp: see docs/gpu.md. The PTX is produced in-process by LLVM's NVPTX
+// Gpu.cpp: GPU offload of parallel loop bodies. The PTX is produced in-process by LLVM's NVPTX
 // target; no CUDA toolkit is needed at compile time.
 #include "marmot/Driver/Gpu.h"
 #include "marmot/Driver/Targets.h"

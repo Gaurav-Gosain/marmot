@@ -9,8 +9,8 @@ def Go_Dialect : Dialect {
   let summary = "Go semantics carried down to the marmot backend";
   let description = [{
     Ops for Go operations that are not plain LLVM instructions. Values use the
-    LLVM dialect types of SPEC.md section 2.5. Every op lowers to the llvm
-    dialect plus calls into package runtime. See docs/dialect.md.
+    LLVM dialect types of Go values. Every op lowers to the llvm dialect
+    plus calls into package runtime.
   }];
   let dependentDialects = ["::mlir::LLVM::LLVMDialect"];
 }

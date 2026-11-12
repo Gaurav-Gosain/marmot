@@ -1,4 +1,4 @@
-// saxpy for the GPU path (docs/gpu.md): run with MARMOT_GPU=1 after
+// saxpy for the GPU path: run with MARMOT_GPU=1 after
 // marmot build -release with MARMOT_BACKEND_FLAGS=-gpu on a CUDA host.
 package main
 

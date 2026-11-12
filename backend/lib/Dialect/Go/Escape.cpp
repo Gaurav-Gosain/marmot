@@ -1,4 +1,4 @@
-// Escape.cpp: escape analysis on the go dialect. See docs/passes.md.
+// Escape.cpp: escape analysis on the go dialect.
 //
 // A value "escapes" when it may be reachable after the current call of the
 // function returns, or by another goroutine. The analysis follows the SSA

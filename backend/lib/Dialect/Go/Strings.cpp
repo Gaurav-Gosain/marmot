@@ -1,5 +1,5 @@
-// Strings.cpp: string concat folding and no-copy conversions. Rules in
-// docs/passes.md (section go-strings).
+// Strings.cpp: string concat folding (S1, S2) and no-copy []byte to string
+// conversions (S3).
 #include "marmot/Dialect/Go/Passes.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -206,7 +206,7 @@ struct GoStringsPass : marmot::go::impl::GoStringsBase<GoStringsPass> {
     // flattened inner concat no longer hides the outer one that reads the
     // bytes later), so the no-write window reaches the last real read.
     // Off by default: verify re-checked it (a38a481); re-enabling also needs
-    // the conformance matrix and a fuzz round with it on (SPEC rule 11).
+    // the conformance matrix and a fuzz round with it on.
     if (!noCopy)
       return;
     for (BytesToStrOp conv : convs) {

@@ -1,4 +1,4 @@
-// Reference for rt_gpu_for (docs/gpu.md): loads PTX made by marmot-backend -gpu and runs it
+// Reference for rt_gpu_for: loads PTX made by marmot-backend -gpu and runs it
 // over registered host memory (zero copy; device address = host address under UVA). Run on
 // Build on a Linux host with CUDA: gcc -I/opt/cuda/include rt_gpu_for_reference.c -L/opt/cuda/lib64 -lcuda. Verified
 // 2026-11-12 on the RTX 3070 with the PTX of backend/test/driver/gpu.mlir: 16M saxpy, 0 wrong.

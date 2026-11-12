@@ -1,4 +1,4 @@
-# Reference decoder for the marmot pc table, version 2 (docs/pcln.md): prints
+# Reference decoder for the marmot pc table, versions 2 and 3: prints
 # "function file:line" for each pc offset given. The model for the runtime's
 # lookup.
 import bisect, struct, sys

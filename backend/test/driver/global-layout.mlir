@@ -1,7 +1,7 @@
 // A struct GEP on a global is folded to a byte offset while translating; it
 // must use the target's data layout (i64 aligned to 8), not LLVM's default
 // (i64 aligned to 4), or reads miss the initializer by 4 bytes
-// (.work/static_layout_repro.go, 2026-11-12).
+// (a struct global with a static initializer and an alignment gap).
 // RUN: %backend -O0 -emit=llvm -o - %s | %FileCheck %s
 // RUN: %backend -O0 -o %t.o %s && %clang %t.o -o %t.exe && %t.exe; test $? -eq 2
 // RUN: %backend -O2 -o %t2.o %s && %clang %t2.o -o %t2.exe && %t2.exe; test $? -eq 2

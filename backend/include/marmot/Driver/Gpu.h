@@ -1,4 +1,4 @@
-// Gpu.h: GPU offload of parallel loop bodies (docs/gpu.md).
+// Gpu.h: GPU offload of parallel loop bodies .
 #ifndef MARMOT_DRIVER_GPU_H
 #define MARMOT_DRIVER_GPU_H
 

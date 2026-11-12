@@ -1,4 +1,4 @@
-// MergeFunctions is off at -Os/-Oz by default (SPEC rule 11): merging two
+// MergeFunctions is off at -Os/-Oz by default: merging two
 // identical defer thunks adds a frame and recover returns nil
 // (tests/run/audit/merge_recover_Os.go). -merge-functions turns it on.
 // RUN: %backend -O z -emit=llvm -o - %s | %FileCheck %s

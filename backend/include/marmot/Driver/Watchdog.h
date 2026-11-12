@@ -1,4 +1,4 @@
-// Watchdog.h: resource ceiling for marmot-backend (SPEC rule 10).
+// Watchdog.h: resource ceiling for marmot-backend.
 #ifndef MARMOT_DRIVER_WATCHDOG_H
 #define MARMOT_DRIVER_WATCHDOG_H
 

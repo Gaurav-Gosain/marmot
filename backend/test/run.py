@@ -4,7 +4,7 @@
 Each test file holds one or more `// RUN: <shell command>` lines (a trailing
 backslash continues a RUN line). Substitutions:
   %s               the test file
-  %t               a per-test scratch path (under .work/backend-test)
+  %t               a per-test scratch path (under build/backend-test/work)
   %S               the directory of the test file
   %backend         build/bin/marmot-backend
   %clang, %opt, %FileCheck, %not, %mlir-translate, %llvm-dis
@@ -17,21 +17,21 @@ import os, platform, re, signal, subprocess, sys, concurrent.futures
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 LLVM = os.environ.get("LLVM_PREFIX", "/opt/homebrew/opt/llvm@22")
 BIN = os.path.join(LLVM, "bin")
-WORK = os.path.join(ROOT, ".work", "backend", "test")
-# The tools under test: the private build (SPEC rule 12), or build/bin.
-TOOLS = os.environ.get("BACKEND_BIN_DIR") or os.path.join(ROOT, ".work", "backend", "bin")
+WORK = os.path.join(ROOT, "build", "backend-test", "work")
+# The tools under test: the private build of backend/test.sh, or build/bin.
+TOOLS = os.environ.get("BACKEND_BIN_DIR") or os.path.join(ROOT, "build", "backend-test", "bin")
 if not os.path.exists(os.path.join(TOOLS, "marmot-backend")):
     TOOLS = os.path.join(ROOT, "build", "bin")
 TOOLS = os.path.abspath(TOOLS)
 
 
 def marmot_root():
-    """A marmot root whose build/bin has the backend tools under test (SPEC
-    rule 12: tests of a private backend build go through the installed marmot
-    driver without installing the backend). Everything else links to ROOT."""
+    """A marmot root whose build/bin has the backend tools under test, so a
+    private backend build is tested through the installed marmot driver
+    before it is installed. Everything else links to ROOT."""
     if TOOLS == os.path.join(ROOT, "build", "bin"):
         return ROOT
-    r = os.path.join(ROOT, ".work", "backend", "troot")
+    r = os.path.join(ROOT, "build", "backend-test", "root")
     os.makedirs(os.path.join(r, "build", "bin"), exist_ok=True)
     for name in ("lib", "internal", "go.mod"):
         link = os.path.join(r, name)
@@ -52,7 +52,7 @@ def marmot_root():
 
 
 MARMOT_ROOT_DIR = marmot_root()
-TIMEOUT = 300  # seconds per RUN line (SPEC rule 10; marmot build -nocache waits for build slots under load)
+TIMEOUT = 300  # seconds per RUN line (marmot build -nocache waits for build slots under load)
 JOBS = 4
 
 SUBST = [

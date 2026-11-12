@@ -1,4 +1,4 @@
-// WholeProgram.h: -wpo batch mode. See docs/passes.md (whole-program mode).
+// WholeProgram.h: -wpo batch mode.
 #ifndef MARMOT_DRIVER_WHOLEPROGRAM_H
 #define MARMOT_DRIVER_WHOLEPROGRAM_H
 
@@ -31,7 +31,7 @@ struct WpoStats {
 // each job gets its object. With wpo the jobs are one program: functions no
 // root reaches are dropped, symbols used by one module only become internal,
 // and small functions are imported across modules for inlining. A non-empty
-// cacheDir caches every step (see docs/passes.md). Returns false if any job
+// cacheDir caches every step. Returns false if any job
 // failed.
 bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &opts,
                          unsigned threads, bool wpo, const std::string &cacheDir,

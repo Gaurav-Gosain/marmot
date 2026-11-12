@@ -1,4 +1,4 @@
-// marmot-pcln: builds the compact pc table (docs/pcln.md). The runtime uses
+// marmot-pcln: builds the compact pc table. The runtime uses
 // the table for tracebacks, runtime.Caller and FuncForPC, without a DWARF
 // parser.
 //

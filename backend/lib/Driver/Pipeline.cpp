@@ -220,7 +220,7 @@ void runLLVMPipeline(llvm::Module &m, llvm::TargetMachine &tm, char level,
   pto.LoopUnrolling = level != 's' && level != 'z';
   pto.LoopVectorization = level == '2' || level == '3';
   pto.SLPVectorization = level == '2' || level == '3';
-  // Off by default (SPEC rule 11): merging two identical defer thunks or
+  // Off by default: merging two identical defer thunks or
   // wrappers adds a frame between a deferred call and recover, which then
   // returns nil (tests/run/audit/merge_recover_Os.go). -merge-functions turns
   // it on at -Os/-Oz for measurements.
@@ -252,7 +252,7 @@ void runLLVMPipeline(llvm::Module &m, llvm::TargetMachine &tm, char level,
     if (lopts.enable)
       loops::registerLLVMPasses(pb, lopts);
     // GPU kernels start from the scalar outlined bodies: extract them right
-    // after the loop optimizer, before CPU vectorization (docs/gpu.md).
+    // after the loop optimizer, before CPU vectorization.
     std::string gpuArch = opts.gpuArch;
     pb.registerOptimizerEarlyEPCallback(
         [gpuArch](llvm::ModulePassManager &mpm, llvm::OptimizationLevel,
@@ -458,7 +458,7 @@ std::unique_ptr<llvm::Module> lowerAndTranslate(ParsedModule &pm, const std::str
   // struct GEP on a global into a byte offset as soon as it builds it, with the
   // module's data layout. Set after translation, the default layout (i64
   // aligned to 4) placed fields 4 bytes off from the target's layout of the
-  // initializer (.work/static_layout_repro.go; test driver/global-layout.mlir).
+  // initializer (test driver/global-layout.mlir).
   module->setAttr(mlir::LLVM::LLVMDialect::getDataLayoutAttrName(),
                   mlir::StringAttr::get(module->getContext(),
                                         tm.createDataLayout().getStringRepresentation()));

@@ -1,20 +1,20 @@
 #!/bin/sh
-# compiletime.sh MODE...: build time of cmd/marmot itself (SPEC headline: compile time).
+# compiletime.sh MODE...: build time of cmd/marmot itself .
 # MODE: go (go build), dev (marmot build), rel (marmot build -release).
 # Steps per mode: cold (go: empty GOCACHE; marmot: -nocache), prime (marmot: fill the caches),
 # warm (no change), edit-codegen and edit-codegen2 (one line added to internal/codegen),
 # edit-leaf (one line added to internal/mlir, imported by codegen and driver).
 # Builds a copy of cmd/ and internal/ in $OUT/src, never the tree itself.
 # Prints "MODE STEP exit wall user sys" per build; logs in $OUT.
-# Env: OUT (default .work/backend/ct), MARMOT (default build/bin/marmot).
+# Env: OUT (default build/compiletime), MARMOT (default build/bin/marmot).
 R=$(cd "$(dirname "$0")/../.." && pwd)
-OUT=${OUT:-$R/.work/backend/ct}
+OUT=${OUT:-$R/build/compiletime}
 MARMOT=${MARMOT:-$R/build/bin/marmot}
 S=$OUT/src
 mkdir -p "$OUT" && OUT=$(cd "$OUT" && pwd)
 rm -rf "$S" && mkdir -p "$S" && cp -R "$R/cmd" "$R/internal" "$R/go.mod" "$R/go.sum" "$S/"
 rm -rf "$S/internal/specialize/cmd"
-export MARMOT_ROOT=$R
+export MARMOT_ROOT=${MROOT:-$R}
 cd "$S" || exit 1
 leaf=internal/mlir/mlir.go
 restore() { cp "$R/internal/codegen/func.go" internal/codegen/func.go; cp "$R/$leaf" $leaf; }

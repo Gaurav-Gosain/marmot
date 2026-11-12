@@ -1,6 +1,5 @@
-// BCE.cpp: bounds check and nil check elimination. The rules are written
-// down in docs/passes.md (section go-bce) and this file implements exactly
-// those rules; keep them in sync.
+// BCE.cpp: bounds check and nil check elimination by the rules B1-B3 and
+// N1-N2 below; nothing else is removed.
 #include "marmot/Dialect/Go/Passes.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
