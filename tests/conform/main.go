@@ -675,7 +675,7 @@ func gitHead(root string) string {
 }
 
 // snapshot copies what the compiler needs (build/bin, build/lib, lib/) into
-// .work/tests/tree-SHA-PID so a long run is not disturbed by other workers editing the tree.
+// .work/tests/tree-SHA-PID so a long run is not disturbed by edits to the working tree.
 // It smoke tests the copy with a hello program and removes older snapshots.
 func snapshot(root, sha string) (string, error) {
 	base := filepath.Join(root, ".work", "tests")
