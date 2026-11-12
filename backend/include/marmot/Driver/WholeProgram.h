@@ -16,6 +16,9 @@ namespace marmot {
 
 struct WpoJob {
   std::string in, out;
+  // A key of the input's contents given by the caller (the jobs file's third
+  // field): the input is then read only when a cached result is missing.
+  std::string key;
 };
 
 struct WpoStats {

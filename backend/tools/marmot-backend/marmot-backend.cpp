@@ -159,7 +159,7 @@ static cl::opt<bool> verifyEach("verify-each",
 namespace {
 
 struct Job {
-  std::string in, out;
+  std::string in, out, key;
 };
 
 bool readJobs(const std::string &path, std::vector<Job> &out, std::string &err) {
@@ -176,13 +176,13 @@ bool readJobs(const std::string &path, std::vector<Job> &out, std::string &err) 
     line = line.trim();
     if (line.empty() || line.starts_with("#"))
       continue;
-    SmallVector<StringRef, 2> fields;
+    SmallVector<StringRef, 3> fields;
     SplitString(line, fields);
-    if (fields.size() != 2) {
-      err = path + ":" + std::to_string(lineNo) + ": want \"in out\"";
+    if (fields.size() != 2 && fields.size() != 3) {
+      err = path + ":" + std::to_string(lineNo) + ": want \"in out [key]\"";
       return false;
     }
-    out.push_back({fields[0].str(), fields[1].str()});
+    out.push_back({fields[0].str(), fields[1].str(), fields.size() == 3 ? fields[2].str() : ""});
   }
   return true;
 }
@@ -346,7 +346,7 @@ int main(int argc, char **argv) {
       }
       std::vector<marmot::WpoJob> wjobs;
       for (const Job &j : jobsOfRequest)
-        wjobs.push_back({j.in, j.out});
+        wjobs.push_back({j.in, j.out, j.key});
       marmot::watchdogRequest(true);
       marmot::PhaseTimes total;
       marmot::WpoStats st;
@@ -413,7 +413,7 @@ int main(int argc, char **argv) {
     }
     std::vector<marmot::WpoJob> wjobs;
     for (const Job &j : work)
-      wjobs.push_back({j.in, j.out});
+      wjobs.push_back({j.in, j.out, j.key});
     marmot::CompileOptions o = opts;
     o.singleThreaded = true;
     marmot::WpoStats st;

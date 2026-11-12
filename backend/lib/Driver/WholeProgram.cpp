@@ -856,12 +856,18 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     ModuleInfo &m = mods[i];
     m.job = jobs[i];
     auto t0 = std::chrono::steady_clock::now();
-    auto buf = MemoryBuffer::getFile(jobs[i].in);
-    if (!buf) {
-      es << jobs[i].in << ": " << buf.getError().message() << "\n";
-      return;
+    if (!jobs[i].key.empty()) {
+      // The caller's key stands for the contents: no read of a 20 MB text
+      // whose every result is cached.
+      m.mlirHash = hashHex("key|" + jobs[i].key);
+    } else {
+      auto buf = MemoryBuffer::getFile(jobs[i].in);
+      if (!buf) {
+        es << jobs[i].in << ": " << buf.getError().message() << "\n";
+        return;
+      }
+      m.mlirHash = hashHex((*buf)->getBuffer());
     }
-    m.mlirHash = hashHex((*buf)->getBuffer());
     t.parse += msSince(t0);
     std::optional<std::string> decls = cache.get(m.mlirHash, "decls");
     if (!decls) {

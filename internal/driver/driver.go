@@ -80,6 +80,7 @@ type build struct {
 	cfg        Config
 	keepLocals bool   // link without -x (the first link of a pc table build)
 	lastOutput string // combined output of the last tool run (run)
+	modKeys    []string // per module: a key of its text, or ""
 	work       string
 	start      time.Time
 	goos       string // target
@@ -291,6 +292,14 @@ func (b *build) run1() (string, error) {
 		}
 	}
 	b.logf("generated %d modules", len(mods))
+	// The package key stands for a module's text (the MLIR cache relies on
+	// that too), so the backend need not read and hash unchanged modules.
+	b.modKeys = make([]string, len(mods))
+	for i := 0; i < len(pkgs); i++ {
+		if cacheable(i) && mods[i].Path != "" {
+			b.modKeys[i] = pkgKeys[i] + "-" + moduleTextVersion
+		}
+	}
 
 	out := cfg.Output
 	if out == "" {
@@ -380,7 +389,11 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 		// cache"); it needs all modules for cross-package summaries.
 		var list strings.Builder
 		for i := range mods {
-			fmt.Fprintf(&list, "%s %s\n", ins[i], objs[i])
+			if i < len(b.modKeys) && b.modKeys[i] != "" {
+				fmt.Fprintf(&list, "%s %s %s\n", ins[i], objs[i], b.modKeys[i])
+			} else {
+				fmt.Fprintf(&list, "%s %s\n", ins[i], objs[i])
+			}
 		}
 		listFile := filepath.Join(b.work, "jobs.txt")
 		os.WriteFile(listFile, []byte(list.String()), 0o644)
@@ -740,3 +753,8 @@ func (b *build) writeXDefs(w io.Writer) {
 		fmt.Fprintf(w, "X %s=%q\n", k, x[k])
 	}
 }
+
+// moduleTextVersion changes when the driver changes module text after
+// codegen (aliasTypes), so keys made from package keys change with it. The
+// work file and the cached file of a module have the same text.
+const moduleTextVersion = "t1"
