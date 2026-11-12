@@ -192,6 +192,7 @@ var (
 	sizeOnly   = flag.Bool("size-only", false, "build once and record size and output check only, no timing")
 	resume     = flag.Bool("resume", false, "continue the results file of this label and date: skip program and toolchain pairs already measured without noise")
 	redo       = flag.String("redo", "", "with -resume: comma separated programs whose old rows are discarded and measured again")
+	redoMarmot = flag.Bool("redo-marmot", false, "with -resume: discard every marmot row so all marmot toolchains are measured again (go and tinygo rows are kept)")
 	noSnapshot = flag.Bool("no-snapshot", false, "use the live tree for marmot instead of a snapshot (do not use for long runs)")
 )
 
@@ -258,7 +259,7 @@ func main() {
 					redoSet[strings.TrimSpace(n)] = true
 				}
 				for _, r := range old.Results {
-					if redoSet[r.Program] {
+					if redoSet[r.Program] || (*redoMarmot && strings.HasPrefix(r.Toolchain, "marmot")) {
 						continue // superseded: measured again at the new revision
 					}
 					if r.Status == "ok" && !r.Noisy {
