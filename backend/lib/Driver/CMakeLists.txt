@@ -1,5 +1,7 @@
 add_library(MarmotPcln STATIC Pcln.cpp)
-target_link_libraries(MarmotPcln PUBLIC ${MARMOT_PCLN_LIBS})
+# No LLVM libraries of its own: marmot-pcln links it with static ones, the
+# driver with the shared ones (two copies of LLVMSupport in one binary split
+# the target registry).
 
 add_library(MarmotDriver STATIC
   Pipeline.cpp
