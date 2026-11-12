@@ -54,6 +54,10 @@ func gwrite(p unsafe.Pointer, n int) {
 	if n == 0 {
 		return
 	}
+	if printCapture != nil {
+		*printCapture = append(*printCapture, unsafe.Slice((*byte)(p), n)...)
+		return
+	}
 	gp := getg()
 	if gp.printlock == 0 {
 		writeErr(p, uintptr(n))

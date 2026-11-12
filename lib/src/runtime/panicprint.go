@@ -272,6 +272,18 @@ func fatalpanic(p *_panic, goid int64) {
 	}
 	gp.printingPanic = true
 	preprintpanics(p)
+	switch panicMode() {
+	case panicJSON:
+		printlock()
+		printPanicJSON(p, goid, getcallerfp())
+		printunlock()
+		exit(2)
+	case panicHuman:
+		printlock()
+		printPanicHuman(p, goid, getcallerfp())
+		printunlock()
+		exit(2)
+	}
 	printlock()
 	printpanics(p)
 	printstring("\ngoroutine ")

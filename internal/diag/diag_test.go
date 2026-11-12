@@ -170,3 +170,47 @@ FAIL
 		t.Errorf("%d diagnostics, want 3 (TestSub folds into its subtest)", len(ds))
 	}
 }
+
+func TestInternalError(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644)
+	raw := "marmot-backend failed: signal: abort trap\nLLVM ERROR: Cannot select: intrinsic %llvm.foo\nIn function: main.main\nStack dump:\n0. Program arguments: marmot-backend -O2\n"
+	var b strings.Builder
+	r := &Reporter{Settings: Settings{Mode: ModeHuman}, W: &b, Dir: dir, Command: "build", Version: "test"}
+	if code := r.Fail(errorString(raw)); code != 1 {
+		t.Fatalf("exit %d", code)
+	}
+	out := b.String()
+	if strings.Contains(out, "Stack dump") || strings.Contains(out, "LLVM ERROR") {
+		t.Errorf("raw tool output on screen:\n%s", out)
+	}
+	if !strings.Contains(out, "internal compiler error in marmot-backend") || !strings.Contains(out, "while compiling main.main") {
+		t.Errorf("missing summary:\n%s", out)
+	}
+	i := strings.Index(out, "report bundle: ")
+	if i < 0 {
+		t.Fatalf("no bundle:\n%s", out)
+	}
+	bundle := strings.TrimSpace(strings.SplitN(out[i+len("report bundle: "):], "\n", 2)[0])
+	defer os.RemoveAll(bundle)
+	if data, err := os.ReadFile(filepath.Join(bundle, "error.txt")); err != nil || string(data) != raw {
+		t.Errorf("bundle error.txt: %v %q", err, data)
+	}
+	if _, err := os.Stat(filepath.Join(bundle, "src", "main.go")); err != nil {
+		t.Errorf("bundle has no source: %v", err)
+	}
+}
+
+func TestLinkError(t *testing.T) {
+	raw := "clang failed: exit status 1\nUndefined symbols for architecture arm64:\n  \"_crypto/internal/foo.bar\", referenced from:\n      _main.main in m000.o\nld: symbol(s) not found for architecture arm64\n"
+	var b strings.Builder
+	r := &Reporter{Settings: Settings{Mode: ModeJSON}, W: &b, Dir: t.TempDir(), Command: "build"}
+	r.Fail(errorString(raw))
+	if !strings.Contains(b.String(), `"code":"M0018"`) || !strings.Contains(b.String(), "crypto/internal/foo.bar") {
+		t.Errorf("link error not reported:\n%s", b.String())
+	}
+}
+
+type errorString string
+
+func (e errorString) Error() string { return string(e) }

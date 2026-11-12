@@ -101,7 +101,7 @@ func (r *Reporter) ms() int64 {
 	return time.Since(r.Start).Milliseconds()
 }
 
-var reFailedFunc = lazy(`(?:in function|function|func) ['"@]*"?([\w./()*\-\[\]]+)`)
+var reFailedFunc = lazy(`(?i)(?:in function|function|func)[: ]+['"@]*([^\s'"@]+)`)
 
 // internal shortens an internal compiler error to one line, names the
 // failing function when the tool output has it, and writes a report bundle.
@@ -112,6 +112,7 @@ func (r *Reporter) internal(d *Diagnostic, full string) {
 		return
 	}
 	tool, _, _ := strings.Cut(d.Message, ":")
+	tool = strings.TrimSuffix(strings.TrimSuffix(tool, " failed"), " timed out")
 	fn := ""
 	if m := reFailedFunc.FindStringSubmatch(full); m != nil {
 		fn = m[1]
