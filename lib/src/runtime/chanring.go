@@ -29,6 +29,10 @@ import "unsafe"
 
 const chanClosedBit = 1 << 63
 
+// chanSpinRounds is how many procyield(30) rounds a blocked buffered send
+// or receive spins before it parks.
+const chanSpinRounds = 16
+
 // Results of ringPush.
 const (
 	ringOK     = 0
@@ -187,8 +191,8 @@ func chansendBuf(c *hchan, ep unsafe.Pointer, block bool) bool {
 		if !block {
 			return false
 		}
-		// Spin a little before parking (see chanrecvBuf).
-		if canSpin(spin) {
+		// Spin before parking (see chanrecvBuf).
+		if spin < chanSpinRounds && canSpin(0) {
 			spin++
 			procyield(30)
 			continue
@@ -247,9 +251,11 @@ func chanrecvBuf(c *hchan, ep unsafe.Pointer, block bool) (selected, received bo
 		}
 		// The ring is empty. A sender on another thread usually adds the
 		// next element within a few hundred nanoseconds, and parking
-		// plus the sender's wake-up costs microseconds: spin a little
-		// first, as sync.Mutex does.
-		if canSpin(spin) {
+		// plus the sender's wake-up costs microseconds: spin first while
+		// other threads run goroutines. 16 rounds (longer than the 4 of
+		// sync.Mutex) keep a steady producer from making the receiver
+		// park on every element (quiet linux-host and laptop A/B).
+		if spin < chanSpinRounds && canSpin(0) {
 			spin++
 			procyield(30)
 			continue
