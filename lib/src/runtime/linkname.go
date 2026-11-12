@@ -227,7 +227,7 @@ func bytealg_MakeNoZero(len int) []byte {
 		panicmakeslicelen()
 	}
 	c := roundupsize(uintptr(len), true)
-	return unsafe.Slice((*byte)(mallocgc(c, nil)), c)[:len]
+	return unsafe.Slice((*byte)(mallocNoZero(c)), c)[:len]
 }
 
 // internal/synctest. marmot has no synctest bubbles: nothing is ever
