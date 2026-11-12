@@ -269,6 +269,13 @@ func (b *build) linkWithFrags(objs []string, link func(extra []string, out strin
 				os.WriteFile(sizeFile, []byte(m[1]+"\n"), 0o644)
 			}
 			b.logf("pcln table added (fragments, %d link(s))", attempt+1)
+			// The link kept the local symbols for marmot-pcln; drop them now
+			// (as -x does on a normal link). The table stays in __TEXT.
+			if os.Getenv("MARMOT_KEEP_SYMBOLS") == "" {
+				if err := b.run("xcrun", "strip", "-x", tmp); err != nil {
+					return err
+				}
+			}
 			return os.Rename(tmp, out)
 		}
 		m := needsRe.FindStringSubmatch(err.Error())
