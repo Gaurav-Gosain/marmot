@@ -97,8 +97,18 @@ func nonNil(v ssa.Value, known map[ssa.Value]bool) bool {
 func (p *Program) instrMayPanic(instr ssa.Instruction, known map[ssa.Value]bool) bool {
 	nn := func(v ssa.Value) bool { return nonNil(v, known) }
 	switch x := instr.(type) {
+	case *ssa.Alloc:
+		// x/tools turns make([]T, n) with constant n into new([n]T)[:];
+		// gc panics (makeslice: len out of range) when that is too large,
+		// so an impossibly large object may panic (spec audit).
+		if pt, ok := x.Type().Underlying().(*types.Pointer); ok {
+			if sz := types.SizesFor("gc", "amd64").Sizeof(pt.Elem()); sz < 0 || sz >= 1<<40 {
+				return true
+			}
+		}
+		return false
 	case *ssa.DebugRef, *ssa.Jump, *ssa.If, *ssa.Return, *ssa.RunDefers, *ssa.Phi,
-		*ssa.Alloc, *ssa.MakeClosure, *ssa.Extract, *ssa.ChangeType, *ssa.MakeInterface,
+		*ssa.MakeClosure, *ssa.Extract, *ssa.ChangeType, *ssa.MakeInterface,
 		*ssa.Field, *ssa.MakeMap, *ssa.ChangeInterface, *ssa.Defer:
 		return false
 	case *ssa.Convert:
