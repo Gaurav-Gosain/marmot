@@ -102,6 +102,9 @@ static cl::opt<bool> serve(
                       "({\"batch\":FILE,\"threads\":N,\"cache\":DIR}), one reply line "
                       "on stdout ({\"ok\":true} or {\"ok\":false,\"error\":TEXT,\"exit\":N}); "
                       "the options of the command line apply to every request"));
+static cl::opt<bool> tier0(
+    "tier0", cl::desc("Batch: compile with the tier0 code generator, LLVM -O0 for the functions "
+                      "it leaves (implies -O 0)"));
 static cl::opt<bool> keepCallSites(
     "keep-call-sites",
     cl::desc("No tail merging of calls, so runtime.Caller sees every inlined frame (dev builds, "
@@ -238,6 +241,10 @@ int main(int argc, char **argv) {
   if (!marmot::parseOptLevel(optLevel, opts.optLevel)) {
     errs() << "marmot-backend: bad -O level: " << optLevel << "\n";
     return 1;
+  }
+  if (tier0) {
+    opts.tier0 = true;
+    opts.optLevel = '0';
   }
   opts.emit = emitKind;
   opts.triple = targetTriple;
@@ -429,6 +436,12 @@ int main(int argc, char **argv) {
                        st.prunedTypes,
                        st.cacheHits, st.cacheMisses, st.compiled.load(), wjobs.size(),
                        st.splitModules, st.groups);
+    if (opts.timePhases && opts.tier0) {
+      errs() << format("tier0: %u functions, %u fallbacks, %u modules need LLVM\n",
+                       st.tier0Functions, st.tier0Fallbacks, st.tier0Rest);
+      for (auto &[why, count] : st.tier0Reasons)
+        errs() << format("tier0 fallback %u: ", count) << why << "\n";
+    }
   } else if (work.size() == 1) {
     runJob(work[0], false);
   } else {

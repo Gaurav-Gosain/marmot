@@ -5,6 +5,7 @@
 #include "marmot/Driver/Pipeline.h"
 
 #include <atomic>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -28,6 +29,9 @@ struct WpoStats {
   std::atomic<unsigned> devirtualized{0};
   std::atomic<unsigned> compiled{0}; // objects optimized and emitted (not from the cache)
   unsigned splitModules = 0, groups = 0; // -split-large
+  // -tier0: functions tier0 compiled and left to LLVM, by first reason.
+  unsigned tier0Functions = 0, tier0Fallbacks = 0, tier0Rest = 0;
+  std::map<std::string, unsigned> tier0Reasons;
 };
 
 // Compiles a batch: escape summaries are propagated across modules, then

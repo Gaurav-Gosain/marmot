@@ -9,4 +9,4 @@ add_library(MarmotDriver STATIC
   WholeProgram.cpp
   Gpu.cpp
 )
-target_link_libraries(MarmotDriver PUBLIC MarmotGoDialect MarmotLoops MarmotPcln ${MARMOT_LLVM_LIBS})
+target_link_libraries(MarmotDriver PUBLIC MarmotGoDialect MarmotLoops MarmotPcln MarmotTier0 ${MARMOT_LLVM_LIBS})

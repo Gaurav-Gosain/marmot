@@ -40,6 +40,7 @@ else()
 endif()
 
 add_subdirectory(include/marmot)
+add_subdirectory(tier0)
 add_subdirectory(lib)
 add_subdirectory(tools/marmot-backend)
 add_subdirectory(tools/marmot-opt)

@@ -19,6 +19,7 @@
 #include "marmot/Loops/Loops.h"
 #include "marmot/Driver/RuntimeBitcode.h"
 #include "marmot/Driver/Watchdog.h"
+#include "tier0/Tier0.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -850,6 +851,154 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   auto moduleOp = [&](unsigned i) {
     return mlir::ModuleOp::getFromOpaquePointer(parsedModuleOp(*mods[i].parsed));
   };
+
+  // -tier0 (dev): each module on its own, largest first, in one pass. tier0
+  // compiles what it supports into OUT; LLVM -O0 compiles the functions it
+  // leaves into OUT.1.o (both listed in OUT.parts). No escape rounds,
+  // summaries, bitcode or splitting: at -O0 none of them changes the code.
+  if (opts.tier0 && !wpo) {
+    parallel([&](unsigned i, raw_ostream &es, PhaseTimes &t) {
+      const WpoJob &j = jobs[i];
+      auto t0 = std::chrono::steady_clock::now();
+      std::string inHash;
+      if (!j.key.empty()) {
+        inHash = hashHex("key|" + j.key);
+      } else {
+        auto buf = MemoryBuffer::getFile(j.in);
+        if (!buf) {
+          es << j.in << ": " << buf.getError().message() << "\n";
+          return;
+        }
+        inHash = hashHex((*buf)->getBuffer());
+      }
+      t.parse += msSince(t0);
+      const std::string key = hashHex(inHash + "|t0|" + fp);
+      const std::string restKey = hashHex(key + "|rest");
+      const std::string rest = j.out + ".1.o";
+      auto writeOut = [&](const std::string &path, StringRef obj) {
+        if (!opts.prepareOnly && !writeFile(path, obj))
+          es << path << ": cannot write\n";
+      };
+      auto writeParts = [&](bool two) {
+        if (opts.prepareOnly)
+          return;
+        if (!two) {
+          sys::fs::remove(j.out + ".parts");
+          return;
+        }
+        if (!writeFile(j.out + ".parts", j.out + "\n" + rest + "\n"))
+          es << j.out << ".parts: cannot write\n";
+      };
+      if (cacheObjects) {
+        auto obj = cache.get(key, "o");
+        auto parts = obj ? cache.get(key, "t0parts") : std::nullopt;
+        auto obj2 = parts && *parts == "2" ? cache.get(restKey, "o") : std::nullopt;
+        if (obj && parts && (*parts == "1" || obj2)) {
+          writeOut(j.out, *obj);
+          fragment(j.out, *obj, key);
+          if (obj2) {
+            writeOut(rest, *obj2);
+            fragment(rest, *obj2, restKey);
+          }
+          writeParts(bool(obj2));
+          return;
+        }
+      }
+      ParsedModulePtr pm;
+      {
+        auto tp = std::chrono::steady_clock::now();
+        pm = parseFile(j.in, opts, es);
+        t.parse += msSince(tp);
+      }
+      if (!pm)
+        return;
+      std::string err;
+      auto tm = createTargetMachine(opts, err);
+      if (!tm) {
+        es << j.in << ": " << err << "\n";
+        return;
+      }
+      if (!lowerModule(*pm, j.in, opts, *tm, t, es))
+        return;
+      mlir::ModuleOp module = mlir::ModuleOp::getFromOpaquePointer(parsedModuleOp(*pm));
+      const std::string out0 = opts.prepareOnly ? j.out + ".prepare.tmp" : j.out;
+      std::string frag;
+      std::vector<std::string> fallback, reasons;
+      tier0::Stats st;
+      auto tc = std::chrono::steady_clock::now();
+      if (!tier0::emit(module, key.substr(0, 16), out0, frag, fallback, reasons, st, err)) {
+        es << j.in << ": tier0: " << err << "\n";
+        return;
+      }
+      t.codegen += msSince(tc);
+      // LLVM gets the module when tier0 left a function or anything that is
+      // not a function or global (constructors, aliases).
+      bool needRest = !fallback.empty();
+      for (mlir::Operation &op : module.getBody()->getOperations())
+        if (!isa<mlir::LLVM::LLVMFuncOp, mlir::LLVM::GlobalOp>(op))
+          needRest = true;
+      {
+        std::lock_guard<std::mutex> lock(mu);
+        stats.tier0Functions += st.functions;
+        stats.tier0Fallbacks += st.fallbacks;
+        stats.tier0Rest += needRest;
+        for (const std::string &r : reasons)
+          ++stats.tier0Reasons[r];
+      }
+      ++stats.compiled;
+      const std::string out1 = opts.prepareOnly ? rest + ".prepare.tmp" : rest;
+      if (needRest) {
+        // Functions tier0 compiled are declarations now; a declaration
+        // must not carry its subprogram (LLVM's verifier rejects it).
+        module.walk([](mlir::LLVM::LLVMFuncOp f) {
+          if (!f.isExternal())
+            return;
+          if (auto fl = dyn_cast<mlir::FusedLoc>(f.getLoc()))
+            if (fl.getMetadata() && isa<mlir::LLVM::DISubprogramAttr>(fl.getMetadata()))
+              f->setLoc(mlir::FusedLoc::get(fl.getLocations(), mlir::Attribute(), f->getContext()));
+        });
+        LLVMContext ctx;
+        auto lm = translateLowered(*pm, j.in, *tm, ctx, t, es);
+        if (!lm || !optimizeAndEmit(*lm, *tm, j.in, out1, opts, t, es))
+          return;
+      }
+      pm = nullptr;
+      auto o0 = MemoryBuffer::getFile(out0);
+      auto o1 = needRest ? MemoryBuffer::getFile(out1) : nullptr;
+      if (!o0 || (needRest && !o1)) {
+        es << j.out << ": cannot read the object back\n";
+        return;
+      }
+      if (!frag.empty() && !opts.prepareOnly && opts.pclnFragments) {
+        if (!writeFile(j.out + ".pcln", frag))
+          es << j.out << ".pcln: cannot write\n";
+        if (cacheObjects)
+          cache.put(key, "pcln", frag);
+      } else {
+        fragment(j.out, (*o0)->getBuffer(), key);
+      }
+      if (needRest)
+        fragment(rest, (*o1)->getBuffer(), restKey);
+      if (cacheObjects) {
+        cache.put(key, "o", (*o0)->getBuffer());
+        if (needRest)
+          cache.put(restKey, "o", (*o1)->getBuffer());
+        cache.put(key, "t0parts", needRest ? "2" : "1");
+      }
+      if (opts.prepareOnly) {
+        sys::fs::remove(out0);
+        if (needRest)
+          sys::fs::remove(out1);
+      }
+      writeParts(needRest);
+    });
+    stats.cacheHits = cache.hits;
+    stats.cacheMisses = cache.misses;
+    if (opts.timePhases)
+      for (unsigned i : order)
+        perJob[i].print(errs, sys::path::filename(jobs[i].in).str());
+    return ok;
+  }
 
   // Phase 1a: hash inputs; declared functions (cached by input hash).
   parallel([&](unsigned i, raw_ostream &es, PhaseTimes &t) {

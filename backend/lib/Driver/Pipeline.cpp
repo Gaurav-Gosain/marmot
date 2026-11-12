@@ -379,25 +379,25 @@ ParsedModulePtr parseFile(const std::string &input, const CompileOptions &opts,
   return pm;
 }
 
-std::unique_ptr<llvm::Module> lowerAndTranslate(ParsedModule &pm, const std::string &input,
-                                                const CompileOptions &opts,
-                                                llvm::TargetMachine &tm,
-                                                llvm::LLVMContext &lctx, PhaseTimes &times,
-                                                llvm::raw_ostream &errs,
-                                                const std::string *mlirOutput) {
+namespace {
+// The go passes and the lowering to the llvm dialect.
+bool runMLIRPasses(ParsedModule &pm, const std::string &input, const CompileOptions &opts,
+                   PhaseTimes &times, llvm::raw_ostream &errs) {
   PhaseTimer timer;
-  auto fail = [&](const llvm::Twine &msg) -> std::unique_ptr<llvm::Module> {
+  auto fail = [&](const llvm::Twine &msg) {
     errs << pm.diagText;
     pm.diagText.clear();
     errs << input << ": " << msg << "\n";
-    return nullptr;
+    return false;
   };
   mlir::ModuleOp module = *pm.module;
 
   // MLIR passes: go dialect passes and lowering to the llvm dialect.
   {
     mlir::PassManager mpm(pm.ctx.get(), mlir::ModuleOp::getOperationName());
-    mpm.enableVerifier(opts.verifyEach || opts.optLevel == '0');
+    // -O0 verifies after every pass (a debugging level), except for tier0
+    // (build time; the parser verified the input).
+    mpm.enableVerifier(opts.verifyEach || (opts.optLevel == '0' && !opts.tier0));
     if (opts.optLevel != '0') {
       if (opts.strings)
         mpm.addPass(go::createGoStrings(go::GoStringsOptions{opts.stringsNoCopy}));
@@ -442,7 +442,63 @@ std::unique_ptr<llvm::Module> lowerAndTranslate(ParsedModule &pm, const std::str
       return fail("MLIR pass pipeline failed");
   }
   times.mlirPasses += timer.lap();
+  return true;
+}
 
+// The target data layout must be known during translation: LLVM folds a
+// struct GEP on a global into a byte offset as soon as it builds it, with the
+// module's data layout. Set after translation, the default layout (i64
+// aligned to 4) placed fields 4 bytes off from the target's layout of the
+// initializer (test driver/global-layout.mlir).
+void setTargetAttrs(mlir::ModuleOp module, llvm::TargetMachine &tm) {
+  module->setAttr(mlir::LLVM::LLVMDialect::getDataLayoutAttrName(),
+                  mlir::StringAttr::get(module->getContext(),
+                                        tm.createDataLayout().getStringRepresentation()));
+  module->setAttr(mlir::LLVM::LLVMDialect::getTargetTripleAttrName(),
+                  mlir::StringAttr::get(module->getContext(), tm.getTargetTriple().str()));
+}
+} // namespace
+
+bool lowerModule(ParsedModule &pm, const std::string &input, const CompileOptions &opts,
+                 llvm::TargetMachine &tm, PhaseTimes &times, llvm::raw_ostream &errs) {
+  if (!runMLIRPasses(pm, input, opts, times, errs))
+    return false;
+  setTargetAttrs(*pm.module, tm);
+  return true;
+}
+
+std::unique_ptr<llvm::Module> translateLowered(ParsedModule &pm, const std::string &input,
+                                               llvm::TargetMachine &tm, llvm::LLVMContext &lctx,
+                                               PhaseTimes &times, llvm::raw_ostream &errs) {
+  PhaseTimer timer;
+  std::unique_ptr<llvm::Module> lmod = mlir::translateModuleToLLVMIR(*pm.module, lctx, input);
+  if (!lmod) {
+    errs << pm.diagText;
+    pm.diagText.clear();
+    errs << input << ": failed to translate to LLVM IR\n";
+    return nullptr;
+  }
+  lmod->setTargetTriple(tm.getTargetTriple());
+  lmod->setDataLayout(tm.createDataLayout());
+  pm.module = nullptr; // free MLIR memory before the LLVM pipeline
+  times.translate += timer.lap();
+  return lmod;
+}
+
+std::unique_ptr<llvm::Module> lowerAndTranslate(ParsedModule &pm, const std::string &input,
+                                                const CompileOptions &opts,
+                                                llvm::TargetMachine &tm,
+                                                llvm::LLVMContext &lctx, PhaseTimes &times,
+                                                llvm::raw_ostream &errs,
+                                                const std::string *mlirOutput) {
+  if (!runMLIRPasses(pm, input, opts, times, errs))
+    return nullptr;
+  PhaseTimer timer;
+  auto fail = [&](const llvm::Twine &msg) -> std::unique_ptr<llvm::Module> {
+    errs << input << ": " << msg << "\n";
+    return nullptr;
+  };
+  mlir::ModuleOp module = *pm.module;
   if (mlirOutput) {
     std::error_code ec;
     llvm::ToolOutputFile out(*mlirOutput, ec, llvm::sys::fs::OF_None);
@@ -454,24 +510,8 @@ std::unique_ptr<llvm::Module> lowerAndTranslate(ParsedModule &pm, const std::str
     return nullptr;
   }
 
-  // The target data layout must be known during translation: LLVM folds a
-  // struct GEP on a global into a byte offset as soon as it builds it, with the
-  // module's data layout. Set after translation, the default layout (i64
-  // aligned to 4) placed fields 4 bytes off from the target's layout of the
-  // initializer (test driver/global-layout.mlir).
-  module->setAttr(mlir::LLVM::LLVMDialect::getDataLayoutAttrName(),
-                  mlir::StringAttr::get(module->getContext(),
-                                        tm.createDataLayout().getStringRepresentation()));
-  module->setAttr(mlir::LLVM::LLVMDialect::getTargetTripleAttrName(),
-                  mlir::StringAttr::get(module->getContext(), tm.getTargetTriple().str()));
-  std::unique_ptr<llvm::Module> lmod = mlir::translateModuleToLLVMIR(module, lctx, input);
-  if (!lmod)
-    return fail("failed to translate to LLVM IR");
-  lmod->setTargetTriple(tm.getTargetTriple());
-  lmod->setDataLayout(tm.createDataLayout());
-  pm.module = nullptr; // free MLIR memory before the LLVM pipeline
-  times.translate += timer.lap();
-  return lmod;
+  setTargetAttrs(module, tm);
+  return translateLowered(pm, input, tm, lctx, times, errs);
 }
 
 std::unique_ptr<llvm::Module> translateFile(const std::string &input,

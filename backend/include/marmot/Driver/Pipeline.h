@@ -56,6 +56,7 @@ struct CompileOptions {
   // The code-changing options of the run as given (marmot-backend), part of
   // every cache key.
   std::string optionKey;
+  bool tier0 = false;          // batch: tier0 objects, LLVM -O0 for what it leaves
   bool prepareOnly = false;    // batch: fill the cache (phase 1 for -wpo), write no outputs
   std::string gpuArch;         // -gpu=sm_86: PTX for "marmot-gpu-body" loops
   bool devirt = true;          // go-devirt at -O1 and up
@@ -102,6 +103,16 @@ std::unique_ptr<llvm::Module> lowerAndTranslate(ParsedModule &pm, const std::str
                                                 llvm::LLVMContext &lctx, PhaseTimes &times,
                                                 llvm::raw_ostream &errs,
                                                 const std::string *mlirOutput = nullptr);
+
+// The MLIR half of lowerAndTranslate: go passes and lowering to the llvm
+// dialect, then the target's data layout and triple on the module. False with
+// a message on errs on failure.
+bool lowerModule(ParsedModule &pm, const std::string &input, const CompileOptions &opts,
+                 llvm::TargetMachine &tm, PhaseTimes &times, llvm::raw_ostream &errs);
+// The LLVM half: translation of a lowered module (frees the MLIR module).
+std::unique_ptr<llvm::Module> translateLowered(ParsedModule &pm, const std::string &input,
+                                               llvm::TargetMachine &tm, llvm::LLVMContext &lctx,
+                                               PhaseTimes &times, llvm::raw_ostream &errs);
 
 // The two halves of compileFile, for the whole-program mode.
 std::unique_ptr<llvm::TargetMachine> createTargetMachine(const CompileOptions &opts,
