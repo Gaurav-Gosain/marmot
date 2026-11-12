@@ -7,12 +7,12 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"io"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"os/exec"
