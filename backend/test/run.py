@@ -23,7 +23,7 @@ TOOLS = os.environ.get("BACKEND_BIN_DIR") or os.path.join(ROOT, ".work", "backen
 if not os.path.exists(os.path.join(TOOLS, "marmot-backend")):
     TOOLS = os.path.join(ROOT, "build", "bin")
 TOOLS = os.path.abspath(TOOLS)
-TIMEOUT = 120  # seconds per RUN line (SPEC rule 10)
+TIMEOUT = 300  # seconds per RUN line (SPEC rule 10; marmot build -nocache waits for build slots under load)
 JOBS = 4
 
 SUBST = [
