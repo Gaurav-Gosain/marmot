@@ -1,7 +1,7 @@
-// Command support generates docs/support.md from conformance results, so the numbers in the
+// Command support generates docs/support-matrix.md from conformance results, so the numbers in the
 // support matrix always come from a committed results file.
 //
-//	go run ./tests/support -results tests/results.json [-linux FILE] [-out docs/support.md]
+//	go run ./tests/support -results tests/results.json [-linux FILE] [-out docs/support-matrix.md]
 //
 // A results file is the JSON written by tests/conform: {"git": SHA, "results": [...]}. Result names
 // may carry an @MODE suffix (dev, release, Oz, O0, O2). Tier tables use the dev results.
@@ -33,7 +33,7 @@ type report struct {
 var (
 	flResults = flag.String("results", "tests/results.json", "conform results (darwin/arm64)")
 	flLinux   = flag.String("linux", "", "conform results from a linux/amd64 run")
-	flOut     = flag.String("out", "docs/support.md", "output file")
+	flOut     = flag.String("out", "docs/support-matrix.md", "output file")
 	flStock   = flag.String("stock", "", "optional notes file with a table of stock package test results (package, result, pass, fail, rate)")
 	flGates   = flag.String("gates", "", "optional notes file with a table of opt-in transforms (Transform, Switch, status)")
 	flKnown   = flag.String("known", "tests/known_failures.txt", "known failures file")
