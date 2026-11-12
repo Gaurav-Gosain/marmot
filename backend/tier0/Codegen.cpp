@@ -399,6 +399,11 @@ ConstVal evalInitializer(LL::GlobalOp g) {
           (void)ft;
           vals[ins.getResult()] = std::move(cv);
         })
+        .Case<LL::PtrToIntOp, LL::IntToPtrOp, LL::BitcastOp>([&](auto c) {
+          // The same 8 bytes (an address stays a relocation).
+          if (sizeOf(c.getType()) != 8 || sizeOf(c.getArg().getType()) != 8) unsupported("narrowing constant cast");
+          vals[c.getResult()] = take(c.getArg());
+        })
         .Case<LL::ReturnOp>([&](auto ret) { out = take(ret.getOperand(0)); })
         .Default([&](Operation *o) { unsupported("initializer op " + o->getName().getStringRef().str()); });
   }
