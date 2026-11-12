@@ -1,0 +1,6 @@
+9592
+4096
+10 19 true
+[false true false false] 4 true true
+oob: runtime error: index out of range [12] with length 9
+neg: runtime error: makeslice: len out of range

@@ -1,0 +1,16 @@
+typed nil ptr nil *P
+typed nil value recv panic: runtime error: invalid memory address or nil pointer dereference
+nil iface panic: runtime error: invalid memory address or nil pointer dereference
+embedded ptr nil nil *P
+embedded iface nil panic: runtime error: invalid memory address or nil pointer dereference
+embedded iface V3
+iface in iface P44
+method value V5V6
+method expr V7
+change type P9
+assert ok <nil> false {1} true true
+assert panic panic: interface conversion: main.S is main.V, not *main.P
+assert nil panic: interface conversion: main.S is nil, not main.V
+any assert true falseV2
+std iface 2 <nil>he
+comparable true false

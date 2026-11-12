@@ -1,0 +1,11 @@
+<nil>
+start inner:from defer
+outer got:second
+3210
+-1 runtime error: index out of range [5] with length 0
+body+d2+d1
+outer:assignment to entry in nil map [inner defer ran]
+[deferred before goexit recover in goexit:<nil>]
+once <nil>
+final:re:E
+wrapped got:w

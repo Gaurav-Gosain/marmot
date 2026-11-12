@@ -1,0 +1,13 @@
+appendInLoop 3
+shadowLen panic: runtime error: index out of range [3] with length 3
+int8Loop panic: runtime error: index out of range [20] with length 20
+wrapLoop panic: runtime error: index out of range [251] with length 251
+negStart panic: runtime error: index out of range [-1]
+twoSlices panic: runtime error: index out of range [2] with length 2
+aliasHeader panic: runtime error: index out of range [1] with length 0
+stepTwo panic: runtime error: index out of range [3] with length 3
+reslice 6
+dominated panic: runtime error: index out of range [3] with length 2
+dominatedOdd panic: runtime error: index out of range [2] with length 2
+nilPtr panic: runtime error: invalid memory address or nil pointer dereference
+strIdx panic: runtime error: index out of range [3] with length 3
