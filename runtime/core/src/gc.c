@@ -552,6 +552,102 @@ static void set_marked(uintptr_t p) {
   if (s) s->markbits[idx / 64] |= 1ull << (idx % 64);
 }
 
+// ---- weak pointers ----
+//
+// Registered slots hold object addresses that do not keep the object alive.
+// After marking and before finalizers mark their referents (gc order: a weak
+// pointer to an object that is only alive for its finalizer reads nil), every
+// slot whose object is unmarked is zeroed and dropped. A slot in heap memory
+// that is itself unreachable is dropped without a write. Open addressing on
+// the slot address; deleted entries are tombstones (1).
+
+static rt_spin weak_lock;
+static uintptr_t *weak_tab;
+static uintptr_t weak_cap, weak_used, weak_live;
+
+static uintptr_t weak_hash(uintptr_t a) { return (uintptr_t)rt_hash_u64(a, 0x77656b); }
+
+static void weak_insert_raw(uintptr_t slot) {
+  uintptr_t i = weak_hash(slot) & (weak_cap - 1);
+  while (weak_tab[i] > 1) i = (i + 1) & (weak_cap - 1);
+  if (weak_tab[i] == 0) weak_used++;
+  weak_tab[i] = slot;
+  weak_live++;
+}
+
+static void weak_grow(void) {
+  uintptr_t ocap = weak_cap, *otab = weak_tab;
+  weak_cap = weak_live * 4 > 1024 ? weak_live * 4 : 1024;
+  uintptr_t c = 1;
+  while (c < weak_cap) c <<= 1;
+  weak_cap = c;
+  weak_tab = os_map(weak_cap * sizeof *weak_tab);
+  if (!weak_tab) rt_throw("out of memory (weak pointer table)");
+  weak_used = weak_live = 0;
+  for (uintptr_t i = 0; i < ocap; i++)
+    if (otab[i] > 1) weak_insert_raw(otab[i]);
+  if (otab) os_unmap(otab, ocap * sizeof *otab);
+}
+
+RT_API void rt_gc_weak_register(uintptr_t *slot) {
+  spin_lock(&weak_lock);
+  if ((weak_used + 1) * 2 > weak_cap) weak_grow();
+  uintptr_t a = (uintptr_t)slot, i = weak_hash(a) & (weak_cap - 1);
+  for (;;) {
+    if (weak_tab[i] == a) break;  // already registered
+    if (weak_tab[i] == 0) {
+      weak_insert_raw(a);
+      break;
+    }
+    i = (i + 1) & (weak_cap - 1);
+  }
+  spin_unlock(&weak_lock);
+}
+
+RT_API void rt_gc_weak_unregister(uintptr_t *slot) {
+  spin_lock(&weak_lock);
+  if (weak_cap) {
+    uintptr_t a = (uintptr_t)slot, i = weak_hash(a) & (weak_cap - 1);
+    while (weak_tab[i] != 0) {
+      if (weak_tab[i] == a) {
+        weak_tab[i] = 1;
+        weak_live--;
+        break;
+      }
+      i = (i + 1) & (weak_cap - 1);
+    }
+  }
+  spin_unlock(&weak_lock);
+}
+
+// The collector stops the world, so a load outside a collection is safe as
+// is: the value then sits in a register or on the stack, which the next
+// collection scans.
+RT_API void *rt_gc_weak_load(uintptr_t *slot) {
+  return (void *)__atomic_load_n(slot, __ATOMIC_ACQUIRE);
+}
+
+static bool is_marked(uintptr_t p);
+
+// World stopped, marking done, finalizer referents not yet marked.
+static void weak_clear(void) {
+  for (uintptr_t i = 0; i < weak_cap; i++) {
+    uintptr_t a = weak_tab[i];
+    if (a <= 1) continue;
+    if (!is_marked(a)) {  // the slot's own memory is garbage
+      weak_tab[i] = 1;
+      weak_live--;
+      continue;
+    }
+    uintptr_t obj = *(uintptr_t *)a;
+    if (obj && !is_marked(obj)) {
+      *(uintptr_t *)a = 0;
+      weak_tab[i] = 1;
+      weak_live--;
+    }
+  }
+}
+
 static void scan_data_segment(void *lo, void *hi) { gc_scan_range((uintptr_t)lo, (uintptr_t)hi); }
 
 static void mark_roots(void) {
@@ -716,6 +812,7 @@ void gc_collect(bool forced) {
   mcache_flush_all();
   int64_t t1 = os_nanotime();
   mark_roots();
+  if (weak_live) weak_clear();
   bool queued = mark_finalizers();
   int64_t t2 = os_nanotime();
   sweep_all();

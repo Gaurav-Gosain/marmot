@@ -78,6 +78,18 @@ void rt_gc_parallel_enable(void);
 // allocation free (internal/synctest.Associate: only heap objects join a
 // bubble).
 int32_t rt_heap_object(void *p);
+
+// Weak pointers. slot is a word (in NOSCAN or non-heap memory) holding an
+// object address, start or interior. After marking and before finalizers
+// mark their referents, every collection stores 0 to each registered slot
+// whose object is unreachable and drops the registration; a registration
+// whose slot is itself in unreachable heap memory is dropped silently.
+// Register a slot once (again is a no-op). rt_gc_weak_load reads a slot; a
+// plain atomic load is equivalent (the collector stops the world, and the
+// loaded value is then a root).
+void rt_gc_weak_register(uintptr_t *slot);
+void rt_gc_weak_unregister(uintptr_t *slot);
+void *rt_gc_weak_load(uintptr_t *slot);
 // Register [start, end) as a conservative root range (globals).
 void rt_gc_add_roots(void *start, void *end);
 // Run fn(obj) once before obj is freed. Used by runtime.SetFinalizer. obj
