@@ -52,6 +52,9 @@ void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintptr_t e
 // for objects without pointers that the caller overwrites completely before
 // reading (string and slice copies, conversion buffers). Inlinable. Under
 // MARMOT_POISON=1 the memory is filled with 0xFB, so a missed byte shows.
+// Only [0, size) is defined in any mode: bytes past size up to the size
+// class are not zeroed, so a caller must request every byte it can expose
+// (for a slice, its capacity).
 void *rt_alloc_nozero(uintptr_t size);
 
 // Free a heap object the compiler proved dead: nothing may use it or point
