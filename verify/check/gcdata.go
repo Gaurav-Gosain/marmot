@@ -16,11 +16,14 @@ import (
 	"go/token"
 	"go/types"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/Gaurav-Gosain/marmot/internal/loader"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -383,6 +386,37 @@ func (r *resolver) conv(e ast.Expr, ph map[string]string) (types.Type, error) {
 	return nil, fmt.Errorf("unsupported type syntax %T", e)
 }
 
+// marmotEnv is the go list environment marmot builds with: its merged GOROOT (stock sources
+// with lib/src overlaid, so reflect, runtime and the other overlay packages have marmot's
+// types), its build tags, and GOARCH arm64 for the layout. The merge itself is file
+// placement only (internal/loader/goroot.go); the layout is computed here.
+func marmotEnv() ([]string, error) {
+	root, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(root, "lib", "src", "runtime")); err == nil {
+			break
+		}
+		up := filepath.Dir(root)
+		if up == root {
+			return nil, fmt.Errorf("no marmot checkout above the working directory")
+		}
+		root = up
+	}
+	out, err := exec.Command("go", "env", "GOROOT").Output()
+	if err != nil {
+		return nil, err
+	}
+	gr, err := loader.MergedGOROOT(strings.TrimSpace(string(out)), filepath.Join(root, "lib", "src"), filepath.Join(root, "build"))
+	if err != nil {
+		return nil, err
+	}
+	return append(os.Environ(), "GOROOT="+gr, "CGO_ENABLED=0", "GOOS=darwin", "GOARCH=arm64",
+		"GOFLAGS=-tags=marmot,purego,math_big_pure_go", "GOTOOLCHAIN=local"), nil
+}
+
 // ---- the check ----
 
 type gcResult struct {
@@ -397,10 +431,21 @@ func checkGCData(mlirPath string, patterns []string) (*gcResult, error) {
 		return nil, err
 	}
 	cfg := &packages.Config{Mode: packages.NeedTypes | packages.NeedImports | packages.NeedDeps | packages.NeedName}
+	env, err := marmotEnv()
+	if err != nil {
+		return nil, err
+	}
+	cfg.Env = env
 	pkgs, err := packages.Load(cfg, patterns...)
 	if err != nil {
 		return nil, err
 	}
+	// the runtime is an implicit import of every marmot program
+	rt, err := packages.Load(cfg, "runtime")
+	if err != nil {
+		return nil, err
+	}
+	pkgs = append(pkgs, rt...)
 	// the main package of a file-argument build is "command-line-arguments" in both tools
 	r := newResolver(pkgs)
 	gcSizes := types.SizesFor("gc", "arm64")

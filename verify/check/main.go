@@ -27,15 +27,37 @@ func main() {
 	verbose := flag.Bool("v", false, "print every justified removal")
 	report := flag.String("report", "", "the certificate from --go-bce='report=FILE': validate the rule the pass names for each removal")
 	loopsReport := flag.String("loops-report", "", "a Rule P report (-loops-report=FILE): check it alone")
-	gcsites := flag.String("gcsites", "", "go dialect MLIR whose allocation sites to check against their descriptors")
+	gcsites := flag.String("gcsites", "", "MLIR whose allocation sites (go dialect) and stores into allocated objects (either dialect) to check against their descriptors")
 	gcdata := flag.String("gcdata", "", "MLIR whose type descriptor bitmaps to check; the arguments are the packages it was built from")
+	gcbin := flag.String("gcbin", "", "a marmot -work directory: check the type descriptors of the linked program (nopcln.exe) against its MLIR")
 	flag.Parse()
+	if *gcbin != "" {
+		r, err := checkGCBin(*gcbin)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "check:", err)
+			os.Exit(2)
+		}
+		for _, b := range r.bad {
+			fmt.Println("MISMATCH", b)
+		}
+		fmt.Printf("check: %d linked type descriptors checked, %d mismatches, %d not linked\n", r.checked, len(r.bad), r.missing)
+		if len(r.bad) > 0 {
+			os.Exit(1)
+		}
+		return
+	}
 	if *gcsites != "" {
 		r, err := checkSites(*gcsites)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "check:", err)
 			os.Exit(2)
 		}
+		st, err := checkStores(*gcsites)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "check:", err)
+			os.Exit(2)
+		}
+		r.bad = append(r.bad, st.bad...)
 		for _, b := range r.bad {
 			fmt.Println("MISMATCH", b)
 		}
@@ -44,7 +66,7 @@ func main() {
 				fmt.Println("skipped", s)
 			}
 		}
-		fmt.Printf("check: %d allocation sites checked, %d mismatches, %d skipped\n", r.checked, len(r.bad), r.skipped)
+		fmt.Printf("check: %d allocation sites checked, %d stores into allocated objects checked (%d unparsed), %d mismatches, %d skipped\n", r.checked, st.checked, st.skipped, len(r.bad), r.skipped)
 		if len(r.bad) > 0 {
 			os.Exit(1)
 		}
