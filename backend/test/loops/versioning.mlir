@@ -8,6 +8,7 @@
 // REMARK: loops: fill: {{.*}}parallel, 0 reductions
 // REMARK: loops: gather: {{.*}}bounds checks versioned (1 checks, {{.*}}1 check loops)
 // REMARK: loops: gather: {{.*}}parallel, 1 reductions
+// REMARK: loops: search: {{.*}}not versioned: exit that does not panic
 // REMARK-NOT: bcv.load
 
 // IR-LABEL: define void @fill(
@@ -68,5 +69,29 @@ module {
   ^panic(%x: i64):
     llvm.call @panicIndex(%x, %len) : (i64, i64) -> ()
     llvm.unreachable
+  }
+
+  // Quicksort's `for a[i] < p { i++ }` after rotation: the compare with p
+  // exits to normal code, not to a panic. It is the loop's own condition,
+  // not a check: versioning it would scan a[i:n] before every entry.
+  llvm.func @search(%p: !llvm.ptr, %n: i64, %x: i64, %out: !llvm.ptr) -> i64 {
+    %c0 = llvm.mlir.constant(0 : i64) : i64
+    %c1 = llvm.mlir.constant(1 : i64) : i64
+    %z = llvm.icmp "sgt" %n, %c0 : i64
+    llvm.cond_br %z, ^loop(%c0 : i64), ^done(%c0 : i64)
+  ^loop(%i: i64):
+    %a = llvm.getelementptr %p[%i] : (!llvm.ptr, i64) -> !llvm.ptr, i64
+    %v = llvm.load %a : !llvm.ptr -> i64
+    %lt = llvm.icmp "slt" %v, %x : i64
+    llvm.cond_br %lt, ^next, ^found(%i : i64)
+  ^next:
+    %i2 = llvm.add %i, %c1 : i64
+    %c = llvm.icmp "slt" %i2, %n : i64
+    llvm.cond_br %c, ^loop(%i2 : i64), ^done(%n : i64)
+  ^found(%k: i64):
+    llvm.store %k, %out : i64, !llvm.ptr
+    llvm.return %k : i64
+  ^done(%r: i64):
+    llvm.return %r : i64
   }
 }

@@ -35,6 +35,22 @@ namespace marmot {
 namespace loops {
 namespace {
 
+// Whether leaving a loop through exit block s always ends in a panic: a short
+// chain of blocks (dedicated exits, LCSSA blocks, a shared panic block) that
+// reaches a call to a noreturn function or `unreachable`, with nothing that
+// branches back to normal code.
+bool leadsToPanic(BasicBlock *s) {
+  for (unsigned steps = 0; s && steps < 8; steps++) {
+    for (Instruction &I : *s)
+      if (auto *cb = dyn_cast<CallBase>(&I); cb && cb->doesNotReturn())
+        return true;
+    if (isa<UnreachableInst>(s->getTerminator()))
+      return true;
+    s = s->getSingleSuccessor();
+  }
+  return false;
+}
+
 // Magnitude limits that keep `invariant + sum of terms` from wrapping in 64
 // bits: invariant parts in [-2^61, 2^61], each term step*j at most 2^60, at
 // most MaxTerms terms.
@@ -401,6 +417,12 @@ bool Versioner::run(Loop *L, std::string &whyOut) {
         return done(reject("exit through a non-branch"));
       if (s == latchExit)
         return done(reject("break to the loop's normal exit"));
+      // A check fails into a panic. Any other exit is the loop's own
+      // condition (quicksort's `for a[i] < p`): versioning it would scan
+      // the whole remaining range before every entry of a loop that
+      // usually leaves early.
+      if (!leadsToPanic(s))
+        return done(reject("exit that does not panic (a data dependent loop condition)"));
       checks.push_back({br, s});
     }
   }
