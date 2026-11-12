@@ -451,6 +451,9 @@ func expandTabs(line string) string {
 	return b.String()
 }
 
+// Highlight colors Go tokens of one source line (tabs expanded).
+func (h *Human) Highlight(line string) string { return h.highlight(line) }
+
 // highlight colors Go tokens of one source line.
 func (h *Human) highlight(line string) string {
 	st := h.Style

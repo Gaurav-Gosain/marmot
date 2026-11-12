@@ -209,3 +209,33 @@ func (s *Sources) stdExports(path string) *exports {
 	}
 	return pkgExports(filepath.Join(ix.root, filepath.FromSlash(path)), false)
 }
+
+// StdImport returns the import path of the standard library package named
+// name that declares sel (sel may be empty), and whether exactly one
+// package fits.
+func (s *Sources) StdImport(name, sel string) (string, bool) { return s.stdPkgFor(name, sel) }
+
+// StdPackageNames lists the names of the standard library packages.
+func (s *Sources) StdPackageNames() []string {
+	var out []string
+	for n := range s.stdIdx().byName {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Exports lists the exported names of the standard library package at
+// path, sorted.
+func (s *Sources) Exports(path string) []string {
+	ex := s.stdExports(path)
+	if ex == nil {
+		return nil
+	}
+	out := make([]string, 0, len(ex.names))
+	for n := range ex.names {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
