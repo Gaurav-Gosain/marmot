@@ -70,6 +70,12 @@ func (p *Program) canonical(t types.Type) string {
 }
 
 func (p *Program) writeCanonical(b *strings.Builder, t types.Type) {
+	p.writeCanonicalG(b, t, nil)
+}
+
+// writeCanonicalG is writeCanonical; guard holds the local named types
+// being written (self-referential local types).
+func (p *Program) writeCanonicalG(b *strings.Builder, t types.Type, guard map[*types.Named]bool) {
 	switch u := types.Unalias(t).(type) {
 	case *types.Basic:
 		if u.Kind() == types.UnsafePointer {
@@ -84,9 +90,24 @@ func (p *Program) writeCanonical(b *strings.Builder, t types.Type) {
 			b.WriteByte('.')
 		}
 		b.WriteString(obj.Name())
-		if obj.Pkg() != nil && obj.Parent() != nil && obj.Parent() != obj.Pkg().Scope() {
+		// Local types: declared in a function (or copied by x/tools for an
+		// instantiation, with no parent scope).
+		if obj.Pkg() != nil && obj.Parent() != obj.Pkg().Scope() && obj.Pkg().Scope().Lookup(obj.Name()) != obj && u.TypeArgs().Len() == 0 {
 			pos := p.fset.Position(obj.Pos())
 			fmt.Fprintf(b, "·%d.%d", pos.Line, pos.Column)
+			// A local type of a generic function is a different type in
+			// each instantiation (struct{ res T } with T = int or []string)
+			// but keeps its name and position: add its structure.
+			if !guard[u] {
+				if guard == nil {
+					guard = map[*types.Named]bool{}
+				}
+				guard[u] = true
+				b.WriteByte('{')
+				p.writeCanonicalG(b, u.Underlying(), guard)
+				b.WriteByte('}')
+				delete(guard, u)
+			}
 		}
 		if ta := u.TypeArgs(); ta != nil && ta.Len() > 0 {
 			b.WriteByte('[')
@@ -94,24 +115,24 @@ func (p *Program) writeCanonical(b *strings.Builder, t types.Type) {
 				if i > 0 {
 					b.WriteByte(',')
 				}
-				p.writeCanonical(b, ta.At(i))
+				p.writeCanonicalG(b, ta.At(i), guard)
 			}
 			b.WriteByte(']')
 		}
 	case *types.Pointer:
 		b.WriteByte('*')
-		p.writeCanonical(b, u.Elem())
+		p.writeCanonicalG(b, u.Elem(), guard)
 	case *types.Slice:
 		b.WriteString("[]")
-		p.writeCanonical(b, u.Elem())
+		p.writeCanonicalG(b, u.Elem(), guard)
 	case *types.Array:
 		fmt.Fprintf(b, "[%d]", u.Len())
-		p.writeCanonical(b, u.Elem())
+		p.writeCanonicalG(b, u.Elem(), guard)
 	case *types.Map:
 		b.WriteString("map[")
-		p.writeCanonical(b, u.Key())
+		p.writeCanonicalG(b, u.Key(), guard)
 		b.WriteByte(']')
-		p.writeCanonical(b, u.Elem())
+		p.writeCanonicalG(b, u.Elem(), guard)
 	case *types.Chan:
 		switch u.Dir() {
 		case types.SendRecv:
@@ -121,7 +142,7 @@ func (p *Program) writeCanonical(b *strings.Builder, t types.Type) {
 		case types.RecvOnly:
 			b.WriteString("<-chan(")
 		}
-		p.writeCanonical(b, u.Elem())
+		p.writeCanonicalG(b, u.Elem(), guard)
 		b.WriteByte(')')
 	case *types.Signature:
 		b.WriteString("func(")
@@ -132,14 +153,14 @@ func (p *Program) writeCanonical(b *strings.Builder, t types.Type) {
 			if u.Variadic() && i == u.Params().Len()-1 {
 				b.WriteString("...")
 			}
-			p.writeCanonical(b, u.Params().At(i).Type())
+			p.writeCanonicalG(b, u.Params().At(i).Type(), guard)
 		}
 		b.WriteString(")(")
 		for i := 0; i < u.Results().Len(); i++ {
 			if i > 0 {
 				b.WriteByte(',')
 			}
-			p.writeCanonical(b, u.Results().At(i).Type())
+			p.writeCanonicalG(b, u.Results().At(i).Type(), guard)
 		}
 		b.WriteByte(')')
 	case *types.Interface:
@@ -149,7 +170,7 @@ func (p *Program) writeCanonical(b *strings.Builder, t types.Type) {
 				b.WriteByte(';')
 			}
 			b.WriteString(methodName(m))
-			p.writeCanonical(b, m.Type())
+			p.writeCanonicalG(b, m.Type(), guard)
 		}
 		b.WriteByte('}')
 	case *types.Struct:
@@ -167,7 +188,7 @@ func (p *Program) writeCanonical(b *strings.Builder, t types.Type) {
 			}
 			b.WriteString(f.Name())
 			b.WriteByte(' ')
-			p.writeCanonical(b, f.Type())
+			p.writeCanonicalG(b, f.Type(), guard)
 			if tag := u.Tag(i); tag != "" {
 				b.WriteString(strconv.Quote(tag))
 			}
@@ -179,7 +200,7 @@ func (p *Program) writeCanonical(b *strings.Builder, t types.Type) {
 			if i > 0 {
 				b.WriteByte(',')
 			}
-			p.writeCanonical(b, u.At(i).Type())
+			p.writeCanonicalG(b, u.At(i).Type(), guard)
 		}
 		b.WriteByte(')')
 	case *types.TypeParam:
@@ -258,7 +279,7 @@ func (m *moduleGen) emitTypeDesc(sym string, t types.Type) {
 		uncommon = cAddr(u)
 	}
 	header := cAgg(tHeader,
-		cI64(size), cI64(ptrdata), gcdata, m.cString(runtimeTypeString(t)), uncommon,
+		cI64(size), cI64(ptrdata), gcdata, m.cString(m.p.runtimeTypeString(t)), uncommon,
 		cInt(kindOf(t), mlir.I8), cInt(align, mlir.I8), cInt(align, mlir.I8), cInt(tflag, mlir.I8))
 
 	var desc cv
@@ -719,13 +740,120 @@ func isRegularMemory(t types.Type, sizes types.Sizes) bool {
 }
 
 // runtimeTypeString formats t the way the gc runtime prints types.
-func runtimeTypeString(t types.Type) string {
+func (p *Program) runtimeTypeString(t types.Type) string {
 	var b strings.Builder
-	writeRuntimeType(&b, t)
+	p.writeRuntimeType(&b, t)
 	return b.String()
 }
 
-func writeRuntimeType(b *strings.Builder, t types.Type) {
+// localTypeArgs returns, for a local type of a generic function in one
+// instantiation, the type arguments gc prints after its name
+// (main.result[int]): found by matching the type against the declared one.
+func (p *Program) localTypeArgs(n *types.Named) []types.Type {
+	obj := n.Obj()
+	if obj.Pkg() == nil || obj.Parent() == obj.Pkg().Scope() || n.TypeArgs().Len() > 0 {
+		return nil
+	}
+	info := p.infos[obj.Pkg()]
+	if info == nil {
+		return nil
+	}
+	var orig *types.Named
+	for id, d := range info.Defs {
+		if id.Pos() == obj.Pos() {
+			if tn, ok := d.(*types.TypeName); ok {
+				orig, _ = tn.Type().(*types.Named)
+			}
+			break
+		}
+	}
+	if orig == nil || orig == n {
+		return nil
+	}
+	bind := map[*types.TypeParam]types.Type{}
+	unifyTypes(orig.Underlying(), n.Underlying(), bind, 0)
+	if len(bind) == 0 {
+		return nil
+	}
+	max := -1
+	for tp := range bind {
+		if tp.Index() > max {
+			max = tp.Index()
+		}
+	}
+	out := make([]types.Type, 0, max+1)
+	for i := 0; i <= max; i++ {
+		found := false
+		for tp, t := range bind {
+			if tp.Index() == i {
+				out = append(out, t)
+				found = true
+			}
+		}
+		if !found {
+			return nil
+		}
+	}
+	return out
+}
+
+// unifyTypes binds the type parameters of a (the generic form) to the
+// corresponding parts of b.
+func unifyTypes(a, b types.Type, bind map[*types.TypeParam]types.Type, depth int) {
+	if depth > 20 {
+		return
+	}
+	if tp, ok := a.(*types.TypeParam); ok {
+		bind[tp] = b
+		return
+	}
+	switch x := a.(type) {
+	case *types.Pointer:
+		if y, ok := b.(*types.Pointer); ok {
+			unifyTypes(x.Elem(), y.Elem(), bind, depth+1)
+		}
+	case *types.Slice:
+		if y, ok := b.(*types.Slice); ok {
+			unifyTypes(x.Elem(), y.Elem(), bind, depth+1)
+		}
+	case *types.Array:
+		if y, ok := b.(*types.Array); ok {
+			unifyTypes(x.Elem(), y.Elem(), bind, depth+1)
+		}
+	case *types.Map:
+		if y, ok := b.(*types.Map); ok {
+			unifyTypes(x.Key(), y.Key(), bind, depth+1)
+			unifyTypes(x.Elem(), y.Elem(), bind, depth+1)
+		}
+	case *types.Chan:
+		if y, ok := b.(*types.Chan); ok {
+			unifyTypes(x.Elem(), y.Elem(), bind, depth+1)
+		}
+	case *types.Struct:
+		if y, ok := b.(*types.Struct); ok && x.NumFields() == y.NumFields() {
+			for i := 0; i < x.NumFields(); i++ {
+				unifyTypes(x.Field(i).Type(), y.Field(i).Type(), bind, depth+1)
+			}
+		}
+	case *types.Signature:
+		if y, ok := b.(*types.Signature); ok && x.Params().Len() == y.Params().Len() && x.Results().Len() == y.Results().Len() {
+			for i := 0; i < x.Params().Len(); i++ {
+				unifyTypes(x.Params().At(i).Type(), y.Params().At(i).Type(), bind, depth+1)
+			}
+			for i := 0; i < x.Results().Len(); i++ {
+				unifyTypes(x.Results().At(i).Type(), y.Results().At(i).Type(), bind, depth+1)
+			}
+		}
+	case *types.Named:
+		if y, ok := b.(*types.Named); ok && x.TypeArgs().Len() == y.TypeArgs().Len() {
+			for i := 0; i < x.TypeArgs().Len(); i++ {
+				unifyTypes(x.TypeArgs().At(i), y.TypeArgs().At(i), bind, depth+1)
+			}
+		}
+	}
+}
+
+func (p *Program) writeRuntimeType(b *strings.Builder, t types.Type) {
 	switch u := types.Unalias(t).(type) {
 	case *types.Basic:
 		if u.Kind() == types.UnsafePointer {
@@ -739,37 +867,47 @@ func writeRuntimeType(b *strings.Builder, t types.Type) {
 			b.WriteByte('.')
 		}
 		b.WriteString(u.Obj().Name())
+		if la := p.localTypeArgs(u); len(la) > 0 {
+			b.WriteByte('[')
+			for i, a := range la {
+				if i > 0 {
+					b.WriteByte(',')
+				}
+				p.writeRuntimeType(b, a)
+			}
+			b.WriteByte(']')
+		}
 		if ta := u.TypeArgs(); ta != nil && ta.Len() > 0 {
 			b.WriteByte('[')
 			for i := 0; i < ta.Len(); i++ {
 				if i > 0 {
 					b.WriteByte(',')
 				}
-				writeRuntimeType(b, ta.At(i))
+				p.writeRuntimeType(b, ta.At(i))
 			}
 			b.WriteByte(']')
 		}
 	case *types.Pointer:
 		b.WriteByte('*')
-		writeRuntimeType(b, u.Elem())
+		p.writeRuntimeType(b, u.Elem())
 	case *types.Slice:
 		b.WriteString("[]")
-		writeRuntimeType(b, u.Elem())
+		p.writeRuntimeType(b, u.Elem())
 	case *types.Array:
 		fmt.Fprintf(b, "[%d]", u.Len())
-		writeRuntimeType(b, u.Elem())
+		p.writeRuntimeType(b, u.Elem())
 	case *types.Map:
 		b.WriteString("map[")
-		writeRuntimeType(b, u.Key())
+		p.writeRuntimeType(b, u.Key())
 		b.WriteByte(']')
-		writeRuntimeType(b, u.Elem())
+		p.writeRuntimeType(b, u.Elem())
 	case *types.Chan:
 		switch u.Dir() {
 		case types.SendRecv:
 			b.WriteString("chan ")
 			if c, ok := u.Elem().(*types.Chan); ok && c.Dir() == types.RecvOnly {
 				b.WriteString("(")
-				writeRuntimeType(b, u.Elem())
+				p.writeRuntimeType(b, u.Elem())
 				b.WriteString(")")
 				return
 			}
@@ -778,10 +916,10 @@ func writeRuntimeType(b *strings.Builder, t types.Type) {
 		case types.RecvOnly:
 			b.WriteString("<-chan ")
 		}
-		writeRuntimeType(b, u.Elem())
+		p.writeRuntimeType(b, u.Elem())
 	case *types.Signature:
 		b.WriteString("func")
-		writeSig(b, u)
+		p.writeSig(b, u)
 	case *types.Interface:
 		if u.NumMethods() == 0 && u.NumEmbeddeds() == 0 {
 			b.WriteString("interface {}")
@@ -797,7 +935,7 @@ func writeRuntimeType(b *strings.Builder, t types.Type) {
 				b.WriteString(m.Pkg().Name() + ".")
 			}
 			b.WriteString(m.Name())
-			writeSig(b, m.Type().(*types.Signature))
+			p.writeSig(b, m.Type().(*types.Signature))
 		}
 		b.WriteString(" }")
 	case *types.Struct:
@@ -816,7 +954,7 @@ func writeRuntimeType(b *strings.Builder, t types.Type) {
 				b.WriteString(f.Name())
 				b.WriteByte(' ')
 			}
-			writeRuntimeType(b, f.Type())
+			p.writeRuntimeType(b, f.Type())
 			if tag := u.Tag(i); tag != "" {
 				fmt.Fprintf(b, " %q", tag)
 			}
@@ -829,7 +967,7 @@ func writeRuntimeType(b *strings.Builder, t types.Type) {
 	}
 }
 
-func writeSig(b *strings.Builder, s *types.Signature) {
+func (p *Program) writeSig(b *strings.Builder, s *types.Signature) {
 	b.WriteByte('(')
 	for i := 0; i < s.Params().Len(); i++ {
 		if i > 0 {
@@ -840,21 +978,21 @@ func writeSig(b *strings.Builder, s *types.Signature) {
 			b.WriteString("...")
 			pt = pt.(*types.Slice).Elem()
 		}
-		writeRuntimeType(b, pt)
+		p.writeRuntimeType(b, pt)
 	}
 	b.WriteByte(')')
 	switch s.Results().Len() {
 	case 0:
 	case 1:
 		b.WriteByte(' ')
-		writeRuntimeType(b, s.Results().At(0).Type())
+		p.writeRuntimeType(b, s.Results().At(0).Type())
 	default:
 		b.WriteString(" (")
 		for i := 0; i < s.Results().Len(); i++ {
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			writeRuntimeType(b, s.Results().At(i).Type())
+			p.writeRuntimeType(b, s.Results().At(i).Type())
 		}
 		b.WriteByte(')')
 	}

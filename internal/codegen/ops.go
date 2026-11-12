@@ -354,7 +354,7 @@ func (f *funcGen) complexOp(op token.Token, x, y, vt string) string {
 		ac := f.op("llvm.fmul %s, %s : f64", a, c)
 		ad := f.op("llvm.fmul %s, %s : f64", a, d)
 		var re, im string
-		if f.m.p.opts.GOARCH == "arm64" {
+		if f.m.p.opts.GOARCH == "arm64" && !f.constOperands {
 			nb := f.op("llvm.fneg %s : f64", b)
 			re = f.op("llvm.intr.fma(%s, %s, %s) : (f64, f64, f64) -> f64", nb, d, ac)
 			im = f.op("llvm.intr.fma(%s, %s, %s) : (f64, f64, f64) -> f64", b, c, ad)

@@ -56,6 +56,7 @@ type funcGen struct {
 	sunkDone          map[ssa.Instruction]bool
 	wrapOld           string                         // recoverWrapEnter result (recoverwrap.go)
 	deferThunk        bool                           // emitting a defer thunk: a builtin call here is the deferred call itself
+	constOperands     bool                           // the binary op being emitted has two constant operands
 	fuseLookup        map[*ssa.Lookup]*ssa.MapUpdate // map read-modify-write pairs (mapfuse.go)
 	fuseSlot          map[*ssa.MapUpdate]string
 }
@@ -565,7 +566,12 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 	case *ssa.Alloc:
 		f.alloc(v)
 	case *ssa.BinOp:
+		// gc folds constant complex products at compile time, unfused.
+		_, cx := v.X.(*ssa.Const)
+		_, cy := v.Y.(*ssa.Const)
+		f.constOperands = cx && cy
 		f.vals[v] = f.binop(v.Op, v.X, v.Y, v.X.Type())
+		f.constOperands = false
 	case *ssa.UnOp:
 		f.vals[v] = f.unop(v)
 	case *ssa.Call:
