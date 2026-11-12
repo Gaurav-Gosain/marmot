@@ -405,6 +405,12 @@ ConstVal evalInitializer(LL::GlobalOp g) {
   return out;
 }
 
+// llvm.used and llvm.compiler.used: lists of symbols to keep, not data.
+bool isUsedList(LL::GlobalOp g) {
+  StringRef n = g.getSymName();
+  return n == "llvm.used" || n == "llvm.compiler.used";
+}
+
 bool isLocalLinkage(LL::Linkage l) { return l == LL::Linkage::Internal || l == LL::Linkage::Private; }
 template <class Op> bool isHidden(Op op) { return op.getVisibility_() == LL::Visibility::Hidden; }
 bool isWeakLinkage(LL::Linkage l) {
@@ -414,6 +420,7 @@ bool isWeakLinkage(LL::Linkage l) {
 
 void ModuleGen::emitGlobal(LL::GlobalOp g) {
   if (g.getThreadLocal_()) unsupported("thread local global");
+  if (g.getSymName().starts_with("llvm.")) unsupported("special global " + g.getSymName().str());
   ConstVal cv = evalInitializer(g);
   std::string name = machoName(g.getSymName());
   uint64_t align = std::max<uint64_t>(g.getAlignment().value_or(0), alignOf(g.getGlobalType()));
@@ -1691,6 +1698,12 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
   for (Operation &op : module.getBody()->getOperations()) {
     if (auto g = dyn_cast<LL::GlobalOp>(op)) {
       if (!definedData.count(g.getSymNameAttr())) continue;  // a declaration
+      if (isUsedList(g)) {
+        // Not data: the symbols it lists survive dead stripping. The list
+        // stays in the module for a fallback object.
+        g.getInitializerRegion().walk([&](LL::AddressOfOp a) { w.retain(symName(a.getGlobalName())); });
+        continue;
+      }
       try {
         emitGlobal(g);
         stats.globals++;
@@ -1743,7 +1756,7 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
       f.getBody().getBlocks().clear();
       if (isWeakLinkage(f.getLinkage()) || isLocalLinkage(f.getLinkage())) f.setLinkage(LL::Linkage::External);
     } else if (auto g = dyn_cast<LL::GlobalOp>(op)) {
-      if (!definedData.count(g.getSymNameAttr())) continue;
+      if (!definedData.count(g.getSymNameAttr()) || isUsedList(g)) continue;
       g.getInitializerRegion().dropAllReferences();
       g.getInitializerRegion().getBlocks().clear();
       g.removeValueAttr();

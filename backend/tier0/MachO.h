@@ -48,6 +48,9 @@ public:
   // of the same image can reach it.
   void renameShared(const std::string &from, const std::string &to);
   const std::string &name(unsigned sym) const { return syms_[sym].name; }
+  // Keeps a symbol through dead stripping (llvm.used): N_NO_DEAD_STRIP in
+  // Mach-O, SHF_GNU_RETAIN on its ELF section.
+  void retain(const std::string &name) { syms_[symbol(name)].retain = true; }
 
   // Section contents. Code is appended as instruction words.
   std::vector<uint8_t> &bytes(Sect s) { return sec_[unsigned(s)].data; }
@@ -87,6 +90,7 @@ private:
   struct Sym {
     std::string name;
     bool defined = false, global = false, weak = false, hidden = false;
+    bool retain = false;
     uint64_t commonSize = 0;  // nonzero for a common symbol (left undefined)
     unsigned commonAlign = 0;
     Sect sect = Sect::Text;

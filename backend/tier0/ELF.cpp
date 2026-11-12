@@ -13,7 +13,8 @@ namespace {
 
 constexpr uint16_t ET_REL = 1, EM_X86_64 = 62;
 constexpr uint32_t SHT_PROGBITS = 1, SHT_SYMTAB = 2, SHT_STRTAB = 3, SHT_RELA = 4, SHT_NOBITS = 8;
-constexpr uint64_t SHF_WRITE = 1, SHF_ALLOC = 2, SHF_EXECINSTR = 4, SHF_INFO_LINK = 0x40;
+constexpr uint64_t SHF_WRITE = 1, SHF_ALLOC = 2, SHF_EXECINSTR = 4, SHF_INFO_LINK = 0x40,
+                   SHF_GNU_RETAIN = 0x200000;
 constexpr uint8_t STB_LOCAL = 0, STB_GLOBAL = 1, STB_WEAK = 2;
 constexpr uint8_t STT_NOTYPE = 0, STT_OBJECT = 1, STT_FUNC = 2;
 constexpr uint8_t STV_HIDDEN = 2;
@@ -85,9 +86,12 @@ std::string MachOWriter::serializeELF() const {
   for (unsigned i = 0; i < 4; i++) {
     const Section &x = sec_[i];
     uint64_t total = i == 3 ? x.bssSize : x.data.size();
-    std::vector<uint64_t> starts;
+    std::vector<uint64_t> starts, kept;
     for (const Sym &y : syms_)
-      if (y.defined && unsigned(y.sect) == i) starts.push_back(y.offset);
+      if (y.defined && unsigned(y.sect) == i) {
+        starts.push_back(y.offset);
+        if (y.retain) kept.push_back(y.offset);
+      }
     std::sort(starts.begin(), starts.end());
     starts.erase(std::unique(starts.begin(), starts.end()), starts.end());
     if (starts.empty() || starts[0] != 0) starts.insert(starts.begin(), 0);
@@ -96,6 +100,7 @@ std::string MachOWriter::serializeELF() const {
       if (hi <= lo && !(k == 0 && starts.size() == 1)) continue;
       Shdr h{shstr.add(elfSectName(i), true), i == 3 ? SHT_NOBITS : SHT_PROGBITS, flags[i]};
       h.align = uint64_t(1) << x.align;
+      if (std::find(kept.begin(), kept.end(), lo) != kept.end()) h.flags |= SHF_GNU_RETAIN;
       if (i == 3)
         h.size = hi - lo;
       else

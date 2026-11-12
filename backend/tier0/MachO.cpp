@@ -307,7 +307,7 @@ std::string MachOWriter::serialize() const {
     } else {
       o.u8(N_SECT | (s.global ? N_EXT : 0) | (s.hidden ? 0x10 : 0));  // N_PEXT
       o.u8(uint8_t(unsigned(s.sect) + 1));
-      o.u16(s.weak ? 0x80 : 0);  // N_WEAK_DEF
+      o.u16(uint16_t((s.weak ? 0x80 : 0) | (s.retain ? 0x20 : 0)));  // N_WEAK_DEF, N_NO_DEAD_STRIP
       o.u64(addr[unsigned(s.sect)] + s.offset);
     }
   }
