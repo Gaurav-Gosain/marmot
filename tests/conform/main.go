@@ -418,7 +418,7 @@ func runOne(root, testsDir, work, marmot, name string, cfg config) result {
 	if strings.HasPrefix(name, "world/") {
 		bto *= 5 // real modules can take minutes to compile on a cold object cache
 	}
-	bo, err := execute(bto, buildDir(root, srcDir, name), append([]string{"MARMOT_ROOT=" + root}, cfg.env...), marmot, args...)
+	bo, err := execute(bto, buildDir(root, srcDir, name), append([]string{"MARMOT_ROOT=" + root, "MARMOT_CACHE_MAX_MB=512"}, cfg.env...), marmot, args...)
 	if err != nil {
 		r.Reason, r.Detail = "compile error", err.Error()
 		return r
@@ -710,7 +710,7 @@ func snapshot(root, sha string) (string, error) {
 	}
 	exe := filepath.Join(snap, "hello")
 	marmot := filepath.Join(snap, "build", "bin", "marmot")
-	b, err := execute(*flBuildTO, snap, []string{"MARMOT_ROOT=" + snap}, marmot, "build", "-o", exe, hello)
+	b, err := execute(*flBuildTO, snap, []string{"MARMOT_ROOT=" + snap, "MARMOT_CACHE_MAX_MB=512"}, marmot, "build", "-o", exe, hello)
 	if err != nil || b.timedOut || b.exit != 0 {
 		return "", fmt.Errorf("snapshot smoke test failed to build (the tree may be mid-edit, retry or use -live): %s", firstLines(b.stdout+b.stderr, 6))
 	}

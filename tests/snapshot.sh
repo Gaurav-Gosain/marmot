@@ -9,6 +9,6 @@ mkdir -p "$dst/build"
 cp -R "$root/build/bin" "$root/build/lib" "$dst/build/"
 cp -R "$root/lib" "$dst/lib"
 printf 'package main\n\nfunc main() { println("hello") }\n' > "$dst/hello.go"
-MARMOT_ROOT="$dst" "$dst/build/bin/marmot" build -o "$dst/hello" "$dst/hello.go" >&2
+MARMOT_CACHE_MAX_MB=512 MARMOT_ROOT="$dst" "$dst/build/bin/marmot" build -o "$dst/hello" "$dst/hello.go" >&2
 "$dst/hello" 2>&1 | grep -q hello
 echo "$dst"

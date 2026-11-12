@@ -397,7 +397,7 @@ func (rn *runner) check(src string) string {
 		args = append(args, "-O", *flO)
 	}
 	args = append(args, file)
-	b, why := sh(2*time.Minute, rn.root, append([]string{"MARMOT_ROOT=" + rn.mroot}, stressEnv()...), rn.marmot, args...)
+	b, why := sh(2*time.Minute, rn.root, append([]string{"MARMOT_ROOT=" + rn.mroot, "MARMOT_CACHE_MAX_MB=512"}, stressEnv()...), rn.marmot, args...)
 	if why != "" || b.code != 0 {
 		return "compile error: " + firstLine(b.stdout+b.stderr+why)
 	}
