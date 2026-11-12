@@ -28,7 +28,13 @@ schedt sched;
 rt_g *rt_main_g;
 
 static rt_m m0;
-static uintptr_t g_stacksize = 1 << 20;        // default goroutine stack reservation
+// Goroutine stacks are address space reserved with mmap and committed page
+// by page as they are touched, so a large reservation costs no memory: 64
+// MiB lets deep recursion (std's depth-limit tests recurse 10^4-10^5
+// levels) run in any goroutine, as gc's growable stacks do. 10^6 goroutines
+// reserve 64 TiB, inside the 47-bit address space; if mmap still fails a
+// stack falls back to 1 MiB (stack_alloc).
+static uintptr_t g_stacksize = (uintptr_t)64 << 20;  // default goroutine stack reservation
 static uintptr_t main_stacksize = 1ull << 30;  // main goroutine
 static bool sysmon_started;
 static rt_spin sysmon_lock;
@@ -67,6 +73,12 @@ static bool stack_alloc(rt_g *g, uintptr_t size) {
   uintptr_t ps = rt_pagesize;
   size = (size + ps - 1) & ~(ps - 1);
   uint8_t *p = os_map(size + ps);
+  if (!p && size > ((uintptr_t)1 << 20)) {
+    // Out of address space (or a map count limit): a small stack, never
+    // cached (gfput only caches g_stacksize stacks).
+    size = (uintptr_t)1 << 20;
+    p = os_map(size + ps);
+  }
   if (!p) return false;
   os_protect_none(p, ps);
   g->map_base = (uintptr_t)p;
@@ -212,7 +224,13 @@ static void stack_take(rt_p *p, rt_g *g) {
 
 // Free goroutine structures: per P, overflow to global.
 static void gfput(rt_p *p, rt_g *g) {
-  if (g->stack_hi && g->stack_hi - g->stack_lo != g_stacksize) return;  // main: never reused
+  if (g == rt_main_g) return;  // never reused
+  if (g->stack_hi && g->stack_hi - g->stack_lo != g_stacksize) {
+    // A fallback stack (stack_alloc): not cached; the next start takes a
+    // standard one.
+    os_unmap((void *)g->map_base, g->map_size);
+    g->stack_hi = g->stack_lo = g->map_base = g->map_size = 0;
+  }
   if (g->stack_hi) stack_give(p, g);
   atomic_store_explicit(&g->status, G_IDLE, memory_order_relaxed);
   g->schedlink = p->gfree;
