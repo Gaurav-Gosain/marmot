@@ -1,0 +1,7 @@
+pid matches: true
+sysname set: true
+getrlimit: <nil> true true
+write: 4 <nil>
+read: ping <nil>
+winsize on a pipe is ENOTTY: true
+read after close is EBADF: true
