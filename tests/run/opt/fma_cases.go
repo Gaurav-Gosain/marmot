@@ -3,7 +3,7 @@ package main
 import "math"
 
 // NaN inputs are left out on purpose: the sign and payload of a NaN result are not defined by the
-// Go spec and differ between compilers and architectures (see docs/support.md, known differences).
+// Go spec and differ between compilers and architectures (see docs/support-matrix.md, known differences).
 //
 // Cases where gc on arm64 fuses (or must not fuse) multiply-add. The expected output is
 // whatever stock Go prints; marmot must match it bit for bit.
