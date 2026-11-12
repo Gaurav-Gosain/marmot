@@ -46,6 +46,10 @@ func needsFrame(fn *ssa.Function) bool {
 
 // callsRecover reports whether fn calls the recover builtin.
 func callsRecover(fn *ssa.Function) bool {
+	if len(fn.Blocks) == 0 {
+		_, ok := externalRecover.Load(fn)
+		return ok
+	}
 	for _, b := range fn.Blocks {
 		for _, instr := range b.Instrs {
 			if c, ok := instr.(ssa.CallInstruction); ok {

@@ -112,48 +112,9 @@ func copyExe(src, dst string) error {
 // facts codegen uses (codegen.Program.PackageKey), the flags and the
 // marmot binary. "" means the package is not cacheable.
 func (b *build) packageKeys(lp *loader.Program, cg *codegen.Program, pkgs []*ssa.Package) []string {
-	exeSig := sha256.New()
-	if exe, err := os.Executable(); err == nil {
-		fileSig(exeSig, exe)
-	}
-	fmt.Fprintf(exeSig, "%s %s %s %s %v %s/%s\n", b.cfg.OptLevel, b.cfg.Emit, b.cfg.Dialect, b.cfg.GC, b.cfg.Release, b.goos, b.goarch)
-	for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_DIALECT", "MARMOT_SPEC"} {
-		fmt.Fprintf(exeSig, "%s=%s\n", k, os.Getenv(k))
-	}
-	writeNoFlags(exeSig)
-	b.writeXDefs(exeSig)
-	base := hex.EncodeToString(exeSig.Sum(nil))
 	byPath := map[string]*packages.Package{}
 	for _, p := range lp.All {
 		byPath[p.PkgPath] = p
-	}
-	memo := map[string]string{}
-	var key func(p *packages.Package) string
-	key = func(p *packages.Package) string {
-		if k, ok := memo[p.PkgPath]; ok {
-			return k
-		}
-		memo[p.PkgPath] = "" // cycle guard
-		h := sha256.New()
-		fmt.Fprintf(h, "pkg v2 %s %s\n", base, p.PkgPath)
-		// GoFiles: the loader does not request CompiledGoFiles.
-		files := append(append([]string{}, p.GoFiles...), p.CompiledGoFiles...)
-		files = append(files, p.EmbedFiles...)
-		sort.Strings(files)
-		for _, f := range files {
-			fileSig(h, f)
-		}
-		deps := make([]string, 0, len(p.Imports))
-		for path := range p.Imports {
-			deps = append(deps, path)
-		}
-		sort.Strings(deps)
-		for _, d := range deps {
-			fmt.Fprintf(h, "dep %s %s\n", d, key(p.Imports[d]))
-		}
-		k := hex.EncodeToString(h.Sum(nil))[:32]
-		memo[p.PkgPath] = k
-		return k
 	}
 	out := make([]string, len(pkgs))
 	for i, sp := range pkgs {
@@ -161,11 +122,72 @@ func (b *build) packageKeys(lp *loader.Program, cg *codegen.Program, pkgs []*ssa
 		if p == nil || sp.Pkg.Path() == "command-line-arguments" {
 			continue // file arguments: the overlay import file is not on disk
 		}
+		if b.incr {
+			out[i] = b.moduleKey(p)
+			continue
+		}
 		h := sha256.New()
-		fmt.Fprintf(h, "%s\n%s\n", key(p), cg.PackageKey(sp))
+		fmt.Fprintf(h, "%s\n%s\n", b.srcKey(p), cg.PackageKey(sp))
 		out[i] = hex.EncodeToString(h.Sum(nil))[:32]
 	}
 	return out
+}
+
+// moduleKey is the key of the module of p in an incremental build, where
+// no whole-program facts enter a module.
+func (b *build) moduleKey(p *packages.Package) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\nseparate\n", b.srcKey(p))
+	return hex.EncodeToString(h.Sum(nil))[:32]
+}
+
+// srcKey hashes the source files of p and, through their keys, of its
+// dependencies, with the flags and the marmot binary.
+func (b *build) srcKey(p *packages.Package) string {
+	b.keyMu.Lock()
+	defer b.keyMu.Unlock()
+	if b.keyMemo == nil {
+		b.keyMemo = map[string]string{}
+		exeSig := sha256.New()
+		if exe, err := os.Executable(); err == nil {
+			fileSig(exeSig, exe)
+		}
+		fmt.Fprintf(exeSig, "%s %s %s %s %v %s/%s\n", b.cfg.OptLevel, b.cfg.Emit, b.cfg.Dialect, b.cfg.GC, b.cfg.Release, b.goos, b.goarch)
+		for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_DIALECT", "MARMOT_SPEC"} {
+			fmt.Fprintf(exeSig, "%s=%s\n", k, os.Getenv(k))
+		}
+		writeNoFlags(exeSig)
+		b.writeXDefs(exeSig)
+		b.keyBase = hex.EncodeToString(exeSig.Sum(nil))
+	}
+	return b.srcKeyLocked(p)
+}
+
+func (b *build) srcKeyLocked(p *packages.Package) string {
+	if k, ok := b.keyMemo[p.PkgPath]; ok {
+		return k
+	}
+	b.keyMemo[p.PkgPath] = "" // cycle guard
+	h := sha256.New()
+	fmt.Fprintf(h, "pkg v2 %s %s\n", b.keyBase, p.PkgPath)
+	// GoFiles: the full loader does not request CompiledGoFiles.
+	files := append(append([]string{}, p.GoFiles...), p.CompiledGoFiles...)
+	files = append(files, p.EmbedFiles...)
+	sort.Strings(files)
+	for _, f := range files {
+		fileSig(h, f)
+	}
+	deps := make([]string, 0, len(p.Imports))
+	for path := range p.Imports {
+		deps = append(deps, path)
+	}
+	sort.Strings(deps)
+	for _, d := range deps {
+		fmt.Fprintf(h, "dep %s %s\n", d, b.srcKeyLocked(p.Imports[d]))
+	}
+	k := hex.EncodeToString(h.Sum(nil))[:32]
+	b.keyMemo[p.PkgPath] = k
+	return k
 }
 
 // cachedModule returns the cached MLIR file of the package with key k.

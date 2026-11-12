@@ -3,6 +3,8 @@
 package loader
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"go/parser"
 	"go/token"
@@ -10,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -30,6 +33,18 @@ type Config struct {
 	// Tests loads the test variant of the (single) package pattern; the
 	// root becomes the generated "pkg.test" main package (go list -test).
 	Tests bool
+	// Incremental loads packages from cached export data where possible
+	// (incremental.go); only packages that changed, or that NeedSource asks
+	// for, are parsed, type checked and get SSA bodies.
+	Incremental bool
+	// NeedSource reports whether a package with the given key must be
+	// compiled this build (its code is not cached).
+	NeedSource func(p *packages.Package, key string) bool
+	// CacheDir holds the export data cache (default build/cache/types).
+	CacheDir string
+	// Listed, if set, is called in incremental loads with every package
+	// after go list, before any is loaded.
+	Listed func(all []*packages.Package)
 	// BeforeSSA runs after type checking on every package, dependencies
 	// first; it may replace Syntax, Types and TypesInfo.
 	BeforeSSA func(all []*packages.Package) error
@@ -39,13 +54,16 @@ type Config struct {
 
 // Program is the loaded and SSA built program.
 type Program struct {
-	SSA        *ssa.Program
-	Packages   []*packages.Package // the root packages
-	All        []*packages.Package // every package in dependency order
-	SSAPkgs    map[*types.Package]*ssa.Package
-	GOROOT     string // the merged GOROOT
-	RealGOROOT string
-	Sizes      types.Sizes
+	SSA      *ssa.Program
+	Packages []*packages.Package // the root packages
+	All      []*packages.Package // every package in dependency order
+	SSAPkgs  map[*types.Package]*ssa.Package
+	GOROOT   string // the merged GOROOT
+	// Incremental holds, by package path, the key, whether the package was
+	// loaded from source, and its facts (incremental loads only).
+	Incremental map[string]*IncrementalPackage
+	RealGOROOT  string
+	Sizes       types.Sizes
 }
 
 // Load loads the packages and builds SSA for all of them.
@@ -105,30 +123,16 @@ func Load(cfg Config) (*Program, error) {
 	}
 	filePatterns := len(cfg.Patterns) > 0 && strings.HasSuffix(cfg.Patterns[0], ".go")
 	t0 := time.Now()
-	pkgs, err := packages.Load(pcfg, patterns...)
-	if err != nil {
-		return nil, err
-	}
-	// //go:embed: give the embed variables initializers and load again.
-	var embedAll []*packages.Package
-	packages.Visit(pkgs, nil, func(p *packages.Package) { embedAll = append(embedAll, p) })
-	over, helpers, err := embedOverlays(embedAll)
-	if err != nil {
-		return nil, err
-	}
-	if over != nil {
-		if pcfg.Overlay == nil {
-			pcfg.Overlay = map[string][]byte{}
+	var pkgs []*packages.Package
+	var incr map[*packages.Package]*IncrementalPackage
+	if cfg.Incremental {
+		roots, _, res, _, err := loadIncremental(cfg, pcfg, patterns, confSig(cfg, goroot, pcfg), cfg.NeedSource)
+		if err != nil {
+			return nil, err
 		}
-		for k, v := range over {
-			pcfg.Overlay[k] = v
-		}
-		for _, h := range helpers {
-			if filePatterns && filepath.Dir(h) == filepath.Dir(patterns[0]) {
-				patterns = append(patterns, h)
-			}
-		}
-		if pkgs, err = packages.Load(pcfg, patterns...); err != nil {
+		pkgs, incr = roots, res
+	} else {
+		if pkgs, err = loadFull(pcfg, patterns, filePatterns); err != nil {
 			return nil, err
 		}
 	}
@@ -176,7 +180,13 @@ func Load(cfg Config) (*Program, error) {
 		}
 	}
 	t1 := time.Now()
-	prog, ssaPkgs, err := buildSSA(pkgs)
+	var prog *ssa.Program
+	var ssaPkgs []*ssa.Package
+	if cfg.Incremental {
+		prog, ssaPkgs, err = buildSSAIncremental(pkgs, all)
+	} else {
+		prog, ssaPkgs, err = buildSSA(pkgs)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +227,14 @@ func Load(cfg Config) (*Program, error) {
 	if sizes == nil {
 		sizes = types.SizesFor("gc", cfg.GOARCH)
 	}
-	return &Program{SSA: prog, Packages: pkgs, All: all, SSAPkgs: m, GOROOT: goroot, RealGOROOT: realRoot, Sizes: sizes}, nil
+	lp := &Program{SSA: prog, Packages: pkgs, All: all, SSAPkgs: m, GOROOT: goroot, RealGOROOT: realRoot, Sizes: sizes}
+	if incr != nil {
+		lp.Incremental = map[string]*IncrementalPackage{}
+		for p, ip := range incr {
+			lp.Incremental[p.PkgPath] = ip
+		}
+	}
+	return lp, nil
 }
 
 func goEnv(name string) (string, error) {
@@ -351,4 +368,98 @@ func GoCache(root string) string {
 		return d
 	}
 	return filepath.Join(root, "build", "cache", "gocache")
+}
+
+// confSig hashes what every package key depends on besides its files.
+func confSig(cfg Config, goroot string, pcfg *packages.Config) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s %s %s %q %v\n", goroot, cfg.GOOS, cfg.GOARCH, cfg.Tags, cfg.Tests)
+	if exe, err := os.Executable(); err == nil {
+		if st, err := os.Stat(exe); err == nil {
+			fmt.Fprintf(h, "%s %d %d\n", exe, st.Size(), st.ModTime().UnixNano())
+		}
+	}
+	var names []string
+	for n := range pcfg.Overlay {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		s := sha256.Sum256(pcfg.Overlay[n])
+		fmt.Fprintf(h, "%s %x\n", n, s[:8])
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// loadFull loads and type checks every package with go/packages.
+func loadFull(pcfg *packages.Config, patterns []string, filePatterns bool) ([]*packages.Package, error) {
+	pkgs, err := packages.Load(pcfg, patterns...)
+	if err != nil {
+		return nil, err
+	}
+	// //go:embed: give the embed variables initializers and load again.
+	var embedAll []*packages.Package
+	packages.Visit(pkgs, nil, func(p *packages.Package) { embedAll = append(embedAll, p) })
+	over, helpers, err := embedOverlays(embedAll)
+	if err != nil {
+		return nil, err
+	}
+	if over != nil {
+		if pcfg.Overlay == nil {
+			pcfg.Overlay = map[string][]byte{}
+		}
+		for k, v := range over {
+			pcfg.Overlay[k] = v
+		}
+		for _, h := range helpers {
+			if filePatterns && filepath.Dir(h) == filepath.Dir(patterns[0]) {
+				patterns = append(patterns, h)
+			}
+		}
+		if pkgs, err = packages.Load(pcfg, patterns...); err != nil {
+			return nil, err
+		}
+	}
+	return pkgs, nil
+}
+
+// buildSSAIncremental builds SSA bodies for the packages loaded from source;
+// packages imported from export data get members without bodies.
+func buildSSAIncremental(roots, all []*packages.Package) (prog *ssa.Program, ssaPkgs []*ssa.Package, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("internal error building SSA: %v", r)
+		}
+	}()
+	var fset *token.FileSet
+	for _, p := range all {
+		if p.Fset != nil {
+			fset = p.Fset
+			break
+		}
+	}
+	prog = ssa.NewProgram(fset, ssa.InstantiateGenerics)
+	byPkg := map[*packages.Package]*ssa.Package{}
+	created := map[*types.Package]bool{}
+	for _, p := range all {
+		if p.Types == nil || created[p.Types] {
+			continue
+		}
+		created[p.Types] = true
+		var sp *ssa.Package
+		if p.Syntax != nil {
+			sp = prog.CreatePackage(p.Types, p.Syntax, p.TypesInfo, false)
+			if p.Module != nil || p.PkgPath == "command-line-arguments" || !isStd(p.PkgPath) {
+				sp.SetDebugMode(true)
+			}
+		} else {
+			sp = prog.CreatePackage(p.Types, nil, nil, true)
+		}
+		byPkg[p] = sp
+	}
+	prog.Build()
+	for _, r := range roots {
+		ssaPkgs = append(ssaPkgs, byPkg[r])
+	}
+	return prog, ssaPkgs, nil
 }

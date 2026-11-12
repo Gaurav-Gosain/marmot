@@ -6,6 +6,7 @@ package codegen
 
 import (
 	"fmt"
+	"github.com/Gaurav-Gosain/marmot/internal/loader"
 	"go/ast"
 	"go/token"
 	"go/types"
@@ -32,6 +33,13 @@ type Options struct {
 	// XDefs sets string variables as the linker's -X does: "pkgpath.name"
 	// to value (go test sets testing.testBinary to "1").
 	XDefs map[string]string
+	// Facts of packages loaded from export data (no syntax), by package
+	// path: their linkname directives, dynamic imports and recover callers.
+	Facts map[string]*loader.Facts
+	// Separate generates each package's module from its own source and the
+	// types it imports only: no whole-program method pruning, dead globals
+	// or devirtualization (incremental builds cache modules by source).
+	Separate bool
 }
 
 // Module is the MLIR text for one Go package (or the synthetic entry module).
@@ -154,7 +162,13 @@ func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package
 		p.pkgOf[pkg.Pkg] = pkg
 		p.collect(pkg)
 	}
-	p.computeUsedMethods()
+	if !p.opts.Separate {
+		p.computeUsedMethods()
+	} else {
+		p.keepExported = true
+		p.reflectCall = true
+		p.punAll = true // no whole-program pun analysis: every access may alias
+	}
 	p.collectFMABlocks()
 	return p, nil
 }
@@ -202,6 +216,11 @@ func (p *Program) collect(pkg *ssa.Package) {
 		}
 		for _, c := range decl.Doc.List {
 			p.parseDirective(fn, c.Text)
+		}
+	}
+	if len(p.files[pkg.Pkg]) == 0 {
+		if facts := p.opts.Facts[pkg.Pkg.Path()]; facts != nil {
+			p.applyFacts(pkg, facts)
 		}
 	}
 	// //go:linkname directives may appear anywhere in a file.
@@ -301,22 +320,16 @@ func (p *Program) computeSymbol(fn *ssa.Function) string {
 			return c
 		}
 	}
-	if fn.Pkg != nil && fn.Synthetic == "" {
-		path := rtPath(fn.Pkg.Pkg)
-		if recv := fn.Signature.Recv(); recv != nil {
-			rt := recv.Type()
-			ptr := ""
-			if pt, ok := rt.(*types.Pointer); ok {
-				rt = pt.Elem()
-				ptr = "*"
-			}
-			name := types.TypeString(rt, func(*types.Package) string { return "" })
-			if ptr != "" {
-				return fmt.Sprintf("%s.(*%s).%s", path, name, fn.Name())
-			}
-			return fmt.Sprintf("%s.%s.%s", path, name, fn.Name())
+	// Functions of packages loaded from export data are marked synthetic
+	// ("from type information") but are the declared functions.
+	declared := fn.Synthetic == "" || strings.HasPrefix(fn.Synthetic, "from type information")
+	if declared && fn.Pkg == nil {
+		if obj, ok := fn.Object().(*types.Func); ok && obj.Pkg() != nil {
+			return p.declaredSymbol(fn, obj.Pkg())
 		}
-		return path + "." + fn.Name()
+	}
+	if fn.Pkg != nil && declared {
+		return p.declaredSymbol(fn, fn.Pkg.Pkg)
 	}
 	// Synthetic functions (wrappers, thunks, instances): the SSA name with
 	// full package paths is unique and stable across modules, except for
@@ -386,4 +399,76 @@ func (p *Program) DynamicLibraries() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// applyFacts records what collect reads from syntax, for a package loaded
+// from export data.
+func (p *Program) applyFacts(pkg *ssa.Package, f *loader.Facts) {
+	for k, v := range f.Dynamic {
+		p.dynamic[pkg.Pkg.Path()+"."+k] = v
+	}
+	for _, d := range f.Dylibs {
+		p.dylibs[d] = true
+	}
+	for _, ln := range f.Linknames {
+		if ln[1] != "" {
+			p.varLinkname[ln[1]] = true
+		}
+		if g, ok := pkg.Members[ln[0]].(*ssa.Global); ok {
+			p.varLinkname[pkg.Pkg.Path()+"."+g.Name()] = true
+			if ln[1] != "" {
+				p.globalLink[g] = ln[1]
+			}
+			continue
+		}
+		if fn, ok := pkg.Members[ln[0]].(*ssa.Function); ok && ln[1] != "" {
+			p.linkname[fn] = ln[1]
+		}
+	}
+	for _, name := range f.Recover {
+		if fn := lookupFunc(p.prog, pkg, name); fn != nil {
+			externalRecover.Store(fn, true)
+		}
+	}
+}
+
+// lookupFunc finds "F" or "T.M" in pkg (value or pointer receiver).
+func lookupFunc(prog *ssa.Program, pkg *ssa.Package, name string) *ssa.Function {
+	tn, mn, ok := strings.Cut(name, ".")
+	if !ok {
+		return pkg.Func(name)
+	}
+	t, ok := pkg.Members[tn].(*ssa.Type)
+	if !ok {
+		return nil
+	}
+	for _, rt := range []types.Type{t.Type(), types.NewPointer(t.Type())} {
+		if sel := prog.MethodSets.MethodSet(rt).Lookup(pkg.Pkg, mn); sel != nil {
+			return prog.MethodValue(sel)
+		}
+	}
+	return nil
+}
+
+// externalRecover holds functions without bodies (loaded from export data)
+// that call recover.
+var externalRecover sync.Map
+
+// declaredSymbol is the symbol of a declared function or method of pkg.
+func (p *Program) declaredSymbol(fn *ssa.Function, pkg *types.Package) string {
+	path := rtPath(pkg)
+	if recv := fn.Signature.Recv(); recv != nil {
+		rt := recv.Type()
+		ptr := ""
+		if pt, ok := rt.(*types.Pointer); ok {
+			rt = pt.Elem()
+			ptr = "*"
+		}
+		name := types.TypeString(rt, func(*types.Package) string { return "" })
+		if ptr != "" {
+			return fmt.Sprintf("%s.(*%s).%s", path, name, fn.Name())
+		}
+		return fmt.Sprintf("%s.%s.%s", path, name, fn.Name())
+	}
+	return path + "." + fn.Name()
 }

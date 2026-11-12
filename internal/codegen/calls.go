@@ -464,6 +464,9 @@ func (f *funcGen) anyBig(vs []ssa.Value) bool {
 // itab comparisons when the closed world has few implementers. The indirect call stays as the fallback, so a dynamic type the
 // analysis did not see (an itab built at run time) is still correct.
 func (f *funcGen) devirtualize(c *ssa.CallCommon) (string, bool) {
+	if f.m.p.usedMethods == nil {
+		return "", false // dev: no whole-program implementer sets
+	}
 	max := 1
 	if f.m.p.opts.Release {
 		max = 3

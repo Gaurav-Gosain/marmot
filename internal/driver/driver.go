@@ -5,6 +5,7 @@ package driver
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/types"
@@ -89,6 +90,11 @@ type build struct {
 	testDir    string   // directory of the package under test
 	dylibs     []string // from //go:cgo_import_dynamic
 	out        string
+	incr       bool // packages without a cached module are loaded from source, the others from export data
+	noIncr     bool
+	keyMu      sync.Mutex
+	keyMemo    map[string]string // srcKey by package path
+	keyBase    string
 }
 
 func (b *build) haveBackend() bool {
@@ -125,6 +131,11 @@ func Build(cfg Config) (string, error) {
 func build1(cfg Config) (*build, error) {
 	b := &build{cfg: cfg}
 	out, err := b.run1()
+	if errors.Is(err, errIncrementalMiss) {
+		b.logf("%v; loading every package from source", err)
+		b = &build{cfg: cfg, noIncr: true}
+		out, err = b.run1()
+	}
 	b.out = out
 	return b, err
 }
@@ -176,7 +187,7 @@ func (b *build) run1() (string, error) {
 		return "", err
 	}
 	defer releaseSlot()
-	lp, err := loader.Load(loader.Config{
+	lcfg := loader.Config{
 		Dir: cfg.Dir, Root: cfg.Root, Tags: cfg.Tags, GOOS: goos, GOARCH: goarch, Patterns: cfg.Patterns,
 		Log: b.logf, Tests: cfg.Test,
 		BeforeSSA: func(all []*packages.Package) error {
@@ -185,7 +196,11 @@ func (b *build) run1() (string, error) {
 		AfterSSA: func(prog *ssa.Program, pkgs []*ssa.Package) error {
 			return specialize.AfterSSA(&specialize.Input{Prog: prog, Pkgs: pkgs, Release: cfg.Release, GOOS: goos, GOARCH: goarch, Log: b.logf})
 		},
-	})
+	}
+	if b.incr = b.incremental(); b.incr {
+		b.incrementalConfig(&lcfg)
+	}
+	lp, err := loader.Load(lcfg)
 	if err != nil {
 		return "", err
 	}
@@ -214,7 +229,8 @@ func (b *build) run1() (string, error) {
 			ssaPkgs = append(ssaPkgs, sp)
 		}
 	}
-	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, GoDialect: cfg.Dialect == "go", Release: cfg.Release, MergedGOROOT: lp.GOROOT, XDefs: b.xdefs()})
+	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, GoDialect: cfg.Dialect == "go", Release: cfg.Release, MergedGOROOT: lp.GOROOT, XDefs: b.xdefs(),
+		Separate: b.incr, Facts: incrementalFacts(lp)})
 	if err != nil {
 		return "", err
 	}
@@ -302,6 +318,9 @@ func (b *build) run1() (string, error) {
 		}
 	}
 	b.logf("codegen skipped for %d unchanged packages", skipped)
+	if err := b.checkIncremental(lp, pkgs, mods); err != nil {
+		return "", err
+	}
 	if err := gen(func(i int) bool { return mods[i].Path == "" }); err != nil {
 		return "", err
 	}
