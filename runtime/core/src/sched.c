@@ -366,6 +366,15 @@ static uint32_t runqgrab(rt_p *victim, rt_p *p, uint32_t tail, bool stealnext) {
       if (stealnext) {
         rt_g *next = atomic_load(&victim->runnext);
         if (next) {
+          // As gc: a running P is usually about to switch to its run-next
+          // goroutine (a channel handoff readies the partner there just
+          // before the sender blocks). Wait 3 us before taking it, so a
+          // ping-pong pair stays on one thread; meanwhile this M still
+          // counts as spinning, so rt_ready skips its futex wakeups.
+          if (atomic_load_explicit(&victim->status, memory_order_relaxed) == P_RUNNING) {
+            os_usleep(3);
+            if (atomic_load(&victim->runnext) != next) continue;
+          }
           if (!atomic_compare_exchange_strong(&victim->runnext, &next, NULL)) continue;
           atomic_store_explicit(&p->runq[tail % RUNQ_SIZE], next, memory_order_relaxed);
           return 1;
