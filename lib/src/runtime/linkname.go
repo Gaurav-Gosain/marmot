@@ -140,8 +140,15 @@ func os_runtime_args() []string { return append([]string{}, goargs()...) }
 //go:linkname os_runtime_beforeExit os.runtime_beforeExit
 func os_runtime_beforeExit(exitCode int) {}
 
+// os calls sigpipe when a write to standard output or error fails with
+// EPIPE: like the gc runtime, die from SIGPIPE unless the program asked for
+// it through os/signal or ignores it.
+//
 //go:linkname os_sigpipe os.sigpipe
-func os_sigpipe() {}
+func os_sigpipe() { rt_sigpipe() }
+
+//go:linkname rt_sigpipe rt_sigpipe
+func rt_sigpipe()
 
 //go:linkname os_runtime_rand os.runtime_rand
 func os_runtime_rand() uint64 { return cheaprand64() }
