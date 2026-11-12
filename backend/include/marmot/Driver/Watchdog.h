@@ -15,6 +15,10 @@ namespace marmot {
 // of 0 turns that check off.
 void startWatchdog();
 
+// --serve: the time limit counts from the start of a request; idle time
+// between requests does not count.
+void watchdogRequest(bool active);
+
 // The inputs being compiled, named in the watchdog message.
 void watchdogBegin(const std::string &input);
 void watchdogEnd(const std::string &input);

@@ -86,7 +86,14 @@ uint64_t memoryInUse() {
   _exit(3);
 }
 
+// Start of the current request in steady clock nanoseconds; 0 while idle.
+std::atomic<int64_t> requestStart{-1};
+
 } // namespace
+
+void watchdogRequest(bool active) {
+  requestStart = active ? std::chrono::steady_clock::now().time_since_epoch().count() : 0;
+}
 
 void watchdogBegin(const std::string &input) {
   std::lock_guard<std::mutex> lock(mu);
@@ -120,9 +127,13 @@ void startWatchdog() {
         if (mb > maxMB)
           die("memory", mb, maxMB, "MB", "MARMOT_MAX_MEM_MB");
       }
-      if (maxSec) {
+      int64_t rs = requestStart.load();
+      if (maxSec && rs != 0) {
+        auto from = rs < 0 ? start
+                           : std::chrono::steady_clock::time_point(
+                                 std::chrono::steady_clock::duration(rs));
         auto secs = std::chrono::duration_cast<std::chrono::seconds>(
-                        std::chrono::steady_clock::now() - start)
+                        std::chrono::steady_clock::now() - from)
                         .count();
         if ((uint64_t)secs > maxSec)
           die("time", secs, maxSec, "s", "MARMOT_MAX_SECONDS");

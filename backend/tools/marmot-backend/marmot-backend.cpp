@@ -10,6 +10,7 @@
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/ThreadPool.h"
@@ -20,6 +21,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdlib>
+#include <iostream>
 #include <thread>
 #include <chrono>
 #include <mutex>
@@ -95,6 +97,11 @@ static cl::opt<bool> pclnFrags(
 static cl::opt<bool> mergeFunctions(
     "merge-functions",
     cl::desc("MergeFunctions at -Os/-Oz (off by default: merged defer thunks break recover)"));
+static cl::opt<bool> serve(
+    "serve", cl::desc("Serve batch requests: one JSON object per line on stdin "
+                      "({\"batch\":FILE,\"threads\":N,\"cache\":DIR}), one reply line "
+                      "on stdout ({\"ok\":true} or {\"ok\":false,\"error\":TEXT,\"exit\":N}); "
+                      "the options of the command line apply to every request"));
 static cl::opt<bool> keepCallSites(
     "keep-call-sites",
     cl::desc("No tail merging of calls, so runtime.Caller sees every inlined frame (dev builds, "
@@ -207,7 +214,7 @@ static std::string optionKey(int argc, char **argv) {
     if (!t.starts_with("-")) // an input file
       continue;
     StringRef name = t.ltrim('-').split('=').first;
-    if (takesValue(name) || name == "time" || name == "prepare-only") {
+    if (takesValue(name) || name == "time" || name == "prepare-only" || name == "serve") {
       if (takesValue(name) && !t.contains('=') && i + 1 < toks.size())
         ++i;
       continue;
@@ -290,6 +297,69 @@ int main(int argc, char **argv) {
   double prepMs = std::chrono::duration<double, std::milli>(
                       std::chrono::steady_clock::now() - start).count();
 
+  // At most MARMOT_MAX_JOBS (default 4) threads, whatever -j says.
+  unsigned cap = 4;
+  if (const char *e = std::getenv("MARMOT_MAX_JOBS"))
+    if (unsigned v = std::strtoul(e, nullptr, 10))
+      cap = v;
+
+  // A long-lived backend for a build server: every request is a batch with
+  // the options of this command line; runtime bitcode and option parsing
+  // are done once.
+  if (serve) {
+    if (emitKind == marmot::Emit::MLIR || !batchFile.empty() || !inputFile.empty()) {
+      errs() << "marmot-backend: --serve takes no input, -batch or -emit=mlir\n";
+      return 1;
+    }
+    marmot::CompileOptions o = opts;
+    o.singleThreaded = true;
+    auto reply = [](bool good, StringRef err, int exit) {
+      json::Object r{{"ok", good}};
+      if (!good) {
+        r["error"] = err.str();
+        r["exit"] = exit;
+      }
+      outs() << json::Value(std::move(r)) << "\n";
+      outs().flush();
+    };
+    std::string line;
+    while (std::getline(std::cin, line)) {
+      if (StringRef(line).trim().empty())
+        continue;
+      Expected<json::Value> v = json::parse(line);
+      const json::Object *req = v ? v->getAsObject() : nullptr;
+      if (!req || !req->getString("batch")) {
+        if (!v)
+          consumeError(v.takeError());
+        reply(false, "bad request: " + line, 1);
+        continue;
+      }
+      std::string batch = req->getString("batch")->str();
+      std::string cache = req->getString("cache") ? req->getString("cache")->str() : cacheDir;
+      unsigned threads = req->getInteger("threads") ? unsigned(*req->getInteger("threads")) : cap;
+      threads = std::max(1u, std::min(threads, cap));
+      std::vector<Job> jobsOfRequest;
+      std::string err;
+      if (!readJobs(batch, jobsOfRequest, err)) {
+        reply(false, err, 1);
+        continue;
+      }
+      std::vector<marmot::WpoJob> wjobs;
+      for (const Job &j : jobsOfRequest)
+        wjobs.push_back({j.in, j.out});
+      marmot::watchdogRequest(true);
+      marmot::PhaseTimes total;
+      marmot::WpoStats st;
+      bool good = marmot::compileWholeProgram(wjobs, o, threads, wpo, cache, total, st, errs());
+      marmot::watchdogRequest(false);
+      if (opts.timePhases)
+        total.print(errs(), "sum of jobs");
+      errs().flush();
+      reply(good, good ? "" : "compile failed", good ? 0 : 1);
+    }
+    return 0;
+  }
+
   std::vector<Job> work;
   if (!batchFile.empty()) {
     if (!inputFile.empty() || !outputFile.empty()) {
@@ -330,11 +400,6 @@ int main(int argc, char **argv) {
     total.add(t);
   };
 
-  // At most MARMOT_MAX_JOBS (default 4) threads, whatever -j says.
-  unsigned cap = 4;
-  if (const char *e = std::getenv("MARMOT_MAX_JOBS"))
-    if (unsigned v = std::strtoul(e, nullptr, 10))
-      cap = v;
   unsigned n = jobs ? unsigned(jobs) : std::thread::hardware_concurrency();
   // A split module (-split-large) has more groups than jobs: no job cap then.
   n = std::max(1u, splitLarge ? std::min(n, cap) : std::min({n, cap, unsigned(work.size())}));
