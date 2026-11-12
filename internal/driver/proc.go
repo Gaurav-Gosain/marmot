@@ -51,6 +51,18 @@ func maxJobs() int {
 	return n
 }
 
+// genJobs is the parallelism for MLIR generation, which runs in this
+// process: every core, unless MARMOT_MAX_JOBS or build slots limit it.
+func genJobs() int {
+	if v, err := strconv.Atoi(os.Getenv("MARMOT_MAX_JOBS")); err == nil && v > 0 {
+		return v
+	}
+	if slotCount() > 0 {
+		return maxJobs()
+	}
+	return runtime.NumCPU()
+}
+
 // startGroup puts cmd in its own process group so the whole tree can be
 // killed on timeout or when marmot exits.
 func startGroup(cmd *exec.Cmd) {

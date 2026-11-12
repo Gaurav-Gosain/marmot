@@ -78,9 +78,10 @@ func llvmTool(name string) string {
 
 type build struct {
 	cfg        Config
-	keepLocals bool     // link without -x (the first link of a pc table build)
-	lastOutput string   // combined output of the last tool run (run)
-	modKeys    []string // per module: a key of its text, or ""
+	keepLocals bool           // link without -x (the first link of a pc table build)
+	lastOutput string         // combined output of the last tool run (run)
+	modKeys    []string       // per module: a key of its text, or ""
+	stream     *backendStream // backend compiling modules as they are written
 	work       string
 	start      time.Time
 	goos       string // target
@@ -233,10 +234,25 @@ func (b *build) run1() (string, error) {
 	}
 	mods := make([]codegen.Module, n)
 	pkgKeys := b.packageKeys(lp, cg, pkgs)
+	if b.canStream() {
+		st, err := b.startStream(n)
+		if err != nil {
+			return "", err
+		}
+		b.stream = st
+		defer func() {
+			if b.stream != nil {
+				b.stream.abort()
+			}
+		}()
+	}
+	cacheable := func(i int) bool {
+		return i < len(pkgs) && pkgKeys[i] != "" && !cfg.NoCache && cfg.Emit != "mlir"
+	}
 	gen := func(need func(i int) bool) error {
 		errs := make([]error, n)
 		var wg sync.WaitGroup
-		sem := make(chan struct{}, maxJobs())
+		sem := make(chan struct{}, genJobs())
 		for i := 0; i < n; i++ {
 			if !need(i) || mods[i].Text != "" || mods[i].Path != "" {
 				continue
@@ -250,6 +266,9 @@ func (b *build) run1() (string, error) {
 					mods[i], errs[i] = cg.GenerateMain(mainSSA)
 				} else {
 					mods[i], errs[i] = cg.Generate(pkgs[i])
+				}
+				if errs[i] == nil {
+					errs[i] = b.spill(i, &mods[i], cacheable(i), pkgKeys)
 				}
 			}()
 		}
@@ -265,9 +284,6 @@ func (b *build) run1() (string, error) {
 		}
 		return nil
 	}
-	cacheable := func(i int) bool {
-		return i < len(pkgs) && pkgKeys[i] != "" && !cfg.NoCache && cfg.Emit != "mlir"
-	}
 	// Modules without a package key (file arguments, the entry module) are
 	// always generated; they are small.
 	if err := gen(func(i int) bool { return !cacheable(i) }); err != nil {
@@ -278,6 +294,9 @@ func (b *build) run1() (string, error) {
 		if cacheable(i) {
 			if path, ok := b.cachedModule(pkgKeys[i]); ok {
 				mods[i] = codegen.Module{Name: pkgs[i].Pkg.Path(), Path: path}
+				if b.stream != nil {
+					b.stream.send(i, path, pkgKeys[i]+"-"+moduleTextVersion)
+				}
 				skipped++
 			}
 		}
@@ -317,7 +336,14 @@ func (b *build) run1() (string, error) {
 		}
 	}
 
-	objs, err := b.compile(mods, cfg.Emit)
+	var objs []string
+	if b.stream != nil {
+		st := b.stream
+		b.stream = nil
+		objs, err = st.finish(b)
+	} else {
+		objs, err = b.compile(mods, cfg.Emit)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -340,6 +366,37 @@ func (b *build) run1() (string, error) {
 	b.logf("linked %s", out)
 	b.saveStamp(stamp, out)
 	return out, nil
+}
+
+// spill writes module i to its file as soon as it is generated (the MLIR
+// cache for a cacheable module, else the work directory) and drops its
+// text, so the texts of all modules are never held at once.
+func (b *build) spill(i int, m *codegen.Module, cacheable bool, keys []string) error {
+	if b.cfg.Emit == "mlir" {
+		return nil
+	}
+	if cacheable {
+		if p := b.saveModule(keys[i], m.Text); p != "" {
+			m.Path, m.Text = p, ""
+			if b.stream != nil {
+				b.stream.send(i, p, keys[i]+"-"+moduleTextVersion)
+			}
+			return nil
+		}
+	}
+	p := filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", i))
+	text := aliasTypes(m.Text)
+	if b.cfg.Work {
+		text = "// " + m.Name + "\n" + text
+	}
+	if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+		return err
+	}
+	m.Path, m.Text = p, ""
+	if b.stream != nil {
+		b.stream.send(i, p, "")
+	}
+	return nil
 }
 
 func defaultOutput(p *packages.Package, emit string) string {
@@ -408,46 +465,10 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 		if emit == "llvm" {
 			emitKind = "llvm"
 		}
-		args := []string{"-O", b.cfg.OptLevel, "--emit=" + emitKind, "--batch=" + listFile, "-j", fmt.Sprint(maxJobs())}
-		if b.wpo() {
-			args = append(args, "-wpo")
-		}
-		if b.cfg.PGOGen {
-			out := b.cfg.Output
-			if out == "" {
-				out = "."
-			}
-			dir, _ := filepath.Abs(filepath.Dir(out))
-			args = append(args, "-pgo-gen="+filepath.Join(dir, "marmot-%m.profraw"))
-		}
-		if b.cfg.PGO != "" {
-			p, _ := filepath.Abs(b.cfg.PGO)
-			args = append(args, "-pgo="+p)
-		}
-		if !b.cfg.NoCache {
-			args = append(args, "-cache-dir", filepath.Join(b.cfg.Root, "build", "cache", "backend"))
-		}
-		if bc := b.rtLib("rtcore.bc"); fileExists(bc) {
-			args = append(args, "--rt-bitcode="+bc)
-		}
-		if b.cross() {
-			args = append(args, "--target="+b.goos+"/"+b.goarch)
-		}
-		args = append(args, b.backendBuildArgs(emit)...)
-		if b.cfg.Verbose {
-			args = append(args, "-time")
-		}
-		if err := b.run(backend, args...); err != nil {
+		if err := b.run(backend, b.backendArgs(emitKind, listFile)...); err != nil {
 			return nil, err
 		}
-		if b.cfg.Verbose {
-			// The backend's phase totals (-time).
-			for _, l := range strings.Split(b.lastOutput, "\n") {
-				if strings.HasPrefix(l, "sum of jobs") || strings.HasPrefix(l, "batch:") || strings.HasPrefix(l, "startup") {
-					b.logf("backend: %s", strings.Join(strings.Fields(l), " "))
-				}
-			}
-		}
+		b.logBackendTimes()
 		return objs, nil
 	}
 	// Fallback without the backend: mlir-translate and clang per module.
@@ -573,6 +594,57 @@ func toolTimeout() time.Duration {
 		}
 	}
 	return 10 * time.Minute
+}
+
+// backendArgs are the marmot-backend arguments for a batch of jobs read
+// from the file batch ("-": stdin).
+func (b *build) backendArgs(emitKind, batch string) []string {
+	jobs := maxJobs()
+	if batch == "-" {
+		jobs = genJobs()
+	}
+	args := []string{"-O", b.cfg.OptLevel, "--emit=" + emitKind, "--batch=" + batch, "-j", fmt.Sprint(jobs)}
+	if b.wpo() {
+		args = append(args, "-wpo")
+	}
+	if b.cfg.PGOGen {
+		out := b.cfg.Output
+		if out == "" {
+			out = "."
+		}
+		dir, _ := filepath.Abs(filepath.Dir(out))
+		args = append(args, "-pgo-gen="+filepath.Join(dir, "marmot-%m.profraw"))
+	}
+	if b.cfg.PGO != "" {
+		p, _ := filepath.Abs(b.cfg.PGO)
+		args = append(args, "-pgo="+p)
+	}
+	if !b.cfg.NoCache {
+		args = append(args, "-cache-dir", filepath.Join(b.cfg.Root, "build", "cache", "backend"))
+	}
+	if bc := b.rtLib("rtcore.bc"); fileExists(bc) {
+		args = append(args, "--rt-bitcode="+bc)
+	}
+	if b.cross() {
+		args = append(args, "--target="+b.goos+"/"+b.goarch)
+	}
+	args = append(args, b.backendBuildArgs(b.cfg.Emit)...)
+	if b.cfg.Verbose {
+		args = append(args, "-time")
+	}
+	return args
+}
+
+// logBackendTimes prints the backend's phase totals (-time).
+func (b *build) logBackendTimes() {
+	if !b.cfg.Verbose {
+		return
+	}
+	for _, l := range strings.Split(b.lastOutput, "\n") {
+		if strings.HasPrefix(l, "sum of jobs") || strings.HasPrefix(l, "batch:") || strings.HasPrefix(l, "startup") {
+			b.logf("backend: %s", strings.Join(strings.Fields(l), " "))
+		}
+	}
 }
 
 func (b *build) run(name string, args ...string) error {
