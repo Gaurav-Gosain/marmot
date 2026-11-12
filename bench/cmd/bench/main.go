@@ -99,6 +99,9 @@ func toolchains() []Toolchain {
 		{Name: "marmot-release-loops", Flags: `marmot build -release with MARMOT_BACKEND_FLAGS="-par -type-alias"`, Build: marmotMode(true),
 			Env:   []string{"MARMOT_BACKEND_FLAGS=-par -type-alias"},
 			Clean: func(string, string) string { return "" }},
+		{Name: "marmot-release-loops-all", Flags: `marmot build -release with MARMOT_BACKEND_FLAGS="-par -type-alias -loops-all-rules"`, Build: marmotMode(true),
+			Env:   []string{"MARMOT_BACKEND_FLAGS=-par -type-alias -loops-all-rules"},
+			Clean: func(string, string) string { return "" }},
 		{Name: "marmot-release-spec", Flags: "marmot build -release with MARMOT_SPEC=all", Build: marmotMode(true),
 			Env:   []string{"MARMOT_SPEC=all"},
 			Clean: func(string, string) string { return "" }},
@@ -198,6 +201,7 @@ var (
 	redo       = flag.String("redo", "", "with -resume: comma separated programs whose old rows are discarded and measured again")
 	redoMarmot = flag.Bool("redo-marmot", false, "with -resume: discard every marmot row so all marmot toolchains are measured again (go and tinygo rows are kept)")
 	prune      = flag.Bool("prune", false, "skip marmot-release-spec for nostd programs (identical to release there) and marmot-release-loops for std programs that are not class A")
+	redoTools  = flag.String("redo-toolchains", "", "with -resume: comma separated toolchains whose old rows are discarded and measured again")
 	noSnapshot = flag.Bool("no-snapshot", false, "use the live tree for marmot instead of a snapshot (do not use for long runs)")
 )
 
@@ -263,7 +267,14 @@ func main() {
 				for _, n := range strings.Split(*redo, ",") {
 					redoSet[strings.TrimSpace(n)] = true
 				}
+				redoTC := map[string]bool{}
+				for _, n := range strings.Split(*redoTools, ",") {
+					redoTC[strings.TrimSpace(n)] = true
+				}
 				for _, r := range old.Results {
+					if redoTC[r.Toolchain] {
+						continue
+					}
 					if redoSet[r.Program] || (*redoMarmot && strings.HasPrefix(r.Toolchain, "marmot")) {
 						continue // superseded: measured again at the new revision
 					}

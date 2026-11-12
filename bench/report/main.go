@@ -193,7 +193,7 @@ func generate(paths []string) {
 		}
 		return progs[i] < progs[j]
 	})
-	order := []string{"go", "go-strip", "tinygo-O2", "tinygo-Oz", "marmot-dev", "marmot-release", "marmot-release-loops", "marmot-release-spec", "marmot-O2", "marmot-Oz"}
+	order := []string{"go", "go-strip", "tinygo-O2", "tinygo-Oz", "marmot-dev", "marmot-release", "marmot-release-loops", "marmot-release-loops-all", "marmot-release-spec", "marmot-O2", "marmot-Oz"}
 	sort.SliceStable(tools, func(i, j int) bool { return rank(order, tools[i]) < rank(order, tools[j]) })
 
 	ms := f64
@@ -856,7 +856,7 @@ func writeTargets(f File, idx map[string]Result, progs []string) {
 	os.WriteFile(filepath.Join(root, ".work", "failed"+sfx+".tsv"), []byte(fails.String()), 0o644)
 	// Toolchain comparison and best and worst programs.
 	w("\n## Toolchains\n\n| Toolchain | Geomean wall speedup | Geomean CPU speedup | Programs |\n|---|---|---|---|\n")
-	for _, t := range []string{"marmot-dev", "marmot-release", "marmot-release-loops", "marmot-release-spec", "marmot-O2", "tinygo-O2"} {
+	for _, t := range []string{"marmot-dev", "marmot-release", "marmot-release-loops", "marmot-release-loops-all", "marmot-release-spec", "marmot-O2", "tinygo-O2"} {
 		if !seen[t] {
 			continue
 		}
