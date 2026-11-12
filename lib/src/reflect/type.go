@@ -686,6 +686,10 @@ func ptrTo(t *rtabi.Type) *rtabi.Type {
 	if pi, ok := ptrMap.Load(t); ok {
 		return &pi.(*rtabi.PtrType).Type
 	}
+	if c := canonicalPtrTo(t); c != nil {
+		pi, _ := ptrMap.LoadOrStore(t, (*rtabi.PtrType)(unsafe.Pointer(c)))
+		return &pi.(*rtabi.PtrType).Type
+	}
 	pp := new(rtabi.PtrType)
 	pp.Size_ = unsafe.Sizeof(uintptr(0))
 	pp.PtrBytes = pp.Size_

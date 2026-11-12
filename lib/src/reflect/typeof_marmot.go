@@ -2,7 +2,7 @@
 // StructOf.
 //
 // A result is the compiler's descriptor of the type when the binary has
-// one (found through the runtime's type table, see canonicalType), so
+// one (found in the compiler's type links, see canonicalType), so
 // that values made with it match static type assertions. Otherwise reflect
 // builds a descriptor and caches it, so each call with the same arguments
 // returns the same Type. A built descriptor is identical to the static
@@ -44,17 +44,62 @@ func madeType(key any, build func() *rtabi.Type) *rtabi.Type {
 // canonicalType returns the compiler's descriptor of the type that t
 // describes, or nil.
 func canonicalType(t *rtabi.Type) *rtabi.Type {
-	for _, c := range typelinks() {
-		if c.Kind_ == t.Kind_ && c.Str == t.Str && !c.HasName() && haveIdenticalUnderlyingType(c, t, true) {
+	for _, c := range typelinksByString()[t.Str] {
+		if c.Kind_ == t.Kind_ && !c.HasName() && haveIdenticalUnderlyingType(c, t, true) {
 			return c
 		}
 	}
 	return nil
 }
 
-// typelinks returns the descriptors of the unnamed composite types the
-// compiler emitted. It is empty until the toolchain records them.
-func typelinks() []*rtabi.Type { return nil }
+// canonicalPtrTo returns the compiler's descriptor of *t, or nil.
+func canonicalPtrTo(t *rtabi.Type) *rtabi.Type {
+	for _, c := range typelinksByString()["*"+t.Str] {
+		if c.Kind_ == rtabi.Pointer && (*rtabi.PtrType)(unsafe.Pointer(c)).Elem == t {
+			return c
+		}
+	}
+	return nil
+}
+
+//go:linkname rt_typelinks rt_typelinks
+//go:noescape
+func rt_typelinks(n *int) unsafe.Pointer
+
+var (
+	typelinksOnce  sync.Once
+	typelinksIndex map[string][]*rtabi.Type
+)
+
+// typelinksByString indexes the descriptors of unnamed composite types the
+// compiler emitted (section marmot_tlinks, found by rt_typelinks) by
+// their type string.
+func typelinksByString() map[string][]*rtabi.Type {
+	typelinksOnce.Do(func() {
+		var n int
+		p := rt_typelinks(&n)
+		m := make(map[string][]*rtabi.Type)
+		if p != nil {
+			for _, t := range unsafe.Slice((**rtabi.Type)(p), n) {
+				if t == nil {
+					continue
+				}
+				dup := false
+				for _, c := range m[t.Str] {
+					if c == t {
+						dup = true
+						break
+					}
+				}
+				if !dup {
+					m[t.Str] = append(m[t.Str], t)
+				}
+			}
+		}
+		typelinksIndex = m
+	})
+	return typelinksIndex
+}
 
 // gcBits is a pointer bitmap under construction, one bit per word.
 type gcBits []byte
