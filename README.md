@@ -10,6 +10,10 @@ marmot run main.go
 marmot test ./...
 ```
 
+It also has the tools people install next to `go`: `marmot fix`, `fmt`, `check`, `watch`, `repl`,
+`bench`, `prof`, `size`, `generate`, `doctor`, and `mcp` for coding agents. Errors come with the
+source, the exact span and a suggested fix, or as JSON. See [Usage](docs/usage.md).
+
 Status: experimental. marmot compiles real Go programs, including itself, but it is new and not
 ready for production use.
 

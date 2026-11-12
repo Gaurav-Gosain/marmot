@@ -9,8 +9,9 @@ marmot follows the `go` command where it can. Run it inside a Go module.
 | `marmot build [packages]` | Compile packages and their dependencies into an executable. |
 | `marmot run file.go` | Compile and run a program. |
 | `marmot test [packages]` | Compile and run package tests, like `go test`. |
-| `marmot fix [packages]` | Apply the machine applicable fixes of build errors. `--code M0004,M0005` limits it to those codes; `--all` adds fixes that may be incorrect, such as typo corrections. |
+| `marmot fix [packages]` | Apply the machine applicable fixes of build errors. `-code M0004,M0005` limits it to those codes; `-all` adds fixes that may be incorrect, such as typo corrections. |
 | `marmot explain CODE` | Describe an error code. With no code, list all of them. |
+| `marmot check [packages]` | Run vet, lint, format and the other code checks in one pass (see [Checks](#checks)). |
 | `marmot watch [build\|run\|test]` | Build, run or test again after every change to a `.go` file, `go.mod` or `go.sum`. |
 | `marmot repl` | Evaluate Go declarations, statements and expressions interactively. |
 | `marmot mcp` | Serve build, run, test, fix and explain to coding agents over the Model Context Protocol. |
@@ -65,6 +66,50 @@ Run the tests of the current module:
 
 ```sh
 marmot test ./...
+```
+
+Apply the safe fixes of the build errors, then see what an error code means:
+
+```sh
+marmot fix ./cmd/app
+marmot explain M0014
+```
+
+Format the module and fix its imports:
+
+```sh
+marmot fmt ./...
+```
+
+Rebuild and restart a server on every save:
+
+```sh
+marmot watch run ./cmd/server -port 8080
+```
+
+Try an expression:
+
+```sh
+echo 'strings.Fields("a b c")' | marmot repl
+```
+
+Compare benchmarks with `go test`, then look at a CPU profile:
+
+```sh
+marmot bench -vs go -cpuprofile cpu.out ./pkg
+marmot prof -tree cpu.out
+```
+
+See what a binary is made of, and why a function is in it:
+
+```sh
+marmot size -why fmt.Sprintf ./app
+```
+
+Check the installation:
+
+```sh
+marmot doctor
 ```
 
 ## The build cache
@@ -200,6 +245,20 @@ Each line is one object with `"schema": 1` and a `kind`. A command writes zero o
 | `explain` | The command that describes the code. |
 
 New fields may be added within schema 1; parsers must ignore fields they do not know.
+
+Other commands use the same envelope (`schema`, `kind`) with their own kinds:
+
+| Command | Kinds |
+| --- | --- |
+| `marmot test -json` | `test` per test, `diagnostic` per failure, `result` |
+| `marmot fix -json` | `fix` per applied fix, then `diagnostic` and `result` |
+| `marmot fmt -json` | `format` per changed file (`file`, `written`), `result` |
+| `marmot generate -json` | `generate` per directive (`command`, `cached`, `outputs`), `result` |
+| `marmot watch -json` | `watch` events (`build`, `done`) around each round's own output |
+| `marmot size -json` | one `size` object: `sections`, `packages`, `functions`; `-why` gives `why` with `chain` |
+| `marmot bench -json` | `bench` per benchmark and unit, with the summaries, `delta` and `p` |
+| `marmot prof -json` | one `profile` object: `functions`, `lines`, and `tree` with `-tree` |
+| `marmot doctor -json` | `doctor` per check (`check`, `status`, `detail`, `fix`), `result` |
 
 `result` fields: `command`, `ok`, `errors`, `warnings`, `output` (the file written, on success),
 `durationMs`, `exitCode`.
