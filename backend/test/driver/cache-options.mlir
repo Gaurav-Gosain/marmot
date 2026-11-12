@@ -9,6 +9,9 @@
 // RUN: %backend -O2 -batch %t.jobs -cache-dir %t.cache -enable-tail-merge=false -time 2>&1 | %FileCheck %s --check-prefix=HIT
 // RUN: env MARMOT_BACKEND_FLAGS="-loops-force-par" %backend -O2 -batch %t.jobs -cache-dir %t.cache -time 2>&1 | %FileCheck %s --check-prefix=MISS
 // RUN: env MARMOT_BACKEND_FLAGS="-loops-force-par" %backend -O2 -batch %t.jobs -cache-dir %t.cache -time 2>&1 | %FileCheck %s --check-prefix=HIT
+// RUN: %backend -O2 -batch %t.jobs -cache-dir %t.cache -strings-nocopy -time 2>&1 | %FileCheck %s --check-prefix=MISS
+// RUN: %backend -O2 -batch %t.jobs -cache-dir %t.cache -strings-nocopy -time 2>&1 | %FileCheck %s --check-prefix=HIT
+// RUN: %backend -O2 -batch %t.jobs -cache-dir %t.cache -loops-mv=3 -time 2>&1 | %FileCheck %s --check-prefix=MISS
 // MISS: compiled 1 of 1 objects
 // HIT: compiled 0 of 1 objects
 module {

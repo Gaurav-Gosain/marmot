@@ -16,6 +16,7 @@
 #include "marmot/Driver/WholeProgram.h"
 #include "marmot/Dialect/Go/Passes.h"
 #include "marmot/Driver/Pcln.h"
+#include "marmot/Loops/Loops.h"
 #include "marmot/Driver/RuntimeBitcode.h"
 #include "marmot/Driver/Watchdog.h"
 
@@ -59,7 +60,7 @@ namespace marmot {
 namespace {
 
 // Bump when the meaning of a cache entry changes.
-constexpr const char *kCacheVersion = "marmot-backend-cache-23";
+constexpr const char *kCacheVersion = "marmot-backend-cache-24";
 
 // Largest function, in LLVM instructions, imported into other modules.
 constexpr unsigned kImportLimit = 40;
@@ -482,7 +483,7 @@ std::string fingerprint(const CompileOptions &opts) {
      << opts.loops.versioning << opts.loops.typeAlias << opts.loops.gpu << "|";
   if (opts.rtBitcode)
     os << opts.rtBitcode->fileHash();
-  os << "|opts:" << opts.optionKey;
+  os << "|opts:" << opts.optionKey << "|loopopts:" << loops::cacheKey();
   os << "|g" << opts.debugLevel << "|ktc" << opts.keepTailCalls << "|gpu=" << opts.gpuArch << "|pgo-gen=" << opts.pgoGen << "|pgo=";
   if (!opts.pgoUse.empty()) {
     if (auto buf = MemoryBuffer::getFile(opts.pgoUse))
