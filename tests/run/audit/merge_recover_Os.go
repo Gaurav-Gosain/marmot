@@ -1,10 +1,6 @@
-// Audit (loops, 2026-11-12): at -Os and -Oz, LLVM MergeFunctions turns the
-// defer thunk of b (defer handler(2)) into a call to the identical thunk
-// of a. keepRecoverFramesUnmerged only guards functions that call
-// runtime.gorecover, not the thunks gorecover counts as "exactly one
-// compiler generated thunk", so the extra frame makes recover in handler
-// return nil and the panic in b is not recovered. -O2 is right.
-// Build with -O s or -O z to see it.
+// At -Os and -Oz, identical defer thunks (defer handler(1) in a, defer
+// handler(2) in b) must not be merged by MergeFunctions: the extra frame
+// would make recover in handler return nil. Build with -O s or -O z.
 package main
 
 import "fmt"

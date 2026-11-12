@@ -1,8 +1,7 @@
-// Audit (loops, 2026-11-12): three packages with go:linkname push (b
-// implements c.Helper), pull of a function (a.hiddenFunc = c.hiddenFunc) and
-// pull of a variable (a.hidden = c.hidden), plus init order by dependency
-// across packages. gc prints "2000 hiddenFunc"; marmot (dev and -release)
-// prints "0 hiddenFunc": the pulled variable is not bound to c.hidden.
+// Three packages: go:linkname push (b implements c.Helper), pull of a
+// function (a.hiddenFunc = c.hiddenFunc) and of a variable (a.hidden =
+// c.hidden), and init order by dependency across packages. gc prints
+// "2000 hiddenFunc".
 package main
 
 import (

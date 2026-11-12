@@ -1,7 +1,6 @@
 // Parallelize.cpp: loop-parallelize.
 //
-// Finds counted loops whose iterations are independent (Rule P in
-// docs/loops.md), outlines the loop into a chunk function
+// Finds counted loops whose iterations are independent (rule P), outlines the loop into a chunk function
 //
 //     void F$parN(ctx *, int64 lo, int64 hi)   // runs iterations [lo, hi)
 //
@@ -157,7 +156,7 @@ struct Plan {
   std::vector<Family> families;
   // Sources that rt_ranges_disjoint must find pairwise disjoint.
   std::vector<RangeSource> disjoint;
-  // GPU offer (docs/gpu.md): every access is in one of these whole-loop
+  // GPU offer: every access is in one of these whole-loop
   // byte ranges [s, e); flags 1 read, 2 written. Empty when not offered.
   struct GpuRange {
     const SCEV *s, *e;
@@ -1500,8 +1499,8 @@ Function *Parallelizer::outline(Plan &P, StructType *ctxTy) {
       // k(k-1)/2 is computed from the 64-bit counter k (0 <= k < 2^63) by
       // halving the even one of k and k-1, then multiplying: exact modulo
       // 2^64, so its truncation is exact modulo 2^w. Truncating k first is
-      // wrong for w < 64: k(k-1)/2 mod 2^w depends on k mod 2^(w+1) (found
-      // by verify with an int16 recurrence over 2^20 elements).
+      // wrong for w < 64: k(k-1)/2 mod 2^w depends on k mod 2^(w+1) (an int16
+      // recurrence over 2^20 elements shows it).
       Type *ty = iv.phi->getType();
       Value *kk = hb.CreateSExtOrTrunc(k, ty);
       v = mapped(iv.coef[0]);
@@ -1803,7 +1802,7 @@ void Parallelizer::transform(Plan &P) {
       "rt_parallel_for", FunctionType::get(Type::getVoidTy(C), {i64, i64, ptr, ptr}, false));
   BasicBlock *last = par;
   if (gpu) {
-    // Offer the loop to the GPU (docs/gpu.md); the backend turns the call
+    // Offer the loop to the GPU; the backend turns the call
     // into rt_gpu_for, or into false without a GPU target.
     body->addFnAttr("marmot-gpu-body");
     const DataLayout &DL = F.getDataLayout();

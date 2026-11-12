@@ -1,8 +1,6 @@
-// Audit (loops, 2026-11-12): default-on no-copy string(b) (ops.go tempString,
-// gc's slicebytetostringtmp) is chosen when every use is a comparison or a
-// map lookup key, but the uses may come after a write to b. gc uses the
-// temporary view only when the conversion is the operand itself. marmot
-// (dev and -release): false and 2 instead of true and 1.
+// A no-copy string(b) used only in comparisons or as a map key must not
+// see writes to b made after the conversion (gc uses the temporary view
+// only when the conversion is the operand itself).
 package main
 
 import "fmt"

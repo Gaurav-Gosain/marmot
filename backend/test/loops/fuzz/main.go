@@ -1,4 +1,4 @@
-// Command fuzz is a differential fuzzer for the loop optimizer (docs/loops.md).
+// Command fuzz is a differential fuzzer for the loop optimizer.
 // It generates Go programs made of loop shapes the passes target (reductions,
 // strided and offset stores, overlapping sub-slices, bounds checks that may
 // fail, scans, histograms, nested loops, escape loops), builds each with stock

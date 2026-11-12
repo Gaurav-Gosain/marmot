@@ -1,8 +1,6 @@
-// Audit (loops, 2026-11-12): go-strings marks string(b) no-copy when its
-// only use is an inner concat with nothing writing memory in between (S3),
-// then flattens that single-use inner concat into the outer one (S1). The
-// bytes are then read at the outer concat, after b was modified. -release:
-// "zbcx!" instead of "abcx!". -no-strings fixes it.
+// go-strings must not read a no-copy string(b) after b changes: a
+// single-use inner concat flattened into the outer one read b after
+// b[0] was written (-release printed "zbcx!" for "abcx!").
 package main
 
 import "fmt"

@@ -1,7 +1,5 @@
-// Audit (loops, 2026-11-12): defer r.M() through an interface, where M
-// calls recover. Recovers for *T, then a call with a value receiver type
-// V at the same site is not recovered in dev mode (-release is right; each
-// type alone is right). Not the backend open-defers pass.
+// defer r.M() through an interface, where M calls recover: recovers for
+// *T, and then also for a value receiver type V at the same call site.
 package main
 
 import "fmt"

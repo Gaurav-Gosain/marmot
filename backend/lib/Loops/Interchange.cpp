@@ -1,4 +1,4 @@
-// Interchange.cpp: reduction interchange (Rule I in docs/loops.md).
+// Interchange.cpp: reduction interchange (rule I).
 //
 // Rewrites
 //

@@ -1,4 +1,4 @@
-// Tile.cpp: loop tiling of chunk loops (Rule T2 in docs/loops.md).
+// Tile.cpp: loop tiling of chunk loops (rule T2).
 //
 // In a chunk function (Rule P), the chunk loop over i runs [lo, hi) and holds
 // one inner loop over j:

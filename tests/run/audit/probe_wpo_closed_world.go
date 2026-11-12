@@ -1,5 +1,4 @@
-// Audit probe (loops, 2026-11-12): held on HEAD 86cadb6 in dev, -release and
-// GC stress. Kept as a guard; see docs/audit-backend.md.
+// Edge cases for backend optimizations; the expected output is from gc.
 package main
 
 import (
@@ -9,7 +8,9 @@ import (
 	"strings"
 )
 
-type I interface{ Rare(x uint8, y [5]int8) [2]int32 }
+type I interface {
+	Rare(x uint8, y [5]int8) [2]int32
+}
 
 type impl struct{ k int32 }
 

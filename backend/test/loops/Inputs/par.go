@@ -380,7 +380,7 @@ func histoPeek(b []byte) (int, [16]int) {
 	return peek, h
 }
 
-// Narrow polynomial induction (verify's polyinduct16): a 16-bit second order
+// Narrow polynomial induction (as verify/testdata/progs/polyinduct16.go): a 16-bit second order
 // recurrence over 2^20 iterations; the closed form must be exact past 2^16.
 //go:noinline
 func poly16(buf []int16) {

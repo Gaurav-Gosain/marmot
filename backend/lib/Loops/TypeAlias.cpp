@@ -1,5 +1,4 @@
-// TypeAlias.cpp: go-type-alias, type based alias information (Rule T in
-// docs/loops.md).
+// TypeAlias.cpp: go-type-alias, type based alias information (rule T).
 //
 // In Go without unsafe, a memory location is only accessed with its own type,
 // a type with the same underlying type, or (for structs and arrays) a

@@ -1,12 +1,11 @@
-// Rules.cpp: which loop rules -par may use (docs/loops.md, "Rules and their
-// switches"; verify's gate table in docs/verify.md).
+// Rules.cpp: which loop rules -par may use.
 //
 // -par covers the rules that are proved or checked by certificate: Rule P
 // (same-base windows, strided form, noalias pairs, integer reductions,
 // polynomial inductions, the structural clauses) and Rule V for affine and
-// nil checks. Every other rule has its own switch, off until verify signs it
-// off; -loops-all-rules turns them all on (tests, fuzzing, benchmarks of the
-// full optimizer).
+// nil checks. Every other rule has its own switch, off until it is proved
+// or checked; -loops-all-rules turns them all on (tests, fuzzing, benchmarks
+// of the full optimizer).
 
 #include "Internal.h"
 

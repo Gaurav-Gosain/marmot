@@ -1,5 +1,5 @@
-// adversarial.go: loops that look parallel but are not (clauses of Rule P in
-// docs/loops.md). Each must run exactly like Go: same output, same panic.
+// adversarial.go: loops that look parallel but are not (the clauses of
+// rule P). Each must run exactly like Go: same output, same panic.
 package main
 
 type shape interface{ area() int64 }

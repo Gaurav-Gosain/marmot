@@ -1,4 +1,4 @@
-// Versioning.cpp: bounds check versioning (Rule V in docs/loops.md).
+// Versioning.cpp: bounds check versioning (rule V).
 //
 // A loop L whose only exits besides the latch are checks that never fire
 // when a precondition computed before L holds (bounds checks `i < len`, the

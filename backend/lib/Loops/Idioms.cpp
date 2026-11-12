@@ -1,5 +1,4 @@
-// Idioms.cpp: loop idioms replaced by runtime kernels (Rule D in
-// docs/loops.md).
+// Idioms.cpp: loop idioms replaced by runtime kernels (rule D).
 //
 // Byte count: an innermost counted loop whose only work is
 //

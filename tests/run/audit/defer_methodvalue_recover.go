@@ -1,7 +1,5 @@
-// Audit (loops, 2026-11-12): a deferred method value f := t.M; defer f()
-// whose method calls recover. gc: M is the deferred function, so recover
-// stops the panic. marmot (dev and -release): the panic is not recovered.
-// Not the backend open-defers pass (-no-open-defers changes nothing).
+// A deferred method value (f := t.M; defer f()) whose method calls
+// recover: M is the deferred function, so recover stops the panic.
 package main
 
 import "fmt"

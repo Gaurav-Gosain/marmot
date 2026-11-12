@@ -1,7 +1,6 @@
-// Audit probe (loops, 2026-11-12): adversarial program for the opt-in loop
-// transforms; matched go with -par -type-alias and -loops-force-par in dev,
-// -release and GC stress. Products are rounded with float64() so gc on
-// arm64 (which fuses a*b+c) and amd64 agree. See docs/audit-backend.md.
+// Edge cases for the loop optimizer (-par); the expected output is from gc.
+// Products are rounded with float64() so gc on arm64 (which fuses a*b+c)
+// and amd64 print the same.
 package main
 
 import "fmt"

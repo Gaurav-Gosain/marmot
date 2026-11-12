@@ -1,7 +1,6 @@
-// Audit (loops, 2026-11-12): defer recover() must return nil and let the
-// panic reach the caller (gc: "main recovered: b"). marmot faults (dev) or
-// hangs (-release, and dev under MARMOT_GCSTRESS=1), with or without
-// -no-open-defers.
+// defer recover() must return nil and let the panic reach the caller
+// (gc: "main recovered: b"). It faulted in dev and hung in -release and
+// under MARMOT_GCSTRESS=1, also with -no-open-defers.
 package main
 
 import "fmt"

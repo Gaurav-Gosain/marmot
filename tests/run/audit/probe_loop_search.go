@@ -1,7 +1,6 @@
-// Audit probe (loops, 2026-11-12): bench quicksort hung with -par (Rule V
-// treated the search loop `for a[i] < p` as a bounds check with a loaded
-// bound and scanned a[i:] before every entry: quadratic). Rule V now only
-// versions exits that panic. With the bug this runs for minutes.
+// Quicksort with -par: the search loop `for a[i] < p` is the loop's own
+// condition, not a bounds check; versioning it scanned a[i:] before every
+// entry and made the sort quadratic (minutes instead of a second).
 // quicksort on an int slice filled by an LCG.
 package main
 

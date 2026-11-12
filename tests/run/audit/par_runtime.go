@@ -1,9 +1,7 @@
-// Audit (loops, 2026-11-12): behavior of the parallel loop runtime under -par
-// (lead conditions for the default flip). runtime.NumGoroutine right after a
-// parallel loop must not count its helpers (gc prints 1; marmot with -par
-// at GOMAXPROCS 8 printed 4: helpers still exiting); GOMAXPROCS=1 gives the
-// serial result; a panic in a loop body is the first failing iteration in
-// order with the prefix written. Only differs under the loops configs.
+// The parallel loop runtime under -par: runtime.NumGoroutine right after a
+// parallel loop does not count its helpers (gc prints 1); GOMAXPROCS=1
+// gives the serial result; a panic in a loop body is the first failing
+// iteration in order, with the prefix written.
 package main
 
 import (

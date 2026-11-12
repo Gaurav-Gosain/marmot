@@ -1,6 +1,4 @@
-// Audit probe (loops, 2026-11-12): adversarial program for the opt-in loop
-// transforms; matched go with -par -type-alias and -loops-force-par in dev,
-// -release and GC stress. See docs/audit-backend.md.
+// Edge cases for the loop optimizer (-par); the expected output is from gc.
 package main
 
 import (

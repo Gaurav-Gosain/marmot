@@ -1,4 +1,4 @@
-// Multiversion.cpp: x86-64 versions of chunk functions (docs/loops.md, Rule X).
+// Multiversion.cpp: x86-64 versions of chunk functions (rule X).
 //
 // A portable x86-64 binary targets the baseline (or v2) instruction set. For
 // every chunk function F$par that rt_parallel_for runs, this step adds copies

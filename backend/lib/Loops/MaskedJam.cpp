@@ -1,5 +1,5 @@
 // MaskedJam.cpp: masked jam, outer loop vectorization of loops whose inner
-// loop has a data dependent trip count (Rule M in docs/loops.md).
+// loop has a data dependent trip count (rule M).
 //
 // For a loop X whose body is   Fore; W (inner loop, data dependent exits); Aft
 // the main part of X runs U iterations at once:
