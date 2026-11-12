@@ -106,10 +106,27 @@ RT_API int32_t rt_signal_enable(int32_t sig) {
   return 0;
 }
 
+// SIGPIPE: a handler that does nothing, as gc: writes get EPIPE (rt_write
+// and rt_sigpipe turn EPIPE on fd 1 and 2 into a real SIGPIPE), and unlike
+// SIG_IGN a handler is reset to the default by exec, so child processes
+// still die from SIGPIPE. Ignored at startup (nohup): stays ignored.
+static void sigpipe_noop(int sig, siginfo_t *info, void *ctx) {
+  (void)sig;
+  (void)info;
+  (void)ctx;
+}
+
+static void sigpipe_default(void) {
+  if (sig_ignored & (1ull << SIGPIPE))
+    signal(SIGPIPE, SIG_IGN);
+  else
+    install(SIGPIPE, sigpipe_noop, SA_ONSTACK);
+}
+
 static void sig_default(int sig) {
   if (sig == SIGURG) return;
   if (sig == SIGPIPE) {
-    signal(SIGPIPE, SIG_IGN);  // rt_write turns EPIPE on fd 1 and 2 into a real SIGPIPE
+    sigpipe_default();
     return;
   }
   if (sig == SIGSEGV || sig == SIGBUS) return;
@@ -287,7 +304,7 @@ void signal_init(void) {
   install(SIGURG, sigurg, 0);
   install(SIGSEGV, sigfault, SA_ONSTACK);
   install(SIGBUS, sigfault, SA_ONSTACK);
-  signal(SIGPIPE, SIG_IGN);
+  sigpipe_default();
 }
 
 void signal_init_thread(rt_m *m) {
