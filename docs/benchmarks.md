@@ -12,7 +12,8 @@ Apple M3 Pro, 43 programs.
 
 | Build | Average speed against Go |
 | --- | --- |
-| `marmot build` (dev) | 1.4x faster |
+| `marmot build` (dev, fast code generator) | not measured yet |
+| `marmot build` (dev, `MARMOT_TIER0=0`) | 1.4x faster |
 | `marmot build -release` | 1.6x faster |
 
 "Average" is the geometric mean. 33 of the 43 programs are faster than Go in release mode and
@@ -79,7 +80,7 @@ Apple M3 Pro with 11 cores. The first build starts with empty caches on both sid
 one line to a package: "leaf" is the main package, "deep" is a package that most of the compiler
 uses.
 
-| Case | marmot | marmot, fast code generator | go |
+| Case | marmot, `MARMOT_TIER0=0` | marmot (default) | go |
 | --- | --- | --- | --- |
 | First build, empty caches | 11.6 s | 5.2 s | 3.9 s |
 | Rebuild, nothing changed | 0.13 s | 0.13 s | 0.12 s |

@@ -21,7 +21,7 @@ Details and method in [docs/benchmarks.md](docs/benchmarks.md).
 | Binaries | marmot | go |
 | --- | --- | --- |
 | hello world size | 148 KB | 1.68 MB |
-| run time, average over 43 programs | 1.6x faster | 1.0x |
+| run time, average over 43 programs (`-release`) | 1.6x faster | 1.0x |
 
 | Build time, the compiler itself (182 packages) | marmot | go |
 | --- | --- | --- |
