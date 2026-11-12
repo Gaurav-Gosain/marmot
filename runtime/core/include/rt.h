@@ -187,6 +187,15 @@ intptr_t rt_numgoroutine(void);
 void rt_gstates(int64_t out[3]);
 // 1 when MARMOT_OUTPUT=json: panics and fatal errors are reported as JSON.
 int32_t rt_output_json(void);
+// CPU profile sampling (prof.c): SIGPROF at hz samples per second of CPU
+// time records the interrupted pc and the frame pointer chain. Records are
+// [len, nanotime, count, pc...]; an overflow record [4, 0, 0, lost] reports
+// dropped samples. rt_prof_read copies whole records into buf (n words),
+// returns the words copied, 0 when none are ready, -1 after rt_prof_stop
+// once everything has been read. Returns of rt_prof_start: 0 or -errno.
+int32_t rt_prof_start(int32_t hz);
+void rt_prof_stop(void);
+intptr_t rt_prof_read(uint64_t *buf, intptr_t n);
 // Get and set the number of scheduler threads. n < 1 only queries.
 int32_t rt_gomaxprocs(int32_t n);
 int32_t rt_numcpu(void);
