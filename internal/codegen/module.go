@@ -427,7 +427,9 @@ func (m *moduleGen) global(g *ssa.Global) {
 		local := strings.TrimSuffix(name, "_trampoline_addr")
 		if c, ok := m.p.dynamic[g.Pkg.Pkg.Path()+"."+local]; ok && t == mlir.I64 {
 			m.declareRaw(c, nil, "", "")
-			fmt.Fprintf(&m.defs, "  llvm.mlir.global external %s() {addr_space = 0 : i32} : i64 {\n    %%0 = llvm.mlir.addressof %s : !llvm.ptr\n    %%1 = llvm.ptrtoint %%0 : !llvm.ptr to i64\n    llvm.return %%1 : i64\n  }\n",
+			// A pointer-typed global (same bits as the uintptr) keeps the
+			// initializer a plain address, which tier0 also emits.
+			fmt.Fprintf(&m.defs, "  llvm.mlir.global external %s() {addr_space = 0 : i32, alignment = 8 : i64} : !llvm.ptr {\n    %%0 = llvm.mlir.addressof %s : !llvm.ptr\n    llvm.return %%0 : !llvm.ptr\n  }\n",
 				mlir.Symbol(sym), mlir.Symbol(c))
 			return
 		}
