@@ -84,10 +84,8 @@ func TestApplyFixes(t *testing.T) {
 	path := filepath.Join(dir, "main.go")
 	os.WriteFile(path, src, 0o644)
 	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module m\n"), 0o644)
-	ds := Dedup(FromText(string(text), dir))
-	s := NewSources()
-	s.Enrich(ds, Options{})
-	applied, err := ApplyFixes(ds, map[string]bool{CodeUnusedImport: true, CodeUndefined: true})
+	ds := Process(string(text), NewSources(), Options{Dir: dir})
+	applied, err := ApplyFixes(ds, map[string]bool{CodeUnusedImport: true, CodeUndefined: true}, true)
 	if err != nil {
 		t.Fatal(err)
 	}

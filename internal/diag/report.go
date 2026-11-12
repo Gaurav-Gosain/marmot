@@ -27,17 +27,16 @@ type Reporter struct {
 // and sorted. Internal errors get a report bundle.
 func (r *Reporter) Diagnose(err error) []Diagnostic {
 	text := err.Error()
-	ds := FromText(text, r.Dir)
-	ds = Dedup(ds)
-	Sort(ds)
-	src := NewSources()
-	src.Enrich(ds, Options{Context: r.Mode == ModeJSON})
+	ds := Dedup(FromText(text, r.Dir))
+	// Internal errors first: their message changes before rendering.
 	for i := range ds {
 		if ds[i].Code == CodeInternal {
 			r.internal(&ds[i], text)
 		}
 	}
-	return ds
+	src := NewSources()
+	json := r.Mode == ModeJSON
+	return Finish(ds, src, Options{Context: json, Rendered: json, Dir: r.Dir})
 }
 
 // Fail reports a failed build and returns the exit code (1).

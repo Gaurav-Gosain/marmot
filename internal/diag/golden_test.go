@@ -29,11 +29,9 @@ func TestGolden(t *testing.T) {
 				t.Fatal(err)
 			}
 			render := func(style Style, mode Mode) string {
-				ds := Dedup(FromText(string(text), dir))
-				Sort(ds)
 				src := NewSources()
 				src.GOROOT = goroot
-				src.Enrich(ds, Options{Context: mode == ModeJSON})
+				ds := Process(string(text), src, Options{Context: mode == ModeJSON, Rendered: mode == ModeJSON, Dir: dir})
 				var b bytes.Buffer
 				if mode == ModeJSON {
 					WriteJSON(&b, ds)

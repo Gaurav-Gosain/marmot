@@ -1,0 +1,2 @@
+main.go:20:14: string does not satisfy Number (string missing in ~int | ~int64 | ~float64)
+main.go:21:14: Celsius does not satisfy Number (Celsius missing in ~int | ~int64 | ~float64)

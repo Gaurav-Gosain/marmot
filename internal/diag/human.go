@@ -99,18 +99,18 @@ func (h *Human) Render(ds []Diagnostic) {
 	if errs == 0 {
 		color = st.Warning
 	}
-	fmt.Fprintf(h.W, "%s%s%s\n", color, sum, st.Reset)
+	fmt.Fprintf(h.W, "%s%s%s\n", color, "error: build failed with "+sum, st.Reset)
 	fixable := 0
 	for _, d := range ds {
-		if len(d.Fixes) > 0 {
+		if len(d.Fixes) > 0 && d.Fixes[0].Applicability == MachineApplicable {
 			fixable++
 		}
 	}
 	if fixable > 0 {
-		fmt.Fprintf(h.W, "%s%s can be fixed automatically: marmot fix%s\n", st.Dim, plural(fixable, "error"), st.Reset)
+		fmt.Fprintf(h.W, "%s%s can be fixed automatically: run `marmot fix`%s\n", st.Dim, plural(fixable, "error"), st.Reset)
 	}
 	if len(codes) > 0 {
-		fmt.Fprintf(h.W, "%sfor more about an error: marmot explain %s%s\n", st.Dim, codes[0], st.Reset)
+		fmt.Fprintf(h.W, "%sfor more about an error, run `marmot explain %s`%s\n", st.Dim, codes[0], st.Reset)
 	}
 }
 
@@ -147,40 +147,45 @@ func (h *Human) sevColor(s Severity) string {
 
 func (h *Human) one(d *Diagnostic) {
 	st := h.Style
-	sev := string(d.Severity)
-	// First line: file:line:col: message, so editors and problem matchers
-	// keep working. The code follows in brackets.
-	loc := ""
-	if d.Span.Valid() {
-		loc = fmt.Sprintf("%s:%d:%d: ", RelPath(h.Dir, d.Span.File), d.Span.Line, max(d.Span.Col, 1))
-	}
+	pad := strings.Repeat(" ", h.gutterWidth(d))
+	gut := func() { fmt.Fprintf(h.W, "%s %s|%s\n", pad, st.Gutter, st.Reset) }
+	// Header: severity[CODE]: message, then --> file:line:col (rustc anatomy;
+	// plain mode keeps file:line:col: message for tools).
 	code := ""
 	if d.Code != "" && d.Code != CodeOther {
-		code = " " + st.Dim + "[" + d.Code + "]" + st.Reset
+		code = "[" + d.Code + "]"
 	}
-	fmt.Fprintf(h.W, "%s%s%s%s%s:%s %s%s%s%s\n", st.Bold, loc, st.Reset, h.sevColor(d.Severity), sev, st.Reset, st.Bold, d.Message, st.Reset, code)
+	fmt.Fprintf(h.W, "%s%s%s%s: %s%s%s\n", h.sevColor(d.Severity), d.Severity, code, st.Reset, st.Bold, d.Message, st.Reset)
 	f := (*srcFile)(nil)
 	if d.Span.Valid() {
+		fmt.Fprintf(h.W, "%s%s-->%s %s:%d:%d\n", pad, st.Gutter, st.Reset, RelPath(h.Dir, d.Span.File), d.Span.Line, max(d.Span.Col, 1))
 		f = h.Sources.file(d.Span.File)
 	}
 	if f != nil {
 		h.snippet(f, d)
 	}
-	pad := strings.Repeat(" ", h.gutterWidth(d))
+	if len(d.Notes)+len(d.Related)+len(d.Help)+len(d.Fixes) > 0 && f != nil {
+		gut()
+	}
 	for _, n := range d.Notes {
-		fmt.Fprintf(h.W, "%s %s=%s %snote:%s %s\n", pad, st.Gutter, st.Reset, st.Note, st.Reset, n)
+		if strings.HasPrefix(n, "  ") {
+			// Continuation of the note above (a list).
+			fmt.Fprintf(h.W, "%s         %s\n", pad, n)
+			continue
+		}
+		fmt.Fprintf(h.W, "%s %s=%s %snote:%s %s\n", pad, st.Gutter, st.Reset, st.Bold, st.Reset, n)
 	}
 	for _, r := range d.Related {
-		fmt.Fprintf(h.W, "%s %s=%s %snote:%s %s (%s:%d)\n", pad, st.Gutter, st.Reset, st.Note, st.Reset, r.Message, RelPath(h.Dir, r.Span.File), r.Span.Line)
+		fmt.Fprintf(h.W, "%s %s=%s %snote:%s %s at %s:%d\n", pad, st.Gutter, st.Reset, st.Bold, st.Reset, r.Message, RelPath(h.Dir, r.Span.File), r.Span.Line)
 	}
 	for _, x := range d.Help {
 		fmt.Fprintf(h.W, "%s %s=%s %shelp:%s %s\n", pad, st.Gutter, st.Reset, st.Help, st.Reset, x)
 	}
+	if d.Bundle != "" {
+		fmt.Fprintf(h.W, "%s %s=%s %snote:%s report bundle: %s\n", pad, st.Gutter, st.Reset, st.Bold, st.Reset, d.Bundle)
+	}
 	for _, fx := range d.Fixes {
 		h.fixDiff(fx, pad)
-	}
-	if d.Bundle != "" {
-		fmt.Fprintf(h.W, "%s %s=%s %snote:%s report bundle: %s\n", pad, st.Gutter, st.Reset, st.Note, st.Reset, d.Bundle)
 	}
 }
 
@@ -188,6 +193,11 @@ func (h *Human) gutterWidth(d *Diagnostic) int {
 	n := max(d.Span.EndLine, d.Span.Line)
 	for _, l := range d.Labels {
 		n = max(n, l.Span.EndLine)
+	}
+	for _, fx := range d.Fixes {
+		for _, e := range fx.Edits {
+			n = max(n, e.Span.EndLine, e.Span.Line)
+		}
 	}
 	return max(len(strconv.Itoa(n)), 1)
 }
@@ -495,10 +505,14 @@ func (h *Human) highlight(line string) string {
 	return b.String()
 }
 
-// fixDiff shows a fix as a small diff of the lines it changes.
+// fixDiff shows a fix as help with a diff of the lines it changes.
 func (h *Human) fixDiff(fx Fix, pad string) {
 	st := h.Style
-	fmt.Fprintf(h.W, "%s %s=%s %sfix:%s %s\n", pad, st.Gutter, st.Reset, st.Help, st.Reset, fx.Title)
+	title := fx.Title
+	if fx.Applicability == MaybeIncorrect {
+		title += st.Dim + " (check it)" + st.Reset
+	}
+	fmt.Fprintf(h.W, "%shelp:%s %s\n", st.Help, st.Reset, title)
 	w := len(pad)
 	for _, e := range fx.Edits {
 		f := h.Sources.file(e.File)
@@ -509,8 +523,8 @@ func (h *Human) fixDiff(fx Fix, pad string) {
 		if !ok {
 			continue
 		}
-		if e.File != "" && h.Sources != nil && len(fx.Edits) > 1 {
-			fmt.Fprintf(h.W, "%s %s|%s %s\n", pad, st.Gutter, st.Reset, RelPath(h.Dir, e.File))
+		if len(fx.Edits) > 1 && e.File != fx.Edits[0].File {
+			fmt.Fprintf(h.W, "%s%s-->%s %s\n", pad, st.Gutter, st.Reset, RelPath(h.Dir, e.File))
 		}
 		for i, l := range before {
 			fmt.Fprintf(h.W, "%s%*d%s %s- %s%s\n", st.Gutter, w, first+i, st.Reset, st.DiffDel, expandTabs(l), st.Reset)
@@ -519,6 +533,7 @@ func (h *Human) fixDiff(fx Fix, pad string) {
 			fmt.Fprintf(h.W, "%s%*d%s %s+ %s%s\n", st.Gutter, w, first+i, st.Reset, st.DiffAdd, expandTabs(l), st.Reset)
 		}
 	}
+	fmt.Fprintf(h.W, "%s %s|%s\n", pad, st.Gutter, st.Reset)
 }
 
 // applyToLines returns the lines an edit touches, before and after.

@@ -1,0 +1,30 @@
+error[M0026]: string does not satisfy Number (string missing in ~int | ~int64 | ~float64)
+  --> ./main.go:20:14
+   |
+ 5 | type Number interface {
+   |      ------ `Number` is declared here
+ ...
+20 |     fmt.Println(Sum([]string{"a"}))
+   |                 ^^^ ------------- the type argument is inferred as `string` from this
+   |                 |
+   |                 `string` does not satisfy `Number`
+   |
+   = note: the type set of `Number` is `~int | ~int64 | ~float64`
+
+error[M0026]: Celsius does not satisfy Number (Celsius missing in ~int | ~int64 | ~float64)
+  --> ./main.go:21:14
+   |
+ 5 | type Number interface {
+   |      ------ `Number` is declared here
+ ...
+21 |     fmt.Println(Sum([]Celsius{1}))
+   |                 ^^^ ------------ the type argument is inferred as `Celsius` from this
+   |                 |
+   |                 `Celsius` does not satisfy `Number`
+   |
+   = note: the type set of `Number` is `~int | ~int64 | ~float64`
+   = note: `Celsius` has underlying type `float32`, which the type set does not include
+   = help: to accept it, add `~float32` to `Number`
+
+error: build failed with 2 errors
+for more about an error, run `marmot explain M0026`

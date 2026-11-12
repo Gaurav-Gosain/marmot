@@ -1,22 +1,21 @@
-./main.go:9:7: error: assignment mismatch: 1 variable but strconv.Atoi returns 2 values [M0012]
+error[M0012]: assignment mismatch: 1 variable but strconv.Atoi returns 2 values
+ --> ./main.go:9:7
   |
 9 |     n := strconv.Atoi(s)
-  |          ^^^^^^^^^^^^
-  = help: strconv.Atoi returns 2 values; receive all of them: n, err := strconv.Atoi(s)
+  |          ^^^^^^^^^^^^ `strconv.Atoi` returns 2 values
+  |
+  = help: receive every result: `n, err := strconv.Atoi(s)`
 
-./main.go:16:26: error: multiple-value pair(1) (value of type (int, int)) in single-value context [M0012]
+error[M0009]: too many arguments in call to pair
+  --> ./main.go:16:31
    |
+13 | func pair() (int, int) { return 1, 2 }
+   | ---------------------- `pair` is declared here
+ ...
 16 |     fmt.Println(parse("1"), pair(1))
-   |                             ^^^^
-
-./main.go:16:31: error: too many arguments in call to pair [M0009]
+   |                                  ^ unexpected argument
    |
-16 |     fmt.Println(parse("1"), pair(1))
-   |                                  ^
-   = note: have (number)
-   = note: want ()
-   = note: signature: func pair() (int, int)
-   = note: pair is declared here (./main.go:13)
+   = note: expected `()`, found `(number)`
 
-3 errors
-for more about an error: marmot explain M0009
+error: build failed with 2 errors
+for more about an error, run `marmot explain M0009`

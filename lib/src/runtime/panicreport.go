@@ -311,19 +311,6 @@ func printPanicHuman(p *_panic, goid int64, fp uintptr) {
 			printstring(c.reset)
 			printstring(src[ind:])
 			printstring("\n")
-			if firstUser(frames[:i]) {
-				// Mark the line where the panic happened.
-				printstring(c.blue)
-				printstring("       | ")
-				printstring(c.reset)
-				printstring(c.red)
-				for k := ind; k < len(src); k++ {
-					printstring("^")
-				}
-				printstring(" panicked here")
-				printstring(c.reset)
-				printstring("\n")
-			}
 		}
 		i++
 	}
@@ -332,17 +319,6 @@ func printPanicHuman(p *_panic, goid int64, fp uintptr) {
 	printstring("exit status 2 (MARMOT_OUTPUT=plain prints the plain trace)")
 	printstring(c.reset)
 	printstring("\n")
-}
-
-// firstUser reports whether no frame in fs is a user frame, so the next
-// one is the innermost user frame.
-func firstUser(fs []panicFrame) bool {
-	for _, f := range fs {
-		if userFrame(f.info) {
-			return false
-		}
-	}
-	return true
 }
 
 func printPanicChain(p *_panic, c panicColors) {

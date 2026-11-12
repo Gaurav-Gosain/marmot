@@ -9,7 +9,7 @@ marmot follows the `go` command where it can. Run it inside a Go module.
 | `marmot build [packages]` | Compile packages and their dependencies into an executable. |
 | `marmot run file.go` | Compile and run a program. |
 | `marmot test [packages]` | Compile and run package tests, like `go test`. |
-| `marmot fix [packages]` | Apply the suggested fixes of build errors. `--code M0004,M0005` limits it to those codes. |
+| `marmot fix [packages]` | Apply the machine applicable fixes of build errors. `--code M0004,M0005` limits it to those codes; `--all` adds fixes that may be incorrect, such as typo corrections. |
 | `marmot explain CODE` | Describe an error code. With no code, list all of them. |
 | `marmot cache` | Show the build cache size. `cache trim` and `cache clean` shrink or remove it. |
 | `marmot version` | Print the version. |
@@ -82,7 +82,7 @@ modes:
 
 | Mode | When | What it looks like |
 | --- | --- | --- |
-| human | stderr is a terminal | The `file:line:col: message` line, then the source with carets under the exact span, labels, notes, and suggestions with a diff of the fix. At most 10 errors, sorted by file and line, then a summary. |
+| human | stderr is a terminal | `error[CODE]: message`, then `--> file:line:col`, the source with carets under the exact span and a label saying what is wrong there, labels on related spans, `= note:` and `= help:` lines, and fixes as `help:` with a diff. At most 10 errors, sorted by file and line, then a summary. |
 | plain | stderr is not a terminal | `file:line:col: message` lines, as the go tool prints them. Tools and tests parse this form; it does not change. |
 | json | `--json`, `MARMOT_OUTPUT=json`, or a coding agent environment | JSON Lines on stderr, described below. |
 
@@ -114,16 +114,21 @@ Each line is one object with `"schema": 1` and a `kind`. A command writes zero o
 | Field | Meaning |
 | --- | --- |
 | `severity` | `error`, `warning` or `note`. |
+| `label` | What is wrong at the primary span, readable on its own. |
 | `code` | Stable code, `M0000` when there is no more specific one. |
 | `message` | The message, as in plain mode. |
 | `span` | Primary location. Lines and columns are 1-based, columns count bytes, `endCol` is exclusive. Absent location: `file` is empty. |
 | `labels` | Secondary spans, each `{span, text}`. |
 | `notes`, `help` | Lists of strings. |
-| `fixes` | Machine applicable fixes, each `{title, edits}`; an edit is `{file, span, newText}` and replaces the span (an empty span inserts). Applying every edit of one fix resolves the diagnostic. |
+| `fixes` | Suggested fixes, each `{title, applicability, edits}`; an edit is `{file, span, newText}` and replaces the span (an empty span inserts). `applicability` is `machine-applicable` (safe to apply unseen), `maybe-incorrect` (likely, check it) or `has-placeholders` (never apply as is). Applying every edit of one fix resolves the diagnostic. |
 | `related` | Other locations, each `{span, message}`, for example the declaration of a called function. |
 | `context` | What you would open the file for: `function` (enclosing signature), `lines` (source around the span, `{line, text}`), `types` (one line definitions of the types the message names). |
 | `bundle` | Internal compiler errors only: a directory with the inputs for a bug report. |
+| `rendered` | The human form without color, exactly what a person would see. |
+| `fullMessage` | Present when `message` was shortened (long type names elided). |
 | `explain` | The command that describes the code. |
+
+New fields may be added within schema 1; parsers must ignore fields they do not know.
 
 `result` fields: `command`, `ok`, `errors`, `warnings`, `output` (the file written, on success),
 `durationMs`, `exitCode`.
@@ -131,4 +136,19 @@ Each line is one object with `"schema": 1` and a `kind`. A command writes zero o
 In json mode all errors are listed (no cap), duplicates removed, in a stable order. `marmot fix
 --json` writes one `{"kind":"fix","file","code","title","line"}` line per applied fix, then the
 remaining diagnostics and the result. `marmot explain --json CODE` writes `{code, title, text,
-example, fix}` to stdout.
+wrong, right, fix}` to stdout: the description, code with the mistake, the same code fixed, and
+the usual fix.
+
+`marmot test --json` writes one `{"kind":"test", "package", "name", "status", "durationMs",
+"file", "line", "message", "output"}` line per test and subtest, a `diagnostic` (code `M0022`)
+per failure with its source context, and the result.
+
+### Runtime errors
+
+A program built by marmot reports a panic or fatal error in the same three modes, chosen when
+it happens: `MARMOT_OUTPUT=json` writes one object, `{"schema":1, "kind":"panic", "code":"M0020",
+"message", "valueType", "chain", "goroutine", "frames":[{"func", "file", "line", "col",
+"inlined", "user"}], "goroutines":{"total", "running", "runnable", "waiting"}, "exitCode":2}`
+(`kind` `fatal` and code `M0021` for fatal errors). On a terminal the report lists the program's
+frames with their source lines and folds library frames. Otherwise the trace is the plain Go
+form. `marmot run` in json mode passes `MARMOT_OUTPUT=json` to the program.

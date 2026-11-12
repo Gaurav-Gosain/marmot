@@ -1,0 +1,4 @@
+main.go:26:11: cannot use Square{…} (value of struct type Square) as Shape value in argument to describe: Square does not implement Shape (method Area has pointer receiver)
+main.go:27:16: cannot use Circle{} (value of struct type Circle) as Shape value in variable declaration: Circle does not implement Shape (wrong type for method Area)
+		have Area() int
+		want Area() float64

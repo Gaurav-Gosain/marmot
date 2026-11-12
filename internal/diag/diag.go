@@ -53,11 +53,25 @@ type Edit struct {
 	NewText string `json:"newText"`
 }
 
-// Fix is a machine applicable change: applying all of its edits resolves the
-// diagnostic without other changes.
+// Applicability says how safe a fix is to apply without looking (the rustc
+// levels).
+const (
+	// MachineApplicable fixes are certainly what the code needs; marmot fix
+	// applies them by default.
+	MachineApplicable = "machine-applicable"
+	// MaybeIncorrect fixes are likely but a person should check them (a
+	// typo correction may pick the wrong name). marmot fix --all applies them.
+	MaybeIncorrect = "maybe-incorrect"
+	// HasPlaceholders fixes contain text to fill in; never applied.
+	HasPlaceholders = "has-placeholders"
+)
+
+// Fix is a suggested change: applying all of its edits resolves the
+// diagnostic.
 type Fix struct {
-	Title string `json:"title"`
-	Edits []Edit `json:"edits"`
+	Title         string `json:"title"`
+	Applicability string `json:"applicability"`
+	Edits         []Edit `json:"edits"`
 }
 
 // Related is another location that matters for the diagnostic, for example
@@ -96,8 +110,13 @@ type Diagnostic struct {
 	DocURL   string    `json:"docURL,omitempty"`
 	Context  *Context  `json:"context,omitempty"`
 
-	// Primary is the text drawn under the carets of the main span.
-	Primary string `json:"-"`
+	// Primary is the text drawn under the carets of the main span. It must
+	// make sense alone (editors show only it).
+	Primary string `json:"label,omitempty"`
+	// FullMessage is the message before long type names were shortened.
+	FullMessage string `json:"fullMessage,omitempty"`
+	// Rendered is the human form without color, as a person would see it.
+	Rendered string `json:"rendered,omitempty"`
 	// Bundle is the path of an internal error report bundle.
 	Bundle string `json:"bundle,omitempty"`
 	// Package is the import path the diagnostic belongs to, when known.
@@ -166,6 +185,111 @@ func Dedup(ds []Diagnostic) []Diagnostic {
 		out = append(out, d)
 	}
 	return out
+}
+
+// containerCodes are errors about a whole expression that go/types also
+// reports when a part of it is wrong; with an error inside their span they
+// are a second error for one cause.
+var containerCodes = map[string]bool{CodeAssignCount: true, CodeCannotUse: true, CodeMismatched: true, CodeInvalidOp: true, CodeOther: true}
+
+// DropCascades removes an error whose span strictly contains the span of
+// another error on the same line, when its code is one that go/types reports
+// for a whole expression. The inner error is the cause.
+func DropCascades(ds []Diagnostic) []Diagnostic {
+	var out []Diagnostic
+	for i, d := range ds {
+		drop := false
+		if containerCodes[d.Code] && d.Span.Valid() {
+			a := d.Span
+			for j, e := range ds {
+				if i == j || !e.Span.Valid() || e.Span.File != d.Span.File || e.Span.Line != d.Span.Line {
+					continue
+				}
+				b := e.Span
+				if a.Col <= b.Col && b.EndCol <= a.EndCol && (a.Col != b.Col || a.EndCol != b.EndCol) {
+					drop = true
+				}
+			}
+		}
+		if !drop {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// Options control how a failed build's text becomes diagnostics.
+type Options struct {
+	// Context fills Diagnostic.Context (agent mode).
+	Context bool
+	// ContextLines is the number of lines around the span in Context.
+	ContextLines int
+	// Rendered fills Diagnostic.Rendered with the human form (JSON mode).
+	Rendered bool
+	// Dir is the directory paths are shown relative to.
+	Dir string
+}
+
+// Process turns the plain error text of a build into diagnostics: parse,
+// drop duplicates and follow-on errors, enrich from the sources, drop
+// cascades, sort, shorten long messages, and render when asked.
+func Process(text string, src *Sources, opt Options) []Diagnostic {
+	ds := Dedup(FromText(text, opt.Dir))
+	return Finish(ds, src, opt)
+}
+
+// Finish runs the steps of Process after parsing.
+func Finish(ds []Diagnostic, src *Sources, opt Options) []Diagnostic {
+	src.Enrich(ds, opt)
+	ds = DropCascades(ds)
+	Sort(ds)
+	for i := range ds {
+		shortenMessage(&ds[i])
+	}
+	if opt.Rendered {
+		for i := range ds {
+			var b strings.Builder
+			h := &Human{W: &b, Style: Plain, Dir: opt.Dir, Sources: src}
+			h.one(&ds[i])
+			ds[i].Rendered = b.String()
+		}
+	}
+	return ds
+}
+
+// maxMessage is the longest message shown in full in human mode.
+const maxMessage = 200
+
+// shortenMessage elides the inside of long type names (brackets nested
+// deeper than one level) when the message is too long. The full text stays
+// in FullMessage.
+func shortenMessage(d *Diagnostic) {
+	if len(d.Message) <= maxMessage {
+		return
+	}
+	var b strings.Builder
+	depth := 0
+	for _, r := range d.Message {
+		switch r {
+		case '(', '[', '{':
+			depth++
+			if depth == 2 {
+				b.WriteRune(r)
+				b.WriteString("...")
+				continue
+			}
+		case ')', ']', '}':
+			depth--
+		}
+		if depth >= 2 {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	if b.Len() < len(d.Message) {
+		d.FullMessage = d.Message
+		d.Message = b.String()
+	}
 }
 
 // Counts returns the number of errors and warnings.

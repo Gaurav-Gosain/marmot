@@ -1,0 +1,30 @@
+[1;31merror[M0026][0m: [1mstring does not satisfy Number (string missing in ~int | ~int64 | ~float64)[0m
+  [1;34m-->[0m ./main.go:20:14
+   [1;34m|[0m
+[1;34m 5 |[0m [35mtype[0m Number [35minterface[0m {
+   [1;34m|[0m      [1;34m------[0m [1;34m`Number` is declared here[0m
+ [1;34m...[0m
+[1;34m20 |[0m     fmt.Println(Sum([]string{[32m"a"[0m}))
+   [1;34m|[0m                 [1;31m^^^[0m [1;34m-------------[0m [1;34mthe type argument is inferred as `string` from this[0m
+   [1;34m|[0m                 [1;31m|[0m
+   [1;34m|[0m                 [1;31m`string` does not satisfy `Number`[0m
+   [1;34m|[0m
+   [1;34m=[0m [1mnote:[0m the type set of `Number` is `~int | ~int64 | ~float64`
+
+[1;31merror[M0026][0m: [1mCelsius does not satisfy Number (Celsius missing in ~int | ~int64 | ~float64)[0m
+  [1;34m-->[0m ./main.go:21:14
+   [1;34m|[0m
+[1;34m 5 |[0m [35mtype[0m Number [35minterface[0m {
+   [1;34m|[0m      [1;34m------[0m [1;34m`Number` is declared here[0m
+ [1;34m...[0m
+[1;34m21 |[0m     fmt.Println(Sum([]Celsius{[36m1[0m}))
+   [1;34m|[0m                 [1;31m^^^[0m [1;34m------------[0m [1;34mthe type argument is inferred as `Celsius` from this[0m
+   [1;34m|[0m                 [1;31m|[0m
+   [1;34m|[0m                 [1;31m`Celsius` does not satisfy `Number`[0m
+   [1;34m|[0m
+   [1;34m=[0m [1mnote:[0m the type set of `Number` is `~int | ~int64 | ~float64`
+   [1;34m=[0m [1mnote:[0m `Celsius` has underlying type `float32`, which the type set does not include
+   [1;34m=[0m [1;32mhelp:[0m to accept it, add `~float32` to `Number`
+
+[1;31merror: build failed with 2 errors[0m
+[2mfor more about an error, run `marmot explain M0026`[0m

@@ -1,32 +1,40 @@
-./main.go:16:4: error: c.Incremnt undefined (type Counter has no field or method Incremnt) [M0003]
+error[M0003]: c.Incremnt undefined (type Counter has no field or method Incremnt)
+  --> ./main.go:16:4
    |
 16 |     c.Incremnt()
-   |       ^^^^^^^^ did you mean Increment?
-   = note: fields of Counter: n, label
-   = note: methods of Counter: (*Counter) Increment, (Counter) Value
-   = fix: use Increment
+   |       ^^^^^^^^ `Counter` has no field or method `Incremnt`
+   |
+   = note: fields of `Counter`: `n`, `label`
+   = note: methods of `Counter`: `(*Counter) Increment`, `(Counter) Value`
+help: use `Increment` (check it)
 16 -     c.Incremnt()
 16 +     c.Increment()
+   |
 
-./main.go:17:4: error: c.Lable undefined (type Counter has no field or method Lable) [M0003]
+error[M0003]: c.Lable undefined (type Counter has no field or method Lable)
+  --> ./main.go:17:4
    |
 17 |     c.Lable = "x"
-   |       ^^^^^ did you mean label?
-   = note: fields of Counter: n, label
-   = note: methods of Counter: (*Counter) Increment, (Counter) Value
-   = fix: use label
+   |       ^^^^^ `Counter` has no field or method `Lable`
+   |
+   = note: fields of `Counter`: `n`, `label`
+   = note: methods of `Counter`: `(*Counter) Increment`, `(Counter) Value`
+help: use `label` (check it)
 17 -     c.Lable = "x"
 17 +     c.label = "x"
+   |
 
-./main.go:19:4: error: b.WriteStrin undefined (type strings.Builder has no field or method WriteStrin) [M0003]
+error[M0003]: b.WriteStrin undefined (type strings.Builder has no field or method WriteStrin)
+  --> ./main.go:19:4
    |
 19 |     b.WriteStrin("x")
-   |       ^^^^^^^^^^ did you mean WriteString?
-   = note: methods of strings.Builder: (*Builder) Cap, (*Builder) Grow, (*Builder) Len, (*Builder) Reset, (*Builder) String, (*Builder) Write, (*Builder) WriteByte, (*Builder) WriteRune, (*Builder) WriteString
-   = fix: use WriteString
+   |       ^^^^^^^^^^ `strings.Builder` has no field or method `WriteStrin`
+   |
+   = note: methods of `strings.Builder`: `(*Builder) Cap`, `(*Builder) Grow`, `(*Builder) Len`, `(*Builder) Reset`, `(*Builder) String`, `(*Builder) Write`, `(*Builder) WriteByte`, `(*Builder) WriteRune`, `(*Builder) WriteString`
+help: use `WriteString` (check it)
 19 -     b.WriteStrin("x")
 19 +     b.WriteString("x")
+   |
 
-3 errors
-3 errors can be fixed automatically: marmot fix
-for more about an error: marmot explain M0003
+error: build failed with 3 errors
+for more about an error, run `marmot explain M0003`

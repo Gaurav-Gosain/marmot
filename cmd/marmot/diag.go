@@ -84,10 +84,13 @@ func cmdExplain(args []string) int {
 		st = diag.Colors
 	}
 	fmt.Printf("%s%s: %s%s\n\n%s\n", st.Bold, c.Code, c.Title, st.Reset, wrap(c.Text, 80))
-	if c.Example != "" {
-		fmt.Printf("\n%sExample%s\n\n", st.Bold, st.Reset)
-		for _, l := range strings.Split(c.Example, "\n") {
-			fmt.Printf("    %s\n", l)
+	for _, ex := range [][2]string{{"Wrong", c.Wrong}, {"Right", c.Right}} {
+		if ex[1] == "" {
+			continue
+		}
+		fmt.Printf("\n%s%s%s\n\n", st.Bold, ex[0], st.Reset)
+		for _, l := range strings.Split(ex[1], "\n") {
+			fmt.Printf("    %s\n", strings.ReplaceAll(l, "\t", "    "))
 		}
 	}
 	if c.Fix != "" {
@@ -120,6 +123,7 @@ func wrap(s string, n int) string {
 func cmdFix(args []string) int {
 	fs := flag.NewFlagSet("fix", flag.ContinueOnError)
 	codesFlag := fs.String("code", "", "only apply fixes for these comma separated codes, for example M0004,M0005")
+	all := fs.Bool("all", false, "also apply fixes that may be incorrect (typo corrections); check the result")
 	tags := fs.String("tags", "", "comma separated build tags")
 	of := addOutputFlags(fs)
 	if err := fs.Parse(args); err != nil {
@@ -148,7 +152,7 @@ func cmdFix(args []string) int {
 		return rep.Usage("marmot: " + err.Error())
 	}
 	defer os.RemoveAll(tmp)
-	var all []diag.Applied
+	var done []diag.Applied
 	var last []diag.Diagnostic
 	for round := 0; round < 4; round++ {
 		cfg := driver.Config{
@@ -164,20 +168,20 @@ func cmdFix(args []string) int {
 			break
 		}
 		last = rep.Diagnose(err)
-		applied, werr := diag.ApplyFixes(last, codes)
+		applied, werr := diag.ApplyFixes(last, codes, *all)
 		if werr != nil {
 			return rep.Fail(werr)
 		}
 		if len(applied) == 0 {
 			break
 		}
-		all = append(all, applied...)
+		done = append(done, applied...)
 	}
 	remaining, _ := diag.Counts(last)
 	if rep.Mode == diag.ModeJSON {
 		enc := json.NewEncoder(os.Stderr)
 		enc.SetEscapeHTML(false)
-		for _, a := range all {
+		for _, a := range done {
 			enc.Encode(struct {
 				Kind string `json:"kind"`
 				diag.Applied
@@ -188,16 +192,16 @@ func cmdFix(args []string) int {
 		}
 		diag.WriteResult(os.Stderr, diag.Result{Command: "fix", OK: remaining == 0, Errors: remaining, DurationMs: time.Since(rep.Start).Milliseconds()})
 	} else {
-		for _, a := range all {
+		for _, a := range done {
 			fmt.Printf("%s:%d: %s [%s]\n", diag.RelPath(rep.Dir, a.File), a.Line, a.Title, a.Code)
 		}
 		switch {
-		case len(all) == 0 && remaining == 0:
+		case len(done) == 0 && remaining == 0:
 			fmt.Println("nothing to fix")
 		case remaining > 0:
-			fmt.Printf("%d fixed, %d errors left\n", len(all), remaining)
+			fmt.Printf("%d fixed, %d errors left\n", len(done), remaining)
 		default:
-			fmt.Printf("%d fixed, the build is clean\n", len(all))
+			fmt.Printf("%d fixed, the build is clean\n", len(done))
 		}
 	}
 	if remaining > 0 {
@@ -240,9 +244,7 @@ func runTestJSON(rep *diag.Reporter, cmd *exec.Cmd, pkg string, start time.Time)
 			failed++
 		}
 	}
-	ds := diag.TestDiagnostics(results)
-	src := diag.NewSources()
-	src.Enrich(ds, diag.Options{Context: true})
+	ds := diag.Finish(diag.TestDiagnostics(results), diag.NewSources(), diag.Options{Context: true, Rendered: true, Dir: rep.Dir})
 	diag.WriteJSON(rep.W, ds)
 	code := 0
 	if err != nil {

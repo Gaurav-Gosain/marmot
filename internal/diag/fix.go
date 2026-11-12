@@ -15,10 +15,12 @@ type Applied struct {
 }
 
 // ApplyFixes writes the fixes of the diagnostics to their files. When codes
-// is not empty only diagnostics with one of those codes are fixed. Edits that
+// is not empty only diagnostics with one of those codes are fixed. Only
+// machine applicable fixes are taken unless maybe is set, which adds the
+// maybe-incorrect ones; fixes with placeholders are never applied. Edits that
 // overlap an edit already taken are skipped, so the result always parses as
 // well as the input did. It returns what it changed.
-func ApplyFixes(ds []Diagnostic, codes map[string]bool) ([]Applied, error) {
+func ApplyFixes(ds []Diagnostic, codes map[string]bool, maybe bool) ([]Applied, error) {
 	type edit struct {
 		a, b int
 		text string
@@ -35,6 +37,9 @@ func ApplyFixes(ds []Diagnostic, codes map[string]bool) ([]Applied, error) {
 			continue
 		}
 		fx := d.Fixes[0]
+		if fx.Applicability != MachineApplicable && !(maybe && fx.Applicability == MaybeIncorrect) {
+			continue
+		}
 		// All edits of a fix go in, or none.
 		type pending struct {
 			fe *fileEdits

@@ -1,61 +1,78 @@
-./main.go:5:2: error: "os" imported and not used [M0005]
+error[M0005]: "os" imported and not used
+ --> ./main.go:5:2
   |
 5 |     "os"
-  |     ^^^^ not used in this file
-  = help: if the package is imported only for its side effects, write import _ "os"
-  = fix: remove the import of "os"
+  |     ^^^^ imported here but not used
+  |
+  = help: if it is imported only for its side effects, write `import _ "os"`
+help: remove the import of `"os"`
 5 -     "os"
+  |
 
-./main.go:13:2: error: declared and not used: count [M0004]
+error[M0004]: declared and not used: count
+  --> ./main.go:13:2
    |
 13 |     count := 3
-   |     ^^^^^ declared here, never used
-   = fix: remove count
-13 -     count := 3
-
-./main.go:14:21: error: cannot use "two" (untyped string constant) as int value in argument to add [M0006]
+   |     ^^^^^ declared here but never used
    |
-14 |     fmt.Println(add(1, "two"))
-   |                        ^^^^^ this is untyped string, want int
-   = note: signature: func add(a, b int) int
-   = note: add is declared here (./main.go:8)
-   = help: to parse a number from a string, use strconv.Atoi("two")
+help: remove `count`
+13 -     count := 3
+   |
 
-./main.go:15:6: error: undefined: fmt.Printn [M0002]
+error[M0006]: cannot use "two" (untyped string constant) as int value in argument to add
+  --> ./main.go:14:21
+   |
+ 8 | func add(a, b int) int {
+   |               --- expected because of parameter `b`
+ ...
+14 |     fmt.Println(add(1, "two"))
+   |                        ^^^^^ expected `int`, found `untyped string`
+   |
+   = help: to parse a number from text, use `strconv.Atoi("two")`
+
+error[M0002]: undefined: fmt.Printn
+  --> ./main.go:15:6
    |
 15 |     fmt.Printn("x")
-   |         ^^^^^^ did you mean Println?
-   = help: a func with a similar name exists: fmt.Println
-   = fix: use fmt.Println
+   |         ^^^^^^ not declared by package `fmt`
+   |
+help: use `fmt.Println` (check it)
 15 -     fmt.Printn("x")
 15 +     fmt.Println("x")
+   |
 
-./main.go:16:2: error: declared and not used: x [M0004]
+error[M0004]: declared and not used: x
+  --> ./main.go:16:2
    |
 16 |     x := strings.ToUpper("a")
-   |     ^ declared here, never used
-   = help: remove the statement if the value is not needed
-   = fix: assign the value to _
+   |     ^ declared here but never used
+   |
+help: assign the value to `_`
 16 -     x := strings.ToUpper("a")
 16 +     _ = strings.ToUpper("a")
+   |
 
-./main.go:16:7: error: undefined: strings [M0002]
+error[M0002]: undefined: strings
+  --> ./main.go:16:7
    |
 16 |     x := strings.ToUpper("a")
-   |          ^^^^^^^ package strings is not imported
-   = help: add the import: import "strings"
-   = fix: import "strings"
- 6 +     "strings"
-
-./main.go:17:9: error: too many return values [M0008]
+   |          ^^^^^^^ package `strings` is not imported
    |
-17 |     return 1
-   |            ^ returned here
-   = note: have (number)
-   = note: want ()
-   = note: signature: func main() (./main.go:12)
-   = help: main has no results; to return a value, declare it: func main() T
+help: add `import "strings"`
+ 6 +     "strings"
+   |
 
-7 errors
-5 errors can be fixed automatically: marmot fix
-for more about an error: marmot explain M0002
+error[M0008]: too many return values
+  --> ./main.go:17:9
+   |
+12 | func main() {
+   | ----------- `main` declares no results
+ ...
+17 |     return 1
+   |            ^ returns a value
+   |
+   = note: expected `()`, found `(number)`
+
+error: build failed with 7 errors
+4 errors can be fixed automatically: run `marmot fix`
+for more about an error, run `marmot explain M0002`

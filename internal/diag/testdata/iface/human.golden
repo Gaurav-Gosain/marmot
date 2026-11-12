@@ -1,0 +1,37 @@
+error[M0014]: cannot use Square{…} (value of struct type Square) as Shape value in argument to describe: Square does not implement Shape (method Area has pointer receiver)
+  --> ./main.go:26:11
+   |
+ 5 | type Shape interface {
+   |      ----- `Shape` is declared here
+ ...
+13 | func (s *Square) Area() float64 { return s.side * s.side }
+   |         ------- pointer receiver
+ ...
+15 | func (s Square) Perimter() float64 { return 4 * s.side }
+   |                 -------- not `Perimeter`
+ ...
+26 |     describe(Square{side: 2})
+   |              ^^^^^^^^^^^^^^^ `Square` does not implement `Shape`
+   |
+   = note: `Square` lacks 3 methods of `Shape`:
+             `Area` has a pointer receiver, so only `*Square` has it
+             `Perimeter() float64` is missing; `Square` has `Perimter`
+             `Name() string` is missing
+
+error[M0014]: cannot use Circle{} (value of struct type Circle) as Shape value in variable declaration: Circle does not implement Shape (wrong type for method Area)
+  --> ./main.go:27:16
+   |
+ 5 | type Shape interface {
+   |      ----- `Shape` is declared here
+ ...
+19 | func (c Circle) Area() int          { return 0 }
+   |                 ---- has the wrong type
+ ...
+27 |     var s Shape = Circle{}
+   |                   ^^^^^^^^ `Circle` does not implement `Shape`
+   |
+   = note: `Circle` lacks 1 method of `Shape`:
+             `Area` has type `func() int`, `Shape` needs `func() float64`
+
+error: build failed with 2 errors
+for more about an error, run `marmot explain M0014`
