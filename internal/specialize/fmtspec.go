@@ -336,6 +336,12 @@ func operandReason(op operand, verb rune) string {
 	return "other kind"
 }
 
+// isReflectValue reports whether t is reflect.Value.
+func isReflectValue(t types.Type) bool {
+	n, ok := types.Unalias(t).(*types.Named)
+	return ok && n.Obj().Name() == "Value" && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == "reflect"
+}
+
 // fmtMethods reports whether values of type t, stored in an interface, have
 // any method fmt looks for.
 func fmtMethods(t types.Type) bool {
@@ -374,6 +380,11 @@ func (g *gen) emitOperand(op operand, v string, verb rune, bits uint) string {
 // points do not reproduce exactly: methods, invalid verbs (whose error text
 // names the dynamic type), or kinds without a typed path.
 func (g *gen) emitValue(t types.Type, v string, verb rune, bits uint, depth int) (string, bool) {
+	if isReflectValue(t) {
+		// printArg prints a reflect.Value operand by the value it holds,
+		// before handleMethods; its String method is not used.
+		return "", false
+	}
 	if fmtMethods(t) {
 		// handleMethods at depth 0: Formatter first, then error, then
 		// Stringer, for the string verbs and without #.

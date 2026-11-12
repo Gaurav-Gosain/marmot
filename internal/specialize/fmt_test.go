@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"reflect"
 	"strings"
 )
 
@@ -227,6 +228,11 @@ func out(s string) { sb.WriteString(s); sb.WriteByte('\n') }
 	out(fmt.Sprintf(fs, 1))
 	args := []any{1, 2}
 	out(fmt.Sprintf("%d %d", args...))
+	// printArg prints a reflect.Value by its content, not by Value.String.
+	rv := reflect.ValueOf(7)
+	out(fmt.Sprintf("%v %d %s|", rv, rv, rv))
+	out(fmt.Sprintf("%v|", reflect.ValueOf([]int{1, 2}).Index(1)))
+	out(fmt.Sprintf("%v|", reflect.Value{}))
 }
 
 func main() {
