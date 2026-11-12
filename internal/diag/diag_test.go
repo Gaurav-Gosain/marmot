@@ -212,3 +212,12 @@ func TestLinkError(t *testing.T) {
 type errorString string
 
 func (e errorString) Error() string { return string(e) }
+
+func TestShortenMessage(t *testing.T) {
+	long := "cannot use m (variable of type map[string]func(ctx context.Context, req *http.Request) (map[string][]int, error)) as map[string]func(ctx context.Context, req *http.Request) (map[string][]string, error) value in assignment"
+	d := Diagnostic{Message: long}
+	shortenMessage(&d)
+	if d.FullMessage != long || len(d.Message) >= len(long) || !strings.Contains(d.Message, "(...)") {
+		t.Errorf("not shortened: %q", d.Message)
+	}
+}

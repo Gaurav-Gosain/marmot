@@ -1,0 +1,10 @@
+package main
+
+type T struct{}
+
+func (T) Close() {}
+
+func main() {
+	var t T
+	t.Close()
+}

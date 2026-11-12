@@ -1,0 +1,8 @@
+package main
+
+import "strconv"
+
+func main() {
+	n, _ := strconv.Atoi("12")
+	println(n + 1)
+}

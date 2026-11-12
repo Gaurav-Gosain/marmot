@@ -11,4 +11,4 @@ func load() error {
 	return err
 }
 
-func main() { println(load()) }
+func main() { println(load() != nil) }

@@ -1,10 +1,13 @@
 package diag
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"go/scanner"
 	"go/token"
 	"io"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -184,6 +187,11 @@ func (h *Human) one(d *Diagnostic) {
 	if d.Bundle != "" {
 		fmt.Fprintf(h.W, "%s %s=%s %snote:%s report bundle: %s\n", pad, st.Gutter, st.Reset, st.Bold, st.Reset, d.Bundle)
 	}
+	if d.FullMessage != "" {
+		if p := writeFullMessage(d.FullMessage); p != "" {
+			fmt.Fprintf(h.W, "%s %s=%s %snote:%s the full message, with the long type names, is in %s\n", pad, st.Gutter, st.Reset, st.Bold, st.Reset, p)
+		}
+	}
 	for _, fx := range d.Fixes {
 		h.fixDiff(fx, pad)
 	}
@@ -319,6 +327,17 @@ func (h *Human) snippet(f *srcFile, d *Diagnostic) {
 			}
 		}
 	}
+}
+
+// writeFullMessage saves a long message to a file named by its hash in the
+// temporary directory and returns the path.
+func writeFullMessage(msg string) string {
+	sum := sha256.Sum256([]byte(msg))
+	p := filepath.Join(os.TempDir(), "marmot-msg-"+hex.EncodeToString(sum[:6])+".txt")
+	if err := os.WriteFile(p, []byte(msg+"\n"), 0o644); err != nil {
+		return ""
+	}
+	return p
 }
 
 // drawn is one mark on a caret row, in display columns.

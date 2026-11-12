@@ -1,0 +1,15 @@
+package main
+
+import "os"
+
+func load() error {
+	var err error
+	if true {
+		var data []byte
+		data, err = os.ReadFile("x")
+		_ = data
+	}
+	return err
+}
+
+func main() { println(load() != nil) }

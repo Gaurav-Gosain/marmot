@@ -1,0 +1,8 @@
+package main
+
+var Max = 10
+
+func main() {
+	Max = 20
+	println(Max)
+}

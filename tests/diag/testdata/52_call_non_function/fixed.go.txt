@@ -1,0 +1,6 @@
+package main
+
+func main() {
+	limit := 10
+	println(min(limit, 3))
+}

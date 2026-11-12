@@ -1,0 +1,9 @@
+package main
+
+import "strconv"
+
+func main() {
+	n := 3
+	s := "x"
+	println(s + strconv.Itoa(n))
+}

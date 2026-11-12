@@ -1,0 +1,6 @@
+package main
+
+func main() {
+	xs := []int{1}
+	println(len(xs) + 1)
+}

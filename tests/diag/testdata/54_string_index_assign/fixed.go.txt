@@ -1,0 +1,9 @@
+package main
+
+func main() {
+	s := "hello"
+	b := []byte(s)
+	b[0] = 'H'
+	s = string(b)
+	println(s)
+}

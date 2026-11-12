@@ -1,0 +1,12 @@
+package main
+
+type Namer interface{ Name() string }
+
+type Dog struct{}
+
+func (Dog) Name() string { return "dog" }
+
+func main() {
+	var n Namer = Dog{}
+	println(n.Name())
+}
