@@ -302,7 +302,7 @@ func (st *incrState) typeCheck(p *packages.Package, files []*ast.File) (*types.P
 		}),
 		Sizes: st.sizes,
 		Error: func(err error) {
-			if len(errs) < 10 {
+			if len(errs) < 10 || st.cfg.AllErrors {
 				errs = append(errs, err.Error())
 			}
 		},

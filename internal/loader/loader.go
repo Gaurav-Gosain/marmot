@@ -33,6 +33,10 @@ type Config struct {
 	// Tests loads the test variant of the (single) package pattern; the
 	// root becomes the generated "pkg.test" main package (go list -test).
 	Tests bool
+	// AllErrors reports every load and type error: no caps per package or
+	// overall, and no "could not import" follow-ons of a package that
+	// already has errors.
+	AllErrors bool
 	// Incremental loads packages from cached export data where possible
 	// (incremental.go); only packages that changed, or that NeedSource asks
 	// for, are parsed, type checked and get SSA bodies.
@@ -171,11 +175,14 @@ func Load(cfg Config) (*Program, error) {
 	packages.Visit(pkgs, nil, func(p *packages.Package) {
 		all = append(all, p)
 		for _, e := range p.Errors {
+			if cfg.AllErrors && followOn(p, e) {
+				continue
+			}
 			errs = append(errs, e.Error())
 		}
 	})
 	if len(errs) > 0 {
-		if len(errs) > 20 {
+		if len(errs) > 20 && !cfg.AllErrors {
 			errs = append(errs[:20], fmt.Sprintf("too many errors (%d)", len(errs)))
 		}
 		return nil, fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -471,4 +478,18 @@ func buildSSAIncremental(roots, all []*packages.Package) (prog *ssa.Program, ssa
 		ssaPkgs = append(ssaPkgs, byPkg[r])
 	}
 	return prog, ssaPkgs, nil
+}
+
+// followOn reports whether e is a "could not import" type error of p for an
+// import that has errors of its own, which are reported there.
+func followOn(p *packages.Package, e packages.Error) bool {
+	if e.Kind != packages.TypeError || !strings.Contains(e.Msg, "could not import ") {
+		return false
+	}
+	for path, q := range p.Imports {
+		if len(q.Errors) > 0 && strings.Contains(e.Msg, "could not import "+path+" ") {
+			return true
+		}
+	}
+	return false
 }

@@ -50,6 +50,8 @@ type Config struct {
 	Tags     []string
 	Patterns []string
 	Stderr   io.Writer
+	// AllErrors reports every load and type error (loader.Config.AllErrors).
+	AllErrors bool
 }
 
 // FindRoot locates the marmot repository root.
@@ -200,7 +202,7 @@ func (b *build) run1() (string, error) {
 	defer releaseSlot()
 	lcfg := loader.Config{
 		Dir: cfg.Dir, Root: cfg.Root, Tags: cfg.Tags, GOOS: goos, GOARCH: goarch, Patterns: cfg.Patterns,
-		Log: b.logf, Tests: cfg.Test,
+		Log: b.logf, Tests: cfg.Test, AllErrors: cfg.AllErrors,
 		BeforeSSA: func(all []*packages.Package) error {
 			return specialize.BeforeSSA(&specialize.Input{Packages: all, Release: cfg.Release, GOOS: goos, GOARCH: goarch, Log: b.logf})
 		},
