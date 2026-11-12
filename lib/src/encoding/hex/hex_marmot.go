@@ -105,8 +105,10 @@ func DecodedLen(x int) int { return x / 2 }
 func Decode(dst, src []byte) (int, error) {
 	// marmot: decode the whole pairs with the C core's SIMD decoder; on an
 	// invalid byte or a short dst, redo the work below to report exactly
-	// what the Go loop reports.
-	if n := len(src) / 2; n > 0 && len(dst) >= n {
+	// what the Go loop reports. Only when dst and src do not overlap: the
+	// SIMD decoder writes dst ahead of what the redo (or a later block)
+	// reads from src, and Decode(b, b) is a common in-place use.
+	if n := len(src) / 2; n > 0 && len(dst) >= n && !overlaps(dst[:n], src) {
 		if rt_hex_decode(unsafe.SliceData(dst), unsafe.Pointer(unsafe.SliceData(src)), n) == n {
 			if len(src)%2 == 0 {
 				return n, nil
@@ -382,4 +384,13 @@ func (h *dumper) Close() (err error) {
 	h.rightChars[nBytes+1] = '\n'
 	_, err = h.w.Write(h.rightChars[:nBytes+2])
 	return
+}
+
+// overlaps reports whether a and b share memory.
+func overlaps(a, b []byte) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	pa, pb := uintptr(unsafe.Pointer(unsafe.SliceData(a))), uintptr(unsafe.Pointer(unsafe.SliceData(b)))
+	return pa < pb+uintptr(len(b)) && pb < pa+uintptr(len(a))
 }
