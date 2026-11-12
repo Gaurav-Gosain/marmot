@@ -258,6 +258,19 @@ func preprintpanics(p *_panic) {
 // fatalpanic prints the panic chain and the goroutine header and exits
 // with status 2.
 func fatalpanic(p *_panic, goid int64) {
+	gp := getg()
+	if gp.printingPanic {
+		// An Error or String method that preprintpanics called panicked
+		// and nothing recovered it, as gc reports it.
+		const text = "panic while printing panic value"
+		switch r := p.arg.(type) {
+		case string:
+			throw(text + ": " + r)
+		default:
+			throw(text + ": type " + efaceOf(&p.arg).typ.str)
+		}
+	}
+	gp.printingPanic = true
 	preprintpanics(p)
 	printlock()
 	printpanics(p)

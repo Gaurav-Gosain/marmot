@@ -42,6 +42,10 @@ type g struct {
 	// FIPS 140 service indicator and bypass flag (crypto packages).
 	fipsIndicator  uint8
 	fipsOnlyBypass bool
+	// printingPanic is set while a fatal panic converts panic values to
+	// text (preprintpanics), so a panic in an Error or String method
+	// stops instead of recursing.
+	printingPanic bool
 	// labels is the runtime/pprof label set of this goroutine.
 	labels unsafe.Pointer
 }

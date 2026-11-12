@@ -210,7 +210,7 @@ type PanicNilError struct {
 	_ [0]*PanicNilError
 }
 
-func (*PanicNilError) Error() string { return "panic called with nil argument" }
+func (*PanicNilError) Error() string { return "runtime error: panic called with nil argument" }
 func (*PanicNilError) RuntimeError() {}
 
 // Entry points for compiler generated checks. None of them return.
