@@ -2,7 +2,9 @@
 // symbols, sections and relocations as the Mach-O form (see MachO.h).
 #include "MachO.h"
 
+#include <algorithm>
 #include <cstring>
+#include <unordered_map>
 
 namespace marmot {
 namespace tier0 {
@@ -36,10 +38,16 @@ struct Buf {
 
 struct Strtab {
   std::string s = std::string(1, '\0');
-  uint32_t add(const std::string &n) {
+  std::unordered_map<std::string, uint32_t> seen;  // section names repeat
+  uint32_t add(const std::string &n, bool share = false) {
+    if (share) {
+      auto it = seen.find(n);
+      if (it != seen.end()) return it->second;
+    }
     uint32_t at = uint32_t(s.size());
     s += n;
     s.push_back('\0');
+    if (share) seen.emplace(n, at);
     return at;
   }
 };
@@ -64,20 +72,52 @@ std::string MachOWriter::serializeELF() const {
   Strtab shstr, str;
   std::vector<Shdr> sh;
   sh.push_back(Shdr{0, 0, 0});
-  unsigned secIndex[4];
+  // One ELF section per defined symbol (as -ffunction-sections and
+  // -fdata-sections), so --gc-sections drops dead code and the undefined
+  // symbols only dead code refers to.
   static const uint64_t flags[4] = {SHF_ALLOC | SHF_EXECINSTR, SHF_ALLOC | SHF_WRITE, SHF_ALLOC,
                                     SHF_ALLOC | SHF_WRITE};
+  struct Chunk {
+    uint64_t lo, hi;
+    unsigned shndx;
+  };
+  std::vector<Chunk> chunks[4];
   for (unsigned i = 0; i < 4; i++) {
     const Section &x = sec_[i];
-    Shdr h{shstr.add(elfSectName(i)), i == 3 ? SHT_NOBITS : SHT_PROGBITS, flags[i]};
-    h.align = uint64_t(1) << x.align;
-    if (i == 3)
-      h.size = x.bssSize;
-    else
-      h.data.assign(x.data.begin(), x.data.end());
-    secIndex[i] = unsigned(sh.size());
-    sh.push_back(std::move(h));
+    uint64_t total = i == 3 ? x.bssSize : x.data.size();
+    std::vector<uint64_t> starts;
+    for (const Sym &y : syms_)
+      if (y.defined && unsigned(y.sect) == i) starts.push_back(y.offset);
+    std::sort(starts.begin(), starts.end());
+    starts.erase(std::unique(starts.begin(), starts.end()), starts.end());
+    if (starts.empty() || starts[0] != 0) starts.insert(starts.begin(), 0);
+    for (size_t k = 0; k < starts.size(); k++) {
+      uint64_t lo = starts[k], hi = k + 1 < starts.size() ? starts[k + 1] : total;
+      if (hi <= lo && !(k == 0 && starts.size() == 1)) continue;
+      Shdr h{shstr.add(elfSectName(i), true), i == 3 ? SHT_NOBITS : SHT_PROGBITS, flags[i]};
+      h.align = uint64_t(1) << x.align;
+      if (i == 3)
+        h.size = hi - lo;
+      else
+        h.data.assign(x.data.begin() + lo, x.data.begin() + hi);
+      chunks[i].push_back({lo, hi, unsigned(sh.size())});
+      sh.push_back(std::move(h));
+    }
   }
+  // The chunk holding an offset (a symbol at the end of a section, of size
+  // zero, belongs to the last chunk).
+  auto chunkOf = [&](unsigned i, uint64_t off) -> const Chunk & {
+    const std::vector<Chunk> &c = chunks[i];
+    size_t lo = 0, hi = c.size();
+    while (hi - lo > 1) {
+      size_t mid = (lo + hi) / 2;
+      if (c[mid].lo <= off)
+        lo = mid;
+      else
+        hi = mid;
+    }
+    return c[lo];
+  };
 
   // Symbols: the null symbol, locals, then globals (sh_info = first global).
   std::vector<unsigned> order;
@@ -102,9 +142,10 @@ std::string MachOWriter::serializeELF() const {
       symtab.u64(uint64_t(1) << s.commonAlign);
       symtab.u64(s.commonSize);
     } else if (s.defined) {
-      symtab.u16(uint16_t(secIndex[unsigned(s.sect)]));
-      symtab.u64(s.offset);
-      symtab.u64(0);
+      const Chunk &c = chunkOf(unsigned(s.sect), s.offset);
+      symtab.u16(uint16_t(c.shndx));
+      symtab.u64(s.offset - c.lo);
+      symtab.u64(c.hi - c.lo);
     } else {
       symtab.u16(0);
       symtab.u64(0);
@@ -112,13 +153,13 @@ std::string MachOWriter::serializeELF() const {
     }
   }
 
-  // Relocations with explicit addends. PC-relative fields end their
-  // instruction, so the addend is relative to the end of the 4-byte field.
-  unsigned symtabIndex = unsigned(sh.size()) + 0;  // fixed below
+  // Relocations with explicit addends, one table per chunk. PC-relative
+  // fields end their instruction, so the addend is relative to the end of
+  // the 4-byte field.
+  unsigned symtabIndex = 0;
   std::vector<Shdr> relas;
   for (unsigned i = 0; i < 3; i++) {
-    if (sec_[i].rels.empty()) continue;
-    Buf r;
+    std::vector<Buf> per(chunks[i].size());
     for (const Rel &x : sec_[i].rels) {
       uint32_t type = R_X86_64_64;
       int64_t add = x.addend;
@@ -129,16 +170,21 @@ std::string MachOWriter::serializeELF() const {
       case Reloc::Abs64: type = R_X86_64_64; break;
       default: break;  // arm64 kinds never reach an x86-64 object
       }
-      r.u64(x.offset);
+      size_t k = size_t(&chunkOf(i, x.offset) - chunks[i].data());
+      Buf &r = per[k];
+      r.u64(x.offset - chunks[i][k].lo);
       r.u64(uint64_t(finalIdx[x.sym]) << 32 | type);
       r.u64(uint64_t(add));
     }
-    Shdr h{shstr.add(std::string(".rela") + elfSectName(i)), SHT_RELA, SHF_INFO_LINK};
-    h.info = secIndex[i];
-    h.align = 8;
-    h.entsize = 24;
-    h.data = std::move(r.b);
-    relas.push_back(std::move(h));
+    for (size_t k = 0; k < per.size(); k++) {
+      if (per[k].b.empty()) continue;
+      Shdr h{shstr.add(std::string(".rela") + elfSectName(i), true), SHT_RELA, SHF_INFO_LINK};
+      h.info = chunks[i][k].shndx;
+      h.align = 8;
+      h.entsize = 24;
+      h.data = std::move(per[k].b);
+      relas.push_back(std::move(h));
+    }
   }
   symtabIndex = unsigned(sh.size() + relas.size());
   for (Shdr &h : relas) {
