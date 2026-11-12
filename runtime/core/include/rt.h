@@ -252,6 +252,9 @@ void rt_walltime(int64_t *sec, int32_t *nsec);    // wall clock
 void rt_sleep(int64_t ns);
 // One-shot timer: call fn(arg) on a system goroutine at monotonic time when.
 // Returns a handle; rt_timer_stop returns 1 if the timer was stopped before firing.
+// arg is a GC root from rt_timer_start until fn has been called (or the
+// timer is stopped): it may be the only reference to a heap object. The
+// handle is a heap object too and keeps arg alive while it is reachable.
 void *rt_timer_start(int64_t when, void (*fn)(void *), void *arg);
 int32_t rt_timer_stop(void *timer);
 
