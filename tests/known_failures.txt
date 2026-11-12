@@ -1,28 +1,8 @@
 # Expected failures until the compiler catches up. One test per line, path relative to tests/
 # without .go. The conform runner exits 0 when every failure is listed here. Remove lines as they pass.
 goroot/genmeth1
-goroot/range4
-goroot/reflectmethod1
-goroot/reflectmethod2
-goroot/reflectmethod3
-goroot/reflectmethod4
-goroot/reflectmethod5
-goroot/reflectmethod6
-goroot/reflectmethod7
 goroot/shift3
-run/std/reflect/kinds_names
-run/opt/fma_fusion_gc  # gc fuses x*y+z on arm64, marmot does not (spec allows both)
 run/opt/panic_in_loop@Oz  # recovered panic then nil deref panic is not recoverable at -Oz
-run/std/runtime/goroutines_gc  # runtime.Caller unsupported (no pc to file:line table yet)
-run/std/log/basic  # runtime.Caller unsupported, log.Lshortfile prints ???:0
-world/ulid  # return id, parse(&id): gc reads variables after calls (see core/eval_order_var_after_call)
 run/mem/regionstore@lifetime  # MARMOT_LIFETIME=all: region store use-after-free, expected until fixed
-world/audit_unexported  # unexported methods of different packages are confused in itabs
-run/audit/deadinit_bigmake  # huge make: fatal "out of memory" instead of the makeslice panic (dead initializer removal)
-run/audit/defer_builtin_recover  # recover() result lost for a deferred builtin
 run/audit/evalorder_gaps  # map index evaluation order differs from gc
-run/audit/fma_complex_mul  # complex multiply: fused multiply-add bits differ from gc
-run/audit/make_huge_const  # make with a huge constant length does not panic like gc
 run/audit/math_exp_log_bits  # math.Exp(-745.13) returns 0x1, gc 0x0 (value difference, not a NaN payload)
-run/audit/method_value_nil_iface  # method value of a nil interface panics with the wrong message
-run/audit/tempstring_write  # temporary string written through (no-copy conversion)
