@@ -2,7 +2,7 @@
 ROOT := $(abspath .)
 export MARMOT_ROOT := $(ROOT)
 
-.PHONY: diagrams all frontend backend rtcore test conform bench clean
+.PHONY: install diagrams all frontend backend rtcore test conform bench clean
 
 all: frontend backend rtcore
 
@@ -24,6 +24,10 @@ conform: all
 
 bench: all
 	./bench/run.sh
+
+# Copy the built compiler to ~/.marmot and link it into ~/.local/bin (PREFIX, BINDIR override).
+install:
+	./scripts/install.sh
 
 clean:
 	rm -rf build
