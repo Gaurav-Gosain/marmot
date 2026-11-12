@@ -1,5 +1,5 @@
 /-
-RuleV.lean: Rule V of docs/loops.md (bounds check versioning), as implemented in
+RuleV.lean: Rule V (bounds check versioning), as implemented in
 backend/lib/Loops/Versioning.cpp and Affine.cpp.
 
 Two parts.

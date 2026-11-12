@@ -71,8 +71,8 @@ type sstate struct {
 	runq      []int
 	spinners  int  // spinners with a P (their Ps have owner -2)
 	nmspin    int  // nmspinning
-	before50f bool // before rtcore 50f70c9: p->m stays set during a syscall, the exit CAS does not set it
-	fix       bool // rtcore 5a287c8: REQ_EXITSYSCALL takes an idle P or queues in one sched.lock
+	before50f bool // before 50f70c9: p->m stays set during a syscall, the exit CAS does not set it
+	fix       bool // 5a287c8: REQ_EXITSYSCALL takes an idle P or queues in one sched.lock
 	// hold; an M that stops spinning rechecks the global queue
 	spinPh int // 0 no spinner; 1 holds a P (findrunnable); 2 released its P, still spinning;
 	// 3 stopped spinning (5a287c8: rechecks the global queue)
@@ -629,7 +629,7 @@ func newSTW(scripts ...string) *sstate {
 
 var stwScripts = [][]string{{"g", "g"}, {"g", "s"}, {"gg", "g"}, {"g", "g", "s"}, {"gs", "sg"}, {"s", "s", "g"}, {"g", "r"}, {"r", "r", "g"}, {"gr", "rg"}}
 
-// Before rtcore 5a287c8 (at 93701ad) a goroutine that leaves a syscall while the world is stopped can
+// Before 5a287c8 (at 93701ad) a goroutine that leaves a syscall while the world is stopped can
 // be queued after start_the_world looked for work, and nobody runs it. This test records
 // the finding: it passes while the model finds that trace.
 func TestSTWExitSyscallLostWakeBefore5a287c8(t *testing.T) {
@@ -663,7 +663,7 @@ func TestSTWFixed(t *testing.T) {
 	}
 }
 
-// Before rtcore 50f70c9 two Ms could own one P: the P of an M in a syscall is taken and run
+// Before 50f70c9 two Ms could own one P: the P of an M in a syscall is taken and run
 // by another M that enters a syscall too; the first M returns and wins the status CAS while
 // p->m still names the other M. Its SIGURG handler then refuses to stop (p->m != m) and stop
 // the world waits forever (the double GC hang of marmot-2).

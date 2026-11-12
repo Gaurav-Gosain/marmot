@@ -1,4 +1,4 @@
-# b3.bend: rule B3 of go-bce (docs/passes.md) on an execution model.
+# b3.bend: rule B3 of go-bce (backend/lib/Dialect/Go/BCE.cpp) on an execution model.
 #
 # An execution is a trace of block visits, latest first. Each visit records the values, after
 # the visit, of the SSA values B3 talks about:

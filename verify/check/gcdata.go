@@ -1,7 +1,7 @@
 package main
 
 // gcdata.go: an independent check of the pointer bitmaps the compiler emits in type
-// descriptors (docs/verify.md, "Precise GC contract"). It reads the descriptors from the
+// descriptors (precise GC contract). It reads the descriptors from the
 // MLIR (globals "type:<T>" with size and ptrdata first, and "type:<T>.gcdata" with one bit
 // per word), parses each type string back into a go/types type, computes the bitmap with its
 // own implementation of gc's layout rules (shares no code with internal/codegen), and

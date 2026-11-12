@@ -1,5 +1,5 @@
 /-
-RuleP.lean: Rule P of docs/loops.md (loop-parallelize), the independence part.
+RuleP.lean: Rule P (loop-parallelize, backend/lib/Loops/Parallelize.cpp), the independence part.
 
 Model. Memory maps byte addresses to values. Iteration k of the loop is a list of steps over
 the memory and the iteration's own local state, which starts as `loc0 k` (inductions are

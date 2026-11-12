@@ -1,7 +1,7 @@
 package main
 
 // gcstores.go: pointer stores into allocated objects against the kind the object was allocated
-// with (docs/verify.md, "Precise GC contract"). The declared memory type of an allocation site
+// with (precise GC contract). The declared memory type of an allocation site
 // (gcsites.go) says what the compiler meant to store; this file checks what it does store. In
 // every function it follows the pointer returned by each allocation (go.new, go.make_slice,
 // runtime.newobject, runtime.makeslice, runtime.growslice, rt_region_alloc on a noscan region)

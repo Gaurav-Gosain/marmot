@@ -1,5 +1,5 @@
 /-
-Defer.lean: open-coded defers (docs/frontend-passes.md, "Open-coded defers"; opendefer.go).
+Defer.lean: open-coded defers (internal/codegen/opendefer.go).
 
 1. `path_increasing`: the defer statements are numbered by a topological order of the acyclic
    defer region (reverse postorder is one: every edge goes to a higher number). Along any

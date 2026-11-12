@@ -1,7 +1,7 @@
 package main
 
 // report.go: the certificate go-bce writes with --go-bce='report=FILE' (BCE.cpp; format in
-// docs/passes.md): one line per removed check,
+// BCE.cpp): one line per removed check,
 //	<func> TAB <walk index> TAB <rule> [TAB <walk index of the dominating check>]
 // where the walk index counts go.bounds_check, go.index and go.nil_check ops in pre-order
 // before anything is removed. The checker validates exactly the rule the pass names.

@@ -1,6 +1,6 @@
 package main
 
-// bce.go: an independent re-check of go-bce (docs/passes.md). For every check the pass
+// bce.go: an independent re-check of go-bce (backend/lib/Dialect/Go/BCE.cpp). For every check the pass
 // removed, find a justification by the rules as written and as proved in verify/bend
 // (B1, B2, B3, N1, N2). Dominance is decided the way the proofs take it: t dominates x
 // when x is not reachable from entry on paths that avoid t (the closed set S of the

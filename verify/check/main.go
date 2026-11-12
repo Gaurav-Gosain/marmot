@@ -1,5 +1,5 @@
 // Command check re-checks go-bce on real compiler output, independently of LLVM and of the
-// backend: every check the pass removed must be justified by a rule of docs/passes.md as
+// backend: every check the pass removed must be justified by a go-bce rule as
 // proved in verify/bend.
 //
 //	check -before in.mlir -after out.mlir [-report bce.report]

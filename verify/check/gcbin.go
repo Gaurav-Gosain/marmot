@@ -1,7 +1,7 @@
 package main
 
 // gcbin.go: type descriptors in the linked binary against the MLIR they were translated from
-// (docs/verify.md, "Precise GC contract"). -gcdata and -gcsites check the MLIR; this checks
+// (precise GC contract). -gcdata and -gcsites check the MLIR; this checks
 // that the backend and the linker carried each descriptor through: the size and ptrdata words
 // the runtime reads, the bitmap bytes, and that the gcdata word points at the bitmap. A wrong
 // data layout during translation (struct fields read at the wrong offset) shows here.

@@ -1,5 +1,5 @@
 /-
-Region.lean: region allocation (docs/frontend-passes.md, "Regions"; region.go).
+Region.lean: region allocation (internal/codegen/region.go, frameregion.go).
 
 Model. A pointer value points into one object or is not a pointer. Objects allocated by the
 region clone belong to the region R. Instructions of the call's block (with the cloned

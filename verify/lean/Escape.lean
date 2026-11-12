@@ -1,5 +1,5 @@
 /-
-Escape.lean: go-escape's use rules (docs/passes.md, "Use rules"), on a provenance model.
+Escape.lean: go-escape's use rules (backend/lib/Dialect/Go/Escape.cpp), on a provenance model.
 
 Model. Every runtime value carries the set of allocations whose address it may contain (its
 provenance). Instructions, one per row of the use table:

@@ -1,4 +1,4 @@
-# sink.bend: allocation sinking (docs/frontend-passes.md, internal/codegen/allocsink.go).
+# sink.bend: allocation sinking (internal/codegen/allocsink.go).
 #
 # An allocation in block b moves to the start of d, the nearest common dominator of its uses
 # (a phi use counts at the end of its predecessor), when d != b and d lies on no cycle that

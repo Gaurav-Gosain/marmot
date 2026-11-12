@@ -1,5 +1,5 @@
 /-
-Poly.lean: polynomial inductions in Rule P (docs/loops.md condition 2; Parallelize.cpp).
+Poly.lean: polynomial inductions in Rule P (condition 2; backend/lib/Loops/Parallelize.cpp).
 
 An integer header phi with ScalarEvolution form {c0, +, c1, +, c2} on N-bit words takes, in
 iteration k, the value c0 + c1*k + c2*binomial(k, 2) modulo 2^N (the serial recurrence

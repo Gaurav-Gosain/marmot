@@ -1,4 +1,4 @@
-# b2.bend: rules B1, B2 and N2 of go-bce (docs/passes.md).
+# b2.bend: rules B1, B2 and N2 of go-bce (backend/lib/Dialect/Go/BCE.cpp).
 #
 # B2 model: a trace of block visits, latest first, recording after each visit the current
 # values of the check's index i and length n (by E1 the dominating check reads the same

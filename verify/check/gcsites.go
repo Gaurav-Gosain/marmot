@@ -1,7 +1,7 @@
 package main
 
-// gcsites.go: allocation sites against their descriptors (docs/verify.md, "Precise GC
-// contract"). Every go.new, go.make_slice, go.box and go.make_closure names the type
+// gcsites.go: allocation sites against their descriptors (precise GC
+// contract). Every go.new, go.make_slice, go.box and go.make_closure names the type
 // descriptor the runtime will scan the object with and the LLVM memory type the code stores
 // into it. The object kind follows from the descriptor (ptrdata 0: NOSCAN; no bitmap:
 // CONSERVATIVE; else PRECISE with the bitmap). Every pointer-typed word of the memory type

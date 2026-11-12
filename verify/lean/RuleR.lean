@@ -1,5 +1,5 @@
 /-
-RuleR.lean: reductions in Rule P (docs/loops.md, condition 3; Parallelize.cpp).
+RuleR.lean: reductions in Rule P (condition 3; backend/lib/Loops/Parallelize.cpp).
 
 The pass splits an integer reduction r = r op x over the iterations: each chunk starts from
 the identity of op (Parallelize.cpp, `identity`), folds its own iterations in order, and
