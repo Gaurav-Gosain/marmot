@@ -3,12 +3,21 @@
 // expect-stdout: ok
 #include "rtest.h"
 #include <stdio.h>
+#include <time.h>
 
 static volatile uint64_t sink;
 
+static int64_t cpu_ns(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts);
+  return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
+}
+
+// busy runs until the process has used ns of CPU time (wall time varies
+// with load; samples follow CPU time).
 __attribute__((noinline)) static void busy(int64_t ns) {
-  int64_t end = rt_nanotime() + ns;
-  while (rt_nanotime() < end)
+  int64_t end = cpu_ns() + ns;
+  while (cpu_ns() < end)
     for (int i = 0; i < 1000; i++) sink += (uint64_t)i * (uint64_t)i;
 }
 

@@ -38,7 +38,9 @@ static int32_t prof_installed;
 static bool frame_ok(uintptr_t fp, uintptr_t prev, uintptr_t lo, uintptr_t hi) {
   if (fp == 0 || fp & 7 || fp <= prev) return false;
   if (lo && hi) return fp >= lo && fp + 16 <= hi;
-  return fp - prev < (1 << 20);
+  // Unknown bounds (g0, threads not running a goroutine): accept the first
+  // frame, then steps of less than 1 MB.
+  return prev == 0 || fp - prev < (1 << 20);
 }
 
 static void sigprof(int sig, siginfo_t *info, void *ctx) {
