@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"strings"
+	"io"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
 )
@@ -80,19 +80,24 @@ func (m *moduleGen) sharedStringData(s string) string {
 // constGlobal defines a global initialized with c.
 func (m *moduleGen) constGlobal(sym, linkage string, constant bool, c cv) {
 	m.defined[sym] = true
-	var b strings.Builder
+	b := &m.defs
 	k := ""
 	if constant {
 		k = "constant "
 	}
-	fmt.Fprintf(&b, "  llvm.mlir.global %s %s%s() {addr_space = 0 : i32} : %s {\n", linkage, k, mlir.Symbol(sym), c.typ)
+	fmt.Fprintf(b, "  llvm.mlir.global %s %s%s() {addr_space = 0 : i32} : %s {\n", linkage, k, mlir.Symbol(sym), c.typ)
 	n := 0
-	v := writeCV(&b, &n, c)
-	fmt.Fprintf(&b, "    llvm.return %s : %s\n  }\n", v, c.typ)
-	m.defs.WriteString(b.String())
+	v := writeCV(b, &n, c)
+	fmt.Fprintf(b, "    llvm.return %s : %s\n  }\n", v, c.typ)
 }
 
-func writeCV(b *strings.Builder, n *int, c cv) string {
+// cvWriter is where writeCV writes.
+type cvWriter interface {
+	io.Writer
+	WriteString(string) (int, error)
+}
+
+func writeCV(b cvWriter, n *int, c cv) string {
 	name := func() string {
 		*n++
 		return fmt.Sprintf("%%c%d", *n)

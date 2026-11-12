@@ -16,10 +16,10 @@ type moduleGen struct {
 	pkg *ssa.Package // nil for the entry module
 	tm  *typeMapper
 
-	defs        strings.Builder // definitions: globals and functions
-	used        []cv            // llvm.used entries
-	tlinks      []string        // unnamed composite type descriptors defined here
-	locs        map[string]int  // location aliases (locs.go)
+	defs        textBuf        // definitions: globals and functions
+	used        []cv           // llvm.used entries
+	tlinks      []string       // unnamed composite type descriptors defined here
+	locs        map[string]int // location aliases (locs.go)
 	locDefs     strings.Builder
 	decls       map[string]string
 	defined     map[string]bool
@@ -112,25 +112,28 @@ func (m *moduleGen) finish(name string) (Module, error) {
 		}
 		return Module{}, fmt.Errorf("%s", strings.Join(sb, "\n"))
 	}
+	m.emitTypelinks()
+	m.emitUsed()
+	keys := make([]string, 0, len(m.decls))
+	size := m.defs.Len() + m.locDefs.Len() + 128
+	for k, d := range m.decls {
+		if !m.defined[k] {
+			keys = append(keys, k)
+			size += len(d)
+		}
+	}
+	sort.Strings(keys)
 	var out strings.Builder
+	out.Grow(size)
 	// Method pruning is whole-program: modules depend on its result.
 	if m.p.usedMethodsHash != "" {
 		fmt.Fprintf(&out, "// methods: %s\n", m.p.usedMethodsHash)
 	}
 	out.WriteString("module {\n")
-	keys := make([]string, 0, len(m.decls))
-	for k := range m.decls {
-		if !m.defined[k] {
-			keys = append(keys, k)
-		}
-	}
-	sort.Strings(keys)
 	for _, k := range keys {
 		out.WriteString(m.decls[k])
 	}
-	m.emitTypelinks()
-	m.emitUsed()
-	out.WriteString(m.defs.String())
+	m.defs.writeTo(&out)
 	out.WriteString("}\n")
 	out.WriteString(m.locDefs.String())
 	return Module{Name: name, Text: out.String()}, nil

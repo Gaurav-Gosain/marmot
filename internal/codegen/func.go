@@ -245,21 +245,15 @@ func (f *funcGen) gen(sym string, shared bool) {
 			}
 		}
 	}
-	var out strings.Builder
+	out := &f.m.defs
 	out.WriteString(head.String())
-	// Prologue (free variable loads were written to body; allocas go first).
-	if len(fn.Blocks[0].Preds) > 0 {
-		// The entry block of an MLIR region cannot have predecessors.
-		out.WriteString(f.pro.String())
-		// The body starts with the free variable loads, then block 0 header.
-		out.WriteString(f.body.String())
-	} else {
-		out.WriteString(f.pro.String())
-		out.WriteString(f.body.String())
-	}
+	// Prologue (allocas) first; the body starts with the free variable
+	// loads, then (when block 0 has predecessors, which the entry block of
+	// an MLIR region cannot have) the branch to block 0's header.
+	out.WriteString(f.pro.String())
+	out.WriteString(f.body.String())
 	out.WriteString(f.cold.String())
 	out.WriteString("  }" + f.m.loc(fn.Pos()) + "\n")
-	f.m.defs.WriteString(out.String())
 }
 
 // blockHeader starts block b. For block 0 with predecessors the entry
