@@ -161,3 +161,30 @@ func crypto_x509_syscall(fn, a1, a2, a3, a4, a5 uintptr, f1 float64) uintptr {
 
 //go:linkname rt_libcall_f64 rt_libcall_f64
 func rt_libcall_f64(fn unsafe.Pointer, args unsafe.Pointer, f0 float64, err *int32) int
+
+// os_executablePath returns the path of the executable for
+// os.Executable: the kernel passes it as "executable_path=..." in the
+// apple strings that follow the environment block, as the gc runtime
+// reads it.
+func os_executablePath() string {
+	envp := unsafe.Pointer(rt_envp())
+	if envp == nil {
+		return ""
+	}
+	i := uintptr(0)
+	for *(*unsafe.Pointer)(unsafe.Add(envp, i*ptrSize)) != nil {
+		i++
+	}
+	// The apple strings start after the NULL that ends envp.
+	for i++; ; i++ {
+		p := *(*unsafe.Pointer)(unsafe.Add(envp, i*ptrSize))
+		if p == nil {
+			return ""
+		}
+		s := cstring(p)
+		const prefix = "executable_path="
+		if len(s) > len(prefix) && s[:len(prefix)] == prefix {
+			return s[len(prefix):]
+		}
+	}
+}

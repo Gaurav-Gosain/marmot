@@ -535,9 +535,54 @@ func SetFinalizer(obj any, finalizer any) {
 	unlock(&finLock)
 }
 
+// finRunning is the number of runFinalizer calls in progress and finRuns
+// the number started, for blockUntilEmptyFinalizerQueue.
+var finRunning, finRuns uint64
+
+// blockUntilEmptyFinalizerQueue waits until no finalizer or cleanup is
+// running and none has started for a quiet period, or until timeout
+// nanoseconds pass, and reports whether the queue drained. The C core's
+// queue is not visible, so a finalizer queued but not started within the
+// quiet period is missed. Used by tests (sync, unique, runtime).
+func blockUntilEmptyFinalizerQueue(timeout int64) bool {
+	const quiet = 2e6 // ns
+	start := nanotime()
+	runs := atomicLoad64(&finRuns)
+	since := start
+	for {
+		now := nanotime()
+		if r := atomicLoad64(&finRuns); r != runs || atomicLoad64(&finRunning) != 0 {
+			runs, since = r, now
+		} else if now-since >= quiet {
+			return true
+		}
+		if now-start >= timeout {
+			return false
+		}
+		rt_sleep(100e3)
+	}
+}
+
+//go:linkname unique_runtime_blockUntilEmptyCleanupQueue unique.runtime_blockUntilEmptyCleanupQueue
+func unique_runtime_blockUntilEmptyCleanupQueue(timeout int64) bool {
+	return blockUntilEmptyFinalizerQueue(timeout)
+}
+
+//go:linkname sync_test_runtime_blockUntilEmptyCleanupQueue sync_test.runtime_blockUntilEmptyCleanupQueue
+func sync_test_runtime_blockUntilEmptyCleanupQueue(timeout int64) bool {
+	return blockUntilEmptyFinalizerQueue(timeout)
+}
+
+// haveHighResSleep reports that time.Sleep has about 1 ms resolution or
+// better (read by the time package tests).
+var haveHighResSleep = true
+
 // runFinalizer is called by the collector, on a runtime goroutine, for an
 // object that became unreachable.
 func runFinalizer(obj unsafe.Pointer) {
+	atomicXadd64(&finRuns, 1)
+	atomicXadd64(&finRunning, 1)
+	defer atomicXadd64(&finRunning, -1)
 	lock(&finLock)
 	key := ^uintptr(obj)
 	ent := finTable[key]
