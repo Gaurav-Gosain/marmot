@@ -41,4 +41,13 @@ module {
   llvm.func @fa() -> !llvm.ptr { %z = llvm.mlir.constant(0 : i32) : i32
     %r = llvm.call_intrinsic "llvm.frameaddress.p0"(%z) : (i32) -> !llvm.ptr
     llvm.return %r : !llvm.ptr }
+  llvm.func @fmaxi(%a: f64, %b: f64) -> f64 {
+    %r = llvm.intr.maximum(%a, %b) : (f64, f64) -> f64
+    llvm.return %r : f64 }
+  llvm.func @fmini(%a: f32, %b: f32) -> f32 {
+    %r = llvm.intr.minimum(%a, %b) : (f32, f32) -> f32
+    llvm.return %r : f32 }
+  llvm.func @fmaxn(%a: f64, %b: f64) -> f64 {
+    %r = llvm.intr.maxnum(%a, %b) : (f64, f64) -> f64
+    llvm.return %r : f64 }
 }

@@ -5,6 +5,7 @@ uint64_t clz64(uint64_t); uint8_t clz8(uint8_t); uint32_t ctz32(uint32_t); uint6
 uint64_t pop64(uint64_t); uint32_t bswap32(uint32_t); uint16_t brev16(uint16_t);
 uint64_t fshl64(uint64_t,uint64_t,uint64_t); uint32_t fshl32(uint32_t,uint32_t,uint32_t);
 uint8_t fshr8(uint8_t,uint8_t,uint8_t); uint64_t fshr64(uint64_t,uint64_t,uint64_t);
+double fmaxi(double,double); float fmini(float,float); double fmaxn(double,double);
 int64_t sat(double); uint64_t usat(double); void *fa(void);
 static int bad;
 #define CK(a,b) do{ unsigned long long g_=(unsigned long long)(a), w_=(unsigned long long)(b); if(g_!=w_){printf("%s: %llx != %llx\n",#a,g_,w_);bad=1;} }while(0)
@@ -31,6 +32,9 @@ int main(void){
   }
   CK(sat(1e30), INT64_MAX); CK(sat(-1e30), INT64_MIN); CK(sat(NAN), 0); CK(sat(-3.7), -3);
   CK(usat(1e30), UINT64_MAX); CK(usat(-5), 0); CK(usat(NAN), 0);
+  CK(fmaxi(1, 2) == 2, 1); CK(isnan(fmaxi(NAN, 2)), 1); CK(signbit(fmaxi(-0.0, 0.0)), 0);
+  CK(fmini(1, 2) == 1, 1); CK(isnan(fmini(3, NAN)), 1); CK(signbit(fmini(0.0f, -0.0f)), 1);
+  CK(fmaxn(NAN, 2) == 2, 1); CK(fmaxn(-1, -3) == -1, 1);
   CK(fa(), fa()); if(!fa()) bad=1;
   puts(bad?"FAIL":"ok"); return bad;
 }

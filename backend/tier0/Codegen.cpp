@@ -1087,6 +1087,10 @@ void FuncGen::emitOp(Operation &op) {
         stSlot(R1, of(c.getResult()), 8);
       })
       .Case<LL::FAddOp>([&](auto) { fbin([](unsigned d, unsigned n, unsigned m, bool x) { return fadd(d, n, m, x); }); })
+      .Case<LL::MaximumOp>([&](auto) { fbin([](unsigned d, unsigned n, unsigned m, bool x) { return fmax(d, n, m, x); }); })
+      .Case<LL::MinimumOp>([&](auto) { fbin([](unsigned d, unsigned n, unsigned m, bool x) { return fmin(d, n, m, x); }); })
+      .Case<LL::MaxNumOp>([&](auto) { fbin([](unsigned d, unsigned n, unsigned m, bool x) { return fmaxnm(d, n, m, x); }); })
+      .Case<LL::MinNumOp>([&](auto) { fbin([](unsigned d, unsigned n, unsigned m, bool x) { return fminnm(d, n, m, x); }); })
       .Case<LL::FSubOp>([&](auto) { fbin([](unsigned d, unsigned n, unsigned m, bool x) { return fsub(d, n, m, x); }); })
       .Case<LL::FMulOp>([&](auto) { fbin([](unsigned d, unsigned n, unsigned m, bool x) { return fmul(d, n, m, x); }); })
       .Case<LL::FDivOp>([&](auto) { fbin([](unsigned d, unsigned n, unsigned m, bool x) { return fdiv(d, n, m, x); }); })

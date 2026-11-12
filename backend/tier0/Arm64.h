@@ -192,6 +192,11 @@ inline uint32_t mvn(unsigned rd, unsigned rm, bool x64 = true) {
 // Floating point (d: double, s: single). Registers are v0..v31.
 inline uint32_t fpType(bool dbl) { return dbl ? 0x00400000u : 0; }
 inline uint32_t fadd(unsigned d, unsigned n, unsigned m, bool dbl) { return 0x1E202800u | fpType(dbl) | (m << 16) | (n << 5) | d; }
+// FMAX/FMIN propagate NaN (llvm.maximum/minimum); FMAXNM/FMINNM prefer the number (maxnum/minnum).
+inline uint32_t fmax(unsigned d, unsigned n, unsigned m, bool dbl) { return 0x1E204800u | fpType(dbl) | (m << 16) | (n << 5) | d; }
+inline uint32_t fmin(unsigned d, unsigned n, unsigned m, bool dbl) { return 0x1E205800u | fpType(dbl) | (m << 16) | (n << 5) | d; }
+inline uint32_t fmaxnm(unsigned d, unsigned n, unsigned m, bool dbl) { return 0x1E206800u | fpType(dbl) | (m << 16) | (n << 5) | d; }
+inline uint32_t fminnm(unsigned d, unsigned n, unsigned m, bool dbl) { return 0x1E207800u | fpType(dbl) | (m << 16) | (n << 5) | d; }
 inline uint32_t fsub(unsigned d, unsigned n, unsigned m, bool dbl) { return 0x1E203800u | fpType(dbl) | (m << 16) | (n << 5) | d; }
 inline uint32_t fmul(unsigned d, unsigned n, unsigned m, bool dbl) { return 0x1E200800u | fpType(dbl) | (m << 16) | (n << 5) | d; }
 inline uint32_t fdiv(unsigned d, unsigned n, unsigned m, bool dbl) { return 0x1E201800u | fpType(dbl) | (m << 16) | (n << 5) | d; }
