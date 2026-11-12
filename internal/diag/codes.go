@@ -39,15 +39,16 @@ const (
 	CodeUnknownField  = "M0029"
 
 	// marmot check findings, one code per check family.
-	CodeVet       = "M0100"
-	CodeLint      = "M0101"
-	CodeModernize = "M0102"
-	CodeNotFmt    = "M0103"
-	CodeGopls     = "M0104"
-	CodeVuln      = "M0105"
-	CodeNotTidy   = "M0106"
-	CodeCross     = "M0107"
-	CodeDeadcode  = "M0108"
+	CodeVet        = "M0100"
+	CodeLint       = "M0101"
+	CodeModernize  = "M0102"
+	CodeNotFmt     = "M0103"
+	CodeGopls      = "M0104"
+	CodeVuln       = "M0105"
+	CodeNotTidy    = "M0106"
+	CodeCross      = "M0107"
+	CodeDeadcode   = "M0108"
+	CodeExhaustive = "M0109"
 )
 
 // CodeInfo describes one code for marmot explain.
@@ -240,6 +241,11 @@ var codeTable = []CodeInfo{
 	{Code: CodeDeadcode, Title: "unreachable function",
 		Text: "No path from main or a test reaches the function, so it is dead code.",
 		Fix:  "Remove it, or use it."},
+	{Code: CodeExhaustive, Title: "switch misses cases",
+		Wrong: "type Color int\nconst (Red Color = iota; Green; Blue)\n\nswitch c {\ncase Red, Green:\n}",
+		Right: "switch c {\ncase Red, Green:\ncase Blue:\n\t// handled, or nothing to do\n}",
+		Text:  "A switch on an enum-like type (a defined integer or string type with package level constants of that type) does not handle every constant, or a type switch on a sealed interface (one with an unexported method, so only its package implements it) does not handle every implementation, and there is no default clause. A value added to the enum later then goes unnoticed.",
+		Fix:   "Handle the missing values, add a default clause, or write //exhaustive:ignore on the line before the switch. marmot fix adds the missing cases with empty bodies, which keeps the behavior."},
 	{Code: CodeOther, Title: "error",
 		Text: "An error without a more specific code. The message says what is wrong."},
 }

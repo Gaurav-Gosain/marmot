@@ -1,0 +1,84 @@
+package a
+
+type Color int
+
+const (
+	Red Color = iota
+	Green
+	Blue
+)
+
+const Crimson = Red // an alias name of the same value
+
+type Weekday string
+
+const (
+	Mon Weekday = "mon"
+	Tue Weekday = "tue"
+)
+
+func colors(c Color) {
+	switch c { // want "switch on Color misses Blue"
+	case Red, Green:
+	case Blue:
+	}
+	switch c {
+	case Red, Green, Blue:
+	}
+	switch c {
+	case Red:
+	default:
+	}
+	//exhaustive:ignore
+	switch c {
+	case Red:
+	}
+	switch c { // want "switch on Color misses Green, Blue"
+	case Crimson:
+	case Green, Blue:
+	}
+}
+
+func days(d Weekday) {
+	switch d { // want "switch on Weekday misses Tue"
+	case Mon:
+	case Tue:
+	}
+}
+
+// Shape is sealed: only this package implements it.
+type Shape interface{ area() float64 }
+
+type Square struct{ s float64 }
+type Circle struct{ r float64 }
+type Tri struct{ b, h float64 }
+
+func (q Square) area() float64 { return q.s * q.s }
+func (c *Circle) area() float64 { return 3 * c.r * c.r }
+func (t Tri) area() float64    { return t.b * t.h / 2 }
+
+func shapes(s Shape) {
+	switch s.(type) { // want `type switch on Shape misses \*Circle, Tri`
+	case Square:
+	case *Circle, Tri:
+	}
+	switch v := s.(type) {
+	case Square, *Circle, Tri:
+		_ = v
+	}
+}
+
+// Open interfaces are not checked.
+type Namer interface{ Name() string }
+
+func open(n Namer) {
+	switch n.(type) {
+	case nil:
+	}
+}
+
+func plain(n int) {
+	switch n {
+	case 1:
+	}
+}
