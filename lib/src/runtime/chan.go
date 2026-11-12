@@ -134,7 +134,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool) bool {
 	mysg.c = c
 	gp.param = nil
 	c.sendq.enqueue(mysg)
-	goparkunlock(&c.lock)
+	goparkunlockDurable(&c.lock)
 
 	closed := !mysg.success
 	gp.param = nil
@@ -272,7 +272,7 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 	mysg.c = c
 	gp.param = nil
 	c.recvq.enqueue(mysg)
-	goparkunlock(&c.lock)
+	goparkunlockDurable(&c.lock)
 
 	success := mysg.success
 	gp.param = nil

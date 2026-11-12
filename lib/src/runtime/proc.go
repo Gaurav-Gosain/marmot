@@ -51,15 +51,34 @@ func newproc(fn func()) {
 	if fn == nil {
 		panic(errorString("invalid memory address or nil pointer dereference"))
 	}
+	if gp := getg(); gp.bubble != nil || gp.bubbleStart != nil {
+		if gp.bubble != nil {
+			newprocBubble(fn, gp.bubble, false)
+		} else {
+			newprocBubble(fn, gp.bubbleStart, true)
+		}
+		return
+	}
 	rt_go(gostartPC, *(*unsafe.Pointer)(unsafe.Pointer(&fn)))
 }
 
 // gostart is the C entry of a new goroutine. arg is the closure object of
 // the func() passed to newproc.
 func gostart(arg unsafe.Pointer) {
+	resetGoroutineState(getg())
 	var fn func()
 	*(*unsafe.Pointer)(unsafe.Pointer(&fn)) = arg
 	fn()
+}
+
+// resetGoroutineState clears per goroutine fields when a goroutine starts:
+// the C core may reuse a goroutine structure, and with it the g in its
+// slot, for a new goroutine.
+func resetGoroutineState(gp *g) {
+	gp.bubble = nil
+	gp.bubbleStart = nil
+	gp.parkDurable = false
+	gp.labels = nil
 }
 
 // Gosched yields the processor, allowing other goroutines to run.

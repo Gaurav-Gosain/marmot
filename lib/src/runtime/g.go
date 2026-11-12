@@ -46,6 +46,14 @@ type g struct {
 	// text (preprintpanics), so a panic in an Error or String method
 	// stops instead of recursing.
 	printingPanic bool
+	// bubble is the testing/synctest bubble of this goroutine, nil
+	// outside one; bubbleStart is set while the bubble's driver fires
+	// timers, so that goroutines they start join that bubble.
+	bubble      *bubble
+	bubbleStart *bubble
+	// parkDurable makes the next semaphore park count as durably blocked
+	// (WaitGroup.Wait inside a bubble).
+	parkDurable bool
 	// labels is the runtime/pprof label set of this goroutine.
 	labels unsafe.Pointer
 }

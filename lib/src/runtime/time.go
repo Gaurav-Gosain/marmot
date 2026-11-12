@@ -10,11 +10,19 @@ func time_Sleep(ns int64) {
 	if ns <= 0 {
 		return
 	}
+	if b := getg().bubble; b != nil {
+		bubbleSleep(b, ns)
+		return
+	}
 	rt_sleep(ns)
 }
 
 //go:linkname time_now time.now
 func time_now() (sec int64, nsec int32, mono int64) {
+	if b := getg().bubble; b != nil {
+		now := b.clock()
+		return now / 1e9, int32(now % 1e9), now
+	}
 	rt_walltime(&sec, &nsec)
 	return sec, nsec, rt_nanotime()
 }
@@ -25,10 +33,15 @@ func time_runtimeNow() (sec int64, nsec int32, mono int64) {
 }
 
 //go:linkname time_runtimeNano time.runtimeNano
-func time_runtimeNano() int64 { return rt_nanotime() }
+func time_runtimeNano() int64 {
+	if b := getg().bubble; b != nil {
+		return b.clock()
+	}
+	return rt_nanotime()
+}
 
 //go:linkname time_runtimeIsBubbled time.runtimeIsBubbled
-func time_runtimeIsBubbled() bool { return false }
+func time_runtimeIsBubbled() bool { return getg().bubble != nil }
 
 // timeTimer is the runtime side of a time.Timer. Its first two fields are
 // time.Timer (C and initTimer); package time only sees that prefix.
@@ -44,6 +57,11 @@ type timeTimer struct {
 	seq    uintptr // incremented on every stop and reset
 	handle unsafe.Pointer
 	ch     *hchan // the timer channel, nil for AfterFunc timers
+	// bubble is the testing/synctest bubble the timer was made in; its
+	// pending firing is an entry of the bubble's fake clock, not a C core
+	// timer.
+	bubble        *bubble
+	bubblePending bool
 }
 
 // timerToken is the argument of one rt_timer_start: the timer and the seq
@@ -58,6 +76,7 @@ type timerToken struct {
 func time_newTimer(when, period int64, f func(any, uintptr, int64), arg any, cp unsafe.Pointer) *timeTimer {
 	t := new(timeTimer)
 	t.initTimer = true
+	t.bubble = getg().bubble
 	t.f = f
 	t.arg = arg
 	t.ch = (*hchan)(cp)
@@ -71,6 +90,13 @@ func time_newTimer(when, period int64, f func(any, uintptr, int64), arg any, cp 
 func (t *timeTimer) start(when, period int64) {
 	t.when = when
 	t.period = period
+	if b := t.bubble; b != nil {
+		lock(&b.mu)
+		t.bubblePending = true
+		b.addTimer(bubbleTimer{when: when, t: t, seq: t.seq})
+		unlock(&b.mu)
+		return
+	}
 	tok := &timerToken{t: t, seq: t.seq}
 	t.handle = rt_timer_start(when, lazyPC(&timerFirePC, timerFireCode), unsafe.Pointer(tok))
 }
@@ -83,6 +109,13 @@ func timerFireCode() unsafe.Pointer {
 // stop disarms t and reports whether it was pending. t.mu is held.
 func (t *timeTimer) stop() bool {
 	pending := false
+	if b := t.bubble; b != nil && t.bubblePending {
+		lock(&b.mu)
+		b.removeTimer(t)
+		unlock(&b.mu)
+		t.bubblePending = false
+		pending = true
+	}
 	if t.handle != nil {
 		pending = rt_timer_stop(t.handle) == 1
 		t.handle = nil

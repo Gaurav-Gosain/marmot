@@ -13,7 +13,10 @@ func sync_runtime_Semacquire(addr *uint32) { semacquire1(addr, false) }
 
 //go:linkname sync_runtime_SemacquireWaitGroup sync.runtime_SemacquireWaitGroup
 func sync_runtime_SemacquireWaitGroup(addr *uint32, synctestDurable bool) {
+	gp := getg()
+	gp.parkDurable = synctestDurable
 	semacquire1(addr, false)
+	gp.parkDurable = false
 }
 
 //go:linkname sync_runtime_SemacquireRWMutexR sync.runtime_SemacquireRWMutexR
@@ -229,36 +232,6 @@ func bytealg_MakeNoZero(len int) []byte {
 	c := roundupsize(uintptr(len), true)
 	return unsafe.Slice((*byte)(mallocNoZero(c)), c)[:len]
 }
-
-// internal/synctest. marmot has no synctest bubbles: nothing is ever
-// associated with one.
-
-//go:linkname synctest_Run internal/synctest.Run
-func synctest_Run(f func()) { panic(plainError("synctest.Run not supported by marmot")) }
-
-//go:linkname synctest_Wait internal/synctest.Wait
-func synctest_Wait() { panic(plainError("synctest.Wait not supported by marmot")) }
-
-//go:linkname synctest_IsInBubble internal/synctest.IsInBubble
-func synctest_IsInBubble() bool { return false }
-
-//go:linkname synctest_associate internal/synctest.associate
-func synctest_associate(p unsafe.Pointer) int { return 0 }
-
-//go:linkname synctest_disassociate internal/synctest.disassociate
-func synctest_disassociate(b unsafe.Pointer) {}
-
-//go:linkname synctest_isAssociated internal/synctest.isAssociated
-func synctest_isAssociated(p unsafe.Pointer) bool { return false }
-
-//go:linkname synctest_acquire internal/synctest.acquire
-func synctest_acquire() any { return nil }
-
-//go:linkname synctest_release internal/synctest.release
-func synctest_release(any) {}
-
-//go:linkname synctest_inBubble internal/synctest.inBubble
-func synctest_inBubble(b any, f func()) { f() }
 
 // Functions that standard packages pull by their runtime name
 // (//go:linkname local runtime.name).

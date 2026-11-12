@@ -209,3 +209,8 @@ func canSpin(i int) bool { return i < 4 && goruntime.GOMAXPROCS(0) > 1 }
 // none.
 func getcallerfp() uintptr      { return 0 }
 func printTraceback(fp uintptr) {}
+
+// testing/synctest bubbles exist only in marmot programs.
+type bubble struct{}
+
+func goparkunlockDurable(l *mutex) { goparkunlock(l) }

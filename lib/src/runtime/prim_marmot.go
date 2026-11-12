@@ -200,9 +200,24 @@ func goparkunlock(l *mutex) {
 	rt_park(parkunlockPC, unsafe.Pointer(l))
 }
 
+// goparkunlockDurable is goparkunlock for blocking that testing/synctest
+// counts as durable (channels, sync.Cond, WaitGroup.Wait, sleeps) when the
+// goroutine is in a bubble.
+func goparkunlockDurable(l *mutex) {
+	if getg().bubble != nil {
+		rt_park_durable(parkunlockPC, unsafe.Pointer(l))
+		return
+	}
+	rt_park(parkunlockPC, unsafe.Pointer(l))
+}
+
 // goparkselect parks the current goroutine and unlocks the channels of its
 // select (gp.waiting) once it is off its stack.
 func goparkselect(gp *g) {
+	if gp.bubble != nil {
+		rt_park_durable(selparkcommitPC, unsafe.Pointer(gp))
+		return
+	}
 	rt_park(selparkcommitPC, unsafe.Pointer(gp))
 }
 
