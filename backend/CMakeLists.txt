@@ -38,6 +38,13 @@ if(MARMOT_STATIC)
 else()
   set(MARMOT_LLVM_LIBS MLIR LLVM)
 endif()
+# The pc table builder needs no MLIR: without libMLIR it starts in half the
+# time (it runs on every link).
+if(MARMOT_STATIC)
+  set(MARMOT_PCLN_LIBS LLVMDebugInfoDWARF LLVMObject LLVMSupport)
+else()
+  set(MARMOT_PCLN_LIBS LLVM)
+endif()
 
 add_subdirectory(include/marmot)
 add_subdirectory(tier0)

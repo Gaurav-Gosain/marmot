@@ -1,5 +1,5 @@
 add_library(MarmotPcln STATIC Pcln.cpp)
-target_link_libraries(MarmotPcln PUBLIC ${MARMOT_LLVM_LIBS})
+target_link_libraries(MarmotPcln PUBLIC ${MARMOT_PCLN_LIBS})
 
 add_library(MarmotDriver STATIC
   Pipeline.cpp
