@@ -6,6 +6,7 @@
 # single-file programs (*.go at any depth, as in tests/run/std/PKG).
 set -u
 cd "$(dirname "$0")/../.."
+export GOCACHE="$PWD/.work/gocache" # build cache inside the repo
 R=$(pwd)
 W=.work/verify/gccheck
 mkdir -p "$W"

@@ -4,6 +4,7 @@
 #   verify/check/loops.sh [file.go ...]   default: backend/test/loops/Inputs/*.go
 set -u
 cd "$(dirname "$0")/../.."
+export GOCACHE="$PWD/.work/gocache" # build cache inside the repo
 W=$PWD/.work/verify/loops
 mkdir -p "$W"
 go build -o "$W/check" ./verify/check || exit 2

@@ -9,6 +9,7 @@
 # their failures are reported but do not fail the run.
 set -u
 cd "$(dirname "$0")/.."
+export GOCACHE="$PWD/.work/gocache" # build cache inside the repo
 W=.work/verify/progs
 mkdir -p "$W"
 st=0

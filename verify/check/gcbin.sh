@@ -5,6 +5,7 @@
 # Programs are single files at any depth; extra marmot flags come from $GCBIN_FLAGS.
 set -u
 cd "$(dirname "$0")/../.."
+export GOCACHE="$PWD/.work/gocache" # build cache inside the repo
 R=$(pwd)
 W=.work/verify/gcbin
 mkdir -p "$W/tmp"

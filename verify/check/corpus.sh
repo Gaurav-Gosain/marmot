@@ -7,6 +7,7 @@
 # names exactly the checks that disappeared. Exit 1 if any removal is not justified.
 set -u
 cd "$(dirname "$0")/../.."
+export GOCACHE="$PWD/.work/gocache" # build cache inside the repo
 W=.work/verify/corpus
 mkdir -p "$W"
 go build -o "$W/check" ./verify/check || exit 2

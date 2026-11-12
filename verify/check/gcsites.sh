@@ -8,6 +8,7 @@
 # single-file programs (*.go at any depth).
 set -u
 cd "$(dirname "$0")/../.."
+export GOCACHE="$PWD/.work/gocache" # build cache inside the repo
 R=$(pwd)
 W=.work/verify/gcsites
 mkdir -p "$W"
