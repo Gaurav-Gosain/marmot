@@ -24,6 +24,7 @@ type backendStream struct {
 	mu     sync.Mutex
 	err    error // first write error
 	objs   []string
+	work   string
 }
 
 // canStream reports whether the backend can start jobs as they arrive.
@@ -39,7 +40,7 @@ func (b *build) startStream(n int) (*backendStream, error) {
 	if b.cfg.PrintCmd {
 		fmt.Fprintln(b.cfg.Stderr, backend+" "+strings.Join(args, " "))
 	}
-	s := &backendStream{objs: make([]string, n)}
+	s := &backendStream{objs: make([]string, n), work: b.work}
 	for i := range s.objs {
 		s.objs[i] = filepath.Join(b.work, fmt.Sprintf("m%03d.o", i))
 	}
@@ -63,12 +64,15 @@ func (b *build) startStream(n int) (*backendStream, error) {
 
 // send hands module i, written to path, to the backend.
 func (s *backendStream) send(i int, path, key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for len(s.objs) <= i {
+		s.objs = append(s.objs, filepath.Join(s.work, fmt.Sprintf("m%03d.o", len(s.objs))))
+	}
 	line := path + " " + s.objs[i]
 	if key != "" {
 		line += " " + key
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.err == nil {
 		_, s.err = io.WriteString(s.in, line+"\n")
 	}

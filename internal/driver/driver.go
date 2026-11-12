@@ -95,6 +95,9 @@ type build struct {
 	keyMu      sync.Mutex
 	keyMemo    map[string]string // srcKey by package path
 	keyBase    string
+	partMu     sync.Mutex
+	parts      []codegen.Module // modules after the first of packages split in parts
+	partKeys   []string
 }
 
 func (b *build) haveBackend() bool {
@@ -278,13 +281,20 @@ func (b *build) run1() (string, error) {
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				if i == len(pkgs) {
+				var parts []codegen.Module
+				switch {
+				case i == len(pkgs):
 					mods[i], errs[i] = cg.GenerateMain(mainSSA)
-				} else {
+				case b.partInstrs() > 0:
+					parts, errs[i] = cg.GenerateParts(pkgs[i], b.partInstrs())
+					if errs[i] == nil {
+						mods[i], parts = parts[0], parts[1:]
+					}
+				default:
 					mods[i], errs[i] = cg.Generate(pkgs[i])
 				}
 				if errs[i] == nil {
-					errs[i] = b.spill(i, &mods[i], cacheable(i), pkgKeys)
+					errs[i] = b.spillParts(i, &mods[i], parts, cacheable(i), pkgKeys, n)
 				}
 			}()
 		}
@@ -308,10 +318,13 @@ func (b *build) run1() (string, error) {
 	skipped := 0
 	for i := 0; i < len(pkgs); i++ {
 		if cacheable(i) {
-			if path, ok := b.cachedModule(pkgKeys[i]); ok {
-				mods[i] = codegen.Module{Name: pkgs[i].Pkg.Path(), Path: path}
+			if paths, ok := b.cachedParts(pkgKeys[i]); ok {
+				mods[i] = codegen.Module{Name: pkgs[i].Pkg.Path(), Path: paths[0]}
 				if b.stream != nil {
-					b.stream.send(i, path, pkgKeys[i]+"-"+moduleTextVersion)
+					b.stream.send(i, paths[0], pkgKeys[i]+"-"+moduleTextVersion)
+				}
+				for c, path := range paths[1:] {
+					b.addPart(codegen.Module{Name: pkgs[i].Pkg.Path(), Path: path}, partKey(pkgKeys[i], c+1)+"-"+moduleTextVersion, n)
 				}
 				skipped++
 			}
@@ -331,7 +344,6 @@ func (b *build) run1() (string, error) {
 			mods[i].Path = b.saveModule(pkgKeys[i], mods[i].Text)
 		}
 	})
-	b.logf("generated %d modules", len(mods))
 	// The package key stands for a module's text (the MLIR cache relies on
 	// that too), so the backend need not read and hash unchanged modules.
 	b.modKeys = make([]string, len(mods))
@@ -340,6 +352,9 @@ func (b *build) run1() (string, error) {
 			b.modKeys[i] = pkgKeys[i] + "-" + moduleTextVersion
 		}
 	}
+	mods = append(mods, b.parts...)
+	b.modKeys = append(b.modKeys, b.partKeys...)
+	b.logf("generated %d modules", len(mods))
 
 	out := cfg.Output
 	if out == "" {

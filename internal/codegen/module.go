@@ -5,6 +5,7 @@ import (
 	"go/types"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
 	"golang.org/x/tools/go/ssa"
@@ -68,6 +69,110 @@ func (p *Program) Generate(pkg *ssa.Package) (Module, error) {
 	m.static.emitObjects()
 	m.keepWriteOnlyGlobals(pkg, names)
 	return m.finish(pkg.Pkg.Path())
+}
+
+// GenerateParts returns the MLIR modules for pkg: one module, or for a
+// package with more than partInstrs SSA instructions, several, each with a
+// contiguous run of its functions (in member order, closures after their
+// function) of about partInstrs instructions, generated in parallel. The
+// first part also holds the globals, the package init, the static data and
+// the package's type descriptors. Shared code (instances, wrappers) is
+// linkonce, so it may repeat across the parts.
+func (p *Program) GenerateParts(pkg *ssa.Package, partInstrs int) ([]Module, error) {
+	fns := p.byPkg[pkg]
+	total := 0
+	for _, fn := range fns {
+		total += funcInstrs(fn)
+	}
+	if partInstrs <= 0 || total <= partInstrs*3/2 {
+		m, err := p.Generate(pkg)
+		return []Module{m}, err
+	}
+	k := (total + partInstrs - 1) / partInstrs
+	per := (total + k - 1) / k
+	var parts [][]*ssa.Function
+	var cur []*ssa.Function
+	n := 0
+	for _, fn := range fns {
+		cur = append(cur, fn)
+		n += funcInstrs(fn)
+		if n >= per && len(parts) < k-1 {
+			parts = append(parts, cur)
+			cur, n = nil, 0
+		}
+	}
+	if len(cur) > 0 || len(parts) == 0 {
+		parts = append(parts, cur)
+	}
+	mods := make([]Module, len(parts))
+	errs := make([]error, len(parts))
+	var wg sync.WaitGroup
+	for i := range parts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			mods[i], errs[i] = p.generatePart(pkg, parts[i], i == 0, pkg.Pkg.Path())
+		}()
+	}
+	wg.Wait()
+	for _, e := range errs {
+		if e != nil {
+			return nil, e
+		}
+	}
+	return mods, nil
+}
+
+func funcInstrs(fn *ssa.Function) int {
+	n := 1
+	for _, b := range fn.Blocks {
+		n += len(b.Instrs)
+	}
+	return n
+}
+
+// generatePart emits fns of pkg as one module; the first part also holds
+// the globals, the static data and the package init.
+func (p *Program) generatePart(pkg *ssa.Package, fns []*ssa.Function, first bool, name string) (Module, error) {
+	m := p.newModule(pkg)
+	if first {
+		m.static = m.analyzeStaticInit(pkg)
+	} else {
+		m.static = &staticInit{}
+	}
+	names := make([]string, 0, len(pkg.Members))
+	for n := range pkg.Members {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	init := pkg.Func("init")
+	if first {
+		for _, n := range names {
+			if g, ok := pkg.Members[n].(*ssa.Global); ok {
+				m.global(g)
+			}
+		}
+		if init != nil {
+			m.function(init, false)
+		}
+	}
+	for _, fn := range fns {
+		if fn == init {
+			continue
+		}
+		m.function(fn, false)
+	}
+	if first {
+		m.emitOwnTypes(pkg, names)
+	}
+	for m.drain(); len(m.regionQueue) > 0; m.drain() {
+		m.drainRegions()
+	}
+	if first {
+		m.static.emitObjects()
+		m.keepWriteOnlyGlobals(pkg, names)
+	}
+	return m.finish(name)
 }
 
 // GenerateMain returns the entry module that defines marmot_main.
