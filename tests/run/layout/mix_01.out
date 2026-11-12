@@ -1,0 +1,24 @@
+48 8 64 8
+z0_0 0 0 8
+p_1 0 8 8
+b_2 8 1 1
+a3_3 9 3 1
+p_4 16 8 8
+i16_5 24 2 2
+c64_6 28 8 4
+n2_7 36 8 4
+b_8 44 1 1
+0 8 56
+static [] 12 true [1 2 3] 12 -1234 (1+2i) {true [9 8 7] 2.5} true
+static ptr [] 12 true [1 2 3] 12 -1234 (1+2i) {true [9 8 7] 2.5} true
+static O 7 [] 12 true [1 2 3] 12 -1234 (1+2i) {true [9 8 7] 2.5} true -9
+static O ptr 7 [] 12 true [1 2 3] 12 -1234 (1+2i) {true [9 8 7] 2.5} true -9
+direct [] 12 true [1 2 3] 12 -1234 (1+2i) {true [9 8 7] 2.5} true
+directO 7 [] 12 true [1 2 3] 12 -1234 (1+2i) {true [9 8 7] 2.5} true -9
+[] [] [] 4
+dyn [] 12 true [1 2 3] 12 -1234 (1+2i) {true [9 8 7] 2.5} true
+dyn alt [] 15 false [7 8 9] 15 4321 (-3-4i) {false [1 1 1] -0.5} false
+whole store [] 12 true [1 2 3] 12 -1234 (1+2i) {true [9 8 7] 2.5} true
+copy O 7 [] 12 true [1 2 3] 12 -1234 (1+2i) {true [9 8 7] 2.5} true 5
+orig O 7 [] 12 true [1 2 3] 12 -1234 (1+2i) {true [9 8 7] 2.5} true -9
+arr 0 [] 12 true [1 2 3] 12 -1234 (1+2i) {true [9 8 7] 2.5} true

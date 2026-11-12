@@ -1,0 +1,12 @@
+prefix -100500 -200000
+prefix inplace -100500 -200000 true
+prefix shifted -99581 -199500
+prefixF 1.9999999999907615e+21 1.9999999999907615e+21
+prefixU8 64 217
+hist 1563 1563 1563
+histIdx 2668 2666
+hist alias 4 5 303 299
+hist panic runtime error: index out of range [300] with length 300 5336
+count 1594 1593
+-500 499 -200000
+399500 400000

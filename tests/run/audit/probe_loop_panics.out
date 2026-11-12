@@ -1,0 +1,10 @@
+div panic: runtime error: integer divide by zero
+after div 5001750153 100017 0
+mod panic: runtime error: integer divide by zero
+after mod 789045509
+nil panic: runtime error: invalid memory address or nil pointer dereference
+after nil 1599960 8 0
+oob panic: runtime error: index out of range [200005] with length 200000
+after oob 2990962
+short panic: runtime error: index out of range [199900] with length 199900
+after short 19980304850 199901 0
