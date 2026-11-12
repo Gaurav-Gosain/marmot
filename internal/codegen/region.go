@@ -43,7 +43,10 @@ func (p *Program) regionCloneable(fn *ssa.Function) bool {
 		p.regions.ok = map[*ssa.Function]bool{}
 	}
 	for k, v := range q.local {
-		p.regions.ok[k.fn] = v
+		// Only cloneable answers: a query may also hold escape answers.
+		if k.v == regionCloneKey {
+			p.regions.ok[k.fn] = v
+		}
 	}
 	p.escMu.Unlock()
 	return r
