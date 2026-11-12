@@ -2,7 +2,7 @@
 ROOT := $(abspath .)
 export MARMOT_ROOT := $(ROOT)
 
-.PHONY: all frontend backend rtcore test conform bench clean
+.PHONY: diagrams all frontend backend rtcore test conform bench clean
 
 all: frontend backend rtcore
 
@@ -27,3 +27,9 @@ bench: all
 
 clean:
 	rm -rf build
+
+# Render docs/diagrams/*.mmd to light and dark SVG with sketch (go install tuios.dev/sketch/cmd/sketch@latest).
+diagrams:
+	@for f in docs/diagrams/*.mmd; do n=$$(basename $$f .mmd); \
+	  sketch $$f -theme flexoki -o docs/img/$$n-light.svg; \
+	  sketch $$f -theme flexoki-dark -o docs/img/$$n-dark.svg; done

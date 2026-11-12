@@ -5,19 +5,10 @@ that generate code.
 
 ## Pipeline
 
-```mermaid
-flowchart TD
-    S[Go source] --> T["Type check (go/types)"]
-    T --> A["SSA form (x/tools/go/ssa)"]
-    A --> M["MLIR: llvm dialect + go dialect"]
-    M --> P["Go-aware passes"]
-    P --> L["LLVM IR"]
-    L --> O["LLVM optimizer"]
-    O --> B["Object files"]
-    B --> K["System linker"]
-    RT["Runtime library"] --> K
-    K --> X["Executable"]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/pipeline-dark.svg">
+  <img alt="The compiler pipeline from Go source to executable" src="img/pipeline-light.svg">
+</picture>
 
 1. **Front end.** The standard `go/types` checker and the `x/tools` SSA builder turn source
    into a simple, typed instruction form. Generic code is expanded here.
@@ -45,20 +36,10 @@ a call allocates. The `go` dialect keeps that knowledge long enough to use it.
 
 ## Build modes
 
-```mermaid
-flowchart LR
-    subgraph dev
-      P1[package] --> C1[object, cached]
-      P2[package] --> C2[object, cached]
-      C1 --> LK[link]
-      C2 --> LK
-    end
-    subgraph release
-      Q1[package] --> W[whole program]
-      Q2[package] --> W
-      W --> LK2[link]
-    end
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/modes-dark.svg">
+  <img alt="Dev mode compiles packages separately, release mode compiles the whole program" src="img/modes-light.svg">
+</picture>
 
 In dev mode each package is compiled separately and cached, so an edit recompiles little. In
 release mode the optimizer sees the whole program, which allows inlining across packages and
@@ -68,12 +49,10 @@ removal of code that nothing uses.
 
 Every binary carries a small runtime in two layers.
 
-```mermaid
-flowchart TD
-    U[Your program] --> G["Go layer: maps, channels, select, strings, panics, interfaces"]
-    G --> C["C core: memory allocator, garbage collector, scheduler, timers, I/O"]
-    C --> OS[Operating system]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/runtime-dark.svg">
+  <img alt="The two layers of the runtime" src="img/runtime-light.svg">
+</picture>
 
 | Part | How it works |
 | --- | --- |

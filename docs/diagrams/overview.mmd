@@ -1,0 +1,7 @@
+flowchart LR
+    A[Go source] --> B[Type check and SSA]
+    B --> C[MLIR]
+    C --> D[Go-aware passes]
+    D --> E[LLVM]
+    E --> F[Native binary]
+    R[Runtime: GC, scheduler] --> F

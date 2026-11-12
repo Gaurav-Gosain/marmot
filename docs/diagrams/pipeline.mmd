@@ -1,0 +1,11 @@
+flowchart TD
+    S[Go source] --> T["Type check (go/types)"]
+    T --> A["SSA form (x/tools/go/ssa)"]
+    A --> M["MLIR: llvm dialect + go dialect"]
+    M --> P["Go-aware passes"]
+    P --> L["LLVM IR"]
+    L --> O["LLVM optimizer"]
+    O --> B["Object files"]
+    B --> K["System linker"]
+    RT["Runtime library"] --> K
+    K --> X["Executable"]

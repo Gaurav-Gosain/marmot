@@ -1,0 +1,12 @@
+flowchart LR
+    subgraph dev
+      P1[package] --> C1[object, cached]
+      P2[package] --> C2[object, cached]
+      C1 --> LK[link]
+      C2 --> LK
+    end
+    subgraph release
+      Q1[package] --> W[whole program]
+      Q2[package] --> W
+      W --> LK2[link]
+    end

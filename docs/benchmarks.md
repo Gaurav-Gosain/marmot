@@ -23,13 +23,10 @@ programs.
 
 ### By kind of program
 
-```mermaid
-xychart-beta
-    title "Speed against Go, release mode (higher is better)"
-    x-axis ["convolution", "bit tricks", "sum/min/max", "struct copy", "interface calls", "string search", "closures", "quicksort", "tree building", "defer loop"]
-    y-axis "times faster than Go" 0 --> 18
-    bar [17.8, 10.1, 8.9, 4.6, 3.5, 2.8, 2.0, 1.0, 0.9, 0.7]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/speed-dark.svg">
+  <img alt="Speed against Go by program, release mode" src="img/speed-light.svg">
+</picture>
 
 | Program | What it stresses | Against Go |
 | --- | --- | --- |
@@ -61,6 +58,11 @@ them on all cores. This is off by default while it is being reviewed. With it on
 | matrix transpose | 12x faster |
 
 These use every core, so they are faster in wall-clock time, not in total CPU work.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/parallel-dark.svg">
+  <img alt="Speed against Go for loops that run in parallel" src="img/parallel-light.svg">
+</picture>
 
 ## Binary size
 

@@ -25,15 +25,10 @@ against Go. These are early numbers; see [docs/benchmarks.md](docs/benchmarks.md
 | rebuild when nothing changed | about equal | |
 | rebuild of a large program after a small edit | about 4x slower | |
 
-```mermaid
-flowchart LR
-    A[Go source] --> B[Type check and SSA]
-    B --> C[MLIR]
-    C --> D[Go-aware passes]
-    D --> E[LLVM]
-    E --> F[Native binary]
-    R[Runtime: GC, scheduler] --> F
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/overview-dark.svg">
+  <img alt="How marmot turns Go source into a native binary" src="docs/img/overview-light.svg">
+</picture>
 
 ## Documentation
 
