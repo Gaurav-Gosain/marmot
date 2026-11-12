@@ -168,6 +168,7 @@ func cmdBuild(args []string, run bool) int {
 	if *tags != "" {
 		cfg.Tags = strings.Split(*tags, ",")
 	}
+	cfg.AllErrors = rep.Mode == diag.ModeJSON
 	var tmpDir string
 	if run && *out == "" {
 		tmpDir, err = os.MkdirTemp("", "marmot-run-")
@@ -188,6 +189,10 @@ func cmdBuild(args []string, run bool) int {
 	}
 	cmd := exec.Command(exe, progArgs...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if rep.Mode == diag.ModeJSON && os.Getenv("MARMOT_OUTPUT") == "" {
+		// Agent mode reaches the program: a panic is reported as JSON too.
+		cmd.Env = append(os.Environ(), "MARMOT_OUTPUT=json")
+	}
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintln(os.Stderr, "marmot:", err)
 		return 1
@@ -321,6 +326,7 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 	cfg := driver.Config{
 		Root: root, Dir: wd, Output: exe, OptLevel: *opt, OptSet: optSet, Emit: "exe", Work: *work,
 		PrintCmd: *printCmd, Dialect: *dialect, Release: *release, Patterns: []string{pkg}, Stderr: os.Stderr,
+		AllErrors: rep.Mode == diag.ModeJSON,
 	}
 	if *tags != "" {
 		cfg.Tags = strings.Split(*tags, ",")

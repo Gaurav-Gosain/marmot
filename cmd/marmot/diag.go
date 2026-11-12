@@ -151,7 +151,7 @@ func cmdFix(args []string) int {
 	for round := 0; round < 4; round++ {
 		cfg := driver.Config{
 			Root: root, Dir: rep.Dir, Output: filepath.Join(tmp, "prog"), OptLevel: "0", Emit: "exe",
-			GC: "precise", Dialect: "llvm", Patterns: patterns, Stderr: io.Discard,
+			GC: "precise", Dialect: "llvm", Patterns: patterns, Stderr: io.Discard, AllErrors: true,
 		}
 		if *tags != "" {
 			cfg.Tags = strings.Split(*tags, ",")

@@ -76,6 +76,17 @@ func (s *Sources) enrich(d *Diagnostic, opt Options) {
 		s.assignCount(d, f, pos)
 	case CodeNoNewVars:
 		s.noNewVars(d, f, pos)
+	case CodePkgNotFound:
+		var keep []string
+		for _, n := range d.Notes {
+			if strings.HasPrefix(n, "go get ") {
+				d.Help = append(d.Help, "add the module: "+n)
+				continue
+			}
+			keep = append(keep, n)
+		}
+		d.Notes = keep
+		d.Message = strings.TrimSuffix(d.Message, "; to add it:")
 	case CodeSyntax:
 		syntaxHint(d, f)
 	case CodeMissingReturn:
