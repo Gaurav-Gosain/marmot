@@ -19,10 +19,10 @@ type hchan struct {
 	sendq    waitq
 	lock     mutex
 
-	// Ring state of buffered channels (chanring.go).
-	seq    unsafe.Pointer // dataqsiz sequence words
-	enqpos uint64         // next position to fill; chanClosedBit once closed
-	deqpos uint64         // next position to take
+	// ring is the control block of a buffered channel (chanring.go):
+	// the enqueue position, the dequeue position and the sequence words,
+	// each position on its own cache line.
+	ring unsafe.Pointer
 }
 
 // waitq is a queue of waiting goroutines. n is the number of sudogs in the

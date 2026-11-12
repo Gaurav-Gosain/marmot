@@ -240,3 +240,7 @@ func hashBytes(p unsafe.Pointer, n uintptr, seed uintptr) uintptr {
 
 // procyield executes n CPU pause hints.
 func procyield(n int32) { rt_procyield(n) }
+
+// canSpin reports whether spin round i (from 0) is worthwhile: more than
+// one thread runs goroutines and others are busy (gc's sync_runtime_canSpin).
+func canSpin(i int) bool { return rt_can_spin(int32(i)) != 0 }

@@ -32,8 +32,8 @@ func TestChanRingCapacities(t *testing.T) {
 				t.Errorf("size %d: sum %d", size, s)
 			}
 		case <-time.After(5 * time.Second):
-			seq := unsafe.Slice((*uint64)(c.seq), size)
-			t.Fatalf("size %d stalled: enq %x deq %d seq %v recvq.n %d sendq.n %d", size, c.enqpos, c.deqpos, seq, c.recvq.n, c.sendq.n)
+			seq := unsafe.Slice(c.ringSeq(0), size)
+			t.Fatalf("size %d stalled: enq %x deq %d seq %v recvq.n %d sendq.n %d", size, *c.enqp(), *c.deqp(), seq, c.recvq.n, c.sendq.n)
 		}
 		wg.Wait()
 	}

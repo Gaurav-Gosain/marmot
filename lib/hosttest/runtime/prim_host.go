@@ -200,7 +200,8 @@ func hashBytes(p unsafe.Pointer, n uintptr, seed uintptr) uintptr {
 	return memhash(p, seed, n)
 }
 
-func procyield(n int32) { goruntime.Gosched() }
+func procyield(n int32)  { goruntime.Gosched() }
+func canSpin(i int) bool { return i < 4 && goruntime.GOMAXPROCS(0) > 1 }
 
 // Tracebacks need marmot's frame records and pc table; the host prints
 // none.
