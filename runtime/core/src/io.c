@@ -20,6 +20,8 @@ RT_API intptr_t rt_write(int32_t fd, const void *buf, uintptr_t n) {
   return r;
 }
 
+RT_API int32_t rt_isatty(int32_t fd) { return isatty(fd) == 1; }
+
 RT_API intptr_t rt_read(int32_t fd, void *buf, uintptr_t n) {
   rt_entersyscall();
   intptr_t r;

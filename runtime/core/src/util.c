@@ -37,12 +37,7 @@ void rt_printx(uint64_t v) {
   rt_printn(buf + i, sizeof buf - (uintptr_t)i);
 }
 
-void rt_throw(const char *msg) {
-  rt_print("fatal error: ");
-  rt_print(msg);
-  rt_print("\n");
-  os_exit(2);
-}
+void rt_throw(const char *msg) { rt_fatal(msg, __builtin_strlen(msg)); }
 
 const char *rt_getenv(const char *name) {
   char **env = rt_envp();

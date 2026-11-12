@@ -241,11 +241,12 @@ static void sigfault(int sig, siginfo_t *info, void *ctxp) {
   rt_g *g = m ? m->curg : NULL;
   // Stack overflow: the address is in a goroutine's guard page.
   if (g && addr >= g->map_base && addr < g->stack_lo) {
-    rt_print("runtime: goroutine stack exceeds ");
-    rt_printu(g->stack_hi - g->stack_lo);
-    rt_print("-byte limit\n");
-    rt_print("fatal error: stack overflow\n");
-    os_exit(2);
+    if (!rt_output_json()) {
+      rt_print("runtime: goroutine stack exceeds ");
+      rt_printu(g->stack_hi - g->stack_lo);
+      rt_print("-byte limit\n");
+    }
+    rt_throw("stack overflow");
   }
   // A fault in goroutine code (not inside the runtime core) becomes a Go
   // panic through the hook, as if the faulting instruction called it.

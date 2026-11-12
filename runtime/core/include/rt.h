@@ -182,6 +182,11 @@ void **rt_gparam(rt_g *g);
 int64_t rt_goid(void);
 // Number of goroutines that exist.
 intptr_t rt_numgoroutine(void);
+// Live user goroutines by state: out[0] running, out[1] runnable, out[2]
+// waiting. Approximate (read without locks); for panic reports.
+void rt_gstates(int64_t out[3]);
+// 1 when MARMOT_OUTPUT=json: panics and fatal errors are reported as JSON.
+int32_t rt_output_json(void);
 // Get and set the number of scheduler threads. n < 1 only queries.
 int32_t rt_gomaxprocs(int32_t n);
 int32_t rt_numcpu(void);
@@ -309,6 +314,8 @@ int32_t rt_timer_stop(void *timer);
 // native O_* flag values; O_CLOEXEC is always added.
 intptr_t rt_write(int32_t fd, const void *buf, uintptr_t n);
 intptr_t rt_read(int32_t fd, void *buf, uintptr_t n);
+// 1 when fd is a terminal.
+int32_t rt_isatty(int32_t fd);
 intptr_t rt_open(const char *path, int32_t flags, uint32_t mode);
 intptr_t rt_close(int32_t fd);
 // I/O poller (kqueue, epoll). The caller makes fd non-blocking, registers it

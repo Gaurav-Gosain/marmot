@@ -1334,6 +1334,28 @@ RT_API void **rt_gparam(rt_g *g) { return &g->param; }
 
 RT_API intptr_t rt_numgoroutine(void) { return (intptr_t)count_goroutines(); }
 
+// Counts of live user goroutines by state for panic and fatal error reports:
+// out[0] running, out[1] runnable, out[2] waiting. The table is read without
+// the lock; at report time an approximate count is enough.
+RT_API void rt_gstates(int64_t out[3]) {
+  out[0] = out[1] = out[2] = 0;
+  uint32_t n = __atomic_load_n(&nallg, __ATOMIC_ACQUIRE);
+  for (uint32_t i = 0; i < n && gchunks; i++) {
+    gchunk *c = gchunks[i / GCHUNK];
+    if (!c) break;
+    uint64_t live = atomic_load_explicit(&c->live[(i % GCHUNK) / 64], memory_order_relaxed);
+    if (!(live >> (i % 64) & 1)) continue;
+    rt_g *g = c->g[i % GCHUNK];
+    if (!g || g->system) continue;
+    switch (atomic_load_explicit(&g->status, memory_order_relaxed)) {
+    case G_RUNNING: out[0]++; break;
+    case G_RUNNABLE: out[1]++; break;
+    case G_WAITING: out[2]++; break;
+    default: break;
+    }
+  }
+}
+
 RT_API int32_t rt_numcpu(void) { return os_ncpu(); }
 
 static rt_p *pnew(int32_t id) {

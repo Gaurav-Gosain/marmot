@@ -12,7 +12,47 @@ RT_API char **rt_envp(void) { return g_envp; }
 
 RT_API void rt_exit(int32_t code) { os_exit(code); }
 
+RT_API int32_t rt_output_json(void) {
+  const char *v = rt_getenv("MARMOT_OUTPUT");
+  return v && v[0] == 'j' && v[1] == 's' && v[2] == 'o' && v[3] == 'n' && v[4] == 0;
+}
+
+// json_string prints s as a JSON string literal.
+static void json_string(const char *s, uintptr_t n) {
+  static const char hex[] = "0123456789abcdef";
+  rt_print("\"");
+  for (uintptr_t i = 0; i < n; i++) {
+    unsigned char c = (unsigned char)s[i];
+    if (c == '"' || c == '\\') {
+      char b[2] = {'\\', (char)c};
+      rt_printn(b, 2);
+    } else if (c < 0x20) {
+      char b[6] = {'\\', 'u', '0', '0', hex[c >> 4], hex[c & 15]};
+      rt_printn(b, 6);
+    } else {
+      rt_printn((const char *)&c, 1);
+    }
+  }
+  rt_print("\"");
+}
+
+// A fatal error: "fatal error: msg" and exit status 2, or with
+// MARMOT_OUTPUT=json one JSON object (schema 1, kind fatal).
 RT_API void rt_fatal(const char *msg, uintptr_t len) {
+  if (rt_output_json()) {
+    int64_t st[3];
+    rt_gstates(st);
+    rt_print("{\"schema\":1,\"kind\":\"fatal\",\"code\":\"M0021\",\"message\":");
+    json_string(msg, len);
+    rt_print(",\"goroutines\":{\"running\":");
+    rt_printu((uint64_t)st[0]);
+    rt_print(",\"runnable\":");
+    rt_printu((uint64_t)st[1]);
+    rt_print(",\"waiting\":");
+    rt_printu((uint64_t)st[2]);
+    rt_print("},\"exitCode\":2}\n");
+    os_exit(2);
+  }
   rt_print("fatal error: ");
   rt_printn(msg, len);
   rt_print("\n");
