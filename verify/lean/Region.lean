@@ -201,8 +201,137 @@ theorem init_frame (R H : Obj → Prop) (C M : Name → Prop) (mem : Obj × Nat 
     · simp only [e, ite_true]; exact Or.inr ⟨A, rfl, hA⟩
     · simp [e]
 
+/-! ## No-scan regions (frame regions, frameregion.go)
+
+A frame region is allocated noscan: the collector never reads its cells. A heap pointer stored
+in a region object is therefore invisible, and the heap object can be freed while the region
+still points to it (counterexample verify/testdata/progs/frameregionwrite.go: a callee with a
+non-escaping parameter stores a fresh heap pointer into the region object it was given).
+Invariant NS: every pointer cell of a region object points to a holder (a region object or
+the frame object, both alive while the region is). Rule: a store through an address that may
+point into the region (a name of C) stores a value of M (surely points to a holder) or of Z
+(names defined only by `pure`, never a pointer). Call contract: a call writes into region
+cells only what was there or a pointer to a holder (ncallOK). -/
+
+def NS (R H : Obj → Prop) (Z : Name → Prop) (s : St) : Prop :=
+  (∀ x, Z x → (s.env x).ptr = none) ∧
+  (∀ c o, R c.1 → (s.mem c).ptr = some o → H o)
+
+structure RuleNS (prog : List Instr) (C M Z : Name → Prop) : Prop where
+  /-- Z names are only defined by pure -/
+  z_def : ∀ d, Z d → ∀ i ∈ prog, match i with
+      | .ralloc d' _ => d' ≠ d
+      | .alloc d' _ => d' ≠ d
+      | .derive d' _ => d' ≠ d
+      | .load d' _ => d' ≠ d
+      | _ => True
+  store_ns : ∀ v addr, .store v addr ∈ prog → C addr → M v ∨ Z v
+
+/-- the call contract for a noscan region -/
+def ncallOK (R H : Obj → Prop) (s s' : St) : Prop :=
+  ∀ c o, R c.1 → (s'.mem c).ptr = some o → (s.mem c).ptr = some o ∨ H o
+
+theorem step_ns (R H : Obj → Prop) (prog : List Instr) (C M Z : Name → Prop)
+    (_h : Rule prog C M) (hz : RuleNS prog C M Z) (i : Instr) (hi : i ∈ prog) (s s' : St)
+    (st : Step R s i s') (hns : ∀ xs, i = .ncall xs → ncallOK R H s s')
+    (inv : Inv R H C M s) (ns : NS R H Z s) : NS R H Z s' := by
+  obtain ⟨he, hm, _, _⟩ := inv
+  obtain ⟨hzn, hmem⟩ := ns
+  cases st with
+  | ralloc d a ha =>
+    refine ⟨fun x hx => ?_, hmem⟩
+    by_cases e : x = d
+    · subst e; have := hz.z_def x hx _ hi; simp at this
+    · simp only [upd, e, ite_false]; exact hzn x hx
+  | alloc d a ha =>
+    refine ⟨fun x hx => ?_, hmem⟩
+    by_cases e : x = d
+    · subst e; have := hz.z_def x hx _ hi; simp at this
+    · simp only [upd, e, ite_false]; exact hzn x hx
+  | derive d x =>
+    refine ⟨fun y hy => ?_, hmem⟩
+    by_cases e : y = d
+    · subst e; have := hz.z_def y hy _ hi; simp at this
+    · simp only [upd, e, ite_false]; exact hzn y hy
+  | load d addr o i ho' =>
+    refine ⟨fun y hy => ?_, hmem⟩
+    by_cases e : y = d
+    · subst e; have := hz.z_def y hy _ hi; simp at this
+    · simp only [upd, e, ite_false]; exact hzn y hy
+  | store v addr o i ho' =>
+    refine ⟨hzn, fun c o' hr hc => ?_⟩
+    by_cases e : c = (o, i)
+    · subst e
+      simp only [ite_true] at hc
+      have hC : C addr := he addr o ho' hr
+      rcases hz.store_ns v addr hi hC with hv | hv
+      · rcases hm v hv with h2 | ⟨o2, h2, hh⟩
+        · rw [h2] at hc; cases hc
+        · rw [h2] at hc; cases hc; exact hh
+      · rw [hzn v hv] at hc; cases hc
+    · simp only [e, ite_false] at hc; exact hmem c o' hr hc
+  | pure d =>
+    refine ⟨fun y hy => ?_, hmem⟩
+    by_cases e : y = d
+    · subst e; simp [upd]
+    · simp only [upd, e, ite_false]; exact hzn y hy
+  | ncall xs mem' hm' =>
+    refine ⟨hzn, fun c o hr hc => ?_⟩
+    rcases hns xs rfl c o hr hc with h1 | h1
+    · exact hmem c o hr h1
+    · exact h1
+  | sink v => exact ⟨hzn, hmem⟩
+
+/-- executions whose calls keep the noscan contract -/
+inductive RunNS (R H : Obj → Prop) (prog : List Instr) : St → St → Prop
+  | nil (s : St) : RunNS R H prog s s
+  | step (s s' s'' : St) (i : Instr) (hi : i ∈ prog) (h1 : Step R s i s')
+      (hns : ∀ xs, i = .ncall xs → ncallOK R H s s') (h2 : RunNS R H prog s' s'') :
+      RunNS R H prog s s''
+
+/-- Theorem `confined_ns`: under both rules and the noscan call contract, the region stays
+confined (as `confined`) and no region cell ever holds a pointer to anything but a holder:
+the collector, which does not scan the region, loses no object the region refers to. -/
+theorem confined_ns (R H : Obj → Prop) (hRH : ∀ o, R o → H o) (prog : List Instr)
+    (C M Z : Name → Prop) (h : Rule prog C M) (hz : RuleNS prog C M Z) (s s' : St)
+    (r : RunNS R H prog s s') (inv : Inv R H C M s) (ns : NS R H Z s) :
+    Inv R H C M s' ∧ NS R H Z s' := by
+  induction r with
+  | nil => exact ⟨inv, ns⟩
+  | step s s' s'' i hi h1 hns _ ih =>
+    exact ih (step_inv R H hRH prog C M h i hi s s' h1 inv)
+      (step_ns R H prog C M Z h hz i hi s s' h1 hns inv ns)
+
+/-- NS holds at the start when the region's objects are fresh (zeroed) and the Z names hold
+no pointer (no name holds one before the block runs) -/
+theorem init_ns (R H : Obj → Prop) (Z : Name → Prop) (env : Name → Val) (mem : Obj × Nat → Val)
+    (hz : ∀ x, Z x → (env x).ptr = none) (hfresh : ∀ c, R c.1 → (mem c).ptr = none) :
+    NS R H Z { env := env, mem := mem, out := fun _ => False } :=
+  ⟨hz, fun c o hr hc => by rw [hfresh c hr] at hc; cases hc⟩
+
+/-- Not vacuous: the counterexample's pattern (a fresh heap object stored into a region object)
+reaches a state where NS fails, and no RuleNS admits that program. Region R = {0}, holders
+H = {0}, heap object 1. -/
+example : ∃ s s', Step (· = 0) s (.store 2 1) s' ∧ NS (· = 0) (· = 0) (fun _ => False) s ∧
+    ¬ NS (· = 0) (· = 0) (fun _ => False) s' := by
+  let s : St := { env := fun x => if x = 1 then ⟨some 0⟩ else if x = 2 then ⟨some 1⟩ else ⟨none⟩,
+                  mem := fun _ => ⟨none⟩, out := fun _ => False }
+  refine ⟨s, _, Step.store s 2 1 0 0 (by simp [s]), ⟨fun _ h => h.elim, fun c o _ h => by simp [s] at h⟩, ?_⟩
+  intro ⟨_, h⟩
+  have := h (0, 0) 1 rfl (by simp [s])
+  simp at this
+
+example (C M Z : Name → Prop) (hC : C 1) (hM : ¬ M 2) :
+    ¬ RuleNS [.ralloc 1 0, .alloc 2 1, .store 2 1] C M Z := by
+  intro r
+  rcases r.store_ns 2 1 (by simp) hC with h | h
+  · exact hM h
+  · have := r.z_def 2 h (.alloc 2 1) (by simp); simp at this
+
 end Region
 
 #print axioms Region.confined
 #print axioms Region.init_inv
 #print axioms Region.init_frame
+#print axioms Region.confined_ns
+#print axioms Region.init_ns
