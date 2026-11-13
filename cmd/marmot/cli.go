@@ -187,12 +187,7 @@ marmot explain M0002`,
 		command("cache [trim|clean]", "Show, trim or remove the build cache",
 			"Show the size of the build cache. trim shrinks it to MARMOT_CACHE_MAX_MB (default 4096); clean removes it.",
 			"marmot cache\nmarmot cache trim", nil, cmdCache),
-		&cobra.Command{
-			Use:   "version",
-			Short: "Print the marmot version",
-			Args:  cobra.NoArgs,
-			Run:   func(*cobra.Command, []string) { cmdVersion() },
-		},
+		versionCommand(),
 		manCommand(root0(&root)),
 	)
 	return root

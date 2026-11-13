@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
+	"github.com/spf13/cobra"
 )
 
 // Marlo the sentinel, on a 16 by 16 grid: '#' is the body, 'w' the whistle, 'g' the ground.
@@ -32,10 +34,21 @@ var marlo = []string{
 // artWidth is the narrowest terminal that shows the art next to the text.
 const artWidth = 60
 
-// printVersion writes the version. Off a terminal, on a dumb one or a narrow one it is the
-// version line alone, as before; on a terminal Marlo stands to its left.
-func printVersion(w io.Writer, tty, color bool, width int, term string) {
-	if !tty || term == "dumb" || width < artWidth {
+// printVersion writes the version in the output mode the other commands use. JSON mode (a
+// coding agent, -json or MARMOT_OUTPUT=json) writes one object; plain mode, and human mode
+// off a terminal, on a dumb one or a narrow one, the version line alone, as before. On a
+// terminal in human mode Marlo stands to its left.
+func printVersion(w io.Writer, mode diag.Mode, tty, color bool, width int, term string) {
+	switch {
+	case mode == diag.ModeJSON:
+		b, _ := json.Marshal(struct {
+			Schema  int    `json:"schema"`
+			Kind    string `json:"kind"`
+			Version string `json:"version"`
+		}{diag.Schema, "version", version})
+		fmt.Fprintln(w, string(b))
+		return
+	case mode != diag.ModeHuman || !tty || term == "dumb" || width < artWidth:
 		fmt.Fprintln(w, version)
 		return
 	}
@@ -129,8 +142,20 @@ func dim(s string, color bool) string {
 	return "\x1b[2m" + s + "\x1b[0m"
 }
 
-func cmdVersion() {
+func cmdVersion(jsonFlag bool) {
 	tty := diag.IsTerminal(os.Stdout)
-	color := tty && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
-	printVersion(os.Stdout, tty, color, diag.TermWidth(os.Stdout), os.Getenv("TERM"))
+	s := diag.Resolve(jsonFlag, "auto", os.Getenv, tty)
+	printVersion(os.Stdout, s.Mode, tty, s.Color, diag.TermWidth(os.Stdout), os.Getenv("TERM"))
+}
+
+func versionCommand() *cobra.Command {
+	var jsonFlag bool
+	c := &cobra.Command{
+		Use:   "version",
+		Short: "Print the marmot version",
+		Args:  cobra.NoArgs,
+		Run:   func(*cobra.Command, []string) { cmdVersion(jsonFlag) },
+	}
+	c.Flags().BoolVar(&jsonFlag, "json", false, "machine readable output: one JSON object (also $MARMOT_OUTPUT=json, and the default under coding agents)")
+	return c
 }

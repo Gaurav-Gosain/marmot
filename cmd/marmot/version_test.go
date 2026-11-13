@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/Gaurav-Gosain/marmot/internal/diag"
 )
 
 func TestVersionPlain(t *testing.T) {
@@ -18,7 +20,7 @@ func TestVersionPlain(t *testing.T) {
 		{"narrow terminal", true, artWidth - 1, "xterm-256color"},
 	} {
 		var b bytes.Buffer
-		printVersion(&b, c.tty, true, c.width, c.term)
+		printVersion(&b, diag.ModeHuman, c.tty, true, c.width, c.term)
 		if got := b.String(); got != version+"\n" {
 			t.Errorf("%s: got %q, want the version line alone", c.name, got)
 		}
@@ -27,7 +29,7 @@ func TestVersionPlain(t *testing.T) {
 
 func TestVersionArt(t *testing.T) {
 	var b bytes.Buffer
-	printVersion(&b, true, false, 80, "xterm-256color")
+	printVersion(&b, diag.ModeHuman, true, false, 80, "xterm-256color")
 	out := b.String()
 	if strings.Contains(out, "\x1b[") {
 		t.Errorf("NO_COLOR output has escape codes:\n%s", out)
@@ -45,8 +47,22 @@ func TestVersionArt(t *testing.T) {
 	}
 
 	b.Reset()
-	printVersion(&b, true, true, 80, "xterm-256color")
+	printVersion(&b, diag.ModeHuman, true, true, 80, "xterm-256color")
 	if !strings.Contains(b.String(), "\x1b[0;39m") {
 		t.Errorf("colour output does not use the terminal's foreground for the body")
+	}
+}
+
+func TestVersionModes(t *testing.T) {
+	var b bytes.Buffer
+	printVersion(&b, diag.ModePlain, true, true, 100, "xterm-256color")
+	if b.String() != version+"\n" {
+		t.Errorf("plain mode on a terminal: got %q, want the version line alone", b.String())
+	}
+	b.Reset()
+	printVersion(&b, diag.ModeJSON, true, true, 100, "xterm-256color")
+	want := `{"schema":1,"kind":"version","version":"` + version + `"}` + "\n"
+	if b.String() != want {
+		t.Errorf("json mode: got %q, want %q", b.String(), want)
 	}
 }
