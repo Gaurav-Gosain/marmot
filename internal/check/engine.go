@@ -16,6 +16,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -316,9 +317,9 @@ func (e *engine) outOf(p *listPkg) string {
 }
 
 // outHash hashes a facts entry for the keys of its importers: the export
-// data, the package's own facts as a set (each encoded on its own, since
-// gob numbers types in the order it meets them), and the hashes of its
-// dependencies, which cover the facts it passes on from them.
+// data, the package's own facts as a set (written by canonical, since gob
+// writes maps in random order), and the hashes of its dependencies, which
+// cover the facts it passes on from them.
 func (e *engine) outHash(p *listPkg, fe *factsEntry) string {
 	h := newHasher("entry")
 	h.bytes(fe.Types)
@@ -332,11 +333,9 @@ func (e *engine) outHash(p *listPkg, fe *factsEntry) string {
 		if f.PkgPath != p.path {
 			continue
 		}
-		var b bytes.Buffer
-		if err := gob.NewEncoder(&b).Encode(&f); err != nil {
-			h.bytes(fe.Facts)
-			return h.sum()
-		}
+		var b strings.Builder
+		b.WriteString(string(f.Object) + " ")
+		canonical(&b, reflect.ValueOf(f.Fact), 0)
 		parts = append(parts, b.String())
 	}
 	sort.Strings(parts)
@@ -807,4 +806,69 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// canonical writes a value deterministically: maps in key order, pointers
+// followed, unexported fields included.
+func canonical(b *strings.Builder, v reflect.Value, depth int) {
+	if depth > 20 {
+		b.WriteString("...")
+		return
+	}
+	switch v.Kind() {
+	case reflect.Invalid:
+		b.WriteString("nil")
+	case reflect.Pointer, reflect.Interface:
+		if v.IsNil() {
+			b.WriteString("nil")
+			return
+		}
+		b.WriteString(v.Type().String() + "&")
+		canonical(b, v.Elem(), depth+1)
+	case reflect.Struct:
+		b.WriteString(v.Type().String() + "{")
+		for i := 0; i < v.NumField(); i++ {
+			b.WriteString(v.Type().Field(i).Name + ":")
+			canonical(b, v.Field(i), depth+1)
+			b.WriteString(",")
+		}
+		b.WriteString("}")
+	case reflect.Slice, reflect.Array:
+		b.WriteString("[")
+		for i := 0; i < v.Len(); i++ {
+			canonical(b, v.Index(i), depth+1)
+			b.WriteString(",")
+		}
+		b.WriteString("]")
+	case reflect.Map:
+		keys := make([]string, 0, v.Len())
+		vals := map[string]reflect.Value{}
+		it := v.MapRange()
+		for it.Next() {
+			var kb strings.Builder
+			canonical(&kb, it.Key(), depth+1)
+			keys = append(keys, kb.String())
+			vals[kb.String()] = it.Value()
+		}
+		sort.Strings(keys)
+		b.WriteString("map[")
+		for _, k := range keys {
+			b.WriteString(k + ":")
+			canonical(b, vals[k], depth+1)
+			b.WriteString(",")
+		}
+		b.WriteString("]")
+	case reflect.String:
+		b.WriteString(strconv.Quote(v.String()))
+	case reflect.Bool:
+		b.WriteString(strconv.FormatBool(v.Bool()))
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		b.WriteString(strconv.FormatInt(v.Int(), 10))
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		b.WriteString(strconv.FormatUint(v.Uint(), 10))
+	case reflect.Float32, reflect.Float64:
+		b.WriteString(strconv.FormatFloat(v.Float(), 'g', -1, 64))
+	default:
+		b.WriteString(v.Kind().String())
+	}
 }

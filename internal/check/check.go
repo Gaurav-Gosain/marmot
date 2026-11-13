@@ -117,6 +117,8 @@ type scope struct {
 	mergeBase string
 	addedMu   sync.Mutex
 	added     map[string]map[int]bool
+	shapeMu   sync.Mutex
+	shapes    map[string]string // package ID -> shape hash, from the analysis
 }
 
 type module struct {
@@ -189,7 +191,7 @@ func Run(opts Options) (*Result, error) {
 			analysis = append(analysis, n)
 		}
 	}
-	if len(analysis) > 0 {
+	if len(analysis) > 0 || results["deadcode"] != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -483,4 +485,13 @@ func (sc *scope) addedLines(file string) map[int]bool {
 	}
 	sc.added[file] = m
 	return m
+}
+
+func (sc *scope) setShape(id, h string) {
+	sc.shapeMu.Lock()
+	defer sc.shapeMu.Unlock()
+	if sc.shapes == nil {
+		sc.shapes = map[string]string{}
+	}
+	sc.shapes[id] = h
 }

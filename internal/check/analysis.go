@@ -84,6 +84,10 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 			all = append(all, f.analyzers...)
 		}
 	}
+	if results["deadcode"] != nil {
+		// The dead code cache needs every package's shape.
+		all = append(all, shapeAnalyzer)
+	}
 	if len(all) == 0 {
 		return
 	}
@@ -147,6 +151,16 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 	}
 	seen := map[string]bool{}
 	for i, p := range g.roots {
+		if errs[i] == nil {
+			for _, fd := range reps[i].Findings {
+				if fd.Analyzer == shapeAnalyzer.Name {
+					sc.setShape(p.ImportPath, fd.Message)
+				}
+			}
+		}
+		if errCheck == "" {
+			continue // only the shapes were wanted
+		}
 		if errs[i] != nil {
 			r := results[errCheck]
 			r.Status = Failed

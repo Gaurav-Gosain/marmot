@@ -10,9 +10,11 @@ import (
 	"encoding/gob"
 	"fmt"
 	"go/ast"
+	"go/parser"
 	"go/token"
 	"go/types"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -56,17 +58,42 @@ func runDeadcode(sc *scope, opts Options, st *store, r *CheckResult) {
 		h.str(p, files[p])
 	}
 	key := h.sum()
-	var res deadResult
-	if c := st.get(key); c == nil || gob.NewDecoder(bytes.NewReader(c)).Decode(&res) != nil {
-		res = deadcode(sc, opts)
-		if res.Err == "" {
-			var buf bytes.Buffer
-			if gob.NewEncoder(&buf).Encode(res) == nil {
-				st.put(key, buf.Bytes())
+	// The shape key: the reachability inputs of every package, from the
+	// analysis. When it matches, only positions may have moved.
+	skey := ""
+	if sc.shapes != nil {
+		sh := newHasher("deadcode-shape")
+		sh.str(toolID(), sc.dir, envKey(opts.Tags, hostGOOS(), hostGOARCH()))
+		ids := make([]string, 0, len(sc.shapes))
+		for id, s := range sc.shapes {
+			ids = append(ids, id+" "+s)
+		}
+		sort.Strings(ids)
+		sh.str(ids...)
+		for _, m := range sc.modules {
+			for _, n := range []string{"go.mod", "go.sum"} {
+				data, _ := os.ReadFile(filepath.Join(m.Dir, n))
+				sh.bytes(data)
 			}
 		}
-	} else {
+		skey = sh.sum()
+	}
+	var res deadResult
+	switch {
+	case getGob(st, key, &res):
 		r.Cached = true
+	case skey != "" && getGob(st, skey, &res):
+		r.Cached = true
+		res.Funcs = relocate(res.Funcs)
+		putGob(st, key, res)
+	default:
+		res = deadcode(sc, opts)
+		if res.Err == "" {
+			putGob(st, key, res)
+			if skey != "" {
+				putGob(st, skey, res)
+			}
+		}
 	}
 	if res.Err != "" {
 		r.Status = Failed
@@ -253,4 +280,63 @@ func isMarkerMethod(fn *ssa.Function, ifaces []*types.Interface) bool {
 	return slices.ContainsFunc(ifaces, func(i *types.Interface) bool {
 		return types.Implements(fn.Signature.Recv().Type(), i)
 	})
+}
+
+func getGob(st *store, key string, v any) bool {
+	c := st.get(key)
+	return c != nil && gob.NewDecoder(bytes.NewReader(c)).Decode(v) == nil
+}
+
+func putGob(st *store, key string, v any) {
+	var buf bytes.Buffer
+	if gob.NewEncoder(&buf).Encode(v) == nil {
+		st.put(key, buf.Bytes())
+	}
+}
+
+// relocate finds the declarations of dead functions again after their
+// files changed in ways that keep the program's shape.
+func relocate(fs []deadFunc) []deadFunc {
+	files := map[string]map[string]token.Position{}
+	out := fs[:0:0]
+	for _, f := range fs {
+		decls, ok := files[f.Span.File]
+		if !ok {
+			decls = map[string]token.Position{}
+			fset := token.NewFileSet()
+			if af, err := parser.ParseFile(fset, f.Span.File, nil, parser.SkipObjectResolution); err == nil {
+				for _, d := range af.Decls {
+					fd, ok := d.(*ast.FuncDecl)
+					if !ok {
+						continue
+					}
+					name := fd.Name.Name
+					if fd.Recv != nil && len(fd.Recv.List) > 0 {
+						t := fd.Recv.List[0].Type
+						if s, ok := t.(*ast.StarExpr); ok {
+							t = s.X
+						}
+						switch x := t.(type) {
+						case *ast.IndexExpr:
+							t = x.X
+						case *ast.IndexListExpr:
+							t = x.X
+						}
+						if id, ok := t.(*ast.Ident); ok {
+							name = id.Name + "." + name
+						}
+					}
+					decls[name] = fset.Position(fd.Name.Pos())
+				}
+			}
+			files[f.Span.File] = decls
+		}
+		pos, ok := decls[f.Name]
+		if !ok {
+			continue
+		}
+		f.Span = diag.Span{File: f.Span.File, Line: pos.Line, Col: pos.Column, EndLine: pos.Line, EndCol: pos.Column}
+		out = append(out, f)
+	}
+	return out
 }
