@@ -365,11 +365,6 @@ func (p *Program) SetTypesInfo(infos map[*types.Package]*types.Info) {
 // Package returns the SSA packages to compile, in dependency order.
 func (p *Program) Packages() []*ssa.Package { return p.pkgs }
 
-// typeString formats t with full package paths.
-func typeString(t types.Type) string {
-	return types.TypeString(t, func(p *types.Package) string { return p.Path() })
-}
-
 func (p *Program) errorf(pos token.Pos, format string, args ...any) *Error {
 	return &Error{Pos: p.fset.Position(pos), Msg: fmt.Sprintf(format, args...)}
 }

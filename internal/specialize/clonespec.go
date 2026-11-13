@@ -127,14 +127,6 @@ func (g *gen) funcWrapper(t types.Type) (string, bool) {
 	return w, true
 }
 
-func paramTypes(g *gen, sig *types.Signature) []string {
-	var ts []string
-	for v := range sig.Params().Variables() {
-		ts = append(ts, g.typeExpr(v.Type()))
-	}
-	return ts
-}
-
 // cloneOf generates (once) the clone of fn generic over its func
 // parameter idx and returns its name.
 func (g *gen) cloneOf(fn *types.Func, idx int) (string, bool) {

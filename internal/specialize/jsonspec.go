@@ -105,7 +105,6 @@ func (g *gen) jsonFields(st *types.Struct) ([]jsonField, bool) {
 type jsonEnc struct {
 	g     *gen
 	names typeutil.Map // types.Type -> encoder function name ("" once failed)
-	bad   bool
 	trial []types.Type // types named during the attempts in progress
 }
 

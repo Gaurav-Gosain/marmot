@@ -35,11 +35,9 @@ type listPkg struct {
 	Incomplete      bool
 
 	// Filled after decoding.
-	path    string     // package path without the variant suffix
-	deps    []*listPkg // direct imports, resolved
-	root    bool       // analyzed with every check (not only for facts)
-	key     string     // cache key, set by the engine
-	cgoDiag bool
+	path string     // package path without the variant suffix
+	deps []*listPkg // direct imports, resolved
+	root bool       // analyzed with every check (not only for facts)
 }
 
 type listModule struct {

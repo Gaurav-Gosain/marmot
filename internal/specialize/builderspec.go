@@ -114,16 +114,3 @@ func rewriteBuilder(g *gen, f *ast.File) {
 		return true
 	})
 }
-
-// plainPath reports whether e is an identifier or a chain of field
-// selections on one (no calls, indexing or dereferences that could panic
-// or have effects when evaluated twice).
-func plainPath(e ast.Expr) bool {
-	switch e := ast.Unparen(e).(type) {
-	case *ast.Ident:
-		return true
-	case *ast.SelectorExpr:
-		return plainPath(e.X)
-	}
-	return false
-}

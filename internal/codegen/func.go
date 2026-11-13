@@ -29,7 +29,6 @@ type funcGen struct {
 	ctx     string // closure context parameter, "" if none
 	curPos  token.Pos
 	lastPos token.Pos // last valid curPos (locations)
-	failed  bool
 	blkName map[*ssa.BasicBlock]string
 
 	frame             string // _deferframe address, "" if none
@@ -394,13 +393,6 @@ func (f *funcGen) extract(agg, at string, i int, ft types.Type) string {
 
 func (f *funcGen) extractRaw(agg, at string, i int) string {
 	return f.op("llvm.extractvalue %s[%d] : %s", agg, i, at)
-}
-
-func (f *funcGen) insert(agg, at string, i int, v string, ft types.Type) string {
-	if ft != nil && isBool(ft) {
-		v = f.op("llvm.zext %s : i1 to i8", v)
-	}
-	return f.op("llvm.insertvalue %s, %s[%d] : %s", v, agg, i, at)
 }
 
 // build makes an aggregate of LLVM type at from register values.

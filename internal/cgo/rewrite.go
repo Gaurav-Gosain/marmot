@@ -669,7 +669,7 @@ func callC(w, cname, kind string, ext, d *ast.FuncDecl, proto cProto, types map[
 			return "", "", fmt.Errorf("no C prototype for %s", w)
 		}
 		if len(proto.params) != len(params) {
-			return "", "", fmt.Errorf("C prototype of %s has %d parameters, Go %d", w, len(proto.params), len(params))
+			return "", "", fmt.Errorf("the C prototype of %s has %d parameters, Go %d", w, len(proto.params), len(params))
 		}
 		var cps, cargs []string
 		for i, p := range proto.params {

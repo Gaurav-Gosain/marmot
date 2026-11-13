@@ -196,30 +196,3 @@ func titleFirstWord(s string) string {
 	words[0] = string(unicode.ToUpper(r)) + words[0][n:]
 	return strings.Join(words, " ")
 }
-
-func isCasedRune(r rune) bool {
-	if r < utf8.RuneSelf {
-		return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
-	}
-	return unicode.IsUpper(r) || unicode.IsLower(r) || unicode.IsTitle(r)
-}
-
-func isMidRune(r rune) bool {
-	switch r {
-	case '\'', '.', ':', '·', '‘', '’', '․', '﹒', '﹕', '＇', '．', '：':
-		return true
-	}
-	return false
-}
-
-func isBreakRune(r rune) bool {
-	if r < utf8.RuneSelf {
-		return !isCasedRune(r) && !isMidRune(r) && (r < '0' || r > '9') && r != '_'
-	}
-	// Ideographs and kana stand alone in Unicode word breaking; every other
-	// letter, digit and mark joins a word.
-	if unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana) {
-		return true
-	}
-	return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) && !isMidRune(r)
-}

@@ -34,8 +34,7 @@ func runFmt(sc *scope, st *store, r *CheckResult) {
 	}
 	src := diag.NewSources()
 	type out struct {
-		d  *diag.Diagnostic
-		ok bool
+		d *diag.Diagnostic
 	}
 	res := make([]out, len(files))
 	var wg sync.WaitGroup

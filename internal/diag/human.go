@@ -457,8 +457,6 @@ func visualCol(line string, col int) int {
 	return v + (col - 1 - len(line))
 }
 
-func visualWidth(line string) int { return visualCol(line, len(line)+1) }
-
 func expandTabs(line string) string {
 	if !strings.Contains(line, "\t") {
 		return line
@@ -622,7 +620,6 @@ func applyToLines(f *srcFile, e Edit) (before, after []string, first int, ok boo
 	neu := string(f.data[ls:a]) + e.NewText + string(f.data[b:le])
 	if a == b && e.Span.Col == 1 {
 		// Pure insertion of whole lines.
-		old = ""
 		neu = strings.TrimSuffix(e.NewText, "\n")
 		return nil, strings.Split(neu, "\n"), first, true
 	}

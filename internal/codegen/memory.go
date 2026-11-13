@@ -242,9 +242,7 @@ func (f *funcGen) makeSlice(v *ssa.MakeSlice) {
 	st := v.Type().Underlying().(*types.Slice)
 	l := f.toInt64(f.value(v.Len), v.Len.Type())
 	c := f.toInt64(f.value(v.Cap), v.Cap.Type())
-	if isSigned(v.Len.Type()) || isSigned(v.Cap.Type()) || true {
-		// makeslice checks len and cap (negative, len > cap, too large).
-	}
+	// makeslice checks len and cap (negative, len > cap, too large).
 	if f.stackMakeSlice(v, l, c) {
 		f.reportAlloc(v, "make-slice", nil, "stack")
 		return

@@ -43,11 +43,6 @@ const GenFile = "zz_marmot_spec.go"
 // Features are the specializations, each behind its own switch.
 var Features = []string{"fmt", "jsonenc", "jsondec", "sort", "regexp", "mapkey", "split", "builder", "fold"}
 
-// Measured and kept off (enable by name only): clone (sort.Search,
-// slices.IndexFunc, strings.Map clones were 9% slower than -release
-// without them, which already inlines constant closures).
-var optInFeatures = []string{"clone"}
-
 // releaseDefault lists the features on by default in release builds. A
 // feature joins it only after the full conformance matrix and a fuzz round
 // pass with it forced on (MARMOT_SPEC=name).

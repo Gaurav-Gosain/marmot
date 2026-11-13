@@ -451,17 +451,6 @@ func (f *funcGen) minMax(isMin bool, args []ssa.Value, t types.Type) string {
 	return acc
 }
 
-// anyBig reports whether any value has a big (indirect) type; go dialect
-// ops take values directly, so those keep the llvm form.
-func (f *funcGen) anyBig(vs []ssa.Value) bool {
-	for _, v := range vs {
-		if f.tm.isBig(v.Type()) {
-			return true
-		}
-	}
-	return false
-}
-
 // devirtualize turns an interface method call into direct calls guarded by
 // itab comparisons when the closed world has few implementers. The indirect call stays as the fallback, so a dynamic type the
 // analysis did not see (an itab built at run time) is still correct.
