@@ -263,7 +263,7 @@ func goAtLeast(v, min string) bool {
 		return true
 	}
 	a, b := strings.Split(v, "."), strings.Split(min, ".")
-	for i := 0; i < len(b); i++ {
+	for i := range b {
 		if i >= len(a) {
 			return false
 		}

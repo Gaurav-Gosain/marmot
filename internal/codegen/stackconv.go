@@ -93,10 +93,7 @@ func (f *funcGen) stackMakeSlice(v *ssa.MakeSlice, l, c string) bool {
 		return false
 	}
 	maxCap := int64(tmpBufSize) / es
-	align := f.m.p.opts.Sizes.Alignof(st.Elem())
-	if align < 8 {
-		align = 8
-	}
+	align := max(f.m.p.opts.Sizes.Alignof(st.Elem()), 8)
 	buf := f.alloca(fmt.Sprintf("!llvm.array<%d x i8>", tmpBufSize), align)
 	capOK := f.op("llvm.icmp \"ule\" %s, %s : i64", c, f.constInt(maxCap, mlir.I64))
 	lenOK := f.op("llvm.icmp \"ule\" %s, %s : i64", l, c) // unsigned: also rejects l < 0

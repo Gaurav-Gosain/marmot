@@ -372,7 +372,7 @@ func InputFiles(cfg Config) ([]string, string, error) {
 	}
 	var files []string
 	for _, out := range outs {
-		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 			fs := strings.Split(line, "\t")
 			if len(fs) == 0 || fs[0] == "" {
 				continue
@@ -392,8 +392,8 @@ func InputFiles(cfg Config) ([]string, string, error) {
 // (no dot in the first element).
 func isStd(path string) bool {
 	first := path
-	if i := strings.IndexByte(path, '/'); i >= 0 {
-		first = path[:i]
+	if before, _, ok := strings.Cut(path, "/"); ok {
+		first = before
 	}
 	return !strings.Contains(first, ".") && path != "command-line-arguments"
 }

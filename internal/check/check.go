@@ -194,13 +194,11 @@ func Run(opts Options) (*Result, error) {
 		if r == nil {
 			return
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			t0 := time.Now()
 			f(r)
 			r.Duration = time.Since(t0)
-		}()
+		})
 	}
 	// The analysis checks share one package graph and one pass.
 	analysis := []string{}
@@ -210,15 +208,13 @@ func Run(opts Options) (*Result, error) {
 		}
 	}
 	if len(analysis) > 0 || results["deadcode"] != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			t0 := time.Now()
 			runAnalysis(sc, opts, st, lc, lcErr, results, &res.Stats)
 			for _, n := range analysis {
 				results[n].Duration = time.Since(t0)
 			}
-		}()
+		})
 	}
 	run("fmt", func(r *CheckResult) { runFmt(sc, st, r) })
 	run("tidy", func(r *CheckResult) { runTidy(sc, st, r) })
@@ -229,9 +225,7 @@ func Run(opts Options) (*Result, error) {
 	// them.
 	run("vuln", func(r *CheckResult) { runVuln(sc, opts, st, r) })
 	var seq sync.WaitGroup
-	seq.Add(1)
-	go func() {
-		defer seq.Done()
+	seq.Go(func() {
 		for _, n := range []string{"cross", "deadcode"} {
 			r := results[n]
 			if r == nil {
@@ -245,7 +239,7 @@ func Run(opts Options) (*Result, error) {
 			}
 			r.Duration = time.Since(t0)
 		}
-	}()
+	})
 	seq.Wait()
 	wg.Wait()
 	for _, n := range Names {
@@ -482,7 +476,7 @@ func (sc *scope) addedLines(file string) map[int]bool {
 		sc.added[file] = nil // new file: every line
 		return nil
 	}
-	for _, l := range strings.Split(gitOut(dir, "diff", "-U0", sc.mergeBase, "--", filepath.Base(file)), "\n") {
+	for l := range strings.SplitSeq(gitOut(dir, "diff", "-U0", sc.mergeBase, "--", filepath.Base(file)), "\n") {
 		if !strings.HasPrefix(l, "@@") {
 			continue
 		}
@@ -497,7 +491,7 @@ func (sc *scope) addedLines(file string) map[int]bool {
 		}
 		a, _ := strconv.Atoi(start)
 		c, _ := strconv.Atoi(n)
-		for i := 0; i < c; i++ {
+		for i := range c {
 			m[a+i] = true
 		}
 	}

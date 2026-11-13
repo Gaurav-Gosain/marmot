@@ -80,7 +80,7 @@ func (g *gen) jsonFields(st *types.Struct) ([]jsonField, bool) {
 		}
 		jf := jsonField{goName: f.Name(), name: name, typ: f.Type()}
 		if opts != "" {
-			for _, o := range strings.Split(opts, ",") {
+			for o := range strings.SplitSeq(opts, ",") {
 				switch o {
 				case "omitempty":
 					jf.omitEmpty = true
@@ -720,7 +720,7 @@ func (jd *jsonDec) body(t types.Type, tsrc string) (string, bool) {
 			w("\tcase %d:", n)
 			for j, i := range byLen[n] {
 				var conds []string
-				for c := 0; c < n; c++ {
+				for c := range n {
 					conds = append(conds, fmt.Sprintf("k[%d] == %s", c, strconv.QuoteRune(rune(fs[i].name[c]))))
 				}
 				if n == 0 {
@@ -797,8 +797,7 @@ func freshCheck(pkg *types.Package, t types.Type, v string, depth int) (string, 
 			return "", false
 		}
 		conds := []string{"true"}
-		for i := 0; i < u.NumFields(); i++ {
-			f := u.Field(i)
+		for f := range u.Fields() {
 			if f.Name() == "_" || f.Embedded() || (!f.Exported() && f.Pkg() != pkg) {
 				return "", false
 			}
@@ -970,8 +969,8 @@ func hasPointers(t types.Type) bool {
 	case *types.Array:
 		return u.Len() > 0 && hasPointers(u.Elem())
 	case *types.Struct:
-		for i := 0; i < u.NumFields(); i++ {
-			if hasPointers(u.Field(i).Type()) {
+		for field := range u.Fields() {
+			if hasPointers(field.Type()) {
 				return true
 			}
 		}

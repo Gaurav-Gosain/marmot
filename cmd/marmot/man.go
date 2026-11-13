@@ -27,7 +27,7 @@ func manCommand(root func() *cobra.Command) *cobra.Command {
 func roffEscape(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\e`)
 	var b strings.Builder
-	for _, l := range strings.Split(s, "\n") {
+	for l := range strings.SplitSeq(s, "\n") {
 		if strings.HasPrefix(l, ".") || strings.HasPrefix(l, "'") {
 			l = `\&` + l
 		}

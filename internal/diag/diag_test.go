@@ -174,7 +174,7 @@ func TestInternalError(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644)
 	raw := "marmot-backend failed: signal: abort trap\nLLVM ERROR: Cannot select: intrinsic %llvm.foo\nIn function: main.main\nStack dump:\n0. Program arguments: marmot-backend -O2\n"
 	var b strings.Builder
-	r := &Reporter{Settings: Settings{Mode: ModeHuman}, W: &b, Dir: dir, Command: "build", Version: "test"}
+	r := &Reporter{Mode: ModeHuman, W: &b, Dir: dir, Command: "build", Version: "test"}
 	if code := r.Fail(errorString(raw)); code != 1 {
 		t.Fatalf("exit %d", code)
 	}
@@ -185,11 +185,11 @@ func TestInternalError(t *testing.T) {
 	if !strings.Contains(out, "internal compiler error in marmot-backend") || !strings.Contains(out, "while compiling main.main") {
 		t.Errorf("missing summary:\n%s", out)
 	}
-	i := strings.Index(out, "report bundle: ")
-	if i < 0 {
+	_, after, ok := strings.Cut(out, "report bundle: ")
+	if !ok {
 		t.Fatalf("no bundle:\n%s", out)
 	}
-	bundle := strings.TrimSpace(strings.SplitN(out[i+len("report bundle: "):], "\n", 2)[0])
+	bundle := strings.TrimSpace(strings.SplitN(after, "\n", 2)[0])
 	defer os.RemoveAll(bundle)
 	if data, err := os.ReadFile(filepath.Join(bundle, "error.txt")); err != nil || string(data) != raw {
 		t.Errorf("bundle error.txt: %v %q", err, data)
@@ -202,7 +202,7 @@ func TestInternalError(t *testing.T) {
 func TestLinkError(t *testing.T) {
 	raw := "clang failed: exit status 1\nUndefined symbols for architecture arm64:\n  \"_crypto/internal/foo.bar\", referenced from:\n      _main.main in m000.o\nld: symbol(s) not found for architecture arm64\n"
 	var b strings.Builder
-	r := &Reporter{Settings: Settings{Mode: ModeJSON}, W: &b, Dir: t.TempDir(), Command: "build"}
+	r := &Reporter{Mode: ModeJSON, W: &b, Dir: t.TempDir(), Command: "build"}
 	r.Fail(errorString(raw))
 	if !strings.Contains(b.String(), `"code":"M0018"`) || !strings.Contains(b.String(), "crypto/internal/foo.bar") {
 		t.Errorf("link error not reported:\n%s", b.String())

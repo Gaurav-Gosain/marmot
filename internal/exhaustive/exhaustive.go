@@ -226,8 +226,8 @@ func sameModule(pass *analysis.Pass, obj *types.TypeName) bool {
 
 // sealed reports whether an interface has an unexported method.
 func sealed(it *types.Interface) bool {
-	for i := 0; i < it.NumMethods(); i++ {
-		if !it.Method(i).Exported() {
+	for method := range it.Methods() {
+		if !method.Exported() {
 			return true
 		}
 	}

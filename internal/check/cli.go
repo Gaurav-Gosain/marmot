@@ -242,7 +242,7 @@ func FixMain(args []string, version string) int {
 		}
 		return rep.Usage(err.Error())
 	}
-	fo := FixOptions{Options: Options{Patterns: fs.Args(), Jobs: *ff.Jobs, CacheDir: checkCacheDir()}, All: *ff.All, Diff: *ff.Diff, Test: *ff.Test, Upgrade: *ff.Upgrade}
+	fo := FixOptions{Patterns: fs.Args(), Jobs: *ff.Jobs, CacheDir: checkCacheDir(), All: *ff.All, Diff: *ff.Diff, Test: *ff.Test, Upgrade: *ff.Upgrade}
 	if *ff.Only != "" {
 		fo.Only = strings.Split(*ff.Only, ",")
 	}

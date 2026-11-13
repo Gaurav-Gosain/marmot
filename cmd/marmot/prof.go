@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -229,7 +230,7 @@ func listSource(p *pprof.Profile, idx int, re *regexp.Regexp, total int64, unit 
 		for l := range ls {
 			nums = append(nums, l)
 		}
-		sort.Slice(nums, func(i, j int) bool { return nums[i] < nums[j] })
+		slices.Sort(nums)
 		src, _ := os.ReadFile(files[n])
 		text := strings.Split(string(src), "\n")
 		fmt.Printf("\n%s%s%s  %s%s%s\n", st.Bold, n, st.Reset, st.Dim, files[n], st.Reset)

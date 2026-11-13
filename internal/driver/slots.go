@@ -59,7 +59,7 @@ func acquireSlot(logf func(string, ...any)) error {
 	start := time.Now()
 	noted := false
 	for {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			name := filepath.Join(dir, fmt.Sprintf("slot-%d", i))
 			f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE, 0o666)
 			if err != nil {

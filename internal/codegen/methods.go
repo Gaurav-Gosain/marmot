@@ -140,13 +140,13 @@ func (p *Program) computeUsedMethods() {
 				continue
 			}
 			mset := p.prog.MethodSets.MethodSet(t)
-			for i := 0; i < mset.Len(); i++ {
-				if isGenericMethod(mset.At(i)) {
+			for method := range mset.Methods() {
+				if isGenericMethod(method) {
 					continue
 				}
-				m := mset.At(i).Obj().(*types.Func)
+				m := method.Obj().(*types.Func)
 				if used[p.methodKey(m)] || p.keepExported && m.Exported() {
-					push(p.prog.MethodValue(mset.At(i)))
+					push(p.prog.MethodValue(method))
 				}
 			}
 		}
@@ -158,13 +158,13 @@ func (p *Program) computeUsedMethods() {
 					continue
 				}
 				mset := p.prog.MethodSets.MethodSet(t)
-				for i := 0; i < mset.Len(); i++ {
-					if isGenericMethod(mset.At(i)) {
+				for method := range mset.Methods() {
+					if isGenericMethod(method) {
 						continue
 					}
-					m := mset.At(i).Obj().(*types.Func)
+					m := method.Obj().(*types.Func)
 					if used[p.methodKey(m)] || p.keepExported && m.Exported() {
-						push(p.prog.MethodValue(mset.At(i)))
+						push(p.prog.MethodValue(method))
 					}
 				}
 			}
@@ -261,22 +261,22 @@ func (p *Program) typeClosure(root types.Type, set map[string]bool) []types.Type
 			add(u.Key())
 			add(u.Elem())
 		case *types.Struct:
-			for i := 0; i < u.NumFields(); i++ {
-				add(u.Field(i).Type())
+			for field := range u.Fields() {
+				add(field.Type())
 			}
 		case *types.Signature:
-			for i := 0; i < u.Params().Len(); i++ {
-				add(u.Params().At(i).Type())
+			for v := range u.Params().Variables() {
+				add(v.Type())
 			}
-			for i := 0; i < u.Results().Len(); i++ {
-				add(u.Results().At(i).Type())
+			for v := range u.Results().Variables() {
+				add(v.Type())
 			}
 		}
 		if p.keepExported {
 			mset := p.prog.MethodSets.MethodSet(t)
-			for i := 0; i < mset.Len(); i++ {
-				if !isGenericMethod(mset.At(i)) {
-					add(stripRecv(mset.At(i).Obj().Type().(*types.Signature)))
+			for method := range mset.Methods() {
+				if !isGenericMethod(method) {
+					add(stripRecv(method.Obj().Type().(*types.Signature)))
 				}
 			}
 		}
@@ -417,8 +417,8 @@ func (p *Program) addPunned(t types.Type) {
 	p.punned[k] = true
 	switch u := t.Underlying().(type) {
 	case *types.Struct:
-		for i := 0; i < u.NumFields(); i++ {
-			p.addPunned(u.Field(i).Type())
+		for field := range u.Fields() {
+			p.addPunned(field.Type())
 		}
 	case *types.Array:
 		p.addPunned(u.Elem())

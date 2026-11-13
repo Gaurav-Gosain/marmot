@@ -1,6 +1,7 @@
 package codegen
 
 import (
+	"maps"
 	"go/token"
 	"go/types"
 	"os"
@@ -184,9 +185,7 @@ func (p *Program) commitDeep(q *summaryQuery) {
 		p.deep.running = map[escKey]bool{}
 		p.deep.param = map[escKey]bool{}
 	}
-	for k, r := range q.local {
-		p.deep.done[k] = r
-	}
+	maps.Copy(p.deep.done, q.local)
 	p.escMu.Unlock()
 }
 

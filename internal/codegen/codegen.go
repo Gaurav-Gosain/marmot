@@ -217,8 +217,8 @@ func (p *Program) collect(pkg *ssa.Package) {
 			if !ok || named.TypeParams().Len() > 0 {
 				continue
 			}
-			for i := 0; i < named.NumMethods(); i++ {
-				add(p.prog.FuncValue(named.Method(i)))
+			for method := range named.Methods() {
+				add(p.prog.FuncValue(method))
 			}
 		}
 	}

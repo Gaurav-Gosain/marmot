@@ -45,7 +45,7 @@ import (
 )
 
 // version changes the cache key when the generated code changes.
-const version = "marmot-cgo-3"
+const version = "marmot-cgo-4"
 
 // Config describes the build a package is prepared for.
 type Config struct {
@@ -146,7 +146,6 @@ func Prepare(cfg Config, dir, importPath string, files []string) (*Package, erro
 		flags = append(flags, cf...)
 		p.LDFLAGS = append(p.LDFLAGS, lf...)
 	}
-	p.CFLAGS = append(flags, "-I", dir)
 
 	// The key covers the inputs cgo reads.
 	h := sha256.New()
@@ -169,6 +168,8 @@ func Prepare(cfg Config, dir, importPath string, files []string) (*Package, erro
 	}
 	key := hex.EncodeToString(h.Sum(nil))[:24]
 	p.OutDir = filepath.Join(cfg.CacheDir, key)
+	// The package's C files may include _cgo_export.h.
+	p.CFLAGS = append(flags, "-I", dir, "-I", p.OutDir)
 
 	if _, err := os.Stat(filepath.Join(p.OutDir, "done")); err != nil {
 		if err := generate(cfg, bp, dir, importPath, flags, p.OutDir); err != nil {
@@ -358,7 +359,7 @@ func directives(bp *build.Package, dir string) marks {
 var leaf = map[string]bool{}
 
 func init() {
-	for _, n := range strings.Fields(`
+	for n := range strings.FieldsSeq(`
 		strlen strnlen strcmp strncmp strcasecmp strncasecmp strchr strrchr strstr strspn strcspn strpbrk
 		strcpy strncpy strcat strncat strdup strndup memcpy memmove memset memcmp memchr
 		malloc calloc realloc free

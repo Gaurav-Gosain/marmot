@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"maps"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -95,8 +96,8 @@ func reflectUses(p *packages.Package, info *types.Info, f *Facts) {
 // returnsReflect reports whether fn returns a reflect.<name>.
 func returnsReflect(fn *types.Func, name string) bool {
 	res := fn.Type().(*types.Signature).Results()
-	for i := 0; i < res.Len(); i++ {
-		if n, ok := types.Unalias(res.At(i).Type()).(*types.Named); ok &&
+	for v := range res.Variables() {
+		if n, ok := types.Unalias(v.Type()).(*types.Named); ok &&
 			n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == "reflect" && n.Obj().Name() == name {
 			return true
 		}
@@ -249,15 +250,13 @@ func (st *incrState) parseFiles(p *packages.Package) ([]*ast.File, error) {
 	errs := make([]error, len(files))
 	var wg sync.WaitGroup
 	for i, name := range p.CompiledGoFiles {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			var src any
 			if data, ok := st.overlay[name]; ok {
 				src = data
 			}
 			files[i], errs[i] = parser.ParseFile(st.fset, name, src, parser.AllErrors|parser.ParseComments|parser.SkipObjectResolution)
-		}()
+		})
 	}
 	wg.Wait()
 	var msgs []string
@@ -545,9 +544,7 @@ func loadIncremental(cfg Config, pcfg *packages.Config, patterns []string, confS
 
 func copyOverlay(m map[string][]byte) map[string][]byte {
 	out := map[string][]byte{}
-	for k, v := range m {
-		out[k] = v
-	}
+	maps.Copy(out, m)
 	return out
 }
 
@@ -589,9 +586,7 @@ func (st *incrState) run(all []*packages.Package) error {
 	sem := make(chan struct{}, runtime.GOMAXPROCS(0))
 	var wg sync.WaitGroup
 	for _, p := range all {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			defer close(done[p])
 			for _, d := range p.Imports {
 				if ch, ok := done[d]; ok {
@@ -614,7 +609,7 @@ func (st *incrState) run(all []*packages.Package) error {
 				}
 				errMu.Unlock()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	return firstErr
@@ -676,9 +671,7 @@ func (st *incrState) loadOne(p *packages.Package, exportMu *sync.Mutex) error {
 		}
 		if ov != nil {
 			st.mu.Lock()
-			for f, data := range ov {
-				st.overlay[f] = data
-			}
+			maps.Copy(st.overlay, ov)
 			st.mu.Unlock()
 			p.CompiledGoFiles = append(p.CompiledGoFiles, helpers...)
 			if files, err = st.parseFiles(p); err != nil {

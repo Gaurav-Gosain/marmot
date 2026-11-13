@@ -248,8 +248,8 @@ func containsInterface(t types.Type, depth int) bool {
 	case *types.Interface:
 		return true
 	case *types.Struct:
-		for i := 0; i < u.NumFields(); i++ {
-			if containsInterface(u.Field(i).Type(), depth+1) {
+		for field := range u.Fields() {
+			if containsInterface(field.Type(), depth+1) {
 				return true
 			}
 		}

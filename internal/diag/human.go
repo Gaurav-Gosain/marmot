@@ -1,6 +1,7 @@
 package diag
 
 import (
+	"slices"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -344,12 +345,12 @@ func (h *Human) snippet(f *srcFile, d *Diagnostic) {
 				conn.fill(x.vs, x.vs+1, '|', x.col)
 			}
 			fmt.Fprintln(h.W, gut+conn.render(st.Reset))
-			for k := len(texted) - 1; k >= 0; k-- {
+			for k, t := range slices.Backward(texted) {
 				r := newRow(width)
 				for _, x := range texted[:k] {
 					r.fill(x.vs, x.vs+1, '|', x.col)
 				}
-				fmt.Fprintln(h.W, gut+r.render(st.Reset)+strings.Repeat(" ", max(0, texted[k].vs-r.len()))+texted[k].col+texted[k].text+st.Reset)
+				fmt.Fprintln(h.W, gut+r.render(st.Reset)+strings.Repeat(" ", max(0, t.vs-r.len()))+t.col+t.text+st.Reset)
 			}
 		}
 	}

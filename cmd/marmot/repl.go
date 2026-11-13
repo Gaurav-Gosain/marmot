@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"bytes"
 	"context"
 	"flag"
@@ -311,12 +312,7 @@ func (s *replSession) autoImport(in string) {
 }
 
 func (s *replSession) isVar(name string) bool {
-	for _, n := range s.names {
-		if n == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s.names, name)
 }
 
 // program writes the session plus entry as main.go.

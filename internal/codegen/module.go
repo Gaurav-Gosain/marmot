@@ -116,11 +116,9 @@ func (p *Program) GenerateParts(pkg *ssa.Package, partInstrs int) ([]Module, err
 	errs := make([]error, len(parts))
 	var wg sync.WaitGroup
 	for i := range parts {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			mods[i], errs[i] = p.generatePart(pkg, parts[i], i == 0, pkg.Pkg.Path())
-		}()
+		})
 	}
 	wg.Wait()
 	for _, e := range errs {
@@ -354,8 +352,8 @@ func (m *moduleGen) signature(fn *ssa.Function) ([]string, string) {
 	if r := sig.Recv(); r != nil {
 		params = append(params, m.tm.valType(r.Type()))
 	}
-	for i := 0; i < sig.Params().Len(); i++ {
-		params = append(params, m.tm.valType(sig.Params().At(i).Type()))
+	for v := range sig.Params().Variables() {
+		params = append(params, m.tm.valType(v.Type()))
 	}
 	if len(fn.FreeVars) > 0 {
 		params = append(params, mlir.Ptr)
@@ -370,8 +368,8 @@ func (m *moduleGen) sigTypes(sig *types.Signature, closure bool) ([]string, stri
 	if r := sig.Recv(); r != nil {
 		params = append(params, m.tm.valType(r.Type()))
 	}
-	for i := 0; i < sig.Params().Len(); i++ {
-		params = append(params, m.tm.valType(sig.Params().At(i).Type()))
+	for v := range sig.Params().Variables() {
+		params = append(params, m.tm.valType(v.Type()))
 	}
 	if closure {
 		params = append(params, mlir.Ptr)

@@ -146,7 +146,7 @@ func goFiles(sc *scope) []string {
 	top := gitOut(sc.dir, "rev-parse", "--show-toplevel")
 	if top != "" {
 		ls := gitOut(sc.dir, "ls-files", "--full-name", "--cached", "--others", "--exclude-standard", "--", "*.go")
-		for _, n := range strings.Split(ls, "\n") {
+		for n := range strings.SplitSeq(ls, "\n") {
 			if n == "" {
 				continue
 			}
@@ -186,7 +186,7 @@ func (sc *scope) fmtFile(p string) bool {
 	}
 	rel = filepath.ToSlash(rel)
 	if rel != "." {
-		for _, part := range strings.Split(rel, "/") {
+		for part := range strings.SplitSeq(rel, "/") {
 			if part == "testdata" || strings.HasPrefix(part, ".") || strings.HasPrefix(part, "_") {
 				return false
 			}

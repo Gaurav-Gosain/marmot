@@ -248,7 +248,7 @@ func (b *build) linkWithFrags(objs []string, link func(extra []string, out strin
 	}
 	tmp := filepath.Join(b.work, "pcln.exe")
 	ph := filepath.Join(b.work, "pcln.placeholder")
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		if err := os.WriteFile(ph, make([]byte, reserve), 0o644); err != nil {
 			return err
 		}

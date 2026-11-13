@@ -203,7 +203,7 @@ func (b *Binary) readPcln(t []byte) error {
 		}
 		return cstr(u32(pkgOff+4*(uint32(k)-1))) + rest
 	}
-	for k := uint32(0); k < nfuncs; k++ {
+	for k := range nfuncs {
 		start := u32(funcOff + 12*k)
 		end := textEnd
 		if k+1 < nfuncs {

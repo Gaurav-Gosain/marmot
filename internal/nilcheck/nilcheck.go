@@ -20,6 +20,7 @@
 package nilcheck
 
 import (
+	"slices"
 	"fmt"
 	"go/token"
 	"go/types"
@@ -160,8 +161,8 @@ func posString(fset *token.FileSet, p token.Pos) string {
 }
 
 func shortFile(p string) string {
-	if i := strings.LastIndexByte(p, '/'); i >= 0 {
-		return p[i+1:]
+	if _, after, ok := strings.CutLast(p, "/"); ok {
+		return after
 	}
 	return p
 }
@@ -248,8 +249,8 @@ func mayBeNil(pass *analysis.Pass, v ssa.Value) string {
 }
 
 func lastPos(b *ssa.BasicBlock) token.Pos {
-	for i := len(b.Instrs) - 1; i >= 0; i-- {
-		if p := b.Instrs[i].Pos(); p.IsValid() {
+	for _, v := range slices.Backward(b.Instrs) {
+		if p := v.Pos(); p.IsValid() {
 			return p
 		}
 	}

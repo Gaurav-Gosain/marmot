@@ -71,7 +71,7 @@ func New(opt Options) *Prompt {
 	p := &Prompt{opt: opt, tty: term.IsTerminal(opt.In.Fd()), reader: bufio.NewReader(opt.In)}
 	if opt.HistoryPath != "" {
 		if data, err := os.ReadFile(opt.HistoryPath); err == nil {
-			for _, l := range strings.Split(string(data), "\n") {
+			for l := range strings.SplitSeq(string(data), "\n") {
 				if l != "" {
 					p.history = append(p.history, strings.ReplaceAll(l, "\\n", "\n"))
 				}

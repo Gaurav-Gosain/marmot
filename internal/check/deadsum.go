@@ -21,6 +21,7 @@ package check
 // instantiation count as converted to interfaces.
 
 import (
+	"maps"
 	"crypto/sha256"
 	"encoding/hex"
 	"go/ast"
@@ -112,8 +113,8 @@ func summarize(fset *token.FileSet, files []*ast.File, pkg *types.Package, info 
 				continue
 			}
 			named := m.Type().(*types.Named)
-			for i := range named.NumMethods() {
-				if fn := prog.FuncValue(named.Method(i)); fn != nil {
+			for method := range named.Methods() {
+				if fn := prog.FuncValue(method); fn != nil {
 					fns = append(fns, fn)
 				}
 			}
@@ -223,8 +224,7 @@ func (b *sumBuilder) invoke(T types.Type, m *types.Func, invs map[invoke]bool, n
 
 func (b *sumBuilder) iface(I *types.Interface) string {
 	var ms []ifaceMethod
-	for i := range I.NumMethods() {
-		m := I.Method(i)
+	for m := range I.Methods() {
 		if m.Signature().TypeParams() != nil {
 			continue
 		}
@@ -306,12 +306,12 @@ func (b *sumBuilder) summarizeType(T types.Type) string {
 	case *types.Array:
 		elem(T.Elem())
 	case *types.Struct:
-		for i := range T.NumFields() {
-			elem(T.Field(i).Type())
+		for field := range T.Fields() {
+			elem(field.Type())
 		}
 	case *types.Tuple:
-		for i := range T.Len() {
-			elem(T.At(i).Type())
+		for v := range T.Variables() {
+			elem(v.Type())
 		}
 	}
 	return k
@@ -479,25 +479,25 @@ func hasTypeParam(T types.Type) bool {
 		case *types.Signature:
 			return T.TypeParams() != nil || has(T.Params()) || has(T.Results())
 		case *types.Tuple:
-			for i := range T.Len() {
-				if has(T.At(i).Type()) {
+			for v := range T.Variables() {
+				if has(v.Type()) {
 					return true
 				}
 			}
 		case *types.Struct:
-			for i := range T.NumFields() {
-				if has(T.Field(i).Type()) {
+			for field := range T.Fields() {
+				if has(field.Type()) {
 					return true
 				}
 			}
 		case *types.Interface:
-			for i := range T.NumMethods() {
-				if has(T.Method(i).Type()) {
+			for method := range T.Methods() {
+				if has(method.Type()) {
 					return true
 				}
 			}
-			for i := range T.NumEmbeddeds() {
-				if has(T.EmbeddedType(i)) {
+			for etyp := range T.EmbeddedTypes() {
+				if has(etyp) {
 					return true
 				}
 			}
@@ -545,9 +545,7 @@ func reach(sums []*deadSummary, roots []string) map[string]bool {
 			}
 			types_[k] = merged
 		}
-		for k, i := range s.Ifaces {
-			ifaces[k] = i
-		}
+		maps.Copy(ifaces, s.Ifaces)
 	}
 	type rtype struct {
 		key  string

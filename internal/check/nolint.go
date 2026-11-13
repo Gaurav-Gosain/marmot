@@ -1,6 +1,7 @@
 package check
 
 import (
+	"slices"
 	"go/ast"
 	"go/token"
 	"strings"
@@ -76,7 +77,7 @@ func parseNolint(text string) ([]string, bool) {
 		t = t[:i]
 	}
 	var names []string
-	for _, n := range strings.Split(t, ",") {
+	for n := range strings.SplitSeq(t, ",") {
 		n = strings.TrimSpace(n)
 		if n == "all" {
 			return nil, true
@@ -99,11 +100,9 @@ func suppressed(rs []nolintRange, file string, line int, names ...string) bool {
 			return true
 		}
 		for _, l := range r.Linters {
-			for _, n := range names {
-				if l == n {
+			if slices.Contains(names, l) {
 					return true
 				}
-			}
 		}
 	}
 	return false

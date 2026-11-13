@@ -88,7 +88,7 @@ func mergeDir(dst, stock, overlay string) error {
 	if data, err := os.ReadFile(filepath.Join(overlay, "MERGE")); overlay != "" && err == nil {
 		merge = true
 		hidden["MERGE"] = true
-		for _, line := range strings.Split(string(data), "\n") {
+		for line := range strings.SplitSeq(string(data), "\n") {
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, "-") {
 				hidden[strings.TrimSpace(line[1:])] = true

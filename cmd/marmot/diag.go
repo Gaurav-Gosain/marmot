@@ -94,7 +94,7 @@ func cmdExplain(args []string) int {
 			continue
 		}
 		fmt.Printf("\n%s%s%s\n\n", st.Bold, ex[0], st.Reset)
-		for _, l := range strings.Split(ex[1], "\n") {
+		for l := range strings.SplitSeq(ex[1], "\n") {
 			fmt.Printf("    %s\n", strings.ReplaceAll(l, "\t", "    "))
 		}
 	}
@@ -108,7 +108,7 @@ func cmdExplain(args []string) int {
 func wrap(s string, n int) string {
 	var b strings.Builder
 	col := 0
-	for _, w := range strings.Fields(s) {
+	for w := range strings.FieldsSeq(s) {
 		if col > 0 && col+1+len(w) > n {
 			b.WriteByte('\n')
 			col = 0
@@ -179,7 +179,7 @@ func cmdFix(args []string) int {
 		return runCheckTool("fix", toolArgs)
 	}
 	codes := map[string]bool{}
-	for _, c := range strings.Split(*codesFlag, ",") {
+	for c := range strings.SplitSeq(*codesFlag, ",") {
 		if c = strings.ToUpper(strings.TrimSpace(c)); c != "" {
 			if diag.Lookup(c) == nil {
 				return rep.Usage(fmt.Sprintf("marmot fix: unknown code %q", c))
@@ -202,7 +202,7 @@ func cmdFix(args []string) int {
 	defer os.RemoveAll(tmp)
 	var done []diag.Applied
 	var last []diag.Diagnostic
-	for round := 0; round < 4; round++ {
+	for range 4 {
 		cfg := driver.Config{
 			Root: root, Dir: rep.Dir, Output: filepath.Join(tmp, "prog"), OptLevel: "0", Emit: "exe",
 			GC: "precise", Dialect: "llvm", Patterns: patterns, Stderr: io.Discard, AllErrors: true,

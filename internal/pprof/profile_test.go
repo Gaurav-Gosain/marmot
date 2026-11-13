@@ -13,7 +13,7 @@ var sink int
 func spin(d time.Duration) {
 	end := time.Now().Add(d)
 	for time.Now().Before(end) {
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			sink += i * i
 		}
 	}

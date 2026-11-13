@@ -1,6 +1,7 @@
 package check
 
 import (
+	"slices"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -235,11 +236,9 @@ var analysisChecks = []string{"vet", "lint", "modernize", "gopls", "exhaustive",
 func lintFiltered(lc *lintConfig, sc *scope, rep *report, fd finding, linter string, lines map[string]bool) bool {
 	file := fd.Span.File
 	if lc == nil || lc.Linters.Exclusions.Generated != "disable" {
-		for _, g := range rep.Generated {
-			if g == file {
+		if slices.Contains(rep.Generated, file) {
 				return true
 			}
-		}
 	}
 	if lc != nil && lc.Run.Tests != nil && !*lc.Run.Tests && strings.HasSuffix(file, "_test.go") {
 		return true

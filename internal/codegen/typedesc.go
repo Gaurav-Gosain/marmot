@@ -249,10 +249,7 @@ func (m *moduleGen) emitTypeDesc(sym string, t types.Type) {
 		last := words[len(words)-1]
 		ptrdata = (last + 1) * 8
 		// The bitmap covers all size/8 words (rt_alloc precise mode).
-		nwords := size / 8
-		if nwords < last+1 {
-			nwords = last + 1
-		}
+		nwords := max(size / 8, last + 1)
 		if nwords <= maxBitmapWords {
 			bm := make([]byte, (nwords+7)/8)
 			for _, w := range words {
@@ -313,11 +310,11 @@ func (m *moduleGen) emitTypeDesc(sym string, t types.Type) {
 		params := cNull()
 		if n > 0 {
 			var es []cv
-			for i := 0; i < u.Params().Len(); i++ {
-				es = append(es, cAddr(m.typeDescSym(u.Params().At(i).Type())))
+			for v := range u.Params().Variables() {
+				es = append(es, cAddr(m.typeDescSym(v.Type())))
 			}
-			for i := 0; i < u.Results().Len(); i++ {
-				es = append(es, cAddr(m.typeDescSym(u.Results().At(i).Type())))
+			for v := range u.Results().Variables() {
+				es = append(es, cAddr(m.typeDescSym(v.Type())))
 			}
 			psym := sym + ".params"
 			m.constGlobal(psym, "linkonce_odr", true, cArray(mlir.Ptr, es...))
@@ -552,11 +549,11 @@ func (m *moduleGen) uncommon(sym string, t types.Type) string {
 func (p *Program) methodSet(t types.Type) []*types.Selection {
 	mset := p.prog.MethodSets.MethodSet(t)
 	var out []*types.Selection
-	for i := 0; i < mset.Len(); i++ {
-		if isGenericMethod(mset.At(i)) {
+	for method := range mset.Methods() {
+		if isGenericMethod(method) {
 			continue // not part of the runtime method set
 		}
-		out = append(out, mset.At(i))
+		out = append(out, method)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return methodName(out[i].Obj().(*types.Func)) < methodName(out[j].Obj().(*types.Func))
@@ -1072,8 +1069,8 @@ func (m *moduleGen) methodExprEntry(t types.Type, sel *types.Selection) cv {
 	}
 	sig := fn.Type().(*types.Signature)
 	vars := []*types.Var{types.NewParam(token.NoPos, nil, "recv", t)}
-	for i := 0; i < sig.Params().Len(); i++ {
-		vars = append(vars, sig.Params().At(i))
+	for v := range sig.Params().Variables() {
+		vars = append(vars, v)
 	}
 	esig := types.NewSignatureType(nil, nil, nil, types.NewTuple(vars...), sig.Results(), sig.Variadic())
 	code := m.p.prog.MethodValue(sel)

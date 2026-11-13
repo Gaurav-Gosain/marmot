@@ -404,9 +404,9 @@ func (f *funcGen) plain128(t types.Type) bool {
 			return plain(u.Elem())
 		case *types.Struct:
 			var n int64
-			for i := 0; i < u.NumFields(); i++ {
-				ft := u.Field(i).Type()
-				if !plain(ft) || u.Field(i).Name() == "_" {
+			for field := range u.Fields() {
+				ft := field.Type()
+				if !plain(ft) || field.Name() == "_" {
 					return false
 				}
 				n += sz.Sizeof(ft)

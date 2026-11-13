@@ -250,7 +250,7 @@ func TestFix(t *testing.T) {
 	dir := copyTree(t, "testdata/mod")
 	os.Remove(filepath.Join(dir, "sub", "w_windows.go"))
 	cache := t.TempDir()
-	res, err := Fix(FixOptions{Options: Options{Dir: dir, CacheDir: cache}})
+	res, err := Fix(FixOptions{Dir: dir, CacheDir: cache})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestFix(t *testing.T) {
 		t.Errorf("a.go not modernized:\n%s", a)
 	}
 	// A second run finds nothing.
-	res, err = Fix(FixOptions{Options: Options{Dir: dir, CacheDir: cache}})
+	res, err = Fix(FixOptions{Dir: dir, CacheDir: cache})
 	if err != nil || len(res.Applied) != 0 {
 		t.Errorf("second fix: %v %v", res.Applied, err)
 	}
@@ -284,7 +284,7 @@ func TestFixDiffChangesNothing(t *testing.T) {
 	dir := copyTree(t, "testdata/mod")
 	os.Remove(filepath.Join(dir, "sub", "w_windows.go"))
 	before, _ := os.ReadFile(filepath.Join(dir, "a.go"))
-	res, err := Fix(FixOptions{Options: Options{Dir: dir, CacheDir: t.TempDir()}, Diff: true})
+	res, err := Fix(FixOptions{Dir: dir, CacheDir: t.TempDir(), Diff: true})
 	if err != nil {
 		t.Fatal(err)
 	}

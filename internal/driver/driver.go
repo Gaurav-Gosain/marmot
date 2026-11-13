@@ -395,7 +395,7 @@ func (b *build) run1() (string, error) {
 		return "", err
 	}
 	skipped := 0
-	for i := 0; i < len(pkgs); i++ {
+	for i := range pkgs {
 		if cacheable(i) {
 			if paths, ok := b.cachedParts(pkgKeys[i]); ok {
 				mods[i] = codegen.Module{Name: pkgs[i].Pkg.Path(), Path: paths[0]}
@@ -426,7 +426,7 @@ func (b *build) run1() (string, error) {
 	// The package key stands for a module's text (the MLIR cache relies on
 	// that too), so the backend need not read and hash unchanged modules.
 	b.modKeys = make([]string, len(mods))
-	for i := 0; i < len(pkgs); i++ {
+	for i := range pkgs {
 		if cacheable(i) && mods[i].Path != "" {
 			b.modKeys[i] = pkgKeys[i] + "-" + moduleTextVersion
 		}
@@ -593,9 +593,7 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 	errs := make([]error, len(mods))
 	sem := make(chan struct{}, maxJobs())
 	for i := range mods {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			ll := strings.TrimSuffix(objs[i], ext) + ".ll"
@@ -609,7 +607,7 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 			if emit != "llvm" {
 				errs[i] = b.run(llvmTool("clang"), "-c", "-O"+b.cfg.OptLevel, "-Wno-override-module", "-o", objs[i], "-x", "ir", ll)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	for _, e := range errs {
@@ -766,7 +764,7 @@ func (b *build) logBackendTimes() {
 	if !b.cfg.Verbose {
 		return
 	}
-	for _, l := range strings.Split(b.lastOutput, "\n") {
+	for l := range strings.SplitSeq(b.lastOutput, "\n") {
 		if strings.HasPrefix(l, "sum of jobs") || strings.HasPrefix(l, "batch:") || strings.HasPrefix(l, "startup") {
 			b.logf("backend: %s", strings.Join(strings.Fields(l), " "))
 		}
@@ -891,8 +889,8 @@ func linkLibraries(libs []string) []string {
 			continue
 		}
 		var a []string
-		if i := strings.Index(l, ".framework/"); i >= 0 && runtime.GOOS == "darwin" {
-			name := filepath.Base(l[:i])
+		if before, _, ok := strings.Cut(l, ".framework/"); ok && runtime.GOOS == "darwin" {
+			name := filepath.Base(before)
 			a = []string{"-framework", name}
 		} else if runtime.GOOS == "darwin" && strings.HasPrefix(l, "/usr/lib/lib") {
 			// /usr/lib/libresolv.9.dylib -> -lresolv (the file is only in
@@ -928,7 +926,7 @@ func expandParts(objs []string) []string {
 			out = append(out, o)
 			continue
 		}
-		for _, l := range strings.Split(string(data), "\n") {
+		for l := range strings.SplitSeq(string(data), "\n") {
 			if l = strings.TrimSpace(l); l != "" {
 				out = append(out, l)
 			}

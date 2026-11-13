@@ -1,6 +1,7 @@
 package codegen
 
 import (
+	"slices"
 	"go/ast"
 	"go/token"
 	"os"
@@ -271,9 +272,9 @@ func (f *funcGen) sinkGroup(l *ssa.UnOp, i int, b *ssa.BasicBlock, pos map[ssa.I
 		f.sunk = map[ssa.Instruction]bool{}
 		f.sinkBefore = map[ssa.Instruction][]ssa.Instruction{}
 	}
-	for k := len(group) - 1; k >= 0; k-- {
-		f.sunk[group[k]] = true
-		f.sinkBefore[target] = append(f.sinkBefore[target], group[k])
+	for _, g := range slices.Backward(group) {
+		f.sunk[g] = true
+		f.sinkBefore[target] = append(f.sinkBefore[target], g)
 	}
 	for _, e := range extra {
 		f.sunk[e] = true

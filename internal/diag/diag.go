@@ -299,7 +299,7 @@ func relatedToLabels(d *Diagnostic) {
 		}
 		if sp.EndLine == 0 {
 			sp.EndLine, sp.EndCol = sp.Line, sp.Col+1
-			if n := strings.TrimPrefix(r.Message, "other declaration of "); n != r.Message {
+			if n, ok := strings.CutPrefix(r.Message, "other declaration of "); ok {
 				sp.EndCol = sp.Col + len(n)
 			}
 		}

@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"slices"
 	"fmt"
 	"go/parser"
 	"go/token"
@@ -93,8 +94,8 @@ func cgoPackages(cfg Config, pcfg *packages.Config, roots []*packages.Package,
 	relist func(extra []string) ([]*packages.Package, error)) ([]*packages.Package, map[string]*cgo.Package, error) {
 	goroot := ""
 	for _, e := range pcfg.Env {
-		if strings.HasPrefix(e, "GOROOT=") {
-			goroot = strings.TrimPrefix(e, "GOROOT=")
+		if after, ok :=strings.CutPrefix(e, "GOROOT="); ok  {
+			goroot = after
 		}
 	}
 	roots, _, out, err := applyCgo(cfg, goroot, roots, relist)
@@ -252,10 +253,5 @@ func sameFiles(a, b []string) bool {
 }
 
 func contains(s []string, x string) bool {
-	for _, y := range s {
-		if y == x {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s, x)
 }

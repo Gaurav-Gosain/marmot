@@ -1,6 +1,7 @@
 package codegen
 
 import (
+	"strings"
 	"fmt"
 	"go/token"
 	"go/types"
@@ -362,14 +363,14 @@ func (f *funcGen) callRegionClone(c *ssa.CallCommon, fn *ssa.Function, r string)
 }
 
 func joinArgs(a []string) string {
-	s := ""
+	var s strings.Builder
 	for i, x := range a {
 		if i > 0 {
-			s += ", "
+			s.WriteString(", ")
 		}
-		s += x
+		s.WriteString(x)
 	}
-	return s
+	return s.String()
 }
 
 // regionClone emits (once per module) the region clone of fn.

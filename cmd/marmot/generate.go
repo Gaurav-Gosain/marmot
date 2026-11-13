@@ -208,7 +208,7 @@ func runDirective(d genDirective, dir string) error {
 func genEnv(d genDirective, dir string) map[string]string {
 	pkg := filepath.Base(dir)
 	if f, err := os.ReadFile(d.file); err == nil {
-		for _, l := range strings.Split(string(f), "\n") {
+		for l := range strings.SplitSeq(string(f), "\n") {
 			if rest, ok := strings.CutPrefix(strings.TrimSpace(l), "package "); ok {
 				pkg = strings.Fields(rest)[0]
 				break

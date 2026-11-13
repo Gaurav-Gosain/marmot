@@ -141,7 +141,7 @@ func TestDiagnostics(ts []TestResult) []Diagnostic {
 			if t.File != "" {
 				d.Span = Span{File: t.File, Line: t.Line, Col: 1}
 			}
-			for _, r := range strings.Split(rest, "\n") {
+			for r := range strings.SplitSeq(rest, "\n") {
 				if r != "" {
 					d.Notes = append(d.Notes, r)
 				}

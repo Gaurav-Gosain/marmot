@@ -17,9 +17,7 @@ func eachParallel(n int, f func(i int)) {
 	i := 0
 	var wg sync.WaitGroup
 	for range w {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				next.Lock()
 				j := i
@@ -30,7 +28,7 @@ func eachParallel(n int, f func(i int)) {
 				}
 				f(j)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

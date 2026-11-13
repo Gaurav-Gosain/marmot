@@ -99,8 +99,8 @@ func (g *gen) funcWrapper(t types.Type) (string, bool) {
 		as = append(as, fmt.Sprintf("p%d", i))
 	}
 	var rs []string
-	for i := 0; i < sig.Results().Len(); i++ {
-		rt := g.typeExpr(sig.Results().At(i).Type())
+	for v := range sig.Results().Variables() {
+		rt := g.typeExpr(v.Type())
 		if rt == "" {
 			return "", false
 		}
@@ -129,8 +129,8 @@ func (g *gen) funcWrapper(t types.Type) (string, bool) {
 
 func paramTypes(g *gen, sig *types.Signature) []string {
 	var ts []string
-	for i := 0; i < sig.Params().Len(); i++ {
-		ts = append(ts, g.typeExpr(sig.Params().At(i).Type()))
+	for v := range sig.Params().Variables() {
+		ts = append(ts, g.typeExpr(v.Type()))
 	}
 	return ts
 }

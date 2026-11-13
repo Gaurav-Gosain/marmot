@@ -1,6 +1,7 @@
 package specialize
 
 import (
+	"maps"
 	"bytes"
 	"fmt"
 	"go/ast"
@@ -100,9 +101,7 @@ func (g *gen) emitSortTemplates() bool {
 	}
 	// zsortfunc.go: data lessSwap -> data marmot_sortdata[E, L].
 	fren := map[string]string{"lessSwap": "marmot_sortdata[E, L]"}
-	for k, v := range ren {
-		fren[k] = v
-	}
+	maps.Copy(fren, ren)
 	for _, d := range zfunc.Decls {
 		if fd, ok := d.(*ast.FuncDecl); ok {
 			fren[fd.Name.Name] = fd.Name.Name + "_m"
@@ -115,9 +114,7 @@ func (g *gen) emitSortTemplates() bool {
 	}
 	// zsortinterface.go: data Interface -> data D.
 	iren := map[string]string{"Interface": "D"}
-	for k, v := range ren {
-		iren[k] = v
-	}
+	maps.Copy(iren, ren)
 	for _, d := range ziface.Decls {
 		if fd, ok := d.(*ast.FuncDecl); ok {
 			iren[fd.Name.Name] = fd.Name.Name + "_mi"

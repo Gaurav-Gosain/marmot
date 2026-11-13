@@ -4,6 +4,7 @@
 package pprof
 
 import (
+	"slices"
 	"bytes"
 	"compress/gzip"
 	"errors"
@@ -404,15 +405,15 @@ func (p *Profile) Tree(idx int) *Node {
 		root.Value += v
 		st := p.Stack(s)
 		n := root
-		for i := len(st) - 1; i >= 0; i-- {
+		for _, s := range slices.Backward(st) {
 			var c *Node
 			for _, x := range n.Children {
-				if x.Name == st[i].Func {
+				if x.Name == s.Func {
 					c = x
 				}
 			}
 			if c == nil {
-				c = &Node{Name: st[i].Func}
+				c = &Node{Name: s.Func}
 				n.Children = append(n.Children, c)
 			}
 			c.Value += v

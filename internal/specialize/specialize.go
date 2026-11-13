@@ -7,6 +7,7 @@
 package specialize
 
 import (
+	"slices"
 	"bytes"
 	"fmt"
 	"go/ast"
@@ -71,7 +72,7 @@ func enabledSet(release bool) map[string]bool {
 			on[k] = true
 		}
 	default:
-		for _, k := range strings.Split(v, ",") {
+		for k := range strings.SplitSeq(v, ",") {
 			on[strings.TrimSpace(k)] = true
 		}
 	}
@@ -392,8 +393,8 @@ func (g *gen) typeExpr(t types.Type) string {
 				ok = false // local type
 			}
 			if args := t.TypeArgs(); args != nil {
-				for i := 0; i < args.Len(); i++ {
-					check(args.At(i))
+				for t := range args.Types() {
+					check(t)
 				}
 			}
 		case *types.Pointer:
@@ -408,30 +409,28 @@ func (g *gen) typeExpr(t types.Type) string {
 		case *types.Chan:
 			check(t.Elem())
 		case *types.Struct:
-			for i := 0; i < t.NumFields(); i++ {
-				f := t.Field(i)
+			for f := range t.Fields() {
 				if !f.Exported() && f.Pkg() != g.pkg.Types {
 					ok = false
 				}
 				check(f.Type())
 			}
 		case *types.Signature:
-			for i := 0; i < t.Params().Len(); i++ {
-				check(t.Params().At(i).Type())
+			for v := range t.Params().Variables() {
+				check(v.Type())
 			}
-			for i := 0; i < t.Results().Len(); i++ {
-				check(t.Results().At(i).Type())
+			for v := range t.Results().Variables() {
+				check(v.Type())
 			}
 		case *types.Interface:
-			for i := 0; i < t.NumMethods(); i++ {
-				m := t.Method(i)
+			for m := range t.Methods() {
 				if !m.Exported() && m.Pkg() != g.pkg.Types {
 					ok = false
 				}
 				check(m.Type())
 			}
-			for i := 0; i < t.NumEmbeddeds(); i++ {
-				check(t.EmbeddedType(i))
+			for etyp := range t.EmbeddedTypes() {
+				check(etyp)
 			}
 		case *types.Tuple, *types.Union:
 			ok = false
@@ -480,8 +479,8 @@ func (g *gen) newName(kind string) string {
 }
 
 func (g *gen) undo() {
-	for i := len(g.undos) - 1; i >= 0; i-- {
-		g.undos[i]()
+	for _, v := range slices.Backward(g.undos) {
+		v()
 	}
 	g.undos = nil
 }

@@ -64,7 +64,7 @@ func runTidy(sc *scope, st *store, r *CheckResult) {
 				Span:    diag.Span{File: gomod, Line: 1, Col: 1, EndLine: 1, EndCol: 1},
 				Help:    []string{"run `go mod tidy` in " + diag.RelPath(sc.dir, m.Dir)},
 			}
-			for _, l := range strings.Split(strings.TrimRight(tr.Diff, "\n"), "\n") {
+			for l := range strings.SplitSeq(strings.TrimRight(tr.Diff, "\n"), "\n") {
 				if strings.HasPrefix(l, "+") && !strings.HasPrefix(l, "+++") || strings.HasPrefix(l, "-") && !strings.HasPrefix(l, "---") {
 					d.Notes = append(d.Notes, l)
 				}

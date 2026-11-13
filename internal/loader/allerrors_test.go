@@ -22,7 +22,7 @@ func TestAllErrors(t *testing.T) {
 	dir := t.TempDir()
 	var src strings.Builder
 	src.WriteString("package main\n\nfunc main() {\n")
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		fmt.Fprintf(&src, "\tvar v%d int = \"s\"\n\t_ = v%d\n", i, i)
 	}
 	src.WriteString("}\n")

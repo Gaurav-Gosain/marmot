@@ -18,7 +18,7 @@ func FromText(text, dir string) []Diagnostic {
 	var ds []Diagnostic
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 	internal := false
-	for i := 0; i < len(lines); i++ {
+	for i := range lines {
 		l := lines[i]
 		if strings.TrimSpace(l) == "" {
 			continue
@@ -74,7 +74,7 @@ func FromText(text, dir string) []Diagnostic {
 			continue
 		}
 		ds[i].Message = head
-		for _, r := range strings.Split(rest, "\n") {
+		for r := range strings.SplitSeq(rest, "\n") {
 			if r = strings.TrimSpace(r); r != "" {
 				ds[i].Notes = append(ds[i].Notes, r)
 			}

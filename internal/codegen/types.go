@@ -143,7 +143,7 @@ func (m *typeMapper) structType(st *types.Struct) string {
 	fs := make([]string, 0, n+1)
 	vars := make([]*types.Var, n)
 	var off, maxAlign int64 = 0, 1
-	for i := 0; i < n; i++ {
+	for i := range n {
 		f := st.Field(i)
 		vars[i] = f
 		fs = append(fs, m.memType(f.Type()))
@@ -179,8 +179,7 @@ func (m *typeMapper) structFieldCount(st *types.Struct) int {
 // structPadType returns the tail padding array type of st, or "".
 func (m *typeMapper) structPadType(st *types.Struct) string {
 	var off, maxAlign int64 = 0, 1
-	for i := 0; i < st.NumFields(); i++ {
-		f := st.Field(i)
+	for f := range st.Fields() {
 		a := m.sizes.Alignof(f.Type())
 		if a > maxAlign {
 			maxAlign = a

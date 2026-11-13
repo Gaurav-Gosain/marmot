@@ -1,6 +1,7 @@
 package diag
 
 import (
+	"slices"
 	"fmt"
 	"go/ast"
 	"go/scanner"
@@ -422,12 +423,12 @@ func (s *Sources) undefined(d *Diagnostic, f *srcFile, pos token.Pos) {
 // expression (name.Sel).
 func isPkgUse(f *srcFile, pos token.Pos) bool {
 	path := pathNodes(f.ast, pos)
-	for i := len(path) - 1; i >= 0; i-- {
-		if se, ok := path[i].(*ast.SelectorExpr); ok {
+	for _, p := range slices.Backward(path) {
+		if se, ok := p.(*ast.SelectorExpr); ok {
 			id, isID := se.X.(*ast.Ident)
 			return isID && id.Pos() == pos
 		}
-		if _, ok := path[i].(*ast.Ident); !ok {
+		if _, ok := p.(*ast.Ident); !ok {
 			return false
 		}
 	}
@@ -594,7 +595,7 @@ func findModule(dir string) (root, path string) {
 	for {
 		data, err := os.ReadFile(filepath.Join(dir, "go.mod"))
 		if err == nil {
-			for _, l := range strings.Split(string(data), "\n") {
+			for l := range strings.SplitSeq(string(data), "\n") {
 				l = strings.TrimSpace(l)
 				if rest, ok := strings.CutPrefix(l, "module "); ok {
 					return dir, strings.Trim(strings.TrimSpace(rest), `"`)
@@ -912,8 +913,8 @@ func (s *Sources) unusedVar(d *Diagnostic, f *srcFile, pos token.Pos) {
 		return
 	}
 	path := pathNodes(f.ast, pos)
-	for i := len(path) - 1; i >= 0; i-- {
-		switch n := path[i].(type) {
+	for _, p := range slices.Backward(path) {
+		switch n := p.(type) {
 		case *ast.AssignStmt:
 			if n.Tok != token.DEFINE {
 				return
@@ -1045,8 +1046,8 @@ func outerDecl(f *srcFile, pos token.Pos, name string) (Span, bool) {
 	}
 	path := pathNodes(f.ast, pos)
 	var inner ast.Node
-	for i := len(path) - 1; i >= 0; i-- {
-		if b, ok := path[i].(*ast.BlockStmt); ok {
+	for _, p := range slices.Backward(path) {
+		if b, ok := p.(*ast.BlockStmt); ok {
 			inner = b
 			break
 		}
@@ -1182,8 +1183,8 @@ func (s *Sources) cannotUse(d *Diagnostic, f *srcFile, pos token.Pos) {
 		}
 	}
 	haveT := have
-	if i := strings.LastIndex(have, " of type "); i >= 0 {
-		haveT = have[i+len(" of type "):]
+	if _, after, ok := strings.CutLast(have, " of type "); ok {
+		haveT = after
 	} else if strings.HasPrefix(have, "untyped ") {
 		haveT = strings.TrimSuffix(strings.TrimSuffix(have, " constant"), " value")
 	}

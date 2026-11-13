@@ -83,10 +83,7 @@ func (g *gen) regexpMatcher(expr string) (string, uint64, bool) {
 		return "", 0, false
 	}
 	prefix, _ := prog.Prefix()
-	nc := prog.NumCap
-	if nc < 2 {
-		nc = 2
-	}
+	nc := max(prog.NumCap, 2)
 	name := g.newName("re")
 	var b strings.Builder
 	w := func(format string, a ...any) { fmt.Fprintf(&b, format+"\n", a...) }

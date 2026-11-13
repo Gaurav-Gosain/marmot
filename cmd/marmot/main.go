@@ -201,8 +201,7 @@ func cmdBuild(args []string, run bool) int {
 	err = cmd.Wait()
 	signal.Stop(sigs)
 	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
 			if code := ee.ExitCode(); code >= 0 {
 				return code
 			}
