@@ -250,6 +250,13 @@ static void sigfault(int sig, siginfo_t *info, void *ctxp) {
     }
     rt_throw("stack overflow");
   }
+  // A fault inside a C call of a cgo package is fatal, as in gc: a Go panic
+  // must not unwind through C frames.
+  if (m && m->incgo) {
+    fault_print("fatal error: unexpected signal during runtime execution", sig, addr, pc);
+    rt_print("signal arrived during cgo execution\n");
+    os_exit(2);
+  }
   // A fault in goroutine code (not inside the runtime core) becomes a Go
   // panic through the hook, as if the faulting instruction called it.
   if (g && sigpanic_fn && m->locks == 0) {
