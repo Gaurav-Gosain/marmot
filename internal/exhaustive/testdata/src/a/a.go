@@ -15,6 +15,7 @@ type Weekday string
 const (
 	Mon Weekday = "mon"
 	Tue Weekday = "tue"
+	Wed Weekday = "wed"
 )
 
 func colors(c Color) {
@@ -41,8 +42,8 @@ func colors(c Color) {
 }
 
 func days(d Weekday) {
-	switch d { // want "switch on Weekday misses Tue"
-	case Mon:
+	switch d { // want "switch on Weekday misses Wed"
+	case Mon, Tue:
 	}
 }
 

@@ -9,7 +9,7 @@
 // pointers to them) that do.
 //
 // Only types of the switch's own module are checked, and only switches
-// that already handle at least half of the cases: a switch that picks out
+// that already handle more than half of the cases: a switch that picks out
 // a few values of a large enum (two of eighty tokens) is a filter, not an
 // attempt at exhaustiveness. A switch with a default clause is exhaustive
 // by definition and is not reported. A switch can opt out with a //exhaustive:ignore comment on the
@@ -143,7 +143,7 @@ func checkEnum(pass *analysis.Pass, s *ast.SwitchStmt) {
 		seenVal[k] = true
 		missing = append(missing, qualify(pass, named.Obj(), m.name))
 	}
-	if len(missing) == 0 || 2*len(missing) > len(seenVal)+len(covered) || !sameModule(pass, named.Obj()) {
+	if len(missing) == 0 || 2*len(missing) >= len(seenVal)+len(covered) || !sameModule(pass, named.Obj()) {
 		return
 	}
 	report(pass, s.Pos(), s.Body, fmt.Sprintf("switch on %s misses %s", typeName(pass, named), list(missing)), "case "+strings.Join(missing, ", ")+":")
@@ -206,7 +206,7 @@ func checkSealed(pass *analysis.Pass, s *ast.TypeSwitchStmt) {
 			missing = append(missing, typeName(pass, impl))
 		}
 	}
-	if len(missing) == 0 || 2*len(missing) > len(impls) || !sameModule(pass, named.Obj()) {
+	if len(missing) == 0 || 2*len(missing) >= len(impls) || !sameModule(pass, named.Obj()) {
 		return
 	}
 	report(pass, s.Pos(), s.Body, fmt.Sprintf("type switch on %s misses %s", typeName(pass, named), list(missing)), "case "+strings.Join(missing, ", ")+":")
