@@ -1,9 +1,11 @@
 package loader
 
 import (
+	"bytes"
 	"fmt"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -32,7 +34,11 @@ func usesCgo(all []*packages.Package, goroot string) bool {
 			if !strings.HasSuffix(f, ".go") {
 				continue
 			}
-			af, err := parser.ParseFile(fset, f, nil, parser.ImportsOnly)
+			src, err := os.ReadFile(f)
+			if err != nil || !bytes.Contains(src, []byte(`"C"`)) {
+				continue
+			}
+			af, err := parser.ParseFile(fset, f, src, parser.ImportsOnly)
 			if err != nil {
 				continue
 			}
@@ -83,35 +89,34 @@ func cgoRelist(light *packages.Config, patterns []string, cacheDir string) func(
 				}
 				c.Overlay[k] = v
 			}
-			return loadList(&c, patterns, cacheDir)
+			roots, _, err := loadList(&c, patterns, cacheDir)
+			return roots, err
 		}
-		return loadList(light, append(append([]string{}, patterns...), extra...), cacheDir)
+		roots, _, err := loadList(light, append(append([]string{}, patterns...), extra...), cacheDir)
+		return roots, err
 	}
 }
 
 // cgoPackages applies applyCgo to an incremental load.
-func cgoPackages(cfg Config, pcfg *packages.Config, roots []*packages.Package,
+// usesC is loadList's answer, so a program without import "C" costs
+// nothing here.
+func cgoPackages(cfg Config, pcfg *packages.Config, roots []*packages.Package, usesC bool,
 	relist func(extra []string) ([]*packages.Package, error)) ([]*packages.Package, map[string]*cgo.Package, error) {
-	goroot := ""
-	for _, e := range pcfg.Env {
-		if after, ok := strings.CutPrefix(e, "GOROOT="); ok {
-			goroot = after
-		}
+	if !usesC {
+		return roots, nil, nil
 	}
-	roots, _, out, err := applyCgo(cfg, goroot, roots, relist)
+	roots, _, out, err := applyCgo(cfg, envGOROOT(pcfg.Env), roots, relist)
 	return roots, out, err
 }
 
-// applyCgo rewrites the module packages of a cgo program. relist lists the
+// applyCgo rewrites the module packages of a cgo program (one that
+// usesCgo). relist lists the
 // patterns plus extra import paths again. It returns the roots and every
 // package (dependencies first), and the cgo packages by package path.
 func applyCgo(cfg Config, goroot string, roots []*packages.Package,
 	relist func(extra []string) ([]*packages.Package, error)) ([]*packages.Package, []*packages.Package, map[string]*cgo.Package, error) {
 	var all []*packages.Package
 	packages.Visit(roots, nil, func(p *packages.Package) { all = append(all, p) })
-	if !usesCgo(all, goroot) {
-		return roots, all, nil, nil
-	}
 	if cfg.Tests {
 		return nil, nil, nil, fmt.Errorf("marmot test does not support cgo packages yet")
 	}

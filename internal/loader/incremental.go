@@ -441,11 +441,11 @@ func loadIncremental(cfg Config, pcfg *packages.Config, patterns []string, confS
 		cfg.CacheDir = filepath.Join(cfg.Root, "build", "cache", "types")
 	}
 	tl := time.Now()
-	roots, err := loadList(light, patterns, cfg.CacheDir)
+	roots, usesC, err := loadList(light, patterns, cfg.CacheDir)
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
-	roots, cgoPkgs, err := cgoPackages(cfg, pcfg, roots, cgoRelist(light, patterns, cfg.CacheDir))
+	roots, cgoPkgs, err := cgoPackages(cfg, pcfg, roots, usesC, cgoRelist(light, patterns, cfg.CacheDir))
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}

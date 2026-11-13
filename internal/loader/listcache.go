@@ -34,7 +34,9 @@ type listPkg struct {
 }
 
 type listCache struct {
-	Sig    string
+	Sig   string
+	UsesC bool // a package outside std has a file importing "C"
+
 	Roots  []string
 	Pkgs   []listPkg
 	Dirs   map[string]string // directory -> size/mtime signature
@@ -99,7 +101,7 @@ func statSig(path string) string {
 func listSig(pcfg *packages.Config, patterns []string) string {
 	h := sha256.New()
 	// v2: graphs with errors are no longer cached (older ones may be).
-	fmt.Fprintf(h, "v3\n%s\n%q\n%v\n", pcfg.Dir, patterns, pcfg.Tests)
+	fmt.Fprintf(h, "v4\n%s\n%q\n%v\n", pcfg.Dir, patterns, pcfg.Tests)
 	env := append([]string(nil), pcfg.Env...)
 	sort.Strings(env)
 	for _, e := range env {
@@ -140,51 +142,69 @@ func modFiles(dir string) []string {
 
 // loadList returns the package graph for patterns, from the cache when it
 // is still valid, else from go list (and then saves it).
-func loadList(light *packages.Config, patterns []string, cacheDir string) ([]*packages.Package, error) {
+// It also reports whether a package outside std has a file that imports
+// "C" (computed when go list runs, kept in the cache).
+func loadList(light *packages.Config, patterns []string, cacheDir string) ([]*packages.Package, bool, error) {
 	sig := listSig(light, patterns)
 	path := listCachePath(cacheDir, sig)
-	if roots, ok := readListCache(path, sig, light.Dir); ok {
-		return roots, nil
+	if roots, usesC, ok := readListCache(path, sig, light.Dir); ok {
+		return roots, usesC, nil
 	}
 	roots, err := packages.Load(light, patterns...)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	var all []*packages.Package
+	packages.Visit(roots, nil, func(p *packages.Package) { all = append(all, p) })
+	usesC := usesCgo(all, envGOROOT(light.Env))
 	// A graph with errors is not cached: the cache keeps no errors, and the
 	// next load must report them again.
 	clean := true
-	packages.Visit(roots, nil, func(p *packages.Package) { clean = clean && len(p.Errors) == 0 })
-	if clean {
-		writeListCache(path, sig, roots, light.Dir)
+	for _, p := range all {
+		clean = clean && len(p.Errors) == 0
 	}
-	return roots, nil
+	if clean {
+		writeListCache(path, sig, roots, light.Dir, usesC)
+	}
+	return roots, usesC, nil
 }
 
-func readListCache(path, sig, dir string) ([]*packages.Package, bool) {
+// envGOROOT is GOROOT in env.
+func envGOROOT(env []string) string {
+	g := ""
+	for _, e := range env {
+		if strings.HasPrefix(e, "GOROOT=") {
+			g = strings.TrimPrefix(e, "GOROOT=")
+		}
+	}
+	return g
+}
+
+func readListCache(path, sig, dir string) ([]*packages.Package, bool, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	var c listCache
 	if json.Unmarshal(data, &c) != nil || c.Sig != sig {
-		return nil, false
+		return nil, false, false
 	}
 	for f, s := range c.Extras {
 		if statSig(f) != s {
-			return nil, false
+			return nil, false, false
 		}
 	}
 	if len(modFiles(dir)) != len(c.Extras) {
-		return nil, false
+		return nil, false, false
 	}
 	for d, s := range c.Dirs {
 		if statSig(d) != s && goNames(d) != c.Names[d] {
-			return nil, false // a file was added or removed
+			return nil, false, false // a file was added or removed
 		}
 	}
 	for f, s := range c.Files {
 		if statSig(f) != s && headHash(f) != c.Heads[f] {
-			return nil, false // imports or build constraints changed
+			return nil, false, false // imports or build constraints changed
 		}
 	}
 	byID := map[string]*packages.Package{}
@@ -207,7 +227,7 @@ func readListCache(path, sig, dir string) ([]*packages.Package, bool) {
 		for path, id := range lp.Imports {
 			d := idOf[id]
 			if d == nil {
-				return nil, false
+				return nil, false, false
 			}
 			p.Imports[path] = d
 		}
@@ -216,15 +236,15 @@ func readListCache(path, sig, dir string) ([]*packages.Package, bool) {
 	for _, id := range c.Roots {
 		r := idOf[id]
 		if r == nil {
-			return nil, false
+			return nil, false, false
 		}
 		roots = append(roots, r)
 	}
-	return roots, true
+	return roots, c.UsesC, true
 }
 
-func writeListCache(path, sig string, roots []*packages.Package, dir string) {
-	c := listCache{Sig: sig, Dirs: map[string]string{}, Files: map[string]string{}, Extras: map[string]string{},
+func writeListCache(path, sig string, roots []*packages.Package, dir string, usesC bool) {
+	c := listCache{Sig: sig, UsesC: usesC, Dirs: map[string]string{}, Files: map[string]string{}, Extras: map[string]string{},
 		Heads: map[string]string{}, Names: map[string]string{}}
 	for _, f := range modFiles(dir) {
 		c.Extras[f] = statSig(f)
@@ -278,7 +298,7 @@ func CachedInputFiles(cfg Config) (files []string, goroot string, ok bool) {
 	if err != nil {
 		return nil, "", false
 	}
-	roots, err := loadList(lightConfig(pcfg), patterns, cfg.CacheDir)
+	roots, _, err := loadList(lightConfig(pcfg), patterns, cfg.CacheDir)
 	if err != nil {
 		return nil, "", false
 	}
