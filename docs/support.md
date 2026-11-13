@@ -84,6 +84,6 @@ Known differences from Go's `GOOS=wasip1 GOARCH=wasm`, which uses 8-byte pointer
 | Area | Difference |
 | --- | --- |
 | Pointer size | Pointers, `uintptr` and `unsafe.Pointer` are 4 bytes. `int` and `uint` stay 8 bytes, as in Go. |
-| `unsafe.Sizeof`, `unsafe.Alignof`, `unsafe.Offsetof` | Smaller results for pointers and for types that contain them: slices are 20 bytes instead of 24, strings 12 instead of 16, interfaces 8 instead of 16, maps, channels and functions 4 instead of 8. |
-| Struct layout | Fields after a pointer start earlier, so offsets differ. |
+| `unsafe.Sizeof`, `unsafe.Alignof`, `unsafe.Offsetof` | Pointers, maps, channels and functions are 4 bytes instead of 8, interfaces 8 instead of 16. Slices (24 bytes) and strings (16 bytes) keep Go's size: the 8-byte length that follows the pointer is aligned to 8. Structs of pointers and smaller fields shrink. |
+| Struct layout | A field after a pointer can start 4 bytes earlier, so offsets differ. |
 | `reflect` | `Type.Size`, `Type.Align` and `Type.FieldAlign` report the sizes above. |
