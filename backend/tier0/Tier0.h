@@ -37,7 +37,7 @@ struct Stats {
 // internal error.
 bool emit(mlir::ModuleOp module, const std::string &unit, const std::string &outObject,
           std::string &fragment, std::vector<std::string> &fallback, std::vector<std::string> &reasons,
-          Stats &stats, std::string &err, Target target = Target::Arm64MachO);
+          Stats &stats, std::string &err, Target target = Target::Arm64MachO, unsigned threads = 1);
 
 } // namespace tier0
 } // namespace marmot

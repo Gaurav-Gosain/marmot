@@ -19,10 +19,13 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #include <cstring>
+#include <memory>
+#include <thread>
 #include <optional>
 
 using namespace mlir;
@@ -237,6 +240,10 @@ public:
   // Symbols defined in this module (functions with bodies and globals with
   // initializers): reached directly; everything else through the GOT.
   llvm::DenseMap<StringAttr, bool> definedData;
+  llvm::StringSet<> definedNames;  // the same by name (no context access)
+  // Threads for the functions (emit's threads).
+  unsigned threads = 1;
+  void emitFunctions(std::vector<std::string> &fallback, std::vector<std::string> &reasons, Stats &stats);
   // Functions declared returns_twice (rt_setjmp): their callers get no
   // register allocation.
   llvm::DenseSet<StringAttr> returnsTwice;
@@ -530,8 +537,100 @@ void ModuleGen::checkFunction(LL::LLVMFuncOp fn) {
   });
 }
 
+void runX64(ModuleGen &mg, LL::LLVMFuncOp f);
+void runArm64(ModuleGen &mg, LL::LLVMFuncOp f);
+
+// Every function definition, into this writer or, with threads > 1, into a
+// writer per thread for a contiguous range of functions (balanced by
+// operation count), merged in module order: the object is the same as from
+// one thread. Functions only read the module and the read-only tables of
+// this ModuleGen; each part has its own writer, line rows and type cache.
+void ModuleGen::emitFunctions(std::vector<std::string> &fallback, std::vector<std::string> &reasons,
+                              Stats &stats) {
+  std::vector<LL::LLVMFuncOp> fns;
+  std::vector<size_t> weight;
+  size_t total = 0;
+  for (Operation &op : module.getBody()->getOperations())
+    if (auto f = dyn_cast<LL::LLVMFuncOp>(op); f && !f.isExternal()) {
+      size_t n = 0;
+      for (Block &blk : f.getBody()) n += blk.getOperations().size();
+      fns.push_back(f);
+      weight.push_back(n);
+      total += n;
+    }
+  auto one = [&](ModuleGen &g, LL::LLVMFuncOp f, std::vector<std::string> &fb, std::vector<std::string> &rs,
+                 Stats &st) {
+    // A function that falls back leaves no code or relocations behind.
+    auto cp = g.w.checkpoint();
+    try {
+      if (x64)
+        runX64(g, f);
+      else
+        runArm64(g, f);
+      st.functions++;
+    } catch (const Unsupported &u) {
+      g.w.rollback(cp);
+      fb.push_back(f.getSymName().str());
+      rs.push_back(u.why);
+      st.fallbacks++;
+    }
+  };
+  unsigned n = threads;
+  if (n > fns.size() / 8) n = unsigned(fns.size() / 8);
+  if (n <= 1 || total < 20000) {
+    for (LL::LLVMFuncOp f : fns) one(*this, f, fallback, reasons, stats);
+    return;
+  }
+  struct Part {
+    std::unique_ptr<ModuleGen> g;
+    size_t lo, hi;
+    std::vector<std::string> fallback, reasons;
+    Stats stats;
+  };
+  std::vector<Part> parts(n);
+  size_t at = 0, acc = 0;
+  for (unsigned k = 0; k < n; k++) {
+    Part &pt = parts[k];
+    pt.lo = at;
+    size_t goal = total * (k + 1) / n;
+    while (at < fns.size() && (acc < goal || k == n - 1)) acc += weight[at++];
+    pt.hi = at;
+    pt.g = std::make_unique<ModuleGen>(module, unit, x64);
+    pt.g->definedData = definedData;
+    pt.g->definedNames = definedNames;
+    pt.g->returnsTwice = returnsTwice;
+    pt.g->funcs = funcs;
+  }
+  // Accessors such as CallOp::getCalleeFunctionType may unique types.
+  bool threaded = ctx->isMultithreadingEnabled();
+  if (!threaded) ctx->enableMultithreading();
+  {
+    std::vector<std::thread> ts;
+    for (Part &pt : parts)
+      ts.emplace_back([&, pp = &pt] {
+        elfNames = x64;  // thread_local: each thread names symbols for the target
+        for (size_t i = pp->lo; i < pp->hi; i++) one(*pp->g, fns[i], pp->fallback, pp->reasons, pp->stats);
+      });
+    for (std::thread &t : ts) t.join();
+  }
+  if (!threaded) ctx->disableMultithreading();
+  std::vector<unsigned> symMap;
+  for (Part &pt : parts) {
+    w.appendText(pt.g->w, symMap);
+    for (Lines &l : pt.g->lines) {
+      std::vector<Row> rows = std::move(l.rows);
+      for (auto &[off, line, file] : rows) file = fileId(pt.g->files[file]);
+      lines.push_back({symMap[l.sym], l.size, std::move(rows)});
+    }
+    fallback.insert(fallback.end(), pt.fallback.begin(), pt.fallback.end());
+    reasons.insert(reasons.end(), pt.reasons.begin(), pt.reasons.end());
+    stats.functions += pt.stats.functions;
+    stats.fallbacks += pt.stats.fallbacks;
+  }
+}
+
 bool ModuleGen::isDefinedData(StringRef name) const {
-  return definedData.count(StringAttr::get(ctx, name)) != 0;
+  return definedNames.contains(name);
 }
 
 // A scalar constant has no slot: its canonical bits are made where it is used.
@@ -2012,6 +2111,7 @@ void FuncGen::run() {
 #include "CodegenX64.inc"
 
 void runX64(ModuleGen &mg, LL::LLVMFuncOp f) { FuncGenX64(mg, f).run(); }
+void runArm64(ModuleGen &mg, LL::LLVMFuncOp f) { FuncGen(mg, f).run(); }
 
 // Removes discardable definitions (linkonce, linkonce_odr, internal,
 // private) that no other definition reaches, as LLVM does: unused method
@@ -2045,15 +2145,44 @@ static void dropUnused(ModuleOp module) {
   while (!work.empty()) {
     Operation *op = work.back();
     work.pop_back();
+    auto mark = [&](StringAttr name) {
+      auto it = syms.find(name);
+      if (it != syms.end() && !live.count(it->second)) {
+        live[it->second] = true;
+        work.push_back(it->second);
+      }
+    };
     op->walk([&](Operation *inner) {
-      for (NamedAttribute a : inner->getAttrs())
-        a.getValue().walk([&](FlatSymbolRefAttr r) {
-          auto it = syms.find(r.getAttr());
-          if (it != syms.end() && !live.count(it->second)) {
-            live[it->second] = true;
-            work.push_back(it->second);
-          }
-        });
+      // The operations of function bodies and initializers: calls and
+      // addressof name symbols, the others name none. Anything else gets
+      // the general walk over its attributes (slow: it visits every type).
+      if (auto c = dyn_cast<LL::CallOp>(inner)) {
+        if (auto callee = c.getCalleeAttr()) mark(callee.getAttr());
+        return;
+      }
+      if (auto a = dyn_cast<LL::AddressOfOp>(inner)) {
+        mark(a.getGlobalNameAttr().getAttr());
+        return;
+      }
+      if (isa<LL::ConstantOp, LL::ICmpOp, LL::FCmpOp, LL::LoadOp, LL::StoreOp, LL::GEPOp, LL::InsertValueOp,
+              LL::ExtractValueOp, LL::BrOp, LL::CondBrOp, LL::ReturnOp, LL::UnreachableOp, LL::ZeroOp,
+              LL::UndefOp, LL::SelectOp, LL::AllocaOp, LL::AddOp, LL::SubOp, LL::MulOp, LL::AndOp, LL::OrOp,
+              LL::XOrOp, LL::ShlOp, LL::LShrOp, LL::AShrOp, LL::SDivOp, LL::UDivOp, LL::SRemOp, LL::URemOp,
+              LL::FAddOp, LL::FSubOp, LL::FMulOp, LL::FDivOp, LL::FNegOp, LL::ZExtOp, LL::SExtOp, LL::TruncOp,
+              LL::PtrToIntOp, LL::IntToPtrOp, LL::SIToFPOp, LL::UIToFPOp, LL::FPToSIOp, LL::FPToUIOp,
+              LL::FPTruncOp, LL::FPExtOp, LL::FMAOp, LL::MinimumOp, LL::MaximumOp, LL::CallIntrinsicOp,
+              LL::AtomicRMWOp, LL::AtomicCmpXchgOp, LL::MemmoveOp, LL::MemsetOp, LL::MemcpyOp>(inner))
+        return;
+      if (auto g = dyn_cast<LL::GlobalOp>(inner)) {
+        // Its value is a string or a number; a comdat names a symbol.
+        if (auto c = g.getComdatAttr()) mark(c.getRootReference());
+        if (!g.getValueOrNull() || isa<StringAttr, IntegerAttr, FloatAttr>(g.getValueOrNull())) {
+          for (NamedAttribute a : inner->getDiscardableAttrs())
+            a.getValue().walk([&](FlatSymbolRefAttr r) { mark(r.getAttr()); });
+          return;
+        }
+      }
+      for (NamedAttribute a : inner->getAttrs()) a.getValue().walk([&](FlatSymbolRefAttr r) { mark(r.getAttr()); });
     });
   }
   std::vector<Operation *> dead;
@@ -2111,7 +2240,10 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
                     std::vector<std::string> &reasons, Stats &stats, std::string &err) {
   for (Operation &op : module.getBody()->getOperations()) {
     if (auto f = dyn_cast<LL::LLVMFuncOp>(op)) {
-      if (!f.isExternal()) definedData[f.getSymNameAttr()] = true;
+      if (!f.isExternal()) {
+        definedData[f.getSymNameAttr()] = true;
+        definedNames.insert(f.getSymName());
+      }
       bool twice = f.getSymName() == "rt_setjmp";
       if (auto pt = f.getPassthrough())
         for (Attribute a : *pt)
@@ -2119,7 +2251,10 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
       if (twice) returnsTwice.insert(f.getSymNameAttr());
       funcs[f.getSymNameAttr()] = f;
     } else if (auto g = dyn_cast<LL::GlobalOp>(op)) {
-      if (g.getValueOrNull() || !g.getInitializerRegion().empty()) definedData[g.getSymNameAttr()] = true;
+      if (g.getValueOrNull() || !g.getInitializerRegion().empty()) {
+        definedData[g.getSymNameAttr()] = true;
+        definedNames.insert(g.getSymName());
+      }
     }
   }
   for (Operation &op : module.getBody()->getOperations()) {
@@ -2142,24 +2277,7 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
       }
     }
   }
-  for (Operation &op : module.getBody()->getOperations()) {
-    auto f = dyn_cast<LL::LLVMFuncOp>(op);
-    if (!f || f.isExternal()) continue;
-    // A function that falls back leaves no code or relocations behind.
-    auto cp = w.checkpoint();
-    try {
-      if (x64)
-        runX64(*this, f);
-      else
-        FuncGen(*this, f).run();
-      stats.functions++;
-    } catch (const Unsupported &u) {
-      w.rollback(cp);
-      fallback.push_back(f.getSymName().str());
-      reasons.push_back(u.why);
-      stats.fallbacks++;
-    }
-  }
+  emitFunctions(fallback, reasons, stats);
   stats.codeBytes = w.size(Sect::Text);
   llvm::DenseMap<StringAttr, StringAttr> renamed;
   if (!fallback.empty()) {
@@ -2201,11 +2319,14 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
 
 bool emit(ModuleOp module, const std::string &unit, const std::string &outObject, std::string &fragment,
           std::vector<std::string> &fallback, std::vector<std::string> &reasons, Stats &stats,
-          std::string &err, Target target) {
+          std::string &err, Target target, unsigned threads) {
   dropUnused(module);
   bool x64 = target == Target::X64Elf;
   elfNames = x64;
   ModuleGen mg(module, unit, x64);
+  mg.threads = threads ? threads : 1;
+  // MARMOT_TIER0_THREADS=N forces N threads (tests of the parallel path).
+  if (const char *e = getenv("MARMOT_TIER0_THREADS"); e && atoi(e) > 0) mg.threads = unsigned(atoi(e));
   if (!mg.run(fragment, fallback, reasons, stats, err)) return false;
   return mg.w.write(outObject, err);
 }

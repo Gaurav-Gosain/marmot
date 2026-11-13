@@ -318,6 +318,26 @@ std::string MachOWriter::serialize() const {
   return o.b;
 }
 
+void MachOWriter::appendText(const MachOWriter &part, std::vector<unsigned> &symMap) {
+  symMap.resize(part.syms_.size());
+  for (unsigned i = 0; i < part.syms_.size(); i++) symMap[i] = symbol(part.syms_[i].name);
+  const Section &ps = part.sec_[unsigned(Sect::Text)];
+  // Each function start is aligned in part relative to its start; starting
+  // part at that alignment here keeps every offset as in one writer.
+  align(Sect::Text, 1u << ps.align);
+  setAlign(Sect::Text, ps.align);
+  Section &ts = sec_[unsigned(Sect::Text)];
+  uint64_t base = ts.data.size();
+  ts.data.insert(ts.data.end(), ps.data.begin(), ps.data.end());
+  for (const Rel &r : ps.rels) ts.rels.push_back(Rel{r.offset + base, r.kind, symMap[r.sym], r.addend});
+  for (unsigned i = 0; i < part.syms_.size(); i++) {
+    const Sym &s = part.syms_[i];
+    if (!s.defined) continue;
+    if (s.sect != Sect::Text) continue;  // parts hold functions only
+    define(s.name, Sect::Text, base + s.offset, s.global, s.weak, s.hidden);
+  }
+}
+
 bool MachOWriter::write(const std::string &path, std::string &err) const {
   std::string bytes = elf_ ? serializeELF() : serialize();
   FILE *f = std::fopen(path.c_str(), "wb");

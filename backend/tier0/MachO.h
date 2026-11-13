@@ -70,6 +70,14 @@ public:
   // A relocation at offset in sect against symbol sym with addend.
   void reloc(Sect s, uint64_t offset, Reloc kind, unsigned sym, int64_t addend = 0);
 
+  // Appends the text of part (functions emitted by another writer for the
+  // same module) to this text: its code, relocations and the definitions
+  // of its symbols. symMap receives this writer's index of each of part's
+  // symbols. Symbols new to this writer are added in part's order, so
+  // merging the parts of a module in order gives the same object as
+  // emitting all its functions into one writer.
+  void appendText(const MachOWriter &part, std::vector<unsigned> &symMap);
+
   // Text size and relocation count, to drop a function that turned out
   // unsupported (symbols it referenced stay, undefined and unused).
   struct Checkpoint {

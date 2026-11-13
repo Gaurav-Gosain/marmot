@@ -5,6 +5,7 @@
 //   tier0-run [-x64] in.mlir out.o [rest.mlir [frag]]
 //
 // -x64 writes an x86-64 ELF object instead of an arm64 Mach-O one.
+// TIER0_THREADS=N compiles the functions on N threads.
 //
 //   tier0-run -read in.mlir...
 //
@@ -111,7 +112,8 @@ int main(int argc, char **argv) {
   std::vector<std::string> fallback, reasons;
   marmot::tier0::Stats st;
   std::string unit = std::to_string(std::hash<std::string>{}(argv[2]) % 1000000007);
-  if (!marmot::tier0::emit(*m, unit, argv[2], frag, fallback, reasons, st, err, target)) {
+  unsigned threads = getenv("TIER0_THREADS") ? unsigned(atoi(getenv("TIER0_THREADS"))) : 1;
+  if (!marmot::tier0::emit(*m, unit, argv[2], frag, fallback, reasons, st, err, target, threads)) {
     llvm::errs() << "tier0: " << err << "\n";
     return 1;
   }
