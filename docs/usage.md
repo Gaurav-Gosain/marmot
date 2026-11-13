@@ -185,6 +185,39 @@ Each entry is compiled and run as a whole program with the entries before it, an
 output is shown. Earlier statements run again each time, so their side effects repeat. An entry
 that does not compile or panics is not kept.
 
+## Checks
+
+`marmot check` runs the checks a project usually runs by hand or in CI, on one package graph in
+one process: `fmt` (gofmt and goimports), `vet` (the analyzers of the installed go vet), `lint`
+(the golangci-lint standard set: staticcheck, errcheck, govet, ineffassign, unused, and the gosec
+file permission rules), `modernize` (the go fix modernizers), `exhaustive` and `nil`, `vuln`
+(govulncheck), `tidy` (`go mod tidy -diff`), `cross` (every target type checks) and `deadcode`
+(functions no program or test reaches). With no packages it checks every module of the
+`go.work`, or the current module.
+
+    marmot check                      # everything
+    marmot check -changed             # only what changed against origin/main (or main)
+    marmot check -changed v1.2 -only vet,lint
+    marmot fix                        # build error fixes, then formatting and modernizers
+    marmot fix -diff -only modernize  # show the patches, change nothing
+
+A `.golangci.yml` (v2) is read when present: enabled and disabled linters, their settings,
+exclusion rules and presets, `//nolint` and generated files behave as in golangci-lint. Cross
+targets come from `-targets`, `scripts/platforms.txt` or `platforms.txt` (one `goos` or
+`goos/goarch` per line), else linux, darwin and windows on amd64 and arm64.
+
+Every result is cached per package by a key over its files and its dependencies, so an
+unchanged tree is answered at once and an edit reanalyzes only the packages it affects
+(`-nocache` turns this off). The output is one line per finding and one line per check; the exit
+status is 1 when a gating check fails (`modernize`, `exhaustive`, `nil` and `deadcode` only
+report). `marmot fix` keeps a check fix only if the packages still type check afterwards (and,
+with `-test`, their tests pass).
+
+In JSON mode each finding is a `diagnostic` object with `check` and `analyzer` fields, codes
+M0100 to M0110; then one `{"kind":"check","check":"lint","status":"failed","findings":3,...}`
+object per check, then the `result` line. The analyzers live in `marmot-check`, installed next
+to `marmot` (`make check-tool`).
+
 ## Coding agents
 
 `marmot mcp` is a Model Context Protocol server on stdin and stdout. Its tools `build`, `run`,
