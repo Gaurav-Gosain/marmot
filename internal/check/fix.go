@@ -178,7 +178,7 @@ func candidates(r *Result, all bool) []candidate {
 				continue
 			}
 			fx := d.Fixes[0]
-			if fx.Applicability != diag.MachineApplicable && !(all && fx.Applicability == diag.MaybeIncorrect) {
+			if fx.Applicability != diag.MachineApplicable && (!all || fx.Applicability != diag.MaybeIncorrect) {
 				continue
 			}
 			var es []diag.Edit
@@ -244,10 +244,10 @@ func selectFixes(cs []candidate) ([]candidate, int) {
 				if before(e.Span.EndLine, e.Span.EndCol, t.l1, t.c1) || before(t.l2, t.c2, e.Span.Line, e.Span.Col) {
 					continue
 				}
-				if e.Span.EndLine == t.l1 && e.Span.EndCol == t.c1 && !(e.Span.Line == t.l1 && e.Span.Col == t.c1) {
+				if e.Span.EndLine == t.l1 && e.Span.EndCol == t.c1 && (e.Span.Line != t.l1 || e.Span.Col != t.c1) {
 					continue // touching, not overlapping
 				}
-				if t.l2 == e.Span.Line && t.c2 == e.Span.Col && !(t.l1 == t.l2 && t.c1 == t.c2) {
+				if t.l2 == e.Span.Line && t.c2 == e.Span.Col && (t.l1 != t.l2 || t.c1 != t.c2) {
 					continue
 				}
 				ok = false
@@ -266,6 +266,19 @@ func selectFixes(cs []candidate) ([]candidate, int) {
 }
 
 // applyEdits computes the new contents of every file the fixes touch.
+// reformat runs gofmt over a fixed Go file that was formatted before:
+// suggested fixes (a tagged switch, a rewritten condition) are not always
+// formatted text.
+func reformat(old, fixed []byte) []byte {
+	if formatted := gofmtOnly(old); formatted == nil || !bytes.Equal(formatted, old) {
+		return fixed
+	}
+	if out := gofmtOnly(fixed); out != nil {
+		return out
+	}
+	return fixed
+}
+
 func applyEdits(cs []candidate) ([]*fileState, error) {
 	byFile := map[string][]fileEdit{}
 	var order []string
@@ -305,7 +318,7 @@ func applyEdits(cs []candidate) ([]*fileState, error) {
 			last = e.b
 		}
 		b.Write(src[last:])
-		out = append(out, &fileState{path: f, old: src, new: b.Bytes()})
+		out = append(out, &fileState{path: f, old: src, new: reformat(src, b.Bytes())})
 	}
 	return out, nil
 }
