@@ -136,7 +136,20 @@ func (s *Sources) enrich(d *Diagnostic, opt Options) {
 	case CodeHeapAlloc:
 		if f.ast != nil {
 			var best ast.Node
-			for _, n := range pathNodes(f.ast, pos) {
+			path := pathNodes(f.ast, pos)
+			box := strings.Contains(d.Message, ": box of ")
+			for i, n := range path {
+				if box {
+					// A conversion to an interface: the argument converted.
+					if call, ok := n.(*ast.CallExpr); ok && i+1 < len(path) {
+						for _, a := range call.Args {
+							if a == path[i+1] {
+								best = a
+							}
+						}
+					}
+					continue
+				}
 				switch x := n.(type) {
 				case *ast.CompositeLit, *ast.CallExpr, *ast.FuncLit:
 					if f.fset.Position(x.Pos()).Line == d.Span.Line {

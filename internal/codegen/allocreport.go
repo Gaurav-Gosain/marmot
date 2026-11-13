@@ -51,14 +51,7 @@ func (f *funcGen) reportAlloc(v ssa.Value, kind string, t types.Type, where stri
 		}
 	}
 	if !pos.IsValid() {
-		if instr, ok := v.(ssa.Instruction); ok && instr.Block() != nil {
-			for _, i := range instr.Block().Instrs {
-				if i.Pos().IsValid() {
-					pos = i.Pos()
-					break
-				}
-			}
-		}
+		pos = nearPos(v)
 	}
 	rec := allocRecord{Fn: f.fn.String(), Kind: kind, Where: where, Final: !f.goOps()}
 	if pos.IsValid() {
@@ -88,6 +81,62 @@ func (f *funcGen) reportAlloc(v ssa.Value, kind string, t types.Type, where stri
 	f.m.p.allocMu.Lock()
 	w.Write(append(data, '\n'))
 	f.m.p.allocMu.Unlock()
+}
+
+// nearPos places a site that has no position of its own (an implicit
+// conversion to an interface, say): at its first use that has one, else at
+// the next instruction of its block that has one, else the previous one.
+func nearPos(v ssa.Value) token.Pos {
+	if refs := v.Referrers(); refs != nil {
+		for _, r := range *refs {
+			if r.Pos().IsValid() {
+				return r.Pos()
+			}
+		}
+	}
+	instr, ok := v.(ssa.Instruction)
+	if !ok || instr.Block() == nil {
+		return token.NoPos
+	}
+	instrs := instr.Block().Instrs
+	at := 0
+	for i, x := range instrs {
+		if x == instr {
+			at = i
+			break
+		}
+	}
+	for i := at + 1; i < len(instrs); i++ {
+		if instrs[i].Pos().IsValid() {
+			return instrs[i].Pos()
+		}
+	}
+	for i := at - 1; i >= 0; i-- {
+		if instrs[i].Pos().IsValid() {
+			return instrs[i].Pos()
+		}
+	}
+	return token.NoPos
+}
+
+// localBase is the Alloc an address points into through fields and
+// elements, or nil.
+func localBase(v ssa.Value) *ssa.Alloc {
+	for {
+		switch x := v.(type) {
+		case *ssa.Alloc:
+			return x
+		case *ssa.FieldAddr:
+			v = x.X
+		case *ssa.IndexAddr:
+			if _, ok := x.X.Type().Underlying().(*types.Pointer); !ok {
+				return nil
+			}
+			v = x.X
+		default:
+			return nil
+		}
+	}
 }
 
 // convType is the type of the bytes a string conversion copies when its
@@ -145,6 +194,17 @@ func (p *Program) escapeWhy(v ssa.Value, seen map[ssa.Value]bool, noPhi bool) st
 				if _, ok := x.Addr.(*ssa.Global); ok {
 					return "stored in a global variable" + at(x)
 				}
+				if a := localBase(x.Addr); a != nil {
+					what := "a local variable that is"
+					if a.Comment == "varargs" {
+						what = "the variadic arguments, which are"
+					} else if allocKind(a) == "composite" {
+						what = "a composite literal that is"
+					}
+					if why := p.escapeWhy(a, seen, noPhi); why != "" {
+						return "stored in " + what + " " + why
+					}
+				}
 				return "stored in memory that outlives the function" + at(x)
 			}
 		case *ssa.Field, *ssa.Index, *ssa.Extract, *ssa.FieldAddr, *ssa.IndexAddr, *ssa.Slice, *ssa.ChangeType, *ssa.SliceToArrayPointer, *ssa.Convert:
@@ -164,6 +224,9 @@ func (p *Program) escapeWhy(v ssa.Value, seen map[ssa.Value]bool, noPhi bool) st
 			if p.callLeaks(&x.Call, v, x) {
 				if callee := x.Call.StaticCallee(); callee != nil {
 					return fmt.Sprintf("passed to %s, which may keep it", callee.String()) + at(x)
+				}
+				if b, ok := x.Call.Value.(*ssa.Builtin); ok {
+					return fmt.Sprintf("passed to %s, which may keep it", b.Name()) + at(x)
 				}
 				if x.Call.IsInvoke() {
 					return "passed to an interface method, which may keep it" + at(x)
