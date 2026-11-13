@@ -270,7 +270,7 @@ func generate(cfg Config, bp *build.Package, dir, importPath string, flags []str
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }() // temporary directory; a leftover only costs disk
 	// cgo asks gccgo once how it mangles symbols; marmot does not use the
 	// mangled names, so a stub that answers with the current scheme does.
 	stub := filepath.Join(tmp, "gccgo-stub")
@@ -303,18 +303,18 @@ func generate(cfg Config, bp *build.Package, dir, importPath string, flags []str
 	}
 	// Keep only what marmot compiles.
 	for _, f := range []string{"_cgo_defun.c", "_cgo_main.c", "_cgo_flags", "gccgo-stub"} {
-		os.Remove(filepath.Join(tmp, f))
+		_ = os.Remove(filepath.Join(tmp, f)) // unused cgo output; a leftover only costs disk
 	}
 	ents, _ := os.ReadDir(tmp)
 	for _, e := range ents {
 		if strings.HasSuffix(e.Name(), ".o") {
-			os.Remove(filepath.Join(tmp, e.Name()))
+			_ = os.Remove(filepath.Join(tmp, e.Name())) // gcc objects marmot does not use
 		}
 	}
 	if err := os.WriteFile(filepath.Join(tmp, "done"), nil, 0o644); err != nil {
 		return err
 	}
-	os.RemoveAll(out)
+	_ = os.RemoveAll(out) // a stale directory; if it stays, the Rename below fails and says so
 	return os.Rename(tmp, out)
 }
 

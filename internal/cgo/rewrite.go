@@ -121,7 +121,10 @@ func rewrite(dir string, bp *build.Package, mk marks) error {
 	}
 	src := func(n ast.Node) string {
 		var b bytes.Buffer
-		format.Node(&b, fset, n)
+		if err := format.Node(&b, fset, n); err != nil {
+			// The generated file then fails to parse and says where.
+			return "/* " + err.Error() + " */"
+		}
 		return b.String()
 	}
 	externs := map[string]*ast.FuncDecl{}
@@ -244,7 +247,6 @@ func rewrite(dir string, bp *build.Package, mk marks) error {
 	text := strings.ReplaceAll(out.String(), "_cgopackage.Incomplete", "_cgo_Incomplete")
 	formatted, err := format.Source([]byte(text))
 	if err != nil {
-		os.WriteFile(path+".bad", []byte(text), 0o644)
 		return fmt.Errorf("generated Go: %v", err)
 	}
 	if err := os.WriteFile(path, formatted, 0o644); err != nil {
@@ -267,7 +269,9 @@ func rewrite(dir string, bp *build.Package, mk marks) error {
 	}
 	if exp := filepath.Join(dir, "_cgo_export.c"); fileExists(exp) {
 		if len(exports) == 0 {
-			os.Remove(exp)
+			if err := os.Remove(exp); err != nil {
+				return err
+			}
 		} else if err := exportsC(exp, expC); err != nil {
 			return err
 		}
