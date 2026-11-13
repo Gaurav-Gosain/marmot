@@ -1,6 +1,7 @@
 // Pcln.cpp: see Pcln.h.
 #include "marmot/Driver/Pcln.h"
 
+#include "llvm/ADT/StringMap.h"
 #include "llvm/DebugInfo/DWARF/DWARFContext.h"
 #include "llvm/Object/MachO.h"
 #include "llvm/Object/ObjectFile.h"
@@ -397,8 +398,10 @@ bool addFragment(StringRef fragment, const std::function<uint64_t(StringRef)> &a
 std::string encode(Table &t, uint64_t base, uint32_t quantum, unsigned version,
                    const std::function<std::string(const std::string &)> &rename) {
   auto nm = [&](const std::string &n) { return rename ? rename(n) : n; };
+  // Hash maps: offsets depend only on the order of first use (a std::map of
+  // 45000 names cost a large part of encode).
   std::string strs;
-  std::map<std::string, uint32_t> strIndex;
+  llvm::StringMap<uint32_t> strIndex;
   auto addStr = [&](const std::string &s) {
     auto [it, fresh] = strIndex.try_emplace(s, strs.size());
     if (fresh) {
@@ -410,7 +413,7 @@ std::string encode(Table &t, uint64_t base, uint32_t quantum, unsigned version,
   // Prefix tables: directories of files, package paths of functions. A
   // file is uvarint dir + base name; a function name uvarint pkg + rest.
   std::vector<std::string> dirs, pkgs;
-  std::map<std::string, uint32_t> dirIdx, pkgIdx;
+  llvm::StringMap<uint32_t> dirIdx, pkgIdx;
   auto prefixed = [&](const std::string &full, bool isFunc) {
     size_t cut;
     if (isFunc) {
