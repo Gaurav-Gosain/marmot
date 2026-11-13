@@ -4,14 +4,19 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
+	"go/ast"
 	"go/format"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
+	"golang.org/x/tools/imports"
 )
 
 // fmtResult is the cached outcome for one file version.
@@ -56,7 +61,7 @@ func runFmt(sc *scope, st *store, r *CheckResult) {
 					return
 				}
 				fr = fmtResult{}
-				got, err := src.FormatFile(f, data)
+				got, err := formatFile(src, f, data)
 				if err != nil {
 					fr.Err = err.Error()
 				} else if !bytes.Equal(got, data) {
@@ -179,4 +184,134 @@ func gofmtOnly(src []byte) []byte {
 		return nil
 	}
 	return out
+}
+
+// formatFile formats like goimports. Formatting and import grouping need
+// no go command; only a file that may miss an import or have an unused
+// one goes through full goimports, which resolves packages (and starts the
+// go command for each file).
+func formatFile(src *diag.Sources, path string, data []byte) ([]byte, error) {
+	if !mayNeedImports(data, dirNames(filepath.Dir(path))) {
+		return imports.Process(path, data, &imports.Options{Comments: true, TabIndent: true, TabWidth: 8, FormatOnly: true})
+	}
+	return src.FormatFile(path, data)
+}
+
+// mayNeedImports reports whether goimports could add or remove an import:
+// an import whose name no selector uses, or a selector on a name the file
+// does not declare (it may be a package goimports would import).
+func mayNeedImports(data []byte, pkgNames map[string]bool) bool {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "", data, parser.ParseComments)
+	if err != nil {
+		return true
+	}
+	used := map[string]bool{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			if x, ok := sel.X.(*ast.Ident); ok {
+				used[x.Name] = true
+			}
+		}
+		return true
+	})
+	for _, im := range f.Imports {
+		path, _ := strconv.Unquote(im.Path.Value)
+		name := ""
+		if im.Name != nil {
+			name = im.Name.Name
+		}
+		if name == "_" || name == "." || path == "C" {
+			continue
+		}
+		if name == "" {
+			// The package name is usually the last element without a
+			// version suffix or a go- prefix; when it is not, goimports
+			// decides.
+			name = importName(path)
+		}
+		if !used[name] {
+			return true
+		}
+	}
+	// Unresolved names used as selector bases: declared in another file of
+	// the package, or a missing import.
+	for _, id := range f.Unresolved {
+		if !used[id.Name] || pkgNames[id.Name] {
+			continue
+		}
+		imported := false
+		for _, im := range f.Imports {
+			p, _ := strconv.Unquote(im.Path.Value)
+			if im.Name != nil && im.Name.Name == id.Name || im.Name == nil && importName(p) == id.Name {
+				imported = true
+			}
+		}
+		if !imported {
+			return true
+		}
+	}
+	return false
+}
+
+func importName(path string) string {
+	name := path[strings.LastIndex(path, "/")+1:]
+	if len(name) > 1 && name[0] == 'v' && strings.Trim(name[1:], "0123456789") == "" {
+		// a major version suffix: example.com/x/v2
+		if i := strings.LastIndex(path[:len(path)-len(name)-1], "/"); i >= 0 {
+			name = path[i+1 : len(path)-len(name)-1]
+		}
+	}
+	name = strings.TrimPrefix(name, "go-")
+	if i := strings.IndexAny(name, ".-"); i >= 0 {
+		name = name[:i]
+	}
+	return name
+}
+
+var dirNameCache sync.Map // dir -> *dirNamesEntry
+
+type dirNamesEntry struct {
+	once  sync.Once
+	names map[string]bool
+}
+
+// dirNames returns the top level names declared in the Go files of a
+// directory, of every package and build configuration in it.
+func dirNames(dir string) map[string]bool {
+	v, _ := dirNameCache.LoadOrStore(dir, &dirNamesEntry{})
+	e := v.(*dirNamesEntry)
+	e.once.Do(func() {
+		e.names = map[string]bool{}
+		ents, _ := os.ReadDir(dir)
+		for _, de := range ents {
+			if de.IsDir() || !strings.HasSuffix(de.Name(), ".go") {
+				continue
+			}
+			f, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, de.Name()), nil, parser.SkipObjectResolution)
+			if err != nil {
+				continue
+			}
+			for _, d := range f.Decls {
+				switch d := d.(type) {
+				case *ast.FuncDecl:
+					if d.Recv == nil {
+						e.names[d.Name.Name] = true
+					}
+				case *ast.GenDecl:
+					for _, sp := range d.Specs {
+						switch sp := sp.(type) {
+						case *ast.ValueSpec:
+							for _, n := range sp.Names {
+								e.names[n.Name] = true
+							}
+						case *ast.TypeSpec:
+							e.names[sp.Name.Name] = true
+						}
+					}
+				}
+			}
+		}
+	})
+	return e.names
 }

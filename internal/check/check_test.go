@@ -128,3 +128,21 @@ func TestRunModule(t *testing.T) {
 		}
 	}
 }
+
+func TestMayNeedImports(t *testing.T) {
+	for _, c := range []struct {
+		src  string
+		want bool
+	}{
+		{"package p\nimport \"strings\"\nvar _ = strings.ToUpper", false},
+		{"package p\nimport \"strings\"\nvar x = 1", true}, // unused import
+		{"package p\nvar _ = strings.ToUpper", true},       // missing import
+		{"package p\nvar _ = local.Field", false},          // declared in a sibling
+		{"package p\nimport yaml \"go.yaml.in/yaml/v3\"\nvar _ = yaml.Marshal", false},
+		{"package p\nimport \"go.yaml.in/yaml/v3\"\nvar _ = yaml.Marshal", false}, // major version suffix
+	} {
+		if got := mayNeedImports([]byte(c.src), map[string]bool{"local": true}); got != c.want {
+			t.Errorf("mayNeedImports(%q) = %v, want %v", c.src, got, c.want)
+		}
+	}
+}

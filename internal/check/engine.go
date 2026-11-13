@@ -2,6 +2,7 @@ package check
 
 import (
 	"bytes"
+	"context"
 	"encoding/gob"
 	"fmt"
 	"go/ast"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
+	"golang.org/x/sync/semaphore"
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/gcexportdata"
 )
@@ -152,7 +154,8 @@ type engine struct {
 	suite  *suite
 	env    string // GOOS, GOARCH, tags, Go version
 	goarch string
-	sem    chan struct{}
+	sem    *semaphore.Weighted
+	jobs   int64
 
 	mu    sync.Mutex
 	units map[*listPkg]*unit
@@ -183,9 +186,11 @@ type unit struct {
 
 func newEngine(g *graph, st *store, s *suite, env, goarch string, jobs int) *engine {
 	if jobs <= 0 {
-		jobs = runtime.GOMAXPROCS(0)
+		// Each job holds a package with the types of all its imports and
+		// its SSA forms; more than 8 at once costs memory, not time.
+		jobs = min(runtime.GOMAXPROCS(0), 8)
 	}
-	e := &engine{g: g, st: st, suite: s, env: env, goarch: goarch, sem: make(chan struct{}, jobs), units: map[*listPkg]*unit{}}
+	e := &engine{g: g, st: st, suite: s, env: env, goarch: goarch, sem: semaphore.NewWeighted(int64(jobs)), jobs: int64(jobs), units: map[*listPkg]*unit{}}
 	for _, p := range g.pkgs {
 		e.units[p] = &unit{}
 	}
@@ -351,8 +356,12 @@ func (e *engine) analyze(p *listPkg, root bool) (*factsEntry, *report, error) {
 	if firstErr != nil {
 		return nil, nil, firstErr
 	}
-	e.sem <- struct{}{}
-	defer func() { <-e.sem }()
+	// A large package takes several job slots: its syntax, types and SSA
+	// forms dominate the memory of a run, and two of them at once can
+	// double the peak.
+	w := min(1+int64(len(p.files()))/100, e.jobs)
+	e.sem.Acquire(context.Background(), w)
+	defer e.sem.Release(w)
 	e.count(&e.analyzed)
 	t0 := time.Now()
 	fe, r, err := e.run(p, root, deps)

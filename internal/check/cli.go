@@ -80,6 +80,12 @@ func Main(args []string, version string) int {
 	}
 	start := time.Now()
 	res, err := Run(opts)
+	if p := os.Getenv("MARMOT_CHECK_MEMPROFILE"); p != "" {
+		if f, err := os.Create(p); err == nil {
+			pprof.Lookup("allocs").WriteTo(f, 0)
+			f.Close()
+		}
+	}
 	if err != nil {
 		return rep.Usage("marmot check: " + err.Error())
 	}
