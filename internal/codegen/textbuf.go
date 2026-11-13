@@ -28,7 +28,13 @@ func (t *textBuf) Write(p []byte) (int, error) {
 }
 
 func (t *textBuf) WriteByte(c byte) error {
-	appendText(t, []byte{c})
+	k := len(t.chunks) - 1
+	if k < 0 || len(t.chunks[k]) == cap(t.chunks[k]) {
+		t.chunks = append(t.chunks, make([]byte, 0, textChunk))
+		k++
+	}
+	t.chunks[k] = append(t.chunks[k], c)
+	t.n++
 	return nil
 }
 

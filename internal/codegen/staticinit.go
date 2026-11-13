@@ -171,7 +171,15 @@ func (m *moduleGen) analyzeStaticInit(pkg *ssa.Package) *staticInit {
 		path []int
 		val  cv
 	}
-	var stores []store
+	nstores := 0
+	for _, b := range blocks {
+		for _, instr := range b.Instrs {
+			if _, ok := instr.(*ssa.Store); ok {
+				nstores++
+			}
+		}
+	}
+	stores := make([]store, 0, nstores)
 	written := map[ssa.Value]map[string]bool{}
 	for _, b := range init.Blocks {
 		for _, instr := range b.Instrs {

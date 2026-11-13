@@ -41,8 +41,15 @@ func (m *moduleGen) loc(pos token.Pos) string {
 		return ""
 	}
 	if p.Filename != m.locName {
-		m.locName = p.Filename
-		m.locQuoted = strconv.Quote(m.p.locFile(p.Filename))
+		q, ok := m.locFiles[p.Filename]
+		if !ok {
+			q = strconv.Quote(m.p.locFile(p.Filename))
+			if m.locFiles == nil {
+				m.locFiles = map[string]string{}
+			}
+			m.locFiles[p.Filename] = q
+		}
+		m.locName, m.locQuoted = p.Filename, q
 	}
 	key := locKey{m.locQuoted, p.Line, p.Column}
 	n, ok := m.locs[key]
@@ -91,18 +98,13 @@ func (p *Program) locFile(name string) string {
 	if p.opts.MergedGOROOT == "" || !strings.HasPrefix(name, p.opts.MergedGOROOT+string(os.PathSeparator)) {
 		return name
 	}
-	p.locMu.Lock()
-	defer p.locMu.Unlock()
-	if r, ok := p.locFiles[name]; ok {
-		return r
+	if r, ok := p.locFiles.Load(name); ok {
+		return r.(string)
 	}
 	r := name
 	if t, err := filepath.EvalSymlinks(name); err == nil {
 		r = t
 	}
-	if p.locFiles == nil {
-		p.locFiles = map[string]string{}
-	}
-	p.locFiles[name] = r
+	p.locFiles.Store(name, r)
 	return r
 }

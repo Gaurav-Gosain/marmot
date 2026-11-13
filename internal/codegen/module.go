@@ -29,9 +29,10 @@ type moduleGen struct {
 	locTF        *token.File       // file of the last position looked up
 	locName      string            // its name and the quoted resolved name
 	locQuoted    string
-	locLast      token.Pos // the last position looked up and its suffix
+	locFiles     map[string]string // file name -> quoted resolved name
+	locLast      token.Pos         // the last position looked up and its suffix
 	locLastRef   string
-	locDefs      strings.Builder
+	locDefs      textBuf
 	decls        map[string]string
 	defined      map[string]bool
 	queue        []*ssa.Function
@@ -254,7 +255,7 @@ func (m *moduleGen) finish(name string) (Module, error) {
 	}
 	// Location aliases come first: the parser then resolves each op's
 	// loc(#locN) at once instead of through a forward reference.
-	out.WriteString(m.locDefs.String())
+	m.locDefs.writeTo(&out)
 	out.WriteString("module {\n")
 	for _, k := range keys {
 		out.WriteString(m.decls[k])

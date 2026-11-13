@@ -96,12 +96,11 @@ type Program struct {
 	pragmas      map[*ssa.Function]pragma
 
 	mu   sync.Mutex
-	syms map[*ssa.Function]string
+	syms sync.Map // *ssa.Function -> symbol (symbol)
 
 	escMu     sync.Mutex
-	locMu     sync.Mutex
 	recWrap   map[*ssa.Function]bool
-	locFiles  map[string]string
+	locFiles  sync.Map // file name -> resolved name (locFile)
 	esc       escapeState
 	regions   regionState
 	deep      deepState
@@ -161,7 +160,6 @@ func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package
 		globalLink:   map[*ssa.Global]string{},
 		dylibs:       map[string]bool{},
 		pragmas:      map[*ssa.Function]pragma{},
-		syms:         map[*ssa.Function]string{},
 	}
 	for _, pkg := range pkgs {
 		if pkg.Pkg.Path() == "runtime" {
@@ -296,14 +294,11 @@ func (p *Program) parseDirective(fn *ssa.Function, text string) {
 
 // symbol returns the link name of fn.
 func (p *Program) symbol(fn *ssa.Function) string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if s, ok := p.syms[fn]; ok {
-		return s
+	if s, ok := p.syms.Load(fn); ok {
+		return s.(string)
 	}
-	s := p.computeSymbol(fn)
-	p.syms[fn] = s
-	return s
+	s, _ := p.syms.LoadOrStore(fn, p.computeSymbol(fn))
+	return s.(string)
 }
 
 func (p *Program) computeSymbol(fn *ssa.Function) string {
