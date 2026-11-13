@@ -394,6 +394,14 @@ int32_t rt_x86_level(void);
 // Mark the current goroutine as entering/leaving a blocking system call.
 void rt_entersyscall(void);
 void rt_exitsyscall(void);
+// cgo calls (cgo.c): the generated C wrappers bracket each C call.
+void rt_cgo_enter(void);
+void rt_cgo_exit(void);
+void rt_cgo_enter_fast(void);
+void rt_cgo_exit_fast(void);
+void rt_cgo_exit_errno(int32_t e);
+int32_t rt_cgo_errno(void);
+void rt_cgo_keep(void *p);
 
 // ---- Panic support ----
 
