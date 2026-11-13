@@ -288,6 +288,21 @@ needs no C library on the target machine, cgo packages included; their C is comp
 musl. It links with `ld.lld` (`lld` from Homebrew on macOS). `-static` is for Linux targets
 only.
 
+## purego
+
+Programs that call C through [purego](https://github.com/ebitengine/purego) (`Dlopen`,
+`RegisterLibFunc`, `RegisterFunc`, `SyscallN`, `NewCallback`) build unchanged, without cgo
+and without a C compiler, with purego v0.10.x and v0.11.x. marmot replaces purego's assembly
+and runtime hooks: calls go through the runtime as cgo calls do, and C can call the Go
+functions of `NewCallback`, also from its own threads. Argument and result handling is
+purego's own code, so a call behaves as with gc.
+
+`RegisterFunc` and `RegisterLibFunc` need the function pointer's type at compile time:
+`purego.RegisterLibFunc(&puts, lib, "puts")` with `var puts func(string) int32`, or a field of
+a struct of such functions. marmot has no `reflect.MakeFunc`, so it builds the function where
+the call is. A pointer passed in an interface or a type parameter panics with an explanation.
+Other purego versions are a build error naming the supported ones.
+
 ## Bindings from C headers
 
 `marmot bind` reads a C header through clang and writes a Go file of bindings: plain cgo that

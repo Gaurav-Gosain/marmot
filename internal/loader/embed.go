@@ -43,7 +43,8 @@ func embedOverlays(pkgs []*packages.Package, inline bool) (map[string][]byte, []
 	var helpers []string
 	for _, p := range pkgs {
 		jumps := asmJumps(p)
-		if len(p.EmbedFiles) == 0 && len(p.EmbedPatterns) == 0 && len(jumps) == 0 {
+		pg := puregoUser(p)
+		if len(p.EmbedFiles) == 0 && len(p.EmbedPatterns) == 0 && len(jumps) == 0 && !pg {
 			continue
 		}
 		needFS := false
@@ -59,6 +60,13 @@ func embedOverlays(pkgs []*packages.Package, inline bool) (map[string][]byte, []
 				}
 			}
 			edits = append(edits, asmEdits(p, f, jumps)...)
+			if pg {
+				pe, err := puregoEdits(p, f)
+				if err != nil {
+					return nil, nil, err
+				}
+				edits = append(edits, pe...)
+			}
 			if len(edits) == 0 {
 				continue
 			}
@@ -70,11 +78,20 @@ func embedOverlays(pkgs []*packages.Package, inline bool) (map[string][]byte, []
 			if fs && fsFile == "" {
 				fsFile, fsName = name, p.Fset.Position(f.Name.End()).Offset
 			}
-			// Apply from the end so offsets stay valid.
+			// Apply from the end so offsets stay valid. A replaced span must
+			// not overlap another edit (a whole-file replacement stands alone).
 			sort.SliceStable(edits, func(a, b int) bool { return edits[a].pos > edits[b].pos })
+			next := len(src)
 			for _, e := range edits {
-				off := e.pos
-				src = append(src[:off], append([]byte(e.text), src[off:]...)...)
+				off, end := e.pos, e.pos+e.del
+				if e.del < 0 {
+					end = len(src)
+				}
+				if end > next || (e.del < 0 && len(edits) > 1) {
+					return nil, nil, fmt.Errorf("%s: overlapping source edits at offset %d", name, off)
+				}
+				next = off
+				src = append(src[:off], append([]byte(e.text), src[end:]...)...)
 			}
 			if over == nil {
 				over = map[string][]byte{}
@@ -206,6 +223,7 @@ func embedEdits(p *packages.Package, f *ast.File) ([]embedEditAt, bool, error) {
 
 type embedEditAt struct {
 	pos  int
+	del  int // bytes replaced from pos (-1: to the end)
 	text string
 }
 

@@ -1,0 +1,14 @@
+ints: 127 127 14 -32768 65528 -42 4294967290 -3298534883329 17361641481138401521 -42
+bools: true false false
+floats: 5.5 0.3333333333333333 393218.5
+stack: 650 253 8589916728
+strings: HELLO, PUREGO 6
+pointers: [0 1 4 9 16 25] 4 8
+structs: {5 10} 34 {1.5 3 4.5 6} 4321
+structs: {2.5 -2.5} {42 1.5} 40.5 {10 11 12 13} 4321 {122 -5 300}
+callbacks: 305 220 385 1925 1409 14 false
+qsort: [-8 -3 0 2 2 5 9 1099511627776]
+SyscallN: 42
+missing library: true
+missing symbol: true
+close: true

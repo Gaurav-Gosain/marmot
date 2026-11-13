@@ -17,7 +17,11 @@ goroutines, channels, `select`, range over functions, and `unsafe`.
 cgo works: packages that `import "C"` build unchanged, with calls both ways (`//export`,
 also from C threads), the package's C and assembly files, `#cgo` flags and `pkg-config`, and
 gc's pointer passing check. A call to C is a direct native call. Cross compiling cgo packages
-needs the target's C headers (`MARMOT_SYSROOT`). See [cgo](usage.md#cgo).
+needs the target's C headers (`marmot sysroot add`). See [cgo](usage.md#cgo).
+
+purego works (v0.10.x and v0.11.x): `Dlopen`, `RegisterLibFunc` and `RegisterFunc` with a
+function pointer type known at compile time, `SyscallN` and `NewCallback`. See
+[purego](usage.md#purego).
 
 Not supported: plugins and the race detector.
 

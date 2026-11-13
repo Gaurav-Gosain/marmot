@@ -160,7 +160,7 @@ func asmEdits(p *packages.Package, f *ast.File, jumps map[string]asmJump) []embe
 			if !ok {
 				alias = fmt.Sprintf("zz_marmot_asm%d", len(aliases))
 				aliases[j.pkg] = alias
-				out = append(out, embedEditAt{p.Fset.Position(f.Name.End()).Offset, fmt.Sprintf("; import %s %q", alias, j.pkg)})
+				out = append(out, embedEditAt{pos: p.Fset.Position(f.Name.End()).Offset, text: fmt.Sprintf("; import %s %q", alias, j.pkg)})
 			}
 			name = alias + "." + name
 		}
@@ -186,7 +186,7 @@ func asmEdits(p *packages.Package, f *ast.File, jumps map[string]asmJump) []embe
 			}
 			body = fmt.Sprintf(" { %s, %s, _ = %s; return }", rn[0], rn[1], call)
 		}
-		out = append(out, embedEditAt{p.Fset.Position(fd.End()).Offset, body})
+		out = append(out, embedEditAt{pos: p.Fset.Position(fd.End()).Offset, text: body})
 	}
 	return out
 }
