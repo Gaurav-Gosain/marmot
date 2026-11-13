@@ -97,6 +97,9 @@ func Main(args []string, version string) int {
 			defer pprof.StopCPUProfile()
 		}
 	}
+	if *cf.Watch {
+		return Watch(opts, rep, *cf.Details)
+	}
 	start := time.Now()
 	res, err := Run(opts)
 	if p := os.Getenv("MARMOT_CHECK_MEMPROFILE"); p != "" {

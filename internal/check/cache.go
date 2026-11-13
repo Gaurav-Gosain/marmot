@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -17,14 +18,28 @@ type store struct {
 	dir string
 }
 
+var (
+	storesMu sync.Mutex
+	stores   = map[string]*store{}
+)
+
+// openStore returns the store in dir, one per directory for the process
+// (marmot check -watch runs many times and keeps its stat cache).
 func openStore(dir string) *store {
 	if dir == "" {
 		return nil
 	}
+	storesMu.Lock()
+	defer storesMu.Unlock()
+	if s := stores[dir]; s != nil {
+		return s
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil
 	}
-	return &store{dir: dir}
+	s := &store{dir: dir}
+	stores[dir] = s
+	return s
 }
 
 func (s *store) path(key string) string {

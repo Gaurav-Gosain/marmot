@@ -447,3 +447,19 @@ func TestRunMemo(t *testing.T) {
 		t.Errorf("after an edit: %v", findings(c))
 	}
 }
+
+func TestWatchDiff(t *testing.T) {
+	d := func(file, msg string, line int) diag.Diagnostic {
+		return diag.Diagnostic{Check: "lint", Analyzer: "x", Message: msg, Span: diag.Span{File: file, Line: line}}
+	}
+	prev := findingSet(&Result{Checks: []*CheckResult{{Findings: []diag.Diagnostic{d("a.go", "one", 3), d("a.go", "two", 9), d("b.go", "one", 1)}}}})
+	// An edit above moved "two"; "one" in a.go was fixed; b.go got a second "one".
+	cur := findingSet(&Result{Checks: []*CheckResult{{Findings: []diag.Diagnostic{d("a.go", "two", 10), d("b.go", "one", 1), d("b.go", "one", 7)}}}})
+	added, gone := diffFindings(prev, cur)
+	if len(added) != 1 || added[0].Span.File != "b.go" || added[0].Span.Line != 7 {
+		t.Errorf("added %+v", added)
+	}
+	if len(gone) != 1 || gone[0].Span.File != "a.go" || gone[0].Message != "one" {
+		t.Errorf("gone %+v", gone)
+	}
+}
