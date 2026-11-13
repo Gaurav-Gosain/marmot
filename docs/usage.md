@@ -129,6 +129,7 @@ change the cap.
 | `MARMOT_OUTPUT` | Diagnostic output: `json`, `human` or `plain`. See below. |
 | `NO_COLOR` | Turn off color in human output. |
 | `MARMOT_TIER0=0` | Dev builds use LLVM instead of the fast code generator (the default). Slower builds, faster code. |
+| `MARMOT_TIER1=0` | Turn off background tier 1: after a dev build returns, the packages it compiled are compiled again with LLVM at -O2 on idle cores, and later builds link those objects. |
 
 ## Tests, benchmarks and profiles
 

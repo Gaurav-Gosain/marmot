@@ -16,8 +16,9 @@ import (
 // build's, so an object only serves builds made with those options.
 
 // tier1Default is whether dev builds use background tier 1 when
-// MARMOT_TIER1 is not set. Off until it passes the conformance gate.
-const tier1Default = false
+// MARMOT_TIER1 is not set. MARMOT_TIER1=0 turns it off; the conformance,
+// fuzz and bench harnesses set that.
+const tier1Default = true
 
 // tier1 reports whether this build spools its modules for background
 // tier 1 and links the objects tier 1 made: tier0 builds with a cache.

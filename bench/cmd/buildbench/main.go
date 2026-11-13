@@ -239,6 +239,7 @@ func (e env) environ(tc string) []string {
 	if strings.HasPrefix(tc, "marmot") {
 		// No job caps and no slots for the measured command only.
 		v = append(v, "MARMOT_ROOT="+e.mroot, "MARMOT_SLOTS=0", "MARMOT_CACHE_MAX_MB=4096")
+		v = append(v, tier1Off()...)
 		v = filterOut(v, "MARMOT_MAX_JOBS", "MARMOT_BACKEND_FLAGS", "MARMOT_SPEC")
 	}
 	return v
@@ -875,4 +876,13 @@ func check(err error) {
 		fmt.Fprintln(os.Stderr, "buildbench:", err)
 		os.Exit(1)
 	}
+}
+
+// tier1Off keeps background tier 1 out of the runs (it would compete for
+// cores with the builds being measured) unless MARMOT_TIER1 is set.
+func tier1Off() []string {
+	if os.Getenv("MARMOT_TIER1") != "" {
+		return nil
+	}
+	return []string{"MARMOT_TIER1=0"}
 }

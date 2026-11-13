@@ -373,7 +373,7 @@ func measure(p Program, t Toolchain) Result {
 	check(os.MkdirAll(dir, 0o755))
 	out := filepath.Join(dir, p.Name)
 	os.Remove(out)
-	env := append(append(os.Environ(), "GOCACHE="+gocacheDir(), "MARMOT_MAX_JOBS=2", "MARMOT_CACHE_MAX_MB=512"), t.Env...)
+	env := append(append(os.Environ(), "GOCACHE="+gocacheDir(), "MARMOT_MAX_JOBS=2", "MARMOT_CACHE_MAX_MB=512"), append(tier1Off(), t.Env...)...)
 
 	if *sizeOnly {
 		c := exec.Command(t.Build(root, p.Pkg, out, len(t.Env) > 0)[0], t.Build(root, p.Pkg, out, len(t.Env) > 0)[1:]...)
@@ -959,4 +959,13 @@ func fileSHA(path string) string {
 		return ""
 	}
 	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+// tier1Off keeps background tier 1 out of the runs (it would compete for
+// cores with the builds being measured) unless MARMOT_TIER1 is set.
+func tier1Off() []string {
+	if os.Getenv("MARMOT_TIER1") != "" {
+		return nil
+	}
+	return []string{"MARMOT_TIER1=0"}
 }

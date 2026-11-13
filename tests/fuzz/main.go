@@ -397,7 +397,7 @@ func (rn *runner) check(src string) string {
 		args = append(args, "-O", *flO)
 	}
 	args = append(args, file)
-	b, why := sh(2*time.Minute, rn.root, append([]string{"MARMOT_ROOT=" + rn.mroot, "MARMOT_CACHE_MAX_MB=512"}, stressEnv()...), rn.marmot, args...)
+	b, why := sh(2*time.Minute, rn.root, append(append([]string{"MARMOT_ROOT=" + rn.mroot, "MARMOT_CACHE_MAX_MB=512"}, tier1Off()...), stressEnv()...), rn.marmot, args...)
 	if why != "" || b.code != 0 {
 		return "compile error: " + firstLine(b.stdout+b.stderr+why)
 	}
@@ -535,4 +535,13 @@ func stressEnv() []string {
 		return []string{"MARMOT_GCSTRESS=1"}
 	}
 	return nil
+}
+
+// tier1Off keeps background tier 1 out of the runs (it would compete for
+// cores with the builds being measured) unless MARMOT_TIER1 is set.
+func tier1Off() []string {
+	if os.Getenv("MARMOT_TIER1") != "" {
+		return nil
+	}
+	return []string{"MARMOT_TIER1=0"}
 }

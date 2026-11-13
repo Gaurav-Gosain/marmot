@@ -428,7 +428,7 @@ func runOne(root, testsDir, work, marmot, name string, cfg config) result {
 	if strings.HasPrefix(name, "world/") {
 		bto *= 5 // real modules can take minutes to compile on a cold object cache
 	}
-	bo, err := execute(bto, buildDir(root, srcDir, name), append([]string{"MARMOT_ROOT=" + root, "MARMOT_CACHE_MAX_MB=512"}, cfg.env...), marmot, args...)
+	bo, err := execute(bto, buildDir(root, srcDir, name), append(append([]string{"MARMOT_ROOT=" + root, "MARMOT_CACHE_MAX_MB=512"}, tier1Off()...), cfg.env...), marmot, args...)
 	if err != nil {
 		r.Reason, r.Detail = "compile error", err.Error()
 		return r
@@ -748,4 +748,13 @@ func buildDir(root, srcDir, name string) string {
 		return srcDir
 	}
 	return root
+}
+
+// tier1Off keeps background tier 1 out of the runs (it would compete for
+// cores with the builds being measured) unless MARMOT_TIER1 is set.
+func tier1Off() []string {
+	if os.Getenv("MARMOT_TIER1") != "" {
+		return nil
+	}
+	return []string{"MARMOT_TIER1=0"}
 }

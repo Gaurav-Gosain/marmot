@@ -34,7 +34,9 @@ Details and method in [docs/benchmarks.md](docs/benchmarks.md).
 | rebuild, nothing changed | 0.04 s | 0.12 s |
 | rebuild after a one line edit | 0.33 to 0.62 s | 0.32 to 0.75 s |
 
-Dev builds use a fast code generator by default (`MARMOT_TIER0=0` turns it off). Rebuilds use
+Dev builds use a fast code generator by default (`MARMOT_TIER0=0` turns it off). After a dev build returns, the packages it
+compiled are compiled again with LLVM at low priority, and later builds link the optimized
+objects (`MARMOT_TIER1=0` turns it off). Rebuilds use
 the incremental front end, which compiles only changed packages and their importers
 (`MARMOT_INCREMENTAL=0` turns it off).
 
