@@ -532,7 +532,9 @@ func TestWrapWords(t *testing.T) {
 
 func TestFindingLineGolden(t *testing.T) {
 	dir := "/m"
-	at := func(file string, line, col int) diag.Span { return diag.Span{File: dir + "/" + file, Line: line, Col: col} }
+	at := func(file string, line, col int) diag.Span {
+		return diag.Span{File: dir + "/" + file, Line: line, Col: col}
+	}
 	for _, c := range []struct {
 		d    diag.Diagnostic
 		want string
@@ -556,5 +558,28 @@ func TestFindingLineGolden(t *testing.T) {
 	d := fmtDiag("/m/main.go", []byte("package main\nfunc f(){}\n"), []byte("package main\n\nfunc f() {}\n"))
 	if got := findingLine(dir, &d); strings.Count(got, "(gofmt)") != 1 {
 		t.Errorf("fmt finding names its formatter %d times: %s", strings.Count(got, "(gofmt)"), got)
+	}
+}
+
+func TestFmtIgnoredDir(t *testing.T) {
+	t.Setenv("GOWORK", "off")
+	repo := t.TempDir()
+	if d, err := filepath.EvalSymlinks(repo); err == nil {
+		repo = d
+	}
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	os.WriteFile(filepath.Join(repo, ".gitignore"), []byte("scratch/\n"), 0o644)
+	dir := filepath.Join(repo, "scratch")
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/s\n\ngo 1.26\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc main(){}\n"), 0o644)
+	r, err := Run(Options{Dir: dir, Only: []string{"fmt"}, CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(r.Checks[0].Findings); n != 1 {
+		t.Errorf("fmt in a directory git ignores: %d findings, want 1", n)
 	}
 }

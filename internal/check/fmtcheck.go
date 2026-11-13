@@ -164,7 +164,9 @@ func goFiles(sc *scope) []string {
 				add(p)
 			}
 		}
-	} else {
+	}
+	// Outside git, or in a directory git ignores or has never seen: walk it.
+	if len(out) == 0 {
 		// The callback skips what it cannot read, so the walk cannot fail.
 		_ = filepath.WalkDir(sc.dir, func(p string, d os.DirEntry, err error) error {
 			if err != nil {
