@@ -1,4 +1,5 @@
-error[M0014]: cannot use Square{…} (value of struct type Square) as Shape value in argument to describe: Square does not implement Shape (method Area has pointer receiver)
+error[M0014]: cannot use Square{…} (value of struct type Square) as Shape value in argument to
+              describe: Square does not implement Shape (method Area has pointer receiver)
   --> ./main.go:26:11
    |
  5 | type Shape interface {
@@ -18,7 +19,8 @@ error[M0014]: cannot use Square{…} (value of struct type Square) as Shape valu
              `Perimeter() float64` is missing; `Square` has `Perimter`
              `Name() string` is missing
 
-error[M0014]: cannot use Circle{} (value of struct type Circle) as Shape value in variable declaration: Circle does not implement Shape (wrong type for method Area)
+error[M0014]: cannot use Circle{} (value of struct type Circle) as Shape value in variable
+              declaration: Circle does not implement Shape (wrong type for method Area)
   --> ./main.go:27:16
    |
  5 | type Shape interface {

@@ -272,7 +272,7 @@ func Finish(ds []Diagnostic, src *Sources, opt Options) []Diagnostic {
 	if opt.Rendered {
 		for i := range ds {
 			var b strings.Builder
-			h := &Human{W: &b, Style: Plain, Dir: opt.Dir, Sources: src}
+			h := &Human{W: &b, Style: Plain, Dir: opt.Dir, Sources: src, Width: -1} // JSON: unwrapped
 			h.one(&ds[i])
 			ds[i].Rendered = b.String()
 		}

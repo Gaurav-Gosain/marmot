@@ -1,4 +1,5 @@
-[1;31merror[M0014][0m: [1mcannot use Square{…} (value of struct type Square) as Shape value in argument to describe: Square does not implement Shape (method Area has pointer receiver)[0m
+[1;31merror[M0014][0m: [1mcannot use Square{…} (value of struct type Square) as Shape value in argument to[0m
+              [1mdescribe: Square does not implement Shape (method Area has pointer receiver)[0m
   [1;34m-->[0m ./main.go:26:11
    [1;34m|[0m
 [1;34m 5 |[0m [35mtype[0m Shape [35minterface[0m {
@@ -18,7 +19,8 @@
              `Perimeter() float64` is missing; `Square` has `Perimter`
              `Name() string` is missing
 
-[1;31merror[M0014][0m: [1mcannot use Circle{} (value of struct type Circle) as Shape value in variable declaration: Circle does not implement Shape (wrong type for method Area)[0m
+[1;31merror[M0014][0m: [1mcannot use Circle{} (value of struct type Circle) as Shape value in variable[0m
+              [1mdeclaration: Circle does not implement Shape (wrong type for method Area)[0m
   [1;34m-->[0m ./main.go:27:16
    [1;34m|[0m
 [1;34m 5 |[0m [35mtype[0m Shape [35minterface[0m {

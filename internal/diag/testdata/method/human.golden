@@ -32,7 +32,9 @@ error[M0003]: b.WriteStrin undefined (type strings.Builder has no field or metho
 19 |     b.WriteStrin("x")
    |       ^^^^^^^^^^ `strings.Builder` has no field or method `WriteStrin`
    |
-   = note: methods of `strings.Builder`: `(*Builder) Cap`, `(*Builder) Grow`, `(*Builder) Len`, `(*Builder) Reset`, `(*Builder) String`, `(*Builder) Write`, `(*Builder) WriteByte`, `(*Builder) WriteRune`, `(*Builder) WriteString`
+   = note: methods of `strings.Builder`: `(*Builder) Cap`, `(*Builder) Grow`, `(*Builder) Len`,
+           `(*Builder) Reset`, `(*Builder) String`, `(*Builder) Write`, `(*Builder) WriteByte`,
+           `(*Builder) WriteRune`, `(*Builder) WriteString`
 help: use `WriteString` (check it)
    |
 19 -     b.WriteStrin("x")

@@ -43,6 +43,9 @@ type Human struct {
 	Max     int    // at most this many errors are shown (0: 10)
 	Summary string // the summary verb, "build failed with" when empty
 	Sources *Sources
+	// Width is the column count prose wraps to (TermWidth): 0 means
+	// maxWidth, a negative value no wrapping.
+	Width int
 }
 
 const tabWidth = 4
@@ -176,7 +179,9 @@ func (h *Human) one(d *Diagnostic) {
 	if d.Code != "" && d.Code != CodeOther {
 		code = "[" + d.Code + "]"
 	}
-	fmt.Fprintf(h.W, "%s%s%s%s: %s%s%s\n", h.sevColor(d.Severity), d.Severity, code, st.Reset, st.Bold, d.Message, st.Reset)
+	head := string(d.Severity) + code + ": "
+	h.emit(h.sevColor(d.Severity)+string(d.Severity)+code+st.Reset+": ", visible(head),
+		strings.Repeat(" ", visible(head)), d.Message, st.Bold, st.Reset)
 	f := (*srcFile)(nil)
 	if d.Span.Valid() {
 		fmt.Fprintf(h.W, "%s%s-->%s %s:%d:%d\n", pad, st.Gutter, st.Reset, RelPath(h.Dir, d.Span.File), d.Span.Line, max(d.Span.Col, 1))
@@ -190,33 +195,41 @@ func (h *Human) one(d *Diagnostic) {
 			gut()
 		}
 	}
+	// "= note: text": continuation lines start under the text.
+	tagged := func(tag, color, text string) {
+		cols := len(pad) + len(" = ") + len(tag) + 2
+		h.emit(fmt.Sprintf("%s %s=%s %s%s:%s ", pad, st.Gutter, st.Reset, color, tag, st.Reset), cols,
+			strings.Repeat(" ", cols), text, "", "")
+	}
 	for _, n := range d.Notes {
 		if strings.HasPrefix(n, "  ") {
 			// Continuation of the note above (a list).
-			fmt.Fprintf(h.W, "%s         %s\n", pad, n)
+			body := strings.TrimLeft(n, " ")
+			lead := pad + "         " + n[:len(n)-len(body)]
+			h.emit(lead, len(lead), strings.Repeat(" ", len(lead)+2), body, "", "")
 			continue
 		}
-		fmt.Fprintf(h.W, "%s %s=%s %snote:%s %s\n", pad, st.Gutter, st.Reset, st.Bold, st.Reset, n)
+		tagged("note", st.Bold, n)
 	}
 	for _, r := range d.Related {
-		fmt.Fprintf(h.W, "%s %s=%s %snote:%s %s at %s:%d\n", pad, st.Gutter, st.Reset, st.Bold, st.Reset, r.Message, RelPath(h.Dir, r.Span.File), r.Span.Line)
+		tagged("note", st.Bold, fmt.Sprintf("%s at %s:%d", r.Message, RelPath(h.Dir, r.Span.File), r.Span.Line))
 	}
 	for _, x := range d.Help {
-		fmt.Fprintf(h.W, "%s %s=%s %shelp:%s %s\n", pad, st.Gutter, st.Reset, st.Help, st.Reset, x)
+		tagged("help", st.Help, x)
 	}
 	if d.Bundle != "" {
-		fmt.Fprintf(h.W, "%s %s=%s %snote:%s report bundle: %s\n", pad, st.Gutter, st.Reset, st.Bold, st.Reset, d.Bundle)
+		tagged("note", st.Bold, "report bundle: "+d.Bundle)
 	}
 	if d.Check != "" {
 		by := "`" + d.Check + "`"
 		if d.Analyzer != "" {
 			by += ", analyzer `" + d.Analyzer + "`"
 		}
-		fmt.Fprintf(h.W, "%s %s=%s %snote:%s reported by check %s\n", pad, st.Gutter, st.Reset, st.Bold, st.Reset, by)
+		tagged("note", st.Bold, "reported by check "+by)
 	}
 	if d.FullMessage != "" {
 		if p := writeFullMessage(d.FullMessage); p != "" {
-			fmt.Fprintf(h.W, "%s %s=%s %snote:%s the full message, with the long type names, is in %s\n", pad, st.Gutter, st.Reset, st.Bold, st.Reset, p)
+			tagged("note", st.Bold, "the full message, with the long type names, is in "+p)
 		}
 	}
 	for _, fx := range d.Fixes {
@@ -330,15 +343,20 @@ func (h *Human) snippet(f *srcFile, d *Diagnostic) {
 		}
 		sort.SliceStable(texted, func(i, j int) bool { return texted[i].vs < texted[j].vs })
 		out := row.render(st.Reset)
-		if n := len(texted); n > 0 && texted[n-1].vs >= maxStart(ds, texted[n-1]) {
-			out += " " + texted[n-1].col + texted[n-1].text + st.Reset
-			texted = texted[:n-1]
-		}
-		if strings.TrimSpace(out) == "" && len(texted) == 0 {
-			continue
-		}
 		gut := fmt.Sprintf("%s %s|%s ", strings.Repeat(" ", w), st.Gutter, st.Reset)
-		fmt.Fprintln(h.W, gut+out)
+		gcols := w + 3
+		if n := len(texted); n > 0 && texted[n-1].vs >= maxStart(ds, texted[n-1]) {
+			// The label after the carets: continuation lines start under it.
+			t := texted[n-1]
+			texted = texted[:n-1]
+			cols := gcols + row.len() + 1
+			h.emit(gut+out+" ", cols, gut+strings.Repeat(" ", row.len()+1), t.text, t.col, st.Reset)
+		} else {
+			if strings.TrimSpace(out) == "" && len(texted) == 0 {
+				continue
+			}
+			fmt.Fprintln(h.W, gut+out)
+		}
 		if len(texted) > 0 {
 			conn := newRow(width)
 			for _, x := range texted {
@@ -350,7 +368,8 @@ func (h *Human) snippet(f *srcFile, d *Diagnostic) {
 				for _, x := range texted[:k] {
 					r.fill(x.vs, x.vs+1, '|', x.col)
 				}
-				fmt.Fprintln(h.W, gut+r.render(st.Reset)+strings.Repeat(" ", max(0, t.vs-r.len()))+t.col+t.text+st.Reset)
+				lead := gut + r.render(st.Reset) + strings.Repeat(" ", max(0, t.vs-r.len()))
+				h.emit(lead, gcols+max(t.vs, r.len()), lead, t.text, t.col, st.Reset)
 			}
 		}
 	}

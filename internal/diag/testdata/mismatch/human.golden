@@ -21,7 +21,8 @@ error[M0006]: cannot use n (variable of type int) as string value in variable de
 9 |     var name string = n
   |                       ^ expected `string`, found `int`
   |
-  = help: to format a number as text, use `strconv.Itoa(n)` (`string(n)` gives the character with that code point)
+  = help: to format a number as text, use `strconv.Itoa(n)` (`string(n)` gives the character with
+          that code point)
 
 error: build failed with 2 errors
 for more about an error, run `marmot explain M0006`

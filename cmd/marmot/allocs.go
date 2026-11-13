@@ -128,7 +128,7 @@ func showAllocs(rep *diag.Reporter, path string, all bool) {
 		if rep.Color {
 			st = diag.Colors
 		}
-		h := &diag.Human{W: rep.W, Style: st, Dir: rep.Dir, Sources: diag.NewSources()}
+		h := &diag.Human{W: rep.W, Style: st, Dir: rep.Dir, Sources: diag.NewSources(), Width: diag.WidthOf(rep.W)}
 		for i := range ds {
 			if i > 0 {
 				fmt.Fprintln(rep.W)

@@ -50,7 +50,7 @@ func (r *Reporter) Fail(err error) int {
 		if r.Color {
 			st = Colors
 		}
-		h := &Human{W: r.W, Style: st, Dir: r.Dir}
+		h := &Human{W: r.W, Style: st, Dir: r.Dir, Width: WidthOf(r.W)}
 		h.Render(ds)
 	case ModeJSON:
 		ds := r.Diagnose(err)

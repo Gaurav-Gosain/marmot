@@ -559,6 +559,6 @@ func (s *replSession) highlight(line string) string {
 	if !s.colors {
 		return line
 	}
-	h := &diag.Human{Style: diag.Colors}
+	h := &diag.Human{Style: diag.Colors, Width: diag.TermWidth(os.Stdout)}
 	return h.Highlight(line)
 }

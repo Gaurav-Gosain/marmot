@@ -21,7 +21,8 @@
 [1;34m9 |[0m     [35mvar[0m name string = n
   [1;34m|[0m                       [1;31m^[0m [1;31mexpected `string`, found `int`[0m
   [1;34m|[0m
-  [1;34m=[0m [1;32mhelp:[0m to format a number as text, use `strconv.Itoa(n)` (`string(n)` gives the character with that code point)
+  [1;34m=[0m [1;32mhelp:[0m to format a number as text, use `strconv.Itoa(n)` (`string(n)` gives the character with
+          that code point)
 
 [1;31merror: build failed with 2 errors[0m
 [2mfor more about an error, run `marmot explain M0006`[0m

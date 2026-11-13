@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,5 +124,56 @@ func checkSchema(t *testing.T, js string) {
 				}
 			}
 		}
+	}
+}
+
+// TestWrapWidths renders cases with long messages, notes, help and labels
+// at terminal widths 60, 80 and 120 (wrapping caps at 100).
+func TestWrapWidths(t *testing.T) {
+	goroot := testGOROOT(t)
+	var ds []Diagnostic
+	dirs := map[string]string{}
+	for _, name := range []string{"iface", "method", "mismatch"} {
+		dir, _ := filepath.Abs(filepath.Join("testdata", name))
+		text, err := os.ReadFile(filepath.Join(dir, "err.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := NewSources()
+		src.GOROOT = goroot
+		got := Process(string(text), src, Options{Dir: dir})
+		for i := range got {
+			dirs[got[i].Span.File] = dir
+		}
+		ds = append(ds, got...)
+	}
+	// A long label under the carets, and one that hangs below another.
+	mm, _ := filepath.Abs("testdata/mismatch/main.go")
+	ds = append(ds, Diagnostic{Kind: "diagnostic", Severity: Error, Code: "M0006",
+		Message: "a synthetic error with a long label to show how labels wrap",
+		Span:    Span{File: mm, Line: 9, Col: 20, EndLine: 9, EndCol: 21},
+		Primary: "this label is long enough that it has to wrap at the narrower widths, and `a code span stays whole`",
+		Labels: []Label{{Span: Span{File: mm, Line: 9, Col: 6, EndLine: 9, EndCol: 10},
+			Text: "and a second label, also long, that hangs below the first one and wraps as well"}}})
+	for _, w := range []int{60, 80, 120} {
+		t.Run(fmt.Sprint(w), func(t *testing.T) {
+			var b bytes.Buffer
+			src := NewSources()
+			src.GOROOT = goroot
+			h := &Human{W: &b, Style: Plain, Sources: src, Width: w, Max: 100}
+			for i := range ds {
+				h.Dir = dirs[ds[i].Span.File]
+				h.RenderOne(&ds[i])
+			}
+			out := b.String()
+			for _, l := range strings.Split(out, "\n") {
+				if n := visible(l); n > min(w, maxWidth) && !strings.Contains(l, " | ") && !strings.Contains(l, "-->") {
+					// Source lines and paths are not wrapped; everything else is.
+					t.Errorf("line of %d columns at width %d: %q", n, w, l)
+				}
+			}
+			dir, _ := filepath.Abs("testdata")
+			check(t, filepath.Join("testdata", fmt.Sprintf("wrap%d.golden", w)), strings.ReplaceAll(out, dir, "$DIR"))
+		})
 	}
 }

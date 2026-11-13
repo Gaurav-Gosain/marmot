@@ -1,0 +1,107 @@
+error[M0014]: cannot use Square{…} (value of struct type Square) as Shape value in argument to
+              describe: Square does not implement Shape (method Area has pointer receiver)
+  --> ./main.go:26:11
+   |
+ 5 | type Shape interface {
+   |      ----- `Shape` is declared here
+ ...
+13 | func (s *Square) Area() float64 { return s.side * s.side }
+   |         ------- `Area` has a pointer receiver
+ ...
+15 | func (s Square) Perimter() float64 { return 4 * s.side }
+   |                 -------- `Perimter` is declared here; `Shape` needs `Perimeter`
+ ...
+26 |     describe(Square{side: 2})
+   |              ^^^^^^^^^^^^^^^ `Square` does not implement `Shape`
+   |
+   = note: `Square` lacks 3 methods of `Shape`:
+             `Area` has a pointer receiver, so only `*Square` has it
+             `Perimeter() float64` is missing; `Square` has `Perimter`
+             `Name() string` is missing
+error[M0014]: cannot use Circle{} (value of struct type Circle) as Shape value in variable
+              declaration: Circle does not implement Shape (wrong type for method Area)
+  --> ./main.go:27:16
+   |
+ 5 | type Shape interface {
+   |      ----- `Shape` is declared here
+ ...
+19 | func (c Circle) Area() int          { return 0 }
+   |                 ---- `Area` has the wrong type
+ ...
+27 |     var s Shape = Circle{}
+   |                   ^^^^^^^^ `Circle` does not implement `Shape`
+   |
+   = note: `Circle` lacks 1 method of `Shape`:
+             `Area` has type `func() int`, `Shape` needs `func() float64`
+error[M0003]: c.Incremnt undefined (type Counter has no field or method Incremnt)
+  --> ./main.go:16:4
+   |
+16 |     c.Incremnt()
+   |       ^^^^^^^^ `Counter` has no field or method `Incremnt`
+   |
+   = note: fields of `Counter`: `n`, `label`
+   = note: methods of `Counter`: `(*Counter) Increment`, `(Counter) Value`
+help: use `Increment` (check it)
+   |
+16 -     c.Incremnt()
+16 +     c.Increment()
+   |
+error[M0003]: c.Lable undefined (type Counter has no field or method Lable)
+  --> ./main.go:17:4
+   |
+17 |     c.Lable = "x"
+   |       ^^^^^ `Counter` has no field or method `Lable`
+   |
+   = note: fields of `Counter`: `n`, `label`
+   = note: methods of `Counter`: `(*Counter) Increment`, `(Counter) Value`
+help: use `label` (check it)
+   |
+17 -     c.Lable = "x"
+17 +     c.label = "x"
+   |
+error[M0003]: b.WriteStrin undefined (type strings.Builder has no field or method WriteStrin)
+  --> ./main.go:19:4
+   |
+19 |     b.WriteStrin("x")
+   |       ^^^^^^^^^^ `strings.Builder` has no field or method `WriteStrin`
+   |
+   = note: methods of `strings.Builder`: `(*Builder) Cap`, `(*Builder) Grow`, `(*Builder) Len`,
+           `(*Builder) Reset`, `(*Builder) String`, `(*Builder) Write`, `(*Builder) WriteByte`,
+           `(*Builder) WriteRune`, `(*Builder) WriteString`
+help: use `WriteString` (check it)
+   |
+19 -     b.WriteStrin("x")
+19 +     b.WriteString("x")
+   |
+error[M0007]: invalid operation: n + f (mismatched types int and float64)
+ --> ./main.go:8:13
+  |
+6 |     n := 3
+  |     - `n` is `int` from here
+7 |     f := 1.5
+  |     - `f` is `float64` from here
+8 |     total := n + f
+  |              - ^ - `float64`
+  |              |
+  |              `int`
+  |
+  = help: convert one operand, for example `float64(n) + f`
+error[M0006]: cannot use n (variable of type int) as string value in variable declaration
+ --> ./main.go:9:20
+  |
+6 |     n := 3
+  |     - `n` is declared here as `int`
+...
+9 |     var name string = n
+  |                       ^ expected `string`, found `int`
+  |
+  = help: to format a number as text, use `strconv.Itoa(n)` (`string(n)` gives the character with
+          that code point)
+error[M0006]: a synthetic error with a long label to show how labels wrap
+ --> ./main.go:9:20
+  |
+9 |     var name string = n
+  |         ----          ^ this label is long enough that it has to wrap at the narrower widths,
+  |                         and `a code span stays whole`
+  |         |
+  |         and a second label, also long, that hangs below the first one and wraps as well

@@ -44,7 +44,7 @@ func runTestHuman(rep *diag.Reporter, cmd *exec.Cmd, pkg string, start time.Time
 	}
 	w := os.Stdout
 	ds := diag.Finish(diag.TestDiagnostics(results), diag.NewSources(), diag.Options{Dir: rep.Dir})
-	h := &diag.Human{W: w, Style: st, Dir: rep.Dir, Max: 1 << 30}
+	h := &diag.Human{W: w, Style: st, Dir: rep.Dir, Max: 1 << 30, Width: diag.WidthOf(w)}
 	byName := map[string]diag.TestResult{}
 	for _, t := range results {
 		byName[t.Name] = t
