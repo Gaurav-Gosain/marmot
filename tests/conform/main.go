@@ -271,6 +271,10 @@ func discover(testsDir, dir string, filter *regexp.Regexp) []string {
 				fmt.Printf("skip %s: its modules are not in the module cache and cannot be downloaded (offline?)\n", rel)
 				continue
 			}
+			if missing := missingRequirement(filepath.Join(testsDir, rel)); missing != "" {
+				fmt.Printf("skip %s: needs %s\n", rel, missing)
+				continue
+			}
 			out = append(out, rel)
 		}
 	}
@@ -766,6 +770,27 @@ func modulesAvailable(dir string) bool {
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod")
 	return cmd.Run() == nil
+}
+
+// missingRequirement runs the commands of a world test's "requires" file
+// (one per line, # comments) and returns the first that fails, or "". A
+// test that binds a C library names it there: pkg-config --exists raylib.
+func missingRequirement(dir string) string {
+	data, err := os.ReadFile(filepath.Join(dir, "requires"))
+	if err != nil {
+		return ""
+	}
+	for _, l := range strings.Split(string(data), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		f := strings.Fields(l)
+		if exec.Command(f[0], f[1:]...).Run() != nil {
+			return l
+		}
+	}
+	return ""
 }
 
 // refEnv is the environment of the stock Go build of a test.

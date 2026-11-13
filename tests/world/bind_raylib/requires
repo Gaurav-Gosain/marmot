@@ -1,0 +1,3 @@
+# raylib 6.2 with its pkg-config file (on the Linux host: the raylib package; on a Mac,
+# build it from the release source and set PKG_CONFIG_PATH).
+pkg-config --exists raylib

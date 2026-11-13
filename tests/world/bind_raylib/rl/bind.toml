@@ -1,0 +1,33 @@
+# raylib 6.2 bindings. Regenerate with: marmot bind -o rl/rl.go (from tests/world/bind_raylib)
+package = "rl"
+header = "raylib.h"
+pkg-config = "raylib"
+
+# raylib's text functions return its static buffer: copied, not freed.
+borrowed = ["GetTextBetween", "TextReplace", "TextReplaceBetween", "TextInsert",
+  "TextToUpper", "TextToLower", "TextToPascal", "TextToSnake", "TextToCamel"]
+
+
+[rename]                       # one-word C names, two Go words
+LIGHTGRAY = "LightGray"
+DARKGRAY = "DarkGray"
+SKYBLUE = "SkyBlue"
+DARKBLUE = "DarkBlue"
+DARKGREEN = "DarkGreen"
+DARKPURPLE = "DarkPurple"
+DARKBROWN = "DarkBrown"
+RAYWHITE = "RayWhite"
+
+[out]                          # int * parameters that are results
+GetCodepoint = ["codepointSize"]
+GetCodepointNext = ["codepointSize"]
+GetCodepointPrevious = ["codepointSize"]
+CodepointToUTF8 = ["utf8Size"]
+LoadImageAnim = ["frames"]
+
+[owned]                        # results the caller frees, and with what
+LoadFileText = "UnloadFileText"
+LoadUTF8 = "UnloadUTF8"
+TextReplaceAlloc = "MemFree"
+TextReplaceBetweenAlloc = "MemFree"
+TextInsertAlloc = "MemFree"
