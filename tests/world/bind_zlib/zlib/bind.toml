@@ -1,0 +1,18 @@
+# Regenerate with: marmot bind -o zlib/zlib.go (from tests/world/bind_zlib)
+package = "zlib"
+header = "zlib.h"
+ldflags = ["-lz"]
+prefixes = ["gz", "Z_", "z"]
+exclude = ["*_", "gzgetc_"]
+
+[types]
+gzFile = "File"
+z_stream = "Stream"
+
+[close]
+gzFile = "gzclose"
+
+[status]
+functions = ["gzclose", "gzflush", "gzsetparams", "deflate*", "inflate*", "compress*", "uncompress*"]
+ok = ["Z_OK", "Z_STREAM_END"]
+message = "zError"

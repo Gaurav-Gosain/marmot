@@ -1,0 +1,26 @@
+# Regenerate with: marmot bind -o sqlite3/sqlite3.go (from tests/world/bind_sqlite3)
+package = "sqlite3"
+header = "sqlite3.h"
+ldflags = ["-lsqlite3"]
+prefixes = ["sqlite3_", "SQLITE_"]
+include = ["sqlite3_open", "sqlite3_close", "sqlite3_exec", "sqlite3_prepare_v2", "sqlite3_step", "sqlite3_finalize",
+  "sqlite3_reset", "sqlite3_bind_int", "sqlite3_bind_int64", "sqlite3_bind_double", "sqlite3_bind_text",
+  "sqlite3_column_count", "sqlite3_column_int", "sqlite3_column_int64", "sqlite3_column_double", "sqlite3_column_text",
+  "sqlite3_column_name", "sqlite3_errmsg", "sqlite3_errstr", "sqlite3_libversion", "sqlite3_changes", "sqlite3_last_insert_rowid",
+  "SQLITE_*"]
+
+[types]
+sqlite3 = "DB"
+sqlite3_stmt = "Stmt"
+
+[close]
+sqlite3 = "sqlite3_close"
+sqlite3_stmt = "sqlite3_finalize"
+
+[status]
+functions = ["sqlite3_open", "sqlite3_close", "sqlite3_prepare_v2", "sqlite3_finalize", "sqlite3_reset", "sqlite3_bind_*"]
+ok = ["SQLITE_OK"]
+message = "sqlite3_errstr"
+
+[out]
+sqlite3_prepare_v2 = ["ppStmt", "pzTail"]
