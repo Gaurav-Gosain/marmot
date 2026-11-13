@@ -301,6 +301,7 @@ func generate(cfg Config, bp *build.Package, dir, importPath string, flags []str
 	if err := rewrite(tmp, bp, marks); err != nil {
 		return fmt.Errorf("cgo output of %s: %v", importPath, err)
 	}
+	fastLeaves(tmp, cfg.CC, append(append([]string{}, flags...), "-I", dir))
 	// Keep only what marmot compiles.
 	for _, f := range []string{"_cgo_defun.c", "_cgo_main.c", "_cgo_flags", "gccgo-stub"} {
 		_ = os.Remove(filepath.Join(tmp, f)) // unused cgo output; a leftover only costs disk

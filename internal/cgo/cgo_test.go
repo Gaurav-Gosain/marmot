@@ -50,6 +50,13 @@ func TestPrepare(t *testing.T) {
 			t.Errorf("p.cgo2.c lacks %q", want)
 		}
 	}
+	// add is a leaf (fast path, found from the IR); nap calls usleep (bracketed).
+	for name, want := range map[string]string{"add": "rt_cgo_enter_fast();", "nap": "rt_cgo_enter();"} {
+		i := strings.Index(string(c), "_Cfunc_"+name+"(")
+		if i < 0 || !strings.Contains(string(c[i:min(len(c), i+300)]), want) {
+			t.Errorf("wrapper of %s does not use %s", name, want)
+		}
+	}
 	if strings.Contains(string(gotypes), "syscall.Cgocall") || strings.Contains(string(gotypes), "//extern") {
 		t.Errorf("gccgo calls left in _cgo_gotypes.go")
 	}

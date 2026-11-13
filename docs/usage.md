@@ -226,8 +226,9 @@ extend it). The package's `.c`, `.s` and `.S` files are compiled with clang and 
 A call to C is a direct native call on the goroutine's own stack, with no argument copying
 and no stack switch. While a C function runs, its goroutine gives up its processor, so a C
 call that blocks does not hold up other goroutines. C functions that are known to return
-quickly skip that step: functions of the C library such as `strlen`, `memcpy` and the
-`math.h` functions, and functions marked with both `#cgo noescape` and `#cgo nocallback`
+quickly skip that step: functions that call no other function (found when the package is
+compiled), functions of the C library such as `strlen`, `memcpy` and the `math.h` functions,
+and functions marked with both `#cgo noescape` and `#cgo nocallback`
 (marmot reads these two together as "short and does not block"; do not mark a function that
 can sleep or wait). `marmot build -release` also compiles the C code to bitcode and
 optimizes it together with the Go code, so small C functions inline into their Go callers.
