@@ -78,3 +78,33 @@ func isGitRef(s string) bool {
 	}
 	return exec.Command("git", "rev-parse", "--verify", "-q", s+"^{commit}").Run() == nil
 }
+
+// Fix are the analyzer fix flags of marmot fix (run by marmot-check).
+type Fix struct {
+	JSON    *bool
+	Color   *string
+	Only    *string
+	All     *bool
+	Diff    *bool
+	Test    *bool
+	Upgrade *string
+	Tags    *string
+	Jobs    *int
+}
+
+// NewFix returns the flag set of marmot-check fix.
+func NewFix() (*flag.FlagSet, *Fix) {
+	fs := flag.NewFlagSet("fix", flag.ContinueOnError)
+	f := &Fix{
+		JSON:    fs.Bool("json", false, "machine readable output"),
+		Color:   fs.String("color", "auto", "color in human output: auto, always or never"),
+		Only:    fs.String("only", "", "apply the fixes of these checks, comma separated (default fmt,modernize)"),
+		All:     fs.Bool("all", false, "also apply fixes that may be incorrect (vet, lint, exhaustive)"),
+		Diff:    fs.Bool("diff", false, "print the changes as patches, change nothing"),
+		Test:    fs.Bool("test", false, "the tests of every changed package must still pass"),
+		Upgrade: fs.String("upgrade", "", "raise the go version of the modules (go1.N) and apply what it unlocks"),
+		Tags:    fs.String("tags", "", "comma separated build tags"),
+		Jobs:    fs.Int("j", 0, "parallel analysis jobs"),
+	}
+	return fs, f
+}

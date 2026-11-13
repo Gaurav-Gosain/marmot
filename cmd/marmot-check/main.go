@@ -21,6 +21,8 @@ func main() {
 	switch os.Args[1] {
 	case "check":
 		os.Exit(check.Main(os.Args[2:], version))
+	case "fix":
+		os.Exit(check.FixMain(os.Args[2:], version))
 	default:
 		fmt.Fprintf(os.Stderr, "marmot-check: unknown command %q\n", os.Args[1])
 		os.Exit(2)

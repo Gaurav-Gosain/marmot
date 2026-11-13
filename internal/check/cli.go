@@ -207,3 +207,79 @@ func findingLine(dir string, d *diag.Diagnostic) string {
 	}
 	return b.String()
 }
+
+// FixMain runs the analyzer fixes of marmot fix and returns the exit
+// status: 0 when the tree is clean or every fix applied, 1 when a fix had
+// to be rolled back.
+func FixMain(args []string, version string) int {
+	fs, ff := checkflags.NewFix()
+	fs.SetOutput(io.Discard)
+	err := fs.Parse(args)
+	rep := reporter("fix", *ff.JSON, *ff.Color, version)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fs.SetOutput(os.Stdout)
+			fs.PrintDefaults()
+			return 0
+		}
+		return rep.Usage(err.Error())
+	}
+	fo := FixOptions{Options: Options{Patterns: fs.Args(), Jobs: *ff.Jobs, CacheDir: checkCacheDir()}, All: *ff.All, Diff: *ff.Diff, Test: *ff.Test, Upgrade: *ff.Upgrade}
+	if *ff.Only != "" {
+		fo.Only = strings.Split(*ff.Only, ",")
+	}
+	if *ff.Tags != "" {
+		fo.Tags = strings.Split(*ff.Tags, ",")
+	}
+	start := time.Now()
+	res, err := Fix(fo)
+	if err != nil {
+		return rep.Usage("marmot fix: " + err.Error())
+	}
+	code := 0
+	if len(res.RolledBack) > 0 {
+		code = 1
+	}
+	if rep.Mode == diag.ModeJSON {
+		enc := json.NewEncoder(rep.W)
+		enc.SetEscapeHTML(false)
+		for _, a := range res.Applied {
+			enc.Encode(struct {
+				Kind string `json:"kind"`
+				Applied
+			}{"fix", a})
+		}
+		for _, a := range res.RolledBack {
+			enc.Encode(struct {
+				Kind string `json:"kind"`
+				Applied
+			}{"rolledBack", a})
+		}
+		if res.Diff != "" {
+			enc.Encode(map[string]string{"kind": "diff", "diff": res.Diff})
+		}
+		diag.WriteResult(rep.W, diag.Result{Command: "fix", OK: code == 0, Errors: len(res.RolledBack), DurationMs: time.Since(start).Milliseconds(), ExitCode: code})
+		return code
+	}
+	if res.Diff != "" {
+		fmt.Print(res.Diff)
+		return code
+	}
+	for _, n := range res.Notes {
+		fmt.Println(n)
+	}
+	wd, _ := os.Getwd()
+	for _, a := range res.Applied {
+		fmt.Printf("%s:%d: %s [%s %s]\n", diag.RelPath(wd, a.File), a.Line, a.Title, a.Check, a.Analyzer)
+	}
+	for _, a := range res.RolledBack {
+		fmt.Printf("%s:%d: rolled back, the package no longer type checked or its tests failed: %s [%s %s]\n", diag.RelPath(wd, a.File), a.Line, a.Title, a.Check, a.Analyzer)
+	}
+	switch {
+	case len(res.Applied) == 0 && len(res.RolledBack) == 0:
+		fmt.Println("nothing to fix")
+	default:
+		fmt.Printf("%d fixed in %d rounds, %d rolled back\n", len(res.Applied), res.Rounds, len(res.RolledBack))
+	}
+	return code
+}

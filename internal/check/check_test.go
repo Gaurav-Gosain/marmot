@@ -1,9 +1,12 @@
 package check
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -192,5 +195,80 @@ func TestVulnOffline(t *testing.T) {
 	}
 	if c := r.Checks[0]; c.Status != Skipped || !r.OK() {
 		t.Errorf("offline vuln: %s, ok %v", c.Status, r.OK())
+	}
+}
+
+// copyTree copies a test module into a temporary directory.
+func copyTree(t *testing.T, src string) string {
+	dst := t.TempDir()
+	err := filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		if d.IsDir() {
+			return os.MkdirAll(filepath.Join(dst, rel), 0o755)
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dst, rel), data, 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dst
+}
+
+func TestFix(t *testing.T) {
+	if testing.Short() {
+		t.Skip("loads the standard library")
+	}
+	t.Setenv("GOWORK", "off")
+	dir := copyTree(t, "testdata/mod")
+	os.Remove(filepath.Join(dir, "sub", "w_windows.go"))
+	cache := t.TempDir()
+	res, err := Fix(FixOptions{Options: Options{Dir: dir, CacheDir: cache}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, a := range res.Applied {
+		got = append(got, a.Check+" "+filepath.Base(a.File))
+	}
+	sort.Strings(got)
+	if want := []string{"fmt b.go", "modernize a.go"}; !slices.Equal(got, want) {
+		t.Errorf("applied %v, want %v", got, want)
+	}
+	if len(res.RolledBack) != 0 {
+		t.Errorf("rolled back %v", res.RolledBack)
+	}
+	a, _ := os.ReadFile(filepath.Join(dir, "a.go"))
+	if !strings.Contains(string(a), "for i := range n {") {
+		t.Errorf("a.go not modernized:\n%s", a)
+	}
+	// A second run finds nothing.
+	res, err = Fix(FixOptions{Options: Options{Dir: dir, CacheDir: cache}})
+	if err != nil || len(res.Applied) != 0 {
+		t.Errorf("second fix: %v %v", res.Applied, err)
+	}
+}
+
+func TestFixDiffChangesNothing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("loads the standard library")
+	}
+	t.Setenv("GOWORK", "off")
+	dir := copyTree(t, "testdata/mod")
+	os.Remove(filepath.Join(dir, "sub", "w_windows.go"))
+	before, _ := os.ReadFile(filepath.Join(dir, "a.go"))
+	res, err := Fix(FixOptions{Options: Options{Dir: dir, CacheDir: t.TempDir()}, Diff: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, "a.go"))
+	if !bytes.Equal(before, after) || !strings.Contains(res.Diff, "+\tfor i := range n {") {
+		t.Errorf("diff mode changed the file or printed no patch:\n%s", res.Diff)
 	}
 }

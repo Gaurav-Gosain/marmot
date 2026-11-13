@@ -131,6 +131,11 @@ func Run(opts Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The go command reports module directories with symbolic links
+	// resolved (on macOS /var is /private/var).
+	if d, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = d
+	}
 	sc, err := makeScope(dir, opts)
 	if err != nil {
 		return nil, err
