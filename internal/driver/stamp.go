@@ -106,17 +106,25 @@ func (b *build) saveStamp(stamp, out string) {
 	}
 }
 
+// copyExe copies an executable, as a clone where the file system has them
+// (a 43 MB copy took 11 to 15 ms of every build on macOS, a clone 0.2 ms).
 func copyExe(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
+	tmp := dst
+	if !strings.HasSuffix(dst, ".tmp") {
+		tmp = dst + ".marmot-tmp"
 	}
-	if strings.HasSuffix(dst, ".tmp") {
-		return os.WriteFile(dst, data, 0o755)
+	_ = os.Remove(tmp) // a leftover of a killed build; clonefile needs a new name
+	if cloneFile(src, tmp) != nil {
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(tmp, data, 0o755); err != nil {
+			return err
+		}
 	}
-	tmp := dst + ".marmot-tmp"
-	if err := os.WriteFile(tmp, data, 0o755); err != nil {
-		return err
+	if tmp == dst {
+		return nil
 	}
 	return os.Rename(tmp, dst)
 }
