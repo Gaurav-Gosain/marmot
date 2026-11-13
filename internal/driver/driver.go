@@ -630,6 +630,10 @@ func (b *build) link(objs []string, out string) error {
 		return fmt.Errorf("%s is missing; run make rtcore", rt)
 	}
 	if b.cross() {
+		if ok, err := b.linkCross(objs, rt, out); ok {
+			return err // an executable for the target, linked here
+		}
+		b.logf("cross build: a bundle to link on the target; for an executable here: %s", b.crossLinkNote())
 		return b.linkBundle(objs, rt, out)
 	}
 	if b.wantPcln() {

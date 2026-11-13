@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 
@@ -21,7 +20,12 @@ import (
 // fits in the segment's free tail). -s (Config.Strip) or MARMOT_STRIP=1 skips it.
 
 func (b *build) wantPcln() bool {
-	if b.cfg.Strip || os.Getenv("MARMOT_STRIP") != "" || os.Getenv("MARMOT_NO_LOCS") != "" || b.cfg.Emit != "exe" || b.cross() {
+	if b.cfg.Strip || os.Getenv("MARMOT_STRIP") != "" || os.Getenv("MARMOT_NO_LOCS") != "" || b.cfg.Emit != "exe" {
+		return false
+	}
+	// A cross build gets the table when it links here (linkCross), not
+	// when it writes a bundle to link on the target.
+	if b.cross() && (b.crossSysroot() == "" || ldLLD() == "") {
 		return false
 	}
 	return fileExists(b.pclnTool())
@@ -63,7 +67,7 @@ func (b *build) pclnFrags() bool {
 	if !b.wantPcln() || os.Getenv("MARMOT_PCLN_DSYM") != "" {
 		return false
 	}
-	return runtime.GOOS == "darwin" || b.tier0()
+	return b.goos == "darwin" || b.tier0() // the output's format: the target's
 }
 
 // tier0 reports whether the backend compiles with tier0 (-tier0): dev builds
@@ -109,7 +113,7 @@ func (b *build) pclnTool() string {
 // linkWithPcln links out with the table. link(args) runs the linker with
 // the given extra arguments and output.
 func (b *build) linkWithPcln(objs []string, link func(extra []string, out string) error, out string) error {
-	if b.pclnFrags() && runtime.GOOS != "darwin" {
+	if b.pclnFrags() && b.goos != "darwin" {
 		return b.linkWithFragsELF(objs, link, out)
 	}
 	if b.pclnFrags() {
@@ -120,7 +124,7 @@ func (b *build) linkWithPcln(objs []string, link func(extra []string, out string
 		b.logf("pcln: fragments: %v (dsymutil path)", err)
 	}
 	tmp := filepath.Join(b.work, "nopcln.exe")
-	if runtime.GOOS != "darwin" {
+	if b.goos != "darwin" {
 		// ELF: the DWARF is in the binary.
 		if err := link(nil, tmp); err != nil {
 			return err
