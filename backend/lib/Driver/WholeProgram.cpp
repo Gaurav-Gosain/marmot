@@ -1022,7 +1022,15 @@ bool compileTier0(const std::function<bool(WpoJob &)> &next, const CompileOption
       return;
     }
     auto tc = std::chrono::steady_clock::now();
-    if (!tier0::emit(module, key.substr(0, 16), out0, frag, fallback, reasons, st, err, *target)) {
+    // The functions on the threads other jobs leave (all of them in a leaf
+    // edit, where the main module is the only job: 46 ms serial on
+    // cmd/marmot's).
+    unsigned others = busy++;
+    unsigned cgThreads = unsigned(std::max(1, int(threads) - int(others)));
+    bool emitted =
+        tier0::emit(module, key.substr(0, 16), out0, frag, fallback, reasons, st, err, *target, cgThreads);
+    busy--;
+    if (!emitted) {
       es << j.in << ": tier0: " << err << "\n";
       return;
     }
