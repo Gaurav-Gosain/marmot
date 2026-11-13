@@ -136,7 +136,7 @@ func vulnModule(st *store, m module, tags []string) vulnResult {
 	if c := st.get(ikey); c != nil && gob.NewDecoder(bytes.NewReader(c)).Decode(&res) == nil && res.Imported == 0 {
 		return res
 	}
-	res = govulncheck(m.Dir, tags)
+	res = vulnScan(m.Dir, tags)
 	if res.Err == "" {
 		var buf bytes.Buffer
 		if gob.NewEncoder(&buf).Encode(res) == nil {
@@ -147,10 +147,22 @@ func vulnModule(st *store, m module, tags []string) vulnResult {
 	return res
 }
 
+// vulnScan scans at the package level first: it reads the imports only.
+// The symbol scan loads and type checks every package of the program and
+// builds its call graph (gigabytes on a large program); it runs only when
+// the program imports a package that a vulnerability names. Otherwise the
+// package scan has the result the symbol scan would also report.
+func vulnScan(dir string, tags []string) vulnResult {
+	if res := govulncheck(dir, tags, "package"); res.Err == "" && res.Imported == 0 {
+		return res
+	}
+	return govulncheck(dir, tags, "symbol")
+}
+
 // govulncheck runs golang.org/x/vuln/scan with JSON output and reads the
-// symbol level findings.
-func govulncheck(dir string, tags []string) vulnResult {
-	args := []string{"-C", dir, "-format", "json"}
+// findings at the given scan level (package or symbol).
+func govulncheck(dir string, tags []string, level string) vulnResult {
+	args := []string{"-C", dir, "-format", "json", "-scan", level}
 	if len(tags) > 0 {
 		args = append(args, "-tags", strings.Join(tags, ","))
 	}
@@ -158,8 +170,9 @@ func govulncheck(dir string, tags []string) vulnResult {
 	var out, errb bytes.Buffer
 	cmd := scan.Command(context.Background(), args...)
 	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Start(); err == nil {
-		err = cmd.Wait()
+	runErr := cmd.Start()
+	if runErr == nil {
+		runErr = cmd.Wait()
 	}
 	type frame struct {
 		Module, Version, Package, Function, Receiver string
@@ -239,6 +252,9 @@ func govulncheck(dir string, tags []string) vulnResult {
 		}
 		return a.Span.File < b.Span.File || a.Span.File == b.Span.File && a.Span.Line < b.Span.Line
 	})
+	if res.Err == "" && runErr != nil && len(res.Findings) == 0 {
+		res.Err = "govulncheck: " + firstLine(strings.TrimSpace(errb.String()+" "+runErr.Error()))
+	}
 	if res.Err == "" && errb.Len() > 0 && strings.Contains(errb.String(), "fetching vulnerabilities") {
 		res.Err = "govulncheck: " + firstLine(errb.String())
 	}
