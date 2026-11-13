@@ -7,16 +7,27 @@ import (
 	"runtime/pprof"
 )
 
-// startProfile writes a CPU profile to $MARMOT_CPUPROFILE.
+// startProfile writes a CPU profile to $MARMOT_CPUPROFILE and, when the
+// returned function runs, an allocation profile to $MARMOT_MEMPROFILE.
 func startProfile() (stop func()) {
-	p := os.Getenv("MARMOT_CPUPROFILE")
-	if p == "" {
-		return func() {}
+	cpu := os.Getenv("MARMOT_CPUPROFILE")
+	mem := os.Getenv("MARMOT_MEMPROFILE")
+	if cpu != "" {
+		if f, err := os.Create(cpu); err == nil {
+			pprof.StartCPUProfile(f)
+		} else {
+			cpu = ""
+		}
 	}
-	f, err := os.Create(p)
-	if err != nil {
-		return func() {}
+	return func() {
+		if cpu != "" {
+			pprof.StopCPUProfile()
+		}
+		if mem != "" {
+			if f, err := os.Create(mem); err == nil {
+				pprof.Lookup("allocs").WriteTo(f, 0)
+				f.Close()
+			}
+		}
 	}
-	pprof.StartCPUProfile(f)
-	return pprof.StopCPUProfile
 }
