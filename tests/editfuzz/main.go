@@ -32,6 +32,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -45,6 +46,8 @@ var (
 	flGoroot = flag.String("goroot", "", "a writable copy of GOROOT: the standard library becomes editable too")
 	flRun    = flag.String("run", "", "arguments for the built program (space separated)")
 	flMax    = flag.Int("maxfail", 10, "stop a program after this many failures")
+	flFresh  = flag.Int("fresh", 20, "every this many edits, continue from the clean build's cache so the cache stops growing (0: never)")
+	flMinGB  = flag.Int("mingb", 15, "stop when the work directory's disk has less than this many GB free")
 )
 
 func main() {
@@ -55,12 +58,17 @@ func main() {
 	if err := os.RemoveAll(work); err != nil {
 		fatal(err)
 	}
+	os.MkdirAll(work, 0o755)
+	if gb := freeGB(work); gb < float64(*flMinGB) {
+		fatal(fmt.Errorf("only %.1f GB free on the work directory's disk (-mingb %d)", gb, *flMinGB))
+	}
 	total, failed := 0, 0
 	for i, prog := range strings.Split(*flProg, ",") {
 		f := &fuzzer{repo: repo, marmot: marmot, dir: filepath.Join(work, fmt.Sprint(i)), r: rand.New(rand.NewSource(*flSeed + int64(i)))}
 		n, bad := f.runProgram(prog)
 		total += n
 		failed += bad
+		f.cleanup()
 	}
 	fmt.Printf("editfuzz: %d edits checked, %d failures\n", total, failed)
 	if failed > 0 {
@@ -88,6 +96,7 @@ type fuzzer struct {
 	byPath            map[string]*pkg
 	n                 int // unique suffix for added names
 	failures          int
+	checks            int
 }
 
 func (f *fuzzer) runProgram(src string) (checked, failed int) {
@@ -215,6 +224,11 @@ func (f *fuzzer) applyIn(main string, p *pkg, m mutation) (string, bool) {
 
 // check compares an incremental build after the edit with a clean one.
 func (f *fuzzer) check(main, desc string) {
+	if gb := freeGB(f.dir); gb < float64(*flMinGB) {
+		f.cleanup()
+		fatal(fmt.Errorf("only %.1f GB free on the work directory's disk (-mingb %d)", gb, *flMinGB))
+	}
+	f.checks++
 	if res := f.compare(main, desc); res != "" {
 		f.failures++
 		fmt.Printf("FAIL %s: %s\n", desc, res)
@@ -237,6 +251,10 @@ func (f *fuzzer) compare(main, _ string) string {
 		return "no cache after the incremental build: " + err.Error()
 	}
 	defer func() {
+		if *flFresh > 0 && f.checks%*flFresh == 0 {
+			os.RemoveAll(incr)
+			return
+		}
 		os.RemoveAll(cache)
 		os.Rename(incr, cache)
 	}()
@@ -686,5 +704,26 @@ func copyTree(from, to string) {
 	})
 	if err != nil {
 		fatal(err)
+	}
+}
+
+// freeGB is the free space on the disk that holds dir, in GB.
+func freeGB(dir string) float64 {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(dir, &st); err != nil {
+		return 1e9
+	}
+	return float64(st.Bavail) * float64(st.Bsize) / 1e9
+}
+
+// cleanup removes the program's work directory except what explains a
+// failure: the failure-N directories and the differing modules.
+func (f *fuzzer) cleanup() {
+	ents, _ := os.ReadDir(f.dir)
+	for _, e := range ents {
+		if strings.HasPrefix(e.Name(), "failure-") || e.Name() == "differs" {
+			continue
+		}
+		os.RemoveAll(filepath.Join(f.dir, e.Name()))
 	}
 }
