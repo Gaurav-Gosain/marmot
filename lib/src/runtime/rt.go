@@ -224,15 +224,30 @@ type dlInfo struct {
 //go:linkname libc_dladdr dladdr
 func libc_dladdr(addr uintptr, info *dlInfo) int32
 
-// cSymbol names a code address outside the pc table (a C library
-// function such as memmove) from the dynamic linker's symbol tables, or
-// returns "".
+// cSymbol names a code address outside the pc table that lies in a shared
+// library (a C library function such as memmove) from the dynamic linker's
+// symbol tables, or returns "". Addresses in the executable itself get no
+// name: it exports only main, which dladdr would give for all of them.
 func cSymbol(pc uintptr) string {
 	var info dlInfo
-	if libc_dladdr(pc, &info) == 0 || info.sname == nil {
+	if libc_dladdr(pc, &info) == 0 || info.sname == nil || info.fbase == exeBase() {
 		return ""
 	}
 	return cstring(info.sname)
+}
+
+var exeBaseCache uintptr
+
+// exeBase is the load address of the executable.
+func exeBase() uintptr {
+	if exeBaseCache == 0 {
+		f := cSymbol
+		var info dlInfo
+		if libc_dladdr(uintptr(funcPC(unsafe.Pointer(&f))), &info) != 0 {
+			exeBaseCache = info.fbase
+		}
+	}
+	return exeBaseCache
 }
 
 // funcPC returns the code address of the func value stored at fv: the first
