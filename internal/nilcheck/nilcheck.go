@@ -309,6 +309,17 @@ func describe(v ssa.Value) string {
 // guarded reports whether a dominating "v != nil" (or "v == nil")
 // comparison lets control reach b only when v is not nil.
 func guarded(v ssa.Value, b *ssa.BasicBlock) bool {
+	return guardedIn(v, b, &guardState{visiting: map[*ssa.Phi]bool{}})
+}
+
+// guardState bounds the search: guards through boolean phis recurse into
+// the guards of the phis' predecessor blocks, which in loops lead back.
+type guardState struct {
+	visiting map[*ssa.Phi]bool
+	steps    int
+}
+
+func guardedIn(v ssa.Value, b *ssa.BasicBlock, st *guardState) bool {
 	for d := b; d != nil; d = d.Idom() {
 		idom := d.Idom()
 		if idom == nil {
@@ -319,8 +330,8 @@ func guarded(v ssa.Value, b *ssa.BasicBlock) bool {
 			continue
 		}
 		// Succs[0] is the true branch.
-		if dominates(idom.Succs[0], b) && impliesNonNil(ifi.Cond, v, true, map[*ssa.Phi]bool{}) ||
-			dominates(idom.Succs[1], b) && impliesNonNil(ifi.Cond, v, false, map[*ssa.Phi]bool{}) {
+		if dominates(idom.Succs[0], b) && impliesNonNil(ifi.Cond, v, true, st) ||
+			dominates(idom.Succs[1], b) && impliesNonNil(ifi.Cond, v, false, st) {
 			return true
 		}
 	}
@@ -333,8 +344,8 @@ func guarded(v ssa.Value, b *ssa.BasicBlock) bool {
 // known not to be nil), as in ok := v != nil && len(*v) > 0; if ok {...}.
 // A phi met again on a cycle (a flag cleared in a loop) is assumed to hold:
 // it holds if all the other edges do.
-func impliesNonNil(cond, v ssa.Value, want bool, visiting map[*ssa.Phi]bool) bool {
-	if len(visiting) > 16 {
+func impliesNonNil(cond, v ssa.Value, want bool, st *guardState) bool {
+	if st.steps++; st.steps > 200 || len(st.visiting) > 16 {
 		return false
 	}
 	switch c := cond.(type) {
@@ -347,21 +358,21 @@ func impliesNonNil(cond, v ssa.Value, want bool, visiting map[*ssa.Phi]bool) boo
 		}
 		return (c.Op == token.NEQ) == want
 	case *ssa.UnOp:
-		return c.Op == token.NOT && impliesNonNil(c.X, v, !want, visiting)
+		return c.Op == token.NOT && impliesNonNil(c.X, v, !want, st)
 	case *ssa.Phi:
 		if len(c.Edges) == 0 {
 			return false
 		}
-		if visiting[c] {
+		if st.visiting[c] {
 			return true
 		}
-		visiting[c] = true
-		defer delete(visiting, c)
+		st.visiting[c] = true
+		defer delete(st.visiting, c)
 		for i, e := range c.Edges {
 			if k, ok := e.(*ssa.Const); ok && k.Value != nil && k.Value.Kind() == constant.Bool && constant.BoolVal(k.Value) != want {
 				continue // this edge cannot give want
 			}
-			if !impliesNonNil(e, v, want, visiting) && !guarded(v, c.Block().Preds[i]) {
+			if !impliesNonNil(e, v, want, st) && !guardedIn(v, c.Block().Preds[i], st) {
 				return false
 			}
 		}
