@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -470,7 +471,11 @@ func (b *build) run1() (string, error) {
 		b.stream = nil
 		objs, err = st.finish(b)
 	} else {
-		objs, err = b.compile(mods, cfg.Emit)
+		want := -1 // -emit llvm: only the root package's module
+		if cfg.Emit == "llvm" {
+			want = slices.Index(pkgs, mainSSA)
+		}
+		objs, err = b.compile(mods, cfg.Emit, want)
 	}
 	if err != nil {
 		return "", err
@@ -552,8 +557,10 @@ func defaultOutput(p *packages.Package, emit string) string {
 }
 
 // compile turns modules into object files (or .ll for -emit llvm), reusing
-// cached objects keyed by the MLIR text and the flags.
-func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
+// cached objects keyed by the MLIR text and the flags. With want >= 0 the
+// backend writes only module want's output: the other modules still give
+// their summaries and bodies (from its cache), so that output is the same.
+func (b *build) compile(mods []codegen.Module, emit string, want int) ([]string, error) {
 	backend := filepath.Join(b.cfg.Root, "build", "bin", "marmot-backend")
 	haveBackend := b.haveBackend()
 	if b.cfg.Dialect == "go" && !haveBackend {
@@ -585,10 +592,14 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 		// cache"); it needs all modules for cross-package summaries.
 		var list strings.Builder
 		for i := range mods {
+			out := objs[i]
+			if want >= 0 && i != want {
+				out = "-" // no output
+			}
 			if i < len(b.modKeys) && b.modKeys[i] != "" {
-				fmt.Fprintf(&list, "%s %s %s\n", ins[i], objs[i], b.modKeys[i])
+				fmt.Fprintf(&list, "%s %s %s\n", ins[i], out, b.modKeys[i])
 			} else {
-				fmt.Fprintf(&list, "%s %s\n", ins[i], objs[i])
+				fmt.Fprintf(&list, "%s %s\n", ins[i], out)
 			}
 		}
 		listFile := filepath.Join(b.work, "jobs.txt")

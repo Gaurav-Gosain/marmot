@@ -2,7 +2,8 @@
 // object files.
 //
 //   marmot-backend [-O2] [-emit=obj|asm|llvm|bc|mlir] [-rt-bitcode path] -o out in.mlir
-//   marmot-backend -batch jobs.txt -j N      (one "in out" pair per line)
+//   marmot-backend -batch jobs.txt -j N      (one "in out" pair per line; out "-":
+//                                            the module takes part, no output)
 #include "marmot/Driver/Pipeline.h"
 #include "marmot/Driver/RuntimeBitcode.h"
 #include "marmot/Driver/Watchdog.h"

@@ -1546,6 +1546,11 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     };
     parallel([&](unsigned i, raw_ostream &es, PhaseTimes &t) {
       ModuleInfo &m = mods[i];
+      // Output "-": the module is part of the program (its summaries and
+      // bodies serve the others) but its own output is not wanted, as for
+      // every module but main's with marmot build -emit llvm.
+      if (m.job.out == "-")
+        return;
       std::string key = hashHex(m.keyB + "|obj|" + importKey[i]);
       if (!opts.prepareOnly)
         sys::fs::remove(m.job.out + ".parts");
@@ -2010,6 +2015,8 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   };
   parallel([&](unsigned i, raw_ostream &es, PhaseTimes &t) {
     ModuleInfo &info = mods[i];
+    if (info.job.out == "-") // no output wanted (as in dev mode)
+      return;
     auto t0 = std::chrono::steady_clock::now();
     sys::fs::remove(info.job.out + ".parts");
     // The key: this module's bitcode, which of its definitions are live, what
