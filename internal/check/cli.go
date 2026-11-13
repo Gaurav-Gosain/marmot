@@ -111,7 +111,10 @@ func Main(args []string, version string) int {
 // user cache directory when marmot runs outside its repository.
 func checkCacheDir() string {
 	if root, err := driver.FindRoot(); err == nil {
-		return filepath.Join(root, "build", "cache", "check")
+		d := filepath.Join(root, "build", "cache", "check")
+		if os.MkdirAll(d, 0o755) == nil {
+			return d
+		}
 	}
 	if d, err := os.UserCacheDir(); err == nil {
 		return filepath.Join(d, "marmot", "check")
