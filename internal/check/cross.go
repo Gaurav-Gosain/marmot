@@ -137,11 +137,6 @@ func crossDiag(d diag.Diagnostic, target string) diag.Diagnostic {
 	return d
 }
 
-func runDeadcode(sc *scope, opts Options, st *store, r *CheckResult) {
-	r.Status = Skipped
-	r.Notes = append(r.Notes, "not implemented yet")
-}
-
 func runVuln(sc *scope, opts Options, st *store, r *CheckResult) {
 	r.Status = Skipped
 	r.Notes = append(r.Notes, "not implemented yet")

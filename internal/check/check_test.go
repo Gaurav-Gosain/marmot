@@ -166,3 +166,19 @@ func TestRunCross(t *testing.T) {
 		t.Errorf("finding %s:%d from %s, want w_windows.go from windows/amd64", d.Span.File, d.Span.Line, d.Analyzer)
 	}
 }
+
+func TestRunDeadcode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("loads the standard library")
+	}
+	t.Setenv("GOWORK", "off")
+	dir, _ := filepath.Abs("testdata/dead")
+	r, err := Run(Options{Dir: dir, Only: []string{"deadcode"}, CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := r.Checks[0]
+	if c.Status != Findings || len(c.Findings) != 1 || c.Findings[0].Message != "unreachable func: Dead" {
+		t.Fatalf("deadcode: %s %+v", c.Status, c.Findings)
+	}
+}
