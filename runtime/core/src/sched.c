@@ -468,7 +468,7 @@ static rt_m *mget(void) {
 static void acquirep(rt_m *m, rt_p *p) {
   m->p = p;
   m->mcache = p->mcache;
-  p->m = m;
+  __atomic_store_n(&p->m, m, __ATOMIC_RELAXED);  // stop_the_world reads it without sched.lock
   atomic_store(&p->status, P_RUNNING);
 }
 
@@ -476,7 +476,7 @@ static rt_p *releasep(rt_m *m) {
   rt_p *p = m->p;
   m->p = NULL;
   m->mcache = NULL;
-  p->m = NULL;
+  __atomic_store_n(&p->m, NULL, __ATOMIC_RELAXED);
   return p;
 }
 
@@ -1421,9 +1421,14 @@ RT_API void rt_entersyscall(void) {
   if (!m || !m->curg || !m->p) return;
   rt_g *g = m->curg;
   g->syscallsp = rt_spill_regs(g->syscallregs);
-  atomic_store(&g->status, G_SYSCALL);
+  // Release stores, not seq_cst (each a locked instruction on x86): the
+  // collector reads syscallsp after it sees G_SYSCALL, and whoever takes
+  // the P (acquire CAS on P_SYSCALL) sees this goroutine's state. Only the
+  // owning M changes syscalltick while the P runs, so a plain increment.
+  atomic_store_explicit(&g->status, G_SYSCALL, memory_order_release);
   rt_p *p = m->p;
-  atomic_fetch_add(&p->syscalltick, 1);
+  atomic_store_explicit(&p->syscalltick, atomic_load_explicit(&p->syscalltick, memory_order_relaxed) + 1,
+                        memory_order_relaxed);
   // A P in a syscall belongs to no M (as in gc): sysmon or stop the world
   // may take it, another M may run it and enter a syscall itself, and
   // whoever leaves its syscall first and wins the CAS in rt_exitsyscall
@@ -1432,8 +1437,11 @@ RT_API void rt_entersyscall(void) {
   // other M: two Ms ran on one P, and stop the world signalled the wrong M
   // and waited forever (seen as a hang with one M blocked on gc_mu).
   __atomic_store_n(&p->m, NULL, __ATOMIC_RELAXED);
-  atomic_store(&p->status, P_SYSCALL);
-  if (atomic_load(&sched.gcwaiting)) {
+  // The gcwaiting load may pass this store on x86. A stop the world that
+  // starts meanwhile still sees P_RUNNING at first, finds P_SYSCALL on its
+  // next round (every 50 us) and takes the P then; nothing waits on us.
+  atomic_store_explicit(&p->status, P_SYSCALL, memory_order_release);
+  if (atomic_load_explicit(&sched.gcwaiting, memory_order_relaxed)) {
     spin_lock(&sched.lock);
     uint32_t s = P_SYSCALL;
     if (atomic_load(&sched.gcwaiting) &&
@@ -1452,9 +1460,10 @@ RT_API void rt_exitsyscall(void) {
   if (atomic_load_explicit(&g->status, memory_order_relaxed) != G_SYSCALL) return;
   rt_p *p = m->p;
   uint32_t s = P_SYSCALL;
-  if (p && atomic_compare_exchange_strong(&p->status, &s, P_RUNNING)) {
+  if (p && atomic_compare_exchange_strong_explicit(&p->status, &s, P_RUNNING, memory_order_acquire,
+                                                    memory_order_relaxed)) {
     __atomic_store_n(&p->m, m, __ATOMIC_RELAXED);  // ours again (m->p, m->mcache still point at it)
-    atomic_store(&g->status, G_RUNNING);
+    atomic_store_explicit(&g->status, G_RUNNING, memory_order_release);
     return;
   }
   // The P was retaken. Try an idle one, else queue this goroutine.
