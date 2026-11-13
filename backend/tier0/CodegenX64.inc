@@ -58,6 +58,11 @@ private:
   static constexpr unsigned XF1 = 14, XF2 = 15;  // xmm14, xmm15
 
   llvm::DenseMap<Value, uint64_t> slot;
+  llvm::DenseMap<Value, unsigned> home;  // value -> callee saved register (rbx, r12..r15)
+  llvm::DenseSet<Operation *> fusedCmp;  // icmps that only set the flags for the next cond_br
+  Block *nextBlock = nullptr;
+  uint32_t calleeUsed = 0;
+  uint64_t saveArea = 0;
   llvm::DenseMap<Operation *, uint64_t> allocaStorage;
   llvm::DenseMap<Block *, uint64_t> blockStart;
   struct Fixup {
@@ -87,7 +92,37 @@ private:
   void st(unsigned r, uint64_t off) { a.store(r, X::RSP, d32(off), 8); }
   void get(unsigned r, Value v) {
     if (sizeOf(v.getType()) > 8) unsupported("i128 operation");
+    uint64_t bits;
+    if (scalarConst(v, bits)) {
+      a.movImm(r, bits);
+      return;
+    }
+    if (auto h = home.find(v); h != home.end()) {
+      if (h->second != r) a.mov(r, h->second);
+      return;
+    }
     ld(r, of(v));
+  }
+  unsigned src(Value v, unsigned scratch) {
+    if (auto h = home.find(v); h != home.end()) return h->second;
+    get(scratch, v);
+    return scratch;
+  }
+  unsigned srcSigned(Value v, unsigned scratch) {
+    if (intWidth(v.getType()) >= 64) return src(v, scratch);
+    getSigned(scratch, v);
+    return scratch;
+  }
+  unsigned dst(Value v, unsigned scratch) {
+    if (auto h = home.find(v); h != home.end()) return h->second;
+    return scratch;
+  }
+  void putRaw(unsigned r, Value v) {
+    if (auto h = home.find(v); h != home.end()) {
+      if (h->second != r) a.mov(h->second, r);
+      return;
+    }
+    st(r, of(v));
   }
   void getSigned(unsigned r, Value v) {
     get(r, v);
@@ -119,16 +154,14 @@ private:
   void put(unsigned r, Value v) {
     if (sizeOf(v.getType()) > 8) unsupported("i128 operation");
     if (!isFloat(v.getType())) normalize(r, v.getType());
-    st(r, of(v));
+    putRaw(r, v);
   }
-  void getF(unsigned x, Value v) {
-    get(T4, v);
-    a.movqToX(x, T4);
-  }
+  void getF(unsigned x, Value v) { a.movqToX(x, src(v, T4)); }
   void putF(unsigned x, Value v) {
-    a.movqFromX(T4, x);
-    if (v.getType().isF32()) a.mov32(T4, T4);
-    st(T4, of(v));
+    unsigned d = dst(v, T4);
+    a.movqFromX(d, x);
+    if (v.getType().isF32()) a.mov32(d, d);
+    putRaw(d, v);
   }
   // Copies n bytes from [sb + so] to [db + do_] through r11.
   void copyBytes(unsigned db, uint64_t do_, unsigned sb, uint64_t so, uint64_t n) {
@@ -184,10 +217,10 @@ void FuncGenX64::layout() {
   }
   for (Block &b : fn.getBody()) {
     for (BlockArgument arg : b.getArguments())
-      slot[arg] = alloc(std::max<uint64_t>(sizeOf(arg.getType()), 8), std::max<uint64_t>(8, alignOf(arg.getType())));
+      if (!home.count(arg)) slot[arg] = alloc(std::max<uint64_t>(sizeOf(arg.getType()), 8), std::max<uint64_t>(8, alignOf(arg.getType())));
     for (Operation &op : b) {
       for (Value r : op.getResults())
-        slot[r] = alloc(std::max<uint64_t>(sizeOf(r.getType()), 8), std::max<uint64_t>(8, alignOf(r.getType())));
+        if (uint64_t bits; !home.count(r) && !scalarConst(r, bits) && !fusedCmp.count(&op)) slot[r] = alloc(std::max<uint64_t>(sizeOf(r.getType()), 8), std::max<uint64_t>(8, alignOf(r.getType())));
       if (auto al = dyn_cast<LL::AllocaOp>(op)) {
         if (&b != &fn.getBody().front()) unsupported("alloca outside the entry block");
         auto c = al.getArraySize().getDefiningOp<LL::ConstantOp>();
@@ -204,6 +237,7 @@ void FuncGenX64::layout() {
     tempSize = std::max(tempSize, n);
   }
   tempArea = alloc(std::max<uint64_t>(tempSize, 8), 8);  // also the x87 result spill
+  saveArea = alloc(8 * uint64_t(llvm::popcount(calleeUsed)), 8);
   frameSize = (frameSize + 15) & ~uint64_t(15);
 }
 
@@ -211,6 +245,14 @@ void FuncGenX64::prologue() {
   a.push(X::RBP);
   a.mov(X::RBP, X::RSP);
   if (frameSize) a.subImm(X::RSP, d32(frameSize));
+  {
+    uint64_t at = saveArea;
+    for (unsigned r = 0; r < 16; r++)
+      if (calleeUsed >> r & 1) {
+        st(r, at);
+        at += 8;
+      }
+  }
   if (sret) st(X::RDI, sretSlot);
   auto params = fn.getBody().front().getArguments();
   uint64_t stackSize = 0;
@@ -240,12 +282,18 @@ void FuncGenX64::prologue() {
         r = T4;
       }
       if (!l.fp) normalize(r, l.t);
-      st(r, of(arg));
+      putRaw(r, arg);
     }
   }
 }
 
 void FuncGenX64::epilogue() {
+  uint64_t at = saveArea;
+  for (unsigned r = 0; r < 16; r++)
+    if (calleeUsed >> r & 1) {
+      ld(r, at);
+      at += 8;
+    }
   a.mov(X::RSP, X::RBP);
   a.pop(X::RBP);
   a.ret();
@@ -253,18 +301,33 @@ void FuncGenX64::epilogue() {
 
 void FuncGenX64::edgeMoves(Block *dest, OperandRange args) {
   if (args.empty()) return;
+  if (args.size() == 1 && !isAggregate(args[0].getType())) {
+    get(T1, args[0]);
+    putRaw(T1, dest->getArgument(0));
+    return;
+  }
   uint64_t t = tempArea;
   std::vector<uint64_t> tmp;
   for (Value v : args) {
     uint64_t sz = std::max<uint64_t>((sizeOf(v.getType()) + 7) & ~uint64_t(7), 8);
-    copyBytes(X::RSP, t, X::RSP, of(v), sz);
+    if (isAggregate(v.getType())) {
+      copyBytes(X::RSP, t, X::RSP, of(v), sz);
+    } else {
+      get(T4, v);
+      st(T4, t);
+    }
     tmp.push_back(t);
     t += sz;
   }
   for (unsigned i = 0; i < args.size(); i++) {
     BlockArgument arg = dest->getArgument(i);
     uint64_t sz = std::max<uint64_t>((sizeOf(arg.getType()) + 7) & ~uint64_t(7), 8);
-    copyBytes(X::RSP, of(arg), X::RSP, tmp[i], sz);
+    if (isAggregate(arg.getType())) {
+      copyBytes(X::RSP, of(arg), X::RSP, tmp[i], sz);
+    } else {
+      ld(T4, tmp[i]);
+      putRaw(T4, arg);
+    }
   }
 }
 
@@ -321,9 +384,10 @@ void FuncGenX64::emitCall(LL::CallOp call) {
       }
       a.store(reg, X::RSP, d32(of(r) + off), unsigned(sizeOf(t)));
     } else {
-      a.mov(T4, reg);
-      if (!isFloat(t)) normalize(T4, t);
-      st(T4, of(r));
+      unsigned d = dst(r, T4);
+      a.mov(d, reg);
+      if (!isFloat(t)) normalize(d, t);
+      putRaw(d, r);
     }
   };
   for (unsigned i = 0; i < gp.size(); i++) store(retGpr[i], gp[i].first, gp[i].second);
@@ -435,16 +499,16 @@ void FuncGenX64::fminmax(Operation &op, bool max, bool num) {
   a.movqFromX(T1, XF1);
   for (size_t j : toEnd) patch32(j, int64_t(a.here()));
   if (!dbl) a.mov32(T1, T1);
-  st(T1, of(op.getResult(0)));
+  putRaw(T1, op.getResult(0));
 }
 
 void FuncGenX64::emitOp(Operation &op) {
   if (emitWide(op)) return;
   auto bin = [&](auto f) {
-    get(T1, op.getOperand(0));
-    get(T2, op.getOperand(1));
-    f(T1, T2);
-    put(T1, op.getResult(0));
+    unsigned d = dst(op.getResult(0), T1);
+    get(d, op.getOperand(0));
+    f(d, src(op.getOperand(1), T2));
+    put(d, op.getResult(0));
   };
   auto fbin = [&](auto f) {
     bool dbl = op.getResult(0).getType().isF64();
@@ -486,10 +550,10 @@ void FuncGenX64::emitOp(Operation &op) {
         else
           unsupported("constant kind");
         if (isAggregate(c.getType())) unsupported("aggregate constant");
-        a.movImm(T1, bits);
-        put(T1, c.getResult());
+        (void)bits;  // made at each use
       })
       .Case<LL::ZeroOp, LL::UndefOp, LL::PoisonOp>([&](auto z) {
+        if (!isAggregate(z.getType()) && sizeOf(z.getType()) <= 8) return;  // made at each use
         uint64_t n = std::max<uint64_t>((sizeOf(z.getType()) + 7) & ~uint64_t(7), 8);
         a.xor_(T1, T1);
         for (uint64_t i = 0; i < n; i += 8) st(T1, of(z.getResult()) + i);
@@ -517,17 +581,14 @@ void FuncGenX64::emitOp(Operation &op) {
       .Case<LL::SRemOp>([&](auto) { divide(true, true); })
       .Case<LL::ICmpOp>([&](auto c) {
         bool sgn = isSignedPred(c.getPredicate());
-        if (sgn) {
-          getSigned(T1, c.getLhs());
-          getSigned(T2, c.getRhs());
-        } else {
-          get(T1, c.getLhs());
-          get(T2, c.getRhs());
-        }
-        a.cmp(T1, T2);
-        a.setcc(icmpCC(c.getPredicate()), T1);
-        a.movzx8(T1, T1);
-        put(T1, c.getResult());
+        unsigned l = sgn ? srcSigned(c.getLhs(), T1) : src(c.getLhs(), T1);
+        unsigned r = sgn ? srcSigned(c.getRhs(), T2) : src(c.getRhs(), T2);
+        a.cmp(l, r);
+        if (fusedCmp.count(c.getOperation())) return;  // the cond_br jumps on the flags
+        unsigned d = dst(c.getResult(), T1);
+        a.setcc(icmpCC(c.getPredicate()), d);
+        a.movzx8(d, d);
+        putRaw(d, c.getResult());
       })
       .Case<LL::SelectOp>([&](auto s) {
         Type t = s.getType();
@@ -543,24 +604,28 @@ void FuncGenX64::emitOp(Operation &op) {
           patch32(j, int64_t(a.here()));
           return;
         }
-        get(T1, s.getFalseValue());
-        get(T2, s.getTrueValue());
+        unsigned d = dst(s.getResult(), T1);
+        get(d, s.getFalseValue());
+        unsigned tv = src(s.getTrueValue(), T2);
         a.test(T3, T3);
-        a.cmov(X::NE, T1, T2);
-        st(T1, of(s.getResult()));
+        a.cmov(X::NE, d, tv);
+        putRaw(d, s.getResult());
       })
       .Case<LL::ZExtOp, LL::TruncOp, LL::PtrToIntOp, LL::IntToPtrOp>([&](auto c) {
-        get(T1, c.getArg());
-        put(T1, c.getResult());
+        unsigned d = dst(c.getResult(), T1);
+        get(d, c.getArg());
+        put(d, c.getResult());
       })
       .Case<LL::SExtOp>([&](auto c) {
-        getSigned(T1, c.getArg());
-        put(T1, c.getResult());
+        unsigned d = dst(c.getResult(), T1);
+        get(d, c.getArg());
+        signExtend(d, intWidth(c.getArg().getType()));
+        put(d, c.getResult());
       })
       .Case<LL::BitcastOp>([&](auto c) {
         if (isAggregate(c.getType())) unsupported("aggregate bitcast");
         get(T1, c.getArg());
-        st(T1, of(c.getResult()));
+        putRaw(T1, c.getResult());
       })
       .Case<LL::FAddOp>([&](auto) { fbin([&](unsigned d, unsigned s, bool x) { a.addsd(d, s, x); }); })
       .Case<LL::FSubOp>([&](auto) { fbin([&](unsigned d, unsigned s, bool x) { a.subsd(d, s, x); }); })
@@ -574,7 +639,7 @@ void FuncGenX64::emitOp(Operation &op) {
         get(T1, o.getOperand());
         a.movImm(T2, o.getType().isF64() ? uint64_t(1) << 63 : uint64_t(1) << 31);
         a.xor_(T1, T2);
-        st(T1, of(o.getResult()));
+        putRaw(T1, o.getResult());
       })
       .Case<LL::FCmpOp>([&](auto c) {
         bool dbl = c.getLhs().getType().isF64();
@@ -674,38 +739,42 @@ void FuncGenX64::emitOp(Operation &op) {
       })
       .Case<LL::LoadOp>([&](auto l) {
         Type t = l.getType();
-        get(T3, l.getAddr());
+        unsigned ar = src(l.getAddr(), T3);
         if (isAggregate(t)) {
-          copyBytes(X::RSP, of(l.getResult()), T3, 0, sizeOf(t));
+          copyBytes(X::RSP, of(l.getResult()), ar, 0, sizeOf(t));
           return;
         }
-        a.load(T1, T3, 0, unsigned(sizeOf(t)));  // atomic loads are plain loads on x86
+        unsigned d = dst(l.getResult(), T1);
+        a.load(d, ar, 0, unsigned(sizeOf(t)));  // atomic loads are plain loads on x86
         if (intWidth(t) == 1) {
           a.movImm(T2, 1);
-          a.and_(T1, T2);
+          a.and_(d, T2);
         }
-        st(T1, of(l.getResult()));
+        putRaw(d, l.getResult());
       })
       .Case<LL::StoreOp>([&](auto s) {
         Type t = s.getValue().getType();
-        get(T3, s.getAddr());
+        unsigned ar = src(s.getAddr(), T3);
         if (isAggregate(t)) {
-          copyBytes(T3, 0, X::RSP, of(s.getValue()), sizeOf(t));
+          copyBytes(ar, 0, X::RSP, of(s.getValue()), sizeOf(t));
           return;
         }
-        get(T1, s.getValue());
         unsigned sz = unsigned(sizeOf(t));
-        if (s.getOrdering() == LL::AtomicOrdering::seq_cst)
-          a.xchg(T1, T3, sz);
-        else
-          a.store(T1, T3, 0, sz);
+        if (s.getOrdering() == LL::AtomicOrdering::seq_cst) {
+          get(T1, s.getValue());  // xchg writes its register
+          a.xchg(T1, ar, sz);
+        } else {
+          a.store(src(s.getValue(), T1), ar, 0, sz);
+        }
       })
       .Case<LL::AllocaOp>([&](auto al) {
-        a.lea(T1, X::RSP, d32(allocaStorage[al.getOperation()]));
-        st(T1, of(al.getResult()));
+        unsigned d = dst(al.getResult(), T1);
+        a.lea(d, X::RSP, d32(allocaStorage[al.getOperation()]));
+        putRaw(d, al.getResult());
       })
       .Case<LL::GEPOp>([&](auto g) {
-        get(T1, g.getBase());
+        unsigned d = dst(g.getResult(), T1);
+        get(d, g.getBase());
         Type et = g.getElemType();
         bool first = true;
         int64_t constOff = 0;
@@ -729,19 +798,23 @@ void FuncGenX64::emitOp(Operation &op) {
           if (auto ia = llvm::dyn_cast_if_present<IntegerAttr>(idx)) {
             constOff += ia.getInt() * int64_t(scale);
           } else {
-            getSigned(T2, llvm::cast<Value>(idx));
+            unsigned ir = srcSigned(llvm::cast<Value>(idx), T2);
             if (scale != 1) {
+              if (ir != T2) a.mov(T2, ir);
               a.movImm(T3, scale);
               a.imul(T2, T3);
+              ir = T2;
             }
-            a.add(T1, T2);
+            a.add(d, ir);
           }
         }
-        if (constOff) {
+        if (constOff >= INT32_MIN && constOff <= INT32_MAX) {
+          if (constOff) a.addImm(d, int32_t(constOff));
+        } else {
           a.movImm(T2, uint64_t(constOff));
-          a.add(T1, T2);
+          a.add(d, T2);
         }
-        st(T1, of(g.getResult()));
+        putRaw(d, g.getResult());
       })
       .Case<LL::ExtractValueOp>([&](auto x) {
         auto [off, t] = elementAt(x.getContainer().getType(), x.getPosition());
@@ -751,7 +824,7 @@ void FuncGenX64::emitOp(Operation &op) {
           return;
         }
         a.load(T1, X::RSP, d32(src), unsigned(sizeOf(t)));
-        st(T1, of(x.getResult()));
+        putRaw(T1, x.getResult());
       })
       .Case<LL::InsertValueOp>([&](auto ins) {
         Type at = ins.getType();
@@ -845,17 +918,33 @@ void FuncGenX64::emitOp(Operation &op) {
       .Case<LL::ReturnOp>([&](auto r) { emitReturn(r); })
       .Case<LL::BrOp>([&](auto b) {
         edgeMoves(b.getDest(), b.getDestOperands());
-        branchTo(b.getDest());
+        if (b.getDest() != nextBlock) branchTo(b.getDest());
       })
       .Case<LL::CondBrOp>([&](auto c) {
-        get(T3, c.getCondition());
-        a.test(T3, T3);
-        size_t jt = a.jcc(X::NE);
-        edgeMoves(c.getFalseDest(), c.getFalseDestOperands());
-        branchTo(c.getFalseDest());
-        patch32(jt, int64_t(a.here()));
-        edgeMoves(c.getTrueDest(), c.getTrueDestOperands());
-        branchTo(c.getTrueDest());
+        X::CC cc = X::NE;
+        if (auto ic = c.getCondition().template getDefiningOp<LL::ICmpOp>(); ic && fusedCmp.count(ic)) {
+          cc = icmpCC(ic.getPredicate());
+        } else {
+          unsigned cr = src(c.getCondition(), T3);
+          a.test(cr, cr);
+        }
+        Block *t = c.getTrueDest(), *f = c.getFalseDest();
+        if (c.getTrueDestOperands().empty()) {
+          fixups.push_back({a.jcc(cc), t});
+          edgeMoves(f, c.getFalseDestOperands());
+          if (f != nextBlock) branchTo(f);
+        } else if (c.getFalseDestOperands().empty()) {
+          fixups.push_back({a.jcc(X::CC(cc ^ 1)), f});
+          edgeMoves(t, c.getTrueDestOperands());
+          if (t != nextBlock) branchTo(t);
+        } else {
+          size_t jt = a.jcc(cc);
+          edgeMoves(f, c.getFalseDestOperands());
+          branchTo(f);
+          patch32(jt, int64_t(a.here()));
+          edgeMoves(t, c.getTrueDestOperands());
+          if (t != nextBlock) branchTo(t);
+        }
       })
       .Case<LL::SwitchOp>([&](auto s) {
         get(T3, s.getValue());
@@ -886,7 +975,10 @@ bool FuncGenX64::emitWide(Operation &op) {
   for (Type t : op.getOperandTypes()) wide |= isWide(t);
   for (Type t : op.getResultTypes()) wide |= isWide(t);
   if (!wide) return false;
-  auto lo = [&](unsigned r, Value v) { ld(r, of(v)); };
+  auto lo = [&](unsigned r, Value v) {
+    if (!isWide(v.getType())) return get(r, v);
+    ld(r, of(v));
+  };
   auto hi = [&](unsigned r, Value v) { ld(r, of(v) + 8); };
   auto store = [&](unsigned l, unsigned h, Value v) {
     st(l, of(v));
@@ -1123,6 +1215,14 @@ void FuncGenX64::emitIntrinsic(LL::CallIntrinsicOp c) {
 
 void FuncGenX64::run() {
   if (fn.isVarArg()) unsupported("variadic function");
+  fn.walk([&](LL::CondBrOp c) {
+    auto ic = c.getCondition().getDefiningOp<LL::ICmpOp>();
+    if (ic && ic->getNextNode() == c.getOperation() && ic->hasOneUse() && !isWide(ic.getLhs().getType()))
+      fusedCmp.insert(ic.getOperation());
+  });
+  static const unsigned regs[] = {X::RBX, X::R12, X::R13, X::R14, X::R15};
+  home = linearScan(fn, regs, fusedCmp);
+  for (auto [v, r] : home) calleeUsed |= 1u << r;
   layout();
   uint64_t start = a.here();
   std::vector<ModuleGen::Row> rows;
@@ -1139,6 +1239,7 @@ void FuncGenX64::run() {
   prologue();
   for (Block &b : fn.getBody()) {
     blockStart[&b] = a.here();
+    nextBlock = b.getNextNode();
     for (Operation &op : b) {
       row(op.getLoc());
       emitOp(op);

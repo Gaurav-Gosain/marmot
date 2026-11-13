@@ -461,6 +461,27 @@ bool ModuleGen::isDefinedData(StringRef name) const {
   return definedData.count(StringAttr::get(ctx, name)) != 0;
 }
 
+// A scalar constant has no slot: its canonical bits are made where it is used.
+static bool scalarConst(Value v, uint64_t &bits) {
+  Operation *d = v.getDefiningOp();
+  if (!d || isAggregate(v.getType()) || sizeOf(v.getType()) > 8) return false;
+  if (isa<LL::ZeroOp, LL::UndefOp, LL::PoisonOp>(d)) {
+    bits = 0;
+    return true;
+  }
+  auto c = dyn_cast<LL::ConstantOp>(d);
+  if (!c) return false;
+  if (auto i = dyn_cast<IntegerAttr>(c.getValue()))
+    bits = i.getValue().getZExtValue();
+  else if (auto f = dyn_cast<FloatAttr>(c.getValue()))
+    bits = f.getValue().bitcastToAPInt().getZExtValue();
+  else
+    return false;
+  unsigned wdt = isFloat(v.getType()) ? unsigned(8 * sizeOf(v.getType())) : intWidth(v.getType());
+  if (wdt < 64) bits &= (uint64_t(1) << wdt) - 1;
+  return true;
+}
+
 // ---- function level ----
 
 class FuncGen {
@@ -696,26 +717,7 @@ void FuncGen::normalize(unsigned r, Type t) {
   if (wdt < 64) e(ubfx0(r, r, wdt));
 }
 
-// A scalar constant has no slot: its canonical bits are made where it is used.
-bool FuncGen::constBits(Value v, uint64_t &bits) {
-  Operation *d = v.getDefiningOp();
-  if (!d || isAggregate(v.getType()) || sizeOf(v.getType()) > 8) return false;
-  if (isa<LL::ZeroOp, LL::UndefOp, LL::PoisonOp>(d)) {
-    bits = 0;
-    return true;
-  }
-  auto c = dyn_cast<LL::ConstantOp>(d);
-  if (!c) return false;
-  if (auto i = dyn_cast<IntegerAttr>(c.getValue()))
-    bits = i.getValue().getZExtValue();
-  else if (auto f = dyn_cast<FloatAttr>(c.getValue()))
-    bits = f.getValue().bitcastToAPInt().getZExtValue();
-  else
-    return false;
-  unsigned wdt = isFloat(v.getType()) ? unsigned(8 * sizeOf(v.getType())) : intWidth(v.getType());
-  if (wdt < 64) bits &= (uint64_t(1) << wdt) - 1;
-  return true;
-}
+bool FuncGen::constBits(Value v, uint64_t &bits) { return scalarConst(v, bits); }
 
 void FuncGen::get(unsigned r, Value v) {
   if (sizeOf(v.getType()) > 8) unsupported("i128 operation");
@@ -1723,12 +1725,7 @@ std::optional<std::pair<StringRef, unsigned>> lineOf(Location l) {
 // the rest keep their frame slots. No splitting, no coalescing. Functions
 // that call a returns_twice function (rt_setjmp for defer) keep every value
 // in memory, as a longjmp restores the callee saved registers.
-void FuncGen::allocate() {
-  static const bool off = [] {
-    const char *v = getenv("MARMOT_TIER0_NORA");
-    return v && *v && *v != '0';
-  }();
-  if (off) return;
+static bool callsReturnsTwice(LL::LLVMFuncOp fn) {
   bool twice = false;
   fn.walk([&](LL::CallOp c) {
     auto callee = c.getCallee();
@@ -1739,14 +1736,30 @@ void FuncGen::allocate() {
         for (Attribute a : *pt)
           if (auto sa = dyn_cast<StringAttr>(a); sa && sa.getValue() == "returns_twice") twice = true;
   });
-  if (twice) return;
+  return twice;
+}
+
+static bool raOff() {
+  static const bool off = [] {
+    const char *v = getenv("MARMOT_TIER0_NORA");
+    return v && *v && *v != '0';
+  }();
+  return off;
+}
+
+// Values to registers (from regs, all below 32); values of the operations in
+// skip are never materialized.
+static llvm::DenseMap<Value, unsigned> linearScan(LL::LLVMFuncOp fn, llvm::ArrayRef<unsigned> regs,
+                                                  const llvm::DenseSet<Operation *> &skip) {
+  llvm::DenseMap<Value, unsigned> res;
+  if (raOff() || callsReturnsTwice(fn)) return res;
   llvm::DenseMap<Value, unsigned> idx;
   std::vector<Value> vals;
   auto cand = [&](Value v) {
     Type t = v.getType();
     uint64_t bits;
-    if (isa<LL::LLVMVoidType>(t) || isAggregate(t) || isWide(t) || sizeOf(t) > 8 || constBits(v, bits)) return;
-    if (Operation *d = v.getDefiningOp(); d && fusedCmp.count(d)) return;
+    if (isa<LL::LLVMVoidType>(t) || isAggregate(t) || isWide(t) || sizeOf(t) > 8 || scalarConst(v, bits)) return;
+    if (Operation *d = v.getDefiningOp(); d && skip.count(d)) return;
     if (idx.try_emplace(v, unsigned(vals.size())).second) vals.push_back(v);
   };
   // Positions in emission order: a block's start, then each operation.
@@ -1764,7 +1777,7 @@ void FuncGen::allocate() {
     }
     span[&b] = {start, p - 1};
   }
-  if (vals.empty()) return;
+  if (vals.empty()) return res;
   unsigned n = unsigned(vals.size());
   llvm::DenseMap<Block *, unsigned> bi;
   for (unsigned i = 0; i < blocks.size(); i++) bi[blocks[i]] = i;
@@ -1825,7 +1838,7 @@ void FuncGen::allocate() {
   std::vector<unsigned> active;  // value indices holding a register
   llvm::DenseMap<unsigned, unsigned> reg;
   uint32_t freeRegs = 0;
-  for (unsigned r = 19; r <= 28; r++) freeRegs |= 1u << r;
+  for (unsigned r : regs) freeRegs |= 1u << r;
   for (unsigned v : order) {
     unsigned start = iv[v].first;
     for (size_t k = 0; k < active.size();) {
@@ -1856,10 +1869,14 @@ void FuncGen::allocate() {
       active[far] = v;
     }
   }
-  for (auto [v, r] : reg) {
-    home[vals[v]] = r;
-    calleeUsed |= 1u << r;
-  }
+  for (auto [v, r] : reg) res[vals[v]] = r;
+  return res;
+}
+
+void FuncGen::allocate() {
+  static const unsigned regs[] = {19, 20, 21, 22, 23, 24, 25, 26, 27, 28};
+  home = linearScan(fn, regs, fusedCmp);
+  for (auto [v, r] : home) calleeUsed |= 1u << r;
 }
 
 void FuncGen::run() {
