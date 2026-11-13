@@ -182,3 +182,15 @@ func TestRunDeadcode(t *testing.T) {
 		t.Fatalf("deadcode: %s %+v", c.Status, c.Findings)
 	}
 }
+
+func TestVulnOffline(t *testing.T) {
+	t.Setenv("GOWORK", "off")
+	dir, _ := filepath.Abs("testdata/dead")
+	r, err := Run(Options{Dir: dir, Only: []string{"vuln"}, Offline: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := r.Checks[0]; c.Status != Skipped || !r.OK() {
+		t.Errorf("offline vuln: %s, ok %v", c.Status, r.OK())
+	}
+}

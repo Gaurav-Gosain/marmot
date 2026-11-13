@@ -136,8 +136,3 @@ func crossDiag(d diag.Diagnostic, target string) diag.Diagnostic {
 	d.Notes = append(d.Notes, "when building for "+target)
 	return d
 }
-
-func runVuln(sc *scope, opts Options, st *store, r *CheckResult) {
-	r.Status = Skipped
-	r.Notes = append(r.Notes, "not implemented yet")
-}
