@@ -42,17 +42,23 @@ func embedOverlays(pkgs []*packages.Package, inline bool) (map[string][]byte, []
 	var over map[string][]byte
 	var helpers []string
 	for _, p := range pkgs {
-		if len(p.EmbedFiles) == 0 && len(p.EmbedPatterns) == 0 {
+		jumps := asmJumps(p)
+		if len(p.EmbedFiles) == 0 && len(p.EmbedPatterns) == 0 && len(jumps) == 0 {
 			continue
 		}
 		needFS := false
 		fsFile, fsName := "", 0
 		for _, f := range p.Syntax {
 			name := p.Fset.File(f.Pos()).Name()
-			edits, fs, err := embedEdits(p, f)
-			if err != nil {
-				return nil, nil, err
+			var edits []embedEditAt
+			fs := false
+			if len(p.EmbedFiles) > 0 || len(p.EmbedPatterns) > 0 {
+				var err error
+				if edits, fs, err = embedEdits(p, f); err != nil {
+					return nil, nil, err
+				}
 			}
+			edits = append(edits, asmEdits(p, f, jumps)...)
 			if len(edits) == 0 {
 				continue
 			}
@@ -65,7 +71,7 @@ func embedOverlays(pkgs []*packages.Package, inline bool) (map[string][]byte, []
 				fsFile, fsName = name, p.Fset.Position(f.Name.End()).Offset
 			}
 			// Apply from the end so offsets stay valid.
-			sort.Slice(edits, func(a, b int) bool { return edits[a].pos > edits[b].pos })
+			sort.SliceStable(edits, func(a, b int) bool { return edits[a].pos > edits[b].pos })
 			for _, e := range edits {
 				off := e.pos
 				src = append(src[:off], append([]byte(e.text), src[off:]...)...)
