@@ -3,6 +3,11 @@
 // RUN: %backend -O0 -emit=llvm -o - %s | %FileCheck %s
 // RUN: %backend -O0 -o %t.o %s && %clang %t.o -o %t.exe && %t.exe; test $? -eq 42
 // RUN: %backend -tier0 -o %t0.o %s && %clang %t0.o -o %t0.exe && %t0.exe; test $? -eq 42
+// A long integer array (an embedded table) is one dense constant, not a
+// chain of insertvalues that LLVM translates in quadratic time.
+// RUN: python3 %S/Inputs/big_init.py %t.big.mlir
+// RUN: timeout 60 %backend -O2 -emit=llvm -o - %t.big.mlir | %FileCheck %s --check-prefix=BIG
+// BIG: @t = {{.*}}global [100000 x i8] c"\00\01\02
 // RUN: sed 's/i40;/i40/' %s > %t.bad.mlir
 // RUN: %not %backend -O0 -o %t.bad.o %t.bad.mlir 2>&1 | %FileCheck %s --check-prefix=BAD
 // CHECK: @g = linkonce_odr constant { i64, i8, ptr, double, [2 x i32], { ptr, i64 } } { i64 40, i8 -2, ptr @x, double 1.500000e+00, [2 x i32] [i32 1, i32 2], { ptr, i64 } zeroinitializer }

@@ -468,7 +468,8 @@ std::string chunkText(const ModuleSplit &sp, size_t i) {
 //          | 'a' DEC ':' NAME      address of the symbol NAME of DEC bytes
 //          | '(' value* ')'        aggregate, one value per element
 // The ops are the ones the text form had, in the same order: the elements
-// first, then undef and one insertvalue per element.
+// first, then undef and one insertvalue per element; but an array of
+// integers is one constant with a dense value (intArray).
 constexpr llvm::StringLiteral kGoInit = "go.init";
 
 struct InitBuilder {
@@ -479,6 +480,7 @@ struct InitBuilder {
   mlir::Type ptr;
 
   bool fail() { return false; }
+  mlir::Value intArray(mlir::LLVM::LLVMArrayType at);
   bool number(int64_t &v) {
     bool neg = pos < s.size() && s[pos] == '-';
     if (neg)
@@ -539,6 +541,9 @@ struct InitBuilder {
       auto at = llvm::dyn_cast<mlir::LLVM::LLVMArrayType>(ty);
       if (!st && !at)
         return {};
+      if (at)
+        if (mlir::Value v = intArray(at))
+          return v;
       while (pos < s.size() && s[pos] != ')') {
         unsigned i = elems.size();
         mlir::Type et;
@@ -568,6 +573,43 @@ struct InitBuilder {
     return {};
   }
 };
+
+// An array of integers (a table, embedded bytes) as one constant with a
+// dense value: LLVM turns an insertvalue chain into a new constant array per
+// element, quadratic in the length (an 88 KB embedded table in
+// crypto/internal/fips140/nistec took 89 s to translate). Null, with pos
+// where it was, unless every element is an integer or zero.
+mlir::Value InitBuilder::intArray(mlir::LLVM::LLVMArrayType at) {
+  auto it = llvm::dyn_cast<mlir::IntegerType>(at.getElementType());
+  if (!it || at.getNumElements() < 2)
+    return {};
+  size_t start = pos;
+  llvm::SmallVector<llvm::APInt> vals;
+  vals.reserve(at.getNumElements());
+  while (pos < s.size() && s[pos] != ')') {
+    int64_t v = 0;
+    if (s[pos] == 'z') {
+      ++pos;
+    } else if (s[pos] == 'i') {
+      ++pos;
+      if (!number(v) || pos >= s.size() || s[pos++] != ';') {
+        pos = start;
+        return {};
+      }
+    } else {
+      pos = start;
+      return {};
+    }
+    vals.push_back(llvm::APInt(64, uint64_t(v)).trunc(it.getWidth()));
+  }
+  if (pos >= s.size() || vals.size() != at.getNumElements()) {
+    pos = start;
+    return {};
+  }
+  ++pos;
+  auto tt = mlir::RankedTensorType::get({int64_t(vals.size())}, it);
+  return b.create<mlir::LLVM::ConstantOp>(loc, at, mlir::DenseElementsAttr::get(tt, vals));
+}
 
 // Builds the initializer region of each global with a go.init string.
 bool expandInits(mlir::ModuleOp m, llvm::raw_ostream &errs) {
