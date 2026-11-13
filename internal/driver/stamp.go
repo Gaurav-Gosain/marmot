@@ -251,4 +251,7 @@ var noCodeEffect = map[string]bool{
 	"MARMOT_GOCACHE": true, "MARMOT_TOOL_TIMEOUT": true, "MARMOT_MAX_MEM_MB": true,
 	"MARMOT_MAX_SECONDS": true, "MARMOT_SPEC_DUMP": true, "MARMOT_SPEC_DEBUG": true,
 	"MARMOT_GPU": true, "MARMOT_GPUTRACE": true, "MARMOT_GPU_CACHE": true,
+	// Background tier 1 only picks which of two equivalent objects links;
+	// builds with it on or off share the cache.
+	"MARMOT_TIER1": true,
 }

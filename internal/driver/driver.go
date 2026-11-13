@@ -448,6 +448,7 @@ func (b *build) run1() (string, error) {
 	}
 	b.logf("linked %s", out)
 	b.saveStamp(stamp, out)
+	b.startTier1()
 	return out, nil
 }
 
@@ -704,6 +705,9 @@ func (b *build) backendArgs(emitKind, batch string) []string {
 	}
 	if !b.cfg.NoCache {
 		args = append(args, "-cache-dir", filepath.Join(b.cfg.Root, "build", "cache", "backend"))
+		if b.tier1() {
+			args = append(args, "-tier1-spool", b.tier1Spool())
+		}
 	}
 	if bc := b.rtLib("rtcore.bc"); fileExists(bc) {
 		args = append(args, "--rt-bitcode="+bc)

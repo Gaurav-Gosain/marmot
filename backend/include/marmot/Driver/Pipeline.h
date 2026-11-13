@@ -58,6 +58,9 @@ struct CompileOptions {
   // every cache key.
   std::string optionKey;
   bool tier0 = false;          // batch: tier0 objects, LLVM -O0 for what it leaves
+  // tier0 batch: spool the modules it compiles here for background tier 1
+  // (runTier1) and use the -O2 objects tier 1 cached.
+  std::string tier1Spool;
   bool prepareOnly = false;    // batch: fill the cache (phase 1 for -wpo), write no outputs
   std::string gpuArch;         // -gpu=sm_86: PTX for "marmot-gpu-body" loops
   bool devirt = true;          // go-devirt at -O1 and up

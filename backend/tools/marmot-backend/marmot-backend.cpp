@@ -23,6 +23,11 @@
 #include <cstdlib>
 #include <iostream>
 #include <thread>
+
+#if defined(__unix__) || defined(__APPLE__)
+#include <sched.h>
+#include <sys/resource.h>
+#endif
 #include <chrono>
 #include <mutex>
 
@@ -105,6 +110,15 @@ static cl::opt<bool> serve(
 static cl::opt<bool> tier0(
     "tier0", cl::desc("Batch: compile with the tier0 code generator, LLVM -O0 for the functions "
                       "it leaves (implies -O 0)"));
+static cl::opt<std::string> tier1Spool(
+    "tier1-spool",
+    cl::desc("-tier0 batch: spool the modules it compiles in DIR for background tier 1 and use "
+             "the -O2 objects tier 1 cached (needs -cache-dir)"),
+    cl::value_desc("DIR"));
+static cl::opt<bool> tier1Run(
+    "tier1-run",
+    cl::desc("Background tier 1: compile the modules of -tier1-spool at -O2 into -cache-dir, at "
+             "the lowest priority, with the options of the tier0 batch (no -batch)"));
 static cl::opt<bool> keepCallSites(
     "keep-call-sites",
     cl::desc("No tail merging of calls, so runtime.Caller sees every inlined frame (dev builds, "
@@ -204,6 +218,22 @@ bool readJobs(const std::string &path, std::vector<Job> &out, std::string &err) 
 
 } // namespace
 
+// Background work (-tier1-run) runs on idle cores only: the idle
+// scheduling class on Linux, background QoS on macOS (lowest CPU and I/O
+// priority), nice 19 elsewhere.
+static void lowestPriority() {
+#if defined(__linux__)
+  sched_param sp{};
+  if (sched_setscheduler(0, SCHED_IDLE, &sp) != 0)
+    (void)setpriority(PRIO_PROCESS, 0, 19);
+#elif defined(__APPLE__)
+  if (setpriority(PRIO_DARWIN_PROCESS, 0, PRIO_DARWIN_BG) != 0)
+    (void)setpriority(PRIO_PROCESS, 0, 19);
+#elif defined(__unix__)
+  (void)setpriority(PRIO_PROCESS, 0, 19);
+#endif
+}
+
 // Every option of this run that can change generated code, for the cache
 // key: the command line and MARMOT_BACKEND_FLAGS as given, without the
 // options that only say where files are or how many threads run. This covers
@@ -221,7 +251,8 @@ static std::string optionKey(int argc, char **argv) {
   }
   // Options whose value is the next token when not written as -opt=value.
   auto takesValue = [](StringRef n) {
-    return n == "j" || n == "batch" || n == "cache-dir" || n == "o" || n == "rt-bitcode";
+    return n == "j" || n == "batch" || n == "cache-dir" || n == "o" || n == "rt-bitcode" ||
+           n == "tier1-spool";
   };
   std::string key;
   for (size_t i = 0; i < toks.size(); ++i) {
@@ -229,7 +260,8 @@ static std::string optionKey(int argc, char **argv) {
     if (!t.starts_with("-")) // an input file
       continue;
     StringRef name = t.ltrim('-').split('=').first;
-    if (takesValue(name) || name == "time" || name == "prepare-only" || name == "serve") {
+    if (takesValue(name) || name == "time" || name == "prepare-only" || name == "serve" ||
+        name == "tier1-run") {
       if (takesValue(name) && !t.contains('=') && i + 1 < toks.size())
         ++i;
       continue;
@@ -277,6 +309,8 @@ int main(int argc, char **argv) {
   opts.debugLevel = debugLevel;
   opts.keepTailCalls = keepTailCalls;
   opts.prepareOnly = prepareOnly;
+  if (tier0 && !cacheDir.empty())
+    opts.tier1Spool = tier1Spool;
   if (prepareOnly && (batchFile.empty() || cacheDir.empty())) {
     errs() << "marmot-backend: -prepare-only needs -batch and -cache-dir\n";
     return 1;
@@ -306,6 +340,16 @@ int main(int argc, char **argv) {
   opts.strings = !noStrings;
   opts.openDefers = !noOpenDefers;
   opts.timePhases = timePhases;
+
+  // Every option is set: the tier 1 runner's cache keys match the batch's.
+  if (tier1Run) {
+    if (!tier0 || opts.tier1Spool.empty() || !batchFile.empty()) {
+      errs() << "marmot-backend: -tier1-run needs -tier0, -tier1-spool and -cache-dir, no -batch\n";
+      return 1;
+    }
+    lowestPriority();
+    return marmot::runTier1(opts, cacheDir, errs()) ? 0 : 1;
+  }
 
   // Prepared on first use: a fully cached batch never parses it.
   std::unique_ptr<marmot::LazyRuntimeLib> rt;
@@ -483,8 +527,9 @@ int main(int argc, char **argv) {
                        st.cacheHits, st.cacheMisses, st.compiled.load(), jobCount,
                        st.splitModules, st.groups);
     if (opts.timePhases && opts.tier0) {
-      errs() << format("tier0: %u functions, %u fallbacks, %u modules need LLVM\n",
-                       st.tier0Functions, st.tier0Fallbacks, st.tier0Rest);
+      errs() << format("tier0: %u functions, %u fallbacks, %u modules need LLVM, "
+                       "%u tier 1 objects\n",
+                       st.tier0Functions, st.tier0Fallbacks, st.tier0Rest, st.tier1Hits.load());
       for (auto &[why, count] : st.tier0Reasons)
         errs() << format("tier0 fallback %u: ", count) << why << "\n";
     }

@@ -32,6 +32,7 @@ struct WpoStats {
   unsigned splitModules = 0, groups = 0; // -split-large
   // -tier0: functions tier0 compiled and left to LLVM, by first reason.
   unsigned tier0Functions = 0, tier0Fallbacks = 0, tier0Rest = 0;
+  std::atomic<unsigned> tier1Hits{0}; // -tier1-spool: -O2 objects of background tier 1 used
   std::map<std::string, unsigned> tier0Reasons;
 };
 
@@ -51,6 +52,13 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
 bool compileTier0(const std::function<bool(WpoJob &)> &next, const CompileOptions &opts,
                   unsigned threads, const std::string &cacheDir, PhaseTimes &total,
                   WpoStats &stats, llvm::raw_ostream &errs);
+
+// Background tier 1: compiles the modules a tier0 batch left in
+// opts.tier1Spool (KEY.mlir, KEY.fp) at -O2, one at a time, newest first,
+// and caches each object under KEY, where the next tier0 batch with the
+// same options looks first. opts are the tier0 batch's. A second runner on
+// the same spool returns at once. False if a module failed (it is dropped).
+bool runTier1(const CompileOptions &opts, const std::string &cacheDir, llvm::raw_ostream &errs);
 
 } // namespace marmot
 

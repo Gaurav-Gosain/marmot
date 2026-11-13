@@ -80,6 +80,29 @@ std::string hashHex(StringRef data) {
   return out;
 }
 
+// Background tier 1 spool (see runTier1): at most this many modules wait.
+constexpr int kTier1SpoolMax = 64;
+
+// The keys of the modules in a tier 1 spool, newest first.
+std::vector<std::string> tier1Spooled(StringRef dir) {
+  std::vector<std::pair<sys::TimePoint<>, std::string>> found;
+  std::error_code ec;
+  for (sys::fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+    StringRef name = sys::path::filename(it->path());
+    if (!name.consume_back(".mlir"))
+      continue;
+    sys::fs::file_status st;
+    if (sys::fs::status(it->path(), st))
+      continue;
+    found.push_back({st.getLastModificationTime(), name.str()});
+  }
+  std::sort(found.begin(), found.end(), [](auto &a, auto &b) { return a.first > b.first; });
+  std::vector<std::string> keys;
+  for (auto &f : found)
+    keys.push_back(f.second);
+  return keys;
+}
+
 class Cache {
 public:
   explicit Cache(std::string dir) : dir(std::move(dir)) {
@@ -173,6 +196,11 @@ public:
       sys::fs::remove(tmp);
     else
       written += data.size();
+  }
+
+  // Whether an entry exists (no hit is counted, no time touched).
+  bool has(const std::string &key, StringRef kind) const {
+    return enabled() && sys::fs::exists(path(key, kind));
   }
 
   std::atomic<unsigned> hits{0}, misses{0};
@@ -847,6 +875,33 @@ bool compileTier0(const std::function<bool(WpoJob &)> &next, const CompileOption
   if (const char *e = std::getenv("MARMOT_PARSE_THREADS"))
     parseCap = std::max(1, std::atoi(e));
   std::atomic<unsigned> busy{0};
+  // Background tier 1: every module compiled here is linked (copied if
+  // that fails) into the spool as KEY.mlir with KEY.fp, the options it was
+  // compiled with; at most kTier1SpoolMax entries wait.
+  const bool tier1 = cacheObjects && !opts.tier1Spool.empty();
+  int spoolRoom = -1; // entries the spool takes; counted on first use
+  const std::string fpHash = hashHex(fp);
+  auto spoolTier1 = [&](const std::string &in, const std::string &t1Key) {
+    {
+      std::lock_guard<std::mutex> lock(mu);
+      if (spoolRoom < 0) {
+        sys::fs::create_directories(opts.tier1Spool);
+        spoolRoom = kTier1SpoolMax - int(tier1Spooled(opts.tier1Spool).size());
+      }
+      if (spoolRoom <= 0)
+        return;
+      --spoolRoom;
+    }
+    SmallString<256> base(opts.tier1Spool);
+    sys::path::append(base, t1Key);
+    std::string mlir = (base + ".mlir").str(), tmp = (base + ".tmp").str();
+    if (sys::fs::exists(mlir) || !writeFile((base + ".fp").str(), fpHash))
+      return;
+    sys::fs::remove(tmp);
+    if (sys::fs::create_hard_link(in, tmp) && sys::fs::copy_file(in, tmp))
+      return;
+    sys::fs::rename(tmp, mlir);
+  };
   auto compileJob = [&](const WpoJob &j, raw_ostream &es, PhaseTimes &t) {
     auto t0 = std::chrono::steady_clock::now();
     std::string inHash;
@@ -864,6 +919,9 @@ bool compileTier0(const std::function<bool(WpoJob &)> &next, const CompileOption
     const std::string key = hashHex(inHash + "|t0|" + fp);
     const std::string restKey = hashHex(key + "|rest");
     const std::string rest = j.out + ".1.o";
+    // Background tier 1 (opts.tier1Spool): the -O2 object of the same
+    // input, made after the build by runTier1, replaces the tier0 ones.
+    const std::string t1Key = tier1 ? hashHex(inHash + "|t1|" + fp) : std::string();
     auto writeOut = [&](const std::string &path, StringRef obj) {
       if (!opts.prepareOnly && !writeFile(path, obj))
         es << path << ": cannot write\n";
@@ -878,6 +936,15 @@ bool compileTier0(const std::function<bool(WpoJob &)> &next, const CompileOption
       if (!writeFile(j.out + ".parts", j.out + "\n" + rest + "\n"))
         es << j.out << ".parts: cannot write\n";
     };
+    if (tier1) {
+      if (auto obj = cache.get(t1Key, "o")) {
+        writeOut(j.out, *obj);
+        fragment(j.out, *obj, t1Key);
+        writeParts(false);
+        ++stats.tier1Hits;
+        return;
+      }
+    }
     if (cacheObjects) {
       auto obj = cache.get(key, "o");
       auto parts = obj ? cache.get(key, "t0parts") : std::nullopt;
@@ -893,6 +960,8 @@ bool compileTier0(const std::function<bool(WpoJob &)> &next, const CompileOption
         return;
       }
     }
+    if (tier1 && !opts.prepareOnly)
+      spoolTier1(j.in, t1Key);
     uint64_t textSize = 0;
     sys::fs::file_size(j.in, textSize);
     Admit admit(admitMu, admitCv, inFlight, textSize, textBudget);
@@ -1043,6 +1112,104 @@ bool compileTier0(const std::function<bool(WpoJob &)> &next, const CompileOption
   if (opts.timePhases)
     for (auto &[in, t] : perJob)
       t.print(errs, sys::path::filename(in).str());
+  return ok;
+}
+
+bool runTier1(const CompileOptions &opts, const std::string &cacheDir, raw_ostream &errs) {
+  if (opts.tier1Spool.empty() || cacheDir.empty() || opts.emit != Emit::Obj)
+    return true;
+  sys::fs::create_directories(opts.tier1Spool);
+  // One runner at a time; a second one leaves the spool to the first.
+  SmallString<256> lockPath(opts.tier1Spool);
+  sys::path::append(lockPath, ".lock");
+  int lockFd;
+  if (sys::fs::openFileForWrite(lockPath, lockFd, sys::fs::CD_OpenAlways))
+    return true;
+  struct CloseFd {
+    int fd;
+    ~CloseFd() { sys::Process::SafelyCloseFileDescriptor(fd); }
+  } closeLock{lockFd};
+  if (sys::fs::tryLockFile(lockFd))
+    return true;
+  Cache cache(cacheDir);
+  struct EvictAtEnd {
+    Cache &c;
+    ~EvictAtEnd() { c.evict(); }
+  } evictAtEnd{cache};
+  const std::string fpHash = hashHex(fingerprint(opts));
+  // The lowering is the tier0 batch's (same MLIR passes, so the object
+  // links with tier0 objects as its LLVM fallback does); LLVM optimizes and
+  // emits at -O2.
+  CompileOptions o2 = opts;
+  o2.tier0 = false;
+  o2.optLevel = '2';
+  o2.parseThreads = 1;
+  // A module whose text passes a thirty-second of the memory limit waits
+  // for a build to compile it (same rule as the tier0 batch).
+  uint64_t textBudget = 3072ull << 20;
+  if (const char *e = std::getenv("MARMOT_MAX_MEM_MB"))
+    textBudget = std::strtoull(e, nullptr, 10) << 20;
+  textBudget = textBudget ? textBudget / 32 : UINT64_MAX;
+  bool ok = true;
+  // Newest first: the module edited last is the one the next build needs.
+  // Entries that arrive while this runs are taken in the next round.
+  for (;;) {
+    std::vector<std::string> keys = tier1Spooled(opts.tier1Spool);
+    if (keys.empty())
+      break;
+    for (const std::string &k : keys) {
+      SmallString<256> base(opts.tier1Spool);
+      sys::path::append(base, k);
+      const std::string in = (base + ".mlir").str(), fpFile = (base + ".fp").str();
+      auto drop = [&] {
+        sys::fs::remove(in);
+        sys::fs::remove(fpFile);
+      };
+      auto fpBuf = MemoryBuffer::getFile(fpFile);
+      uint64_t size = 0;
+      sys::fs::file_size(in, size);
+      if (!fpBuf || (*fpBuf)->getBuffer() != fpHash || size > textBudget ||
+          cache.has(k, "o")) {
+        drop();
+        continue;
+      }
+      std::string msgs;
+      raw_string_ostream es(msgs);
+      PhaseTimes t;
+      std::string err, obj;
+      auto tm = createTargetMachine(o2, err);
+      ParsedModulePtr pm = tm ? parseFile(in, opts, es) : nullptr;
+      bool good = pm && lowerModule(*pm, in, opts, *tm, t, es);
+      if (good) {
+        LLVMContext ctx;
+        auto lm = translateLowered(*pm, in, *tm, ctx, t, es);
+        pm = nullptr;
+        const std::string out = (base + ".o").str();
+        good = lm && optimizeAndEmit(*lm, *tm, in, out, o2, t, es);
+        if (good) {
+          auto buf = MemoryBuffer::getFile(out);
+          good = bool(buf);
+          if (good)
+            obj = (*buf)->getBuffer().str();
+        }
+        sys::fs::remove(out);
+      }
+      std::string text;
+      if (good && opts.pclnFragments &&
+          !pcln::makeFragment(MemoryBufferRef(obj, in), 3, text, err))
+        good = false;
+      if (good) {
+        // The fragment first: a build that finds the object finds its table.
+        if (opts.pclnFragments)
+          cache.put(k, "pcln", text);
+        cache.put(k, "o", obj);
+      } else {
+        ok = false;
+        errs << "marmot-backend: tier1: " << in << ": " << (tm ? msgs : err) << "\n";
+      }
+      drop();
+    }
+  }
   return ok;
 }
 
