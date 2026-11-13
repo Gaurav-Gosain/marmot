@@ -220,7 +220,19 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 						continue
 					}
 				}
-				addOnce(results[n], toDiag(n, x.linter, x.fd, p.path), seen)
+				if f := x.fd.Span.File; f != "" && filepath.Dir(f) != p.Dir {
+					// A file the package does not own: the cgo output go list
+					// compiles from the build cache. Its positions are not the
+					// user's and its fixes must never be applied.
+					continue
+				}
+				d := toDiag(n, x.linter, x.fd, p.path)
+				if len(p.CgoFiles) > 0 {
+					// The analyzers saw cgo's rewrite of the files: an edit's
+					// offsets need not match the file the user has.
+					d.Fixes = nil
+				}
+				addOnce(results[n], d, seen)
 			}
 		}
 	}

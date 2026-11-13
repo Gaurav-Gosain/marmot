@@ -583,3 +583,37 @@ func TestFmtIgnoredDir(t *testing.T) {
 		t.Errorf("fmt in a directory git ignores: %d findings, want 1", n)
 	}
 }
+
+func TestFixLeavesCgoOutputAlone(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs cgo")
+	}
+	t.Setenv("GOWORK", "off")
+	dir := t.TempDir()
+	if d, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = d
+	}
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/c\n\ngo 1.26\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\n// static int add(int a, int b) { return a + b; }\nimport \"C\"\n\nfunc show(v interface{}) { println(v != nil) }\n\nfunc main() { show(int(C.add(1, 2))) }\n"), 0o644)
+	r, err := Run(Options{Dir: dir, Only: []string{"modernize"}, CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range r.Checks[0].Findings {
+		if filepath.Dir(d.Span.File) != dir {
+			t.Errorf("finding outside the package: %s", d.Span.File)
+		}
+		if len(d.Fixes) > 0 {
+			t.Errorf("a fix in a cgo package: %+v", d.Fixes[0])
+		}
+	}
+	if n := len(r.Checks[0].Findings); n != 1 {
+		t.Errorf("findings: %d, want the one in main.go", n)
+	}
+	if c := candidates(r, true); len(c) != 0 {
+		t.Errorf("fix candidates in a cgo package: %d", len(c))
+	}
+	if editableFile(dir, filepath.Join(os.TempDir(), "x.go")) {
+		t.Error("a file outside the module is editable")
+	}
+}

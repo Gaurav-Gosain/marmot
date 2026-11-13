@@ -3,9 +3,13 @@ package check
 import (
 	"bytes"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -178,6 +182,15 @@ type candidate struct {
 // candidates are the findings with a fix that may be applied.
 func candidates(r *Result, all bool) []candidate {
 	var out []candidate
+	ok := map[string]bool{}
+	editable := func(f string) bool {
+		v, seen := ok[f]
+		if !seen {
+			v = editableFile(r.Dir, f)
+			ok[f] = v
+		}
+		return v
+	}
 	for _, c := range r.Checks {
 		for _, d := range c.Findings {
 			if len(d.Fixes) == 0 {
@@ -197,6 +210,9 @@ func candidates(r *Result, all bool) []candidate {
 				}
 				seen[k] = true
 				es = append(es, e)
+			}
+			if slices.ContainsFunc(es, func(e diag.Edit) bool { return !editable(e.File) }) {
+				continue
 			}
 			if len(es) > 0 {
 				out = append(out, candidate{d, es})
@@ -475,4 +491,15 @@ func diffFiles(fs []*fileState, dir string) string {
 		b.Write(out)
 	}
 	return b.String()
+}
+
+// editableFile reports whether marmot fix may change f: a Go file under
+// the directory checked (not the build cache, where go list puts cgo
+// output, nor the module cache) that does not say it is generated.
+func editableFile(dir, f string) bool {
+	if dir == "" || !strings.HasPrefix(f, dir+string(filepath.Separator)) {
+		return false
+	}
+	af, err := parser.ParseFile(token.NewFileSet(), f, nil, parser.PackageClauseOnly|parser.ParseComments)
+	return err == nil && !ast.IsGenerated(af)
 }
