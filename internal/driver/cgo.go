@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -123,8 +124,8 @@ func (b *build) cgoObjects(pkgs map[string]*cgo.Package, bitcode bool) ([]string
 			if j.bc {
 				args = append([]string{"-emit-llvm"}, args...)
 			}
-			if err := b.run(cc, args...); err != nil {
-				errs[i] = fmt.Errorf("%s: %v", j.src, err)
+			if err := b.compileC(cc, args); err != nil {
+				errs[i] = err
 				_ = os.Remove(tmp) // best effort: the temp file of a failed step
 				return
 			}
@@ -174,6 +175,28 @@ func (b *build) cgoTargetFlags() ([]string, error) {
 		return nil, fmt.Errorf("cgo: cross compiling C for %s/%s needs its headers: set MARMOT_SYSROOT to a copy of the target's root (usr/include, usr/lib)", b.goos, b.goarch)
 	}
 	return flags, nil
+}
+
+// errC is an error in the user's C code: clang's diagnostics as text, so
+// they read as build errors of the program (M0030), not of marmot.
+type errC struct{ text string }
+
+func (e *errC) Error() string { return e.text }
+
+// compileC runs clang on a C or assembly file of a cgo package. A failure
+// with diagnostics is the program's error (errC).
+func (b *build) compileC(cc string, args []string) error {
+	if b.cfg.PrintCmd {
+		fmt.Fprintln(b.cfg.Stderr, cc+" "+strings.Join(args, " "))
+	}
+	out, err := exec.Command(cc, args...).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if text := strings.TrimSpace(string(out)); strings.Contains(text, ": error: ") {
+		return &errC{text}
+	}
+	return fmt.Errorf("%s: %v: %s", cc, err, out)
 }
 
 // headerSig is a signature of the .h files in dir.

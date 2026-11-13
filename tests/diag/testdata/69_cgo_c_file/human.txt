@@ -1,0 +1,15 @@
+error[M0030]: expected ';' after return statement
+ --> ./twice.c:2:14
+  |
+2 |     return x * 2
+  |                 ^
+  |
+help: insert `;`
+  |
+2 -     return x * 2
+2 +     return x * 2;
+  |
+
+error: build failed with 1 error
+1 error can be fixed automatically: run `marmot fix`
+for more about an error, run `marmot explain M0030`

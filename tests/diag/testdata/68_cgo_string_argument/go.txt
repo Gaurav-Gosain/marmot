@@ -1,0 +1,2 @@
+# example.com/cgo_string_argument
+./main.go:10:19: cannot use s (variable of type string) as *C.char value in argument to (C.strlen)

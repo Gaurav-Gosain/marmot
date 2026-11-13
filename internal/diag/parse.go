@@ -2,6 +2,7 @@ package diag
 
 import (
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -14,14 +15,41 @@ var posRE = lazy(`^((?:[A-Za-z]:)?[^:\s][^:]*\.(?:go|s|c|h|mod)):(\d+)(?::(\d+))
 // line that starts with a position, or a non-indented line, starts a new
 // diagnostic; indented lines that follow belong to it. Relative paths are
 // made absolute against dir.
+var (
+	clangCount   = regexp.MustCompile(`^\d+ (errors?|warnings?)( and \d+ (errors?|warnings?))? generated\.$`)
+	clangExcerpt = regexp.MustCompile(`^\s*(\d*) \| ?(.*)$`)
+	pkgPrefix    = regexp.MustCompile(`^[\w.\-]+(?:/[\w.\-]+)*: (\S+:\d+:\d+: .*)$`)
+)
+
 func FromText(text, dir string) []Diagnostic {
 	var ds []Diagnostic
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 	internal := false
+	lastC := false // the previous diagnostic came from clang
 	for i := range lines {
 		l := lines[i]
 		if strings.TrimSpace(l) == "" {
 			continue
+		}
+		// clang (cgo preamble, C files): "N errors generated." and the
+		// excerpt under an error ("  4 | code", "    |   ^", "    |   ;").
+		if clangCount.MatchString(l) {
+			continue
+		}
+		if lastC && clangExcerpt.MatchString(l) {
+			if m := clangExcerpt.FindStringSubmatch(l); m[1] == "" {
+				// A caret line, then possibly clang's fix-it text.
+				if t := strings.TrimSpace(strings.Trim(m[2], "^~ ")); t != "" && !strings.ContainsAny(m[2], "^") {
+					d := &ds[len(ds)-1]
+					d.Fixes = append(d.Fixes, Fix{Title: "insert `" + t + "`", Applicability: MachineApplicable,
+						Edits: []Edit{{File: d.Span.File, Span: Span{File: d.Span.File, Line: d.Span.Line, Col: d.Span.Col, EndLine: d.Span.Line, EndCol: d.Span.Col}, NewText: t}}})
+				}
+			}
+			continue
+		}
+		// The loader prefixes a package's errors with its path.
+		if m := pkgPrefix.FindStringSubmatch(l); m != nil {
+			l = m[1]
 		}
 		if internal {
 			// Tool output after an internal error header stays with it.
@@ -58,6 +86,22 @@ func FromText(text, dir string) []Diagnostic {
 		}
 		d.Message = strings.TrimSpace(d.Message)
 		d.Code = Classify(d.Message)
+		lastC = false
+		if d.Span.Valid() {
+			switch {
+			case strings.HasPrefix(d.Message, "error: "), strings.HasPrefix(d.Message, "fatal error: "):
+				// clang's format: go/types never writes "error:".
+				d.Message = strings.TrimPrefix(strings.TrimPrefix(d.Message, "fatal "), "error: ")
+				d.Code, lastC = CodeC, true
+			case strings.HasPrefix(d.Message, "warning: "):
+				continue // C warnings do not fail the build
+			case strings.HasPrefix(d.Message, "note: ") && len(ds) > 0:
+				prev := &ds[len(ds)-1]
+				prev.Related = append(prev.Related, Related{Span: d.Span, Message: strings.TrimPrefix(d.Message, "note: ")})
+				lastC = true
+				continue
+			}
+		}
 		if d.Code == CodeInternal {
 			internal = true
 		}

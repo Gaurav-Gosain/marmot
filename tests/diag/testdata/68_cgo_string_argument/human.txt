@@ -1,0 +1,14 @@
+error[M0006]: cannot use s (variable of type string) as *C.char value in argument to C.strlen
+  --> ./main.go:10:19
+   |
+ 9 |     s := "hello"
+   |     - `s` is declared here as `string`
+10 |     println(C.strlen(s))
+   |                      ^ expected `*C.char`, found `string`
+   |
+   = help: C wants a C string: `cs := C.CString(s)`, pass `cs`, and free it with
+           `defer C.free(unsafe.Pointer(cs))` (the preamble needs `#include <stdlib.h>`, the file
+           `import "unsafe"`)
+
+error: build failed with 1 error
+for more about an error, run `marmot explain M0006`

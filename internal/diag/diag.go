@@ -260,7 +260,17 @@ func Process(text string, src *Sources, opt Options) []Diagnostic {
 
 // Finish runs the steps of Process after parsing.
 func Finish(ds []Diagnostic, src *Sources, opt Options) []Diagnostic {
+	for i := range ds {
+		ds[i].Message = demangleCgo(ds[i].Message)
+	}
 	src.Enrich(ds, opt)
+	for i := range ds {
+		cgoHelp(&ds[i], src)
+		ds[i].Primary = demangleCgo(ds[i].Primary)
+		for j := range ds[i].Labels {
+			ds[i].Labels[j].Text = demangleCgo(ds[i].Labels[j].Text)
+		}
+	}
 	for i := range ds {
 		relatedToLabels(&ds[i])
 	}

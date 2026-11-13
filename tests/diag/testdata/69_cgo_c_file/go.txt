@@ -1,0 +1,2 @@
+# example.com/cgo_c_file
+twice.c:2:14: error: expected ';' after return statement

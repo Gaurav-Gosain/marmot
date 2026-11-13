@@ -1,0 +1,17 @@
+error[M0006]: cannot use x (variable of type int) as C.int value in argument to C.add
+  --> ./main.go:10:16
+   |
+ 9 |     x := 3
+   |     - `x` is declared here as `int`
+10 |     println(C.add(x, 2))
+   |                   ^ expected `C.int`, found `int`
+   |
+help: convert to `C.int(x)`
+   |
+10 -     println(C.add(x, 2))
+10 +     println(C.add(C.int(x), 2))
+   |
+
+error: build failed with 1 error
+1 error can be fixed automatically: run `marmot fix`
+for more about an error, run `marmot explain M0006`

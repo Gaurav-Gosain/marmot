@@ -1,0 +1,15 @@
+error[M0030]: expected ';' after return statement
+ --> ./main.go:4:44
+  |
+4 | static int add(int a, int b) { return a + b }
+  |                                            ^
+  |
+help: insert `;`
+  |
+4 - static int add(int a, int b) { return a + b }
+4 + static int add(int a, int b) { return a + b; }
+  |
+
+error: build failed with 1 error
+1 error can be fixed automatically: run `marmot fix`
+for more about an error, run `marmot explain M0030`

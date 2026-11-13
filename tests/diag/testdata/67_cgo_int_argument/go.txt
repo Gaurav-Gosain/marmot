@@ -1,0 +1,2 @@
+# example.com/cgo_int_argument
+./main.go:10:16: cannot use x (variable of type int) as C.int value in argument to (C.add)

@@ -37,6 +37,7 @@ const (
 	CodeCannotInfer   = "M0027"
 	CodeShadow        = "M0028"
 	CodeUnknownField  = "M0029"
+	CodeC             = "M0030" // an error in C code (cgo preamble or C files), from clang
 
 	// marmot check findings, one code per check family.
 	CodeVet        = "M0100"
@@ -196,6 +197,10 @@ var codeTable = []CodeInfo{
 		Right: "_ = len(m) < len(n)",
 		Text:  "The operator or conversion is not defined for the operand types.",
 		match: lazy(`^(invalid operation|cannot convert|invalid argument|cannot call|cannot assign|cannot range|cannot index|cannot slice|invalid composite literal|non-boolean)`)},
+	{Code: CodeC, Title: "error in C code",
+		Text:  "clang rejected the C code of a cgo package: the preamble (the comment above import \"C\"), or a .c file of the package. The position is in the Go file for the preamble.",
+		Fix:   "Fix the C as clang says; a help line shows clang's own fix when it has one.",
+		match: lazy(`$^`)},
 	{Code: CodeUsage, Title: "bad command line",
 		Text:  "The command line names no buildable main package, or a flag value is not valid.",
 		match: lazy(`(is not a main package|is not supported; name one main package|^bad -|^unsupported -target|no packages matched|^flag provided but not defined)`)},

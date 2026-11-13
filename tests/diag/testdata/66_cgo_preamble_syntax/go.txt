@@ -1,0 +1,6 @@
+# example.com/cgo_preamble_syntax
+./main.go:4:44: error: expected ';' after return statement
+    4 | static int add(int a, int b) { return a + b }
+      |                                            ^
+      |                                            ;
+1 error generated.
