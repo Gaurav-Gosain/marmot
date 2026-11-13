@@ -78,6 +78,15 @@ void rt_gc_parallel_enable(void);
 // allocation free (internal/synctest.Associate: only heap objects join a
 // bubble).
 int32_t rt_heap_object(void *p);
+// The heap object p points into: *base and *size, and how its words are
+// known: RT_HEAPOBJ_NONE (not a heap object), _NOSCAN (no pointers),
+// _PRECISE (rt_heap_ptr_word tells each word), _CONSERVATIVE (any word may
+// be a pointer). Lock free.
+enum { RT_HEAPOBJ_NONE = 0, RT_HEAPOBJ_NOSCAN, RT_HEAPOBJ_PRECISE, RT_HEAPOBJ_CONSERVATIVE };
+int32_t rt_heap_object_span(void *p, void **base, uintptr_t *size);
+// 1 if the word at byte offset off of a RT_HEAPOBJ_PRECISE object at base
+// is a pointer slot.
+int32_t rt_heap_ptr_word(void *base, uintptr_t off);
 
 // Weak pointers. slot is a word (in NOSCAN or non-heap memory) holding an
 // object address, start or interior. After marking and before finalizers

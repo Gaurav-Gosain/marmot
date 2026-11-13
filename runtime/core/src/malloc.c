@@ -822,6 +822,39 @@ RT_API int32_t rt_heap_object(void *ptr) {
   return (int32_t)((s->allocbits[idx / 64] >> (idx % 64)) & 1);
 }
 
+// The heap object p points into (gc's findObject for cgocheck): its start
+// in *base, its size in *size (the size class or the large span), and how
+// its pointer words are known. Lock free, like rt_heap_object.
+RT_API int32_t rt_heap_object_span(void *ptr, void **base, uintptr_t *size) {
+  uintptr_t p = (uintptr_t)ptr;
+  if (!rt_heap_object(ptr)) return RT_HEAPOBJ_NONE;
+  mspan *s = rt_pagemap[(p - rt_arena_start) >> PAGE_SHIFT];
+  uintptr_t idx = s->cls ? (uintptr_t)(((uint64_t)(p - s->base) * s->divmul) >> 32) : 0;
+  *base = (void *)(s->base + idx * s->elemsize);
+  *size = s->elemsize;
+  switch (s->kind) {
+    case RT_ALLOC_NOSCAN: return RT_HEAPOBJ_NOSCAN;
+    case RT_ALLOC_PRECISE: return RT_HEAPOBJ_PRECISE;
+    default: return RT_HEAPOBJ_CONSERVATIVE;
+  }
+}
+
+// For an object rt_heap_object_span reported as RT_HEAPOBJ_PRECISE: 1 if
+// the word at byte offset off (a multiple of 8) of the object at base is a
+// pointer slot.
+RT_API int32_t rt_heap_ptr_word(void *base, uintptr_t off) {
+  uintptr_t b = (uintptr_t)base;
+  mspan *s = rt_pagemap[(b - rt_arena_start) >> PAGE_SHIFT];
+  if (off >= s->elemsize) return 0;
+  if (s->cls) {
+    uintptr_t w = (b + off - rt_arena_start) / 8;
+    return (int32_t)((rt_heapbits[w / 64] >> (w % 64)) & 1);
+  }
+  uintptr_t e = off / s->ptrelem, i = (off % s->ptrelem) / 8;
+  if (e >= s->ptrcount) return 0;
+  return (s->ptrmap[i / 8] >> (i % 8)) & 1;
+}
+
 // Return a heap object the compiler proved dead. Small objects go on this
 // thread's list for their class and are handed out by the next allocation
 // of that class; large objects give their pages back at once. Pointers that
