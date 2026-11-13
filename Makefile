@@ -6,8 +6,13 @@ export MARMOT_ROOT := $(ROOT)
 
 all: frontend check-tool backend rtcore
 
+# GOEXPERIMENT=nogreenteagc: with the Green Tea collector (default since Go
+# 1.26) code generation sometimes spends most of its CPU time in the
+# collector's span scanning (tryDeferToSpanScan) when every core generates a
+# package; the classic collector is steady. Temporary, until that is fixed
+# upstream or the experiment goes away.
 frontend:
-	go build -o build/bin/marmot ./cmd/marmot
+	GOEXPERIMENT=nogreenteagc go build -o build/bin/marmot ./cmd/marmot
 
 # The analyzers of marmot check, a separate binary that marmot runs.
 check-tool:
