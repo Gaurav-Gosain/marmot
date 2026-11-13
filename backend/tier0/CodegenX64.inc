@@ -1219,6 +1219,7 @@ void FuncGenX64::emitIntrinsic(LL::CallIntrinsicOp c) {
 
 void FuncGenX64::run() {
   if (fn.isVarArg()) unsupported("variadic function");
+  mg.checkFunction(fn);
   fn.walk([&](LL::CondBrOp c) {
     auto ic = c.getCondition().getDefiningOp<LL::ICmpOp>();
     if (ic && ic->getNextNode() == c.getOperation() && ic->hasOneUse() && !isWide(ic.getLhs().getType()))

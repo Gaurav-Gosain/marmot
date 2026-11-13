@@ -98,6 +98,9 @@ using ParsedModulePtr = std::unique_ptr<ParsedModule, ParsedModuleDeleter>;
 // Parse (and verify) input. Null with a message on errs on failure.
 ParsedModulePtr parseFile(const std::string &input, const CompileOptions &opts,
                           llvm::raw_ostream &errs);
+// Verify a module parseFile left unverified (tier0 batches); a no-op when
+// it was verified. False with the diagnostics on errs.
+bool verifyParsed(ParsedModule &pm, const std::string &input, llvm::raw_ostream &errs);
 // The module operation, as an opaque pointer for passes (mlir::ModuleOp).
 void *parsedModuleOp(ParsedModule &pm);
 // The go passes, lowering and translation of a parsed module.

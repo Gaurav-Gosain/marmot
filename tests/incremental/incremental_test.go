@@ -21,6 +21,14 @@ import (
 	"time"
 )
 
+// Tier0 dev builds skip the MLIR verifier; these tests keep it on, so a
+// malformed module from the frontend fails here.
+func init() {
+	if os.Getenv("MARMOT_VERIFY") == "" {
+		os.Setenv("MARMOT_VERIFY", "1")
+	}
+}
+
 const base = "5 2 [3 6 9] 7 {4 y} -1 1"
 
 var edits = []struct {

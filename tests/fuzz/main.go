@@ -462,6 +462,11 @@ func (rn *runner) shrink(src string) string {
 }
 
 func main() {
+	// Tier0 dev builds skip the MLIR verifier; the gates keep it on, so a
+	// malformed module from the frontend fails here.
+	if os.Getenv("MARMOT_VERIFY") == "" {
+		os.Setenv("MARMOT_VERIFY", "1")
+	}
 	// Plain compiler output whoever runs the harness (marmot switches to
 	// JSON under coding agents).
 	os.Setenv("MARMOT_OUTPUT", "plain")

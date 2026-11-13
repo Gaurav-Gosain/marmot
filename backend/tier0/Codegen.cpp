@@ -242,6 +242,9 @@ public:
   llvm::DenseSet<StringAttr> returnsTwice;
   // Functions by name, for the parameter attributes of a direct callee.
   llvm::DenseMap<StringAttr, LL::LLVMFuncOp> funcs;
+  // Value types seen and known to tier0 (checkFunction).
+  llvm::DenseSet<Type> knownTypes;
+  void checkFunction(LL::LLVMFuncOp fn);
   // Whether argument i of call (or the result of fn) is llvm.signext: the
   // caller (callee) extends the narrow integer to 64 bits by its sign.
   // Tier0 keeps narrow integers zero extended, which covers llvm.zeroext.
@@ -485,6 +488,46 @@ void ModuleGen::emitGlobal(LL::GlobalOp g) {
     w.emitData(s, &z, 1);
   }
   for (auto &r : cv.rels) w.reloc(s, at + r.off, Reloc::Abs64, w.symbol(r.sym), r.addend);
+}
+
+// Dev builds skip the MLIR verifier for modules tier0 compiles, so tier0
+// checks what it relies on before it emits anything for a function: every
+// value has a type it knows (integers of at most 64 bits or 128, pointers,
+// f32, f64, and structs and arrays of them), and every direct call matches
+// its callee's signature. Anything else leaves the function to LLVM, which
+// verifies the module first: an invalid module is reported there with the
+// operation and its location, never compiled.
+static bool knownValueType(Type t) {
+  if (auto i = dyn_cast<IntegerType>(t)) return i.getWidth() >= 1 && (i.getWidth() <= 64 || i.getWidth() == 128);
+  if (isa<LL::LLVMPointerType>(t) || t.isF32() || t.isF64()) return true;
+  if (auto s = dyn_cast<LL::LLVMStructType>(t)) {
+    if (s.isOpaque()) return false;
+    return llvm::all_of(s.getBody(), knownValueType);
+  }
+  if (auto a = dyn_cast<LL::LLVMArrayType>(t)) return knownValueType(a.getElementType());
+  return false;
+}
+
+void ModuleGen::checkFunction(LL::LLVMFuncOp fn) {
+  auto check = [&](Type t) {
+    if (knownTypes.contains(t)) return;
+    if (!knownValueType(t)) unsupported("unexpected value type");
+    knownTypes.insert(t);
+  };
+  fn.walk([&](Operation *op) {
+    for (Type t : op->getResultTypes()) check(t);
+    for (Value v : op->getOperands()) check(v.getType());
+    for (Region &rg : op->getRegions())
+      for (Block &b : rg)
+        for (BlockArgument a : b.getArguments()) check(a.getType());
+    if (auto call = dyn_cast<LL::CallOp>(op)) {
+      if (auto callee = call.getCalleeAttr()) {
+        auto it = funcs.find(callee.getAttr());
+        if (it == funcs.end() || it->second.getFunctionType() != call.getCalleeFunctionType())
+          unsupported("call that does not match its callee");
+      }
+    }
+  });
 }
 
 bool ModuleGen::isDefinedData(StringRef name) const {
@@ -1920,6 +1963,7 @@ void FuncGen::allocate() {
 
 void FuncGen::run() {
   if (fn.isVarArg()) unsupported("variadic function");
+  mg.checkFunction(fn);
   // An icmp right before the cond_br that is its only use sets the flags.
   fn.walk([&](LL::CondBrOp c) {
     auto ic = c.getCondition().getDefiningOp<LL::ICmpOp>();
