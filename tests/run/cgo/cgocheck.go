@@ -43,8 +43,6 @@ func main() {
 	C.free(unsafe.Pointer(cp))
 	fmt.Println("C pointer inside: ok")
 
-	goInt := new(C.int)
-	bad := &C.holder{q: goInt}
-	C.takeh(bad)
+	C.take(unsafe.Pointer(w))
 	fmt.Println("not reached")
 }

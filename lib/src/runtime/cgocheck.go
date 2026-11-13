@@ -7,8 +7,8 @@ import "unsafe"
 // that memory holds no Go pointers that are not pinned. The code cgo
 // generates calls cgoCheckPointer for each argument whose type may hold
 // pointers. Go memory here is the heap (rt_heap_object); pointers into
-// package variables are not checked, and neither is memory passed as an
-// unsafe.Pointer whose type is no longer known.
+// package variables are not checked. For an unsafe.Pointer argument the
+// heap's pointer bits of the object stand in for its type.
 
 var cgocheckState int32 // 0: unknown, 1: on, 2: off
 
@@ -49,6 +49,10 @@ func cgoCheckPointer(ptr any, arg any) {
 	}
 	e := efaceOf(&ptr)
 	t := e.typ
+	if t != nil && t.kind == kindUnsafePointer {
+		cgoCheckUnknownPointer(e.data)
+		return
+	}
 	if t == nil || t.kind != kindPointer {
 		return
 	}
@@ -61,6 +65,39 @@ func cgoCheckPointer(ptr any, arg any) {
 	}
 	cgoCheckValue((*ptrtype)(unsafe.Pointer(t)).elem, p)
 }
+
+// cgoCheckUnknownPointer checks memory passed as an unsafe.Pointer, whose
+// type is known only to the heap: the whole object p points into.
+// Objects scanned conservatively (no pointer bits) are not checked.
+func cgoCheckUnknownPointer(p unsafe.Pointer) {
+	if p == nil {
+		return
+	}
+	var base unsafe.Pointer
+	var size uintptr
+	if rt_heap_object_span(p, &base, &size) != rtHeapObjPrecise {
+		return
+	}
+	for off := uintptr(0); off+ptrSize <= size; off += ptrSize {
+		if rt_heap_ptr_word(base, off) == 0 {
+			continue
+		}
+		v := *(*unsafe.Pointer)(unsafe.Add(base, off))
+		if v != nil && rt_heap_object(v) != 0 && !isPinned(v) {
+			panic(errorString("argument of cgo function has Go pointer to unpinned Go pointer"))
+		}
+	}
+}
+
+// rt_heap_object_span kinds (rt.h).
+const rtHeapObjPrecise = 2
+
+//go:linkname rt_heap_object_span rt_heap_object_span
+//go:noescape
+func rt_heap_object_span(p unsafe.Pointer, base *unsafe.Pointer, size *uintptr) int32
+
+//go:linkname rt_heap_ptr_word rt_heap_ptr_word
+func rt_heap_ptr_word(base unsafe.Pointer, off uintptr) int32
 
 // cgoCheckValue panics if the value of type t at p holds a pointer to
 // the Go heap that is not pinned.

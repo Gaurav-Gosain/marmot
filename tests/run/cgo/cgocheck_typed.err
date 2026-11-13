@@ -1,0 +1,1 @@
+panic: runtime error: argument of cgo function has Go pointer to unpinned Go pointer
