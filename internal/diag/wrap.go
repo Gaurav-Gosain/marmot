@@ -61,30 +61,78 @@ func (h *Human) width() int {
 func visible(s string) int { return utf8.RuneCountInString(s) }
 
 // words splits prose into the units wrapping keeps whole: runs of
-// non-space characters, with a backticked span (spaces included) part of
-// the unit it starts in.
+// non-space characters, where a backticked span, a brace group (struct {
+// X int }) and a func(...) group with its result type (func(int) error)
+// count as one unit even when they hold spaces.
 func words(text string) []string {
 	var out []string
 	var cur strings.Builder
 	inCode := false
-	for _, r := range text {
+	depth := 0 // open braces, and parens of a func(...)
+	funcEnd := false
+	resultParen := false // the next ( opens a func's result list
+	rs := []rune(text)
+	for i, r := range rs {
 		switch {
 		case r == '`':
 			inCode = !inCode
-			cur.WriteRune(r)
-		case r == ' ' && !inCode:
+		case inCode:
+		case r == '{':
+			depth++
+		case r == '}' && depth > 0:
+			depth--
+		case r == '(' && (depth > 0 || resultParen || strings.HasSuffix(cur.String(), "func")):
+			depth++
+			resultParen = false
+		case r == ')' && depth > 0:
+			depth--
+			if depth == 0 && strings.Contains(cur.String(), "func(") {
+				funcEnd = true
+			}
+		case r == ' ' && depth == 0:
+			// After func(...): a simple result type joins the unit.
+			if funcEnd && i+1 < len(rs) && resultStart(rs[i+1:]) {
+				funcEnd = false
+				resultParen = rs[i+1] == '('
+				cur.WriteRune(r)
+				continue
+			}
+			funcEnd = false
 			if cur.Len() > 0 {
 				out = append(out, cur.String())
 				cur.Reset()
 			}
-		default:
-			cur.WriteRune(r)
+			continue
 		}
+		cur.WriteRune(r)
 	}
 	if cur.Len() > 0 {
 		out = append(out, cur.String())
 	}
 	return out
+}
+
+// resultStart reports whether rs starts a Go result type right after a
+// func(...) (a type name, *T, []T, map[, chan, or a result list).
+func resultStart(rs []rune) bool {
+	w := string(rs)
+	if i := strings.IndexAny(w, " ,;)"); i >= 0 {
+		w = w[:i]
+	}
+	switch {
+	case w == "":
+		return false
+	case strings.HasPrefix(w, "*") || strings.HasPrefix(w, "[]") || strings.HasPrefix(w, "map[") || w == "chan" || strings.HasPrefix(w, "("):
+		return true
+	}
+	// A type name: an identifier or pkg.Name, not a prose word.
+	for _, t := range []string{"error", "bool", "string", "int", "int8", "int16", "int32", "int64", "uint", "uint8",
+		"uint16", "uint32", "uint64", "uintptr", "byte", "rune", "float32", "float64", "complex64", "complex128", "any"} {
+		if w == t {
+			return true
+		}
+	}
+	return strings.Contains(w, ".") || w != "" && w[0] >= 'A' && w[0] <= 'Z'
 }
 
 // wrapLines breaks text into lines of at most first columns (the first
