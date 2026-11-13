@@ -292,4 +292,9 @@ var noCodeEffect = map[string]bool{
 	// Background tier 1 only picks which of two equivalent objects links;
 	// builds with it on or off share the cache.
 	"MARMOT_TIER1": true,
+	// Profiles of the compiler itself, how it reports, and how it shares
+	// the machine.
+	"MARMOT_CPUPROFILE": true, "MARMOT_MEMPROFILE": true,
+	"MARMOT_CHECK_CPUPROFILE": true, "MARMOT_CHECK_MEMPROFILE": true,
+	"MARMOT_OUTPUT": true, "MARMOT_DAEMON": true, "MARMOT_SLOTS": true, "MARMOT_SLOTS_DIR": true,
 }
