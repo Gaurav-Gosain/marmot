@@ -43,8 +43,8 @@ func fastLeaves(dir, cc string, flags []string) {
 			if m[2] != "Cfunc" || !leaves[m[1]] {
 				return body
 			}
-			body = strings.Replace(body, "rt_cgo_enter();", "rt_cgo_enter_fast();", 1)
-			return strings.Replace(body, "rt_cgo_exit();", "rt_cgo_exit_fast();", 1)
+			body = strings.Replace(body, "rt_cgo_enter();", fastEnter, 1)
+			return strings.Replace(body, "rt_cgo_exit();", fastExit, 1)
 		})
 		if c != string(data) {
 			if err := os.WriteFile(file, []byte(c), 0o644); err != nil {
@@ -106,7 +106,7 @@ func leafFunctions(ir string) map[string]bool {
 		for _, c := range callees {
 			switch {
 			case strings.HasPrefix(c, "llvm.") && !strings.HasPrefix(c, "llvm.trap"):
-			case c == "rt_cgo_enter" || c == "rt_cgo_exit" || c == "rt_cgo_enter_fast" || c == "rt_cgo_exit_fast":
+			case c == "rt_cgo_enter" || c == "rt_cgo_exit" || c == "rt_cgo_fast_enter" || c == "rt_cgo_fast_exit":
 			case c != "" && visit(c, seen):
 			default:
 				ok = false

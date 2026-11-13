@@ -41,7 +41,7 @@ func TestPrepare(t *testing.T) {
 	}
 	for _, want := range []string{
 		"rt_cgo_enter();",          // bracketed
-		"rt_cgo_enter_fast();",     // spin: noescape and nocallback; strlen: libc leaf
+		"rt_cgo_fast_enter();",     // spin: noescape and nocallback; strlen: libc leaf
 		"rt_cgo_exit_errno(errno)", // fails
 		"_Cfunc_mk_m(int p0, pair *r) { *r = ",
 		"return (void *)&counter;",
@@ -51,7 +51,7 @@ func TestPrepare(t *testing.T) {
 		}
 	}
 	// add is a leaf (fast path, found from the IR); nap calls usleep (bracketed).
-	for name, want := range map[string]string{"add": "rt_cgo_enter_fast();", "nap": "rt_cgo_enter();"} {
+	for name, want := range map[string]string{"add": "rt_cgo_fast_enter();", "nap": "rt_cgo_enter();"} {
 		i := strings.Index(string(c), "_Cfunc_"+name+"(")
 		if i < 0 || !strings.Contains(string(c[i:min(len(c), i+300)]), want) {
 			t.Errorf("wrapper of %s does not use %s", name, want)

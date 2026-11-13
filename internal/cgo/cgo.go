@@ -45,7 +45,7 @@ import (
 )
 
 // version changes the cache key when the generated code changes.
-const version = "marmot-cgo-4"
+const version = "marmot-cgo-5"
 
 // Config describes the build a package is prepared for.
 type Config struct {

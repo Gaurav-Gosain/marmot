@@ -19,8 +19,8 @@ import (
 const cPrologue = `/* marmot: C calls are bracketed by the runtime (internal/cgo). */
 extern void rt_cgo_enter(void);
 extern void rt_cgo_exit(void);
-extern void rt_cgo_enter_fast(void);
-extern void rt_cgo_exit_fast(void);
+extern void *rt_cgo_fast_enter(void);
+extern void rt_cgo_fast_exit(void *m);
 extern void rt_cgo_exit_errno(int);
 `
 
@@ -785,6 +785,13 @@ var reBody = regexp.MustCompile(`(?ms)^(_cgo_[0-9a-f]+_(C2?func)_(\w+))\(.*?\n\}
 
 // bracket replaces cgo's thread sanitizer hooks in each wrapper with the
 // runtime's entry and exit.
+// The fast path: the M is read once, on entry (no goroutine switch can
+// happen inside a fast call).
+const (
+	fastEnter = "void *_cgo_m = rt_cgo_fast_enter();"
+	fastExit  = "rt_cgo_fast_exit(_cgo_m);"
+)
+
 func bracket(c string, mk marks) string {
 	return reBody.ReplaceAllStringFunc(c, func(body string) string {
 		m := reBody.FindStringSubmatch(body)
@@ -794,7 +801,7 @@ func bracket(c string, mk marks) string {
 		case kind == "C2func":
 			enter, exit = "rt_cgo_enter(); errno = 0;", "rt_cgo_exit_errno(errno);"
 		case mk.fast(name):
-			enter, exit = "rt_cgo_enter_fast();", "rt_cgo_exit_fast();"
+			enter, exit = fastEnter, fastExit
 		}
 		body = strings.Replace(body, "_cgo_tsan_acquire();", enter, 1)
 		return strings.Replace(body, "_cgo_tsan_release();", exit, 1)
