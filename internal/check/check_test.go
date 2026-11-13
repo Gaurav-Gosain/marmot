@@ -529,3 +529,32 @@ func TestWrapWords(t *testing.T) {
 		}
 	}
 }
+
+func TestFindingLineGolden(t *testing.T) {
+	dir := "/m"
+	at := func(file string, line, col int) diag.Span { return diag.Span{File: dir + "/" + file, Line: line, Col: col} }
+	for _, c := range []struct {
+		d    diag.Diagnostic
+		want string
+	}{
+		{diag.Diagnostic{Check: "fmt", Analyzer: "gofmt", Message: "file is not formatted", Span: at("main.go", 9, 1)},
+			"./main.go:9:1: file is not formatted (gofmt)"},
+		{diag.Diagnostic{Check: "fmt", Analyzer: "goimports", Message: "file is not formatted", Span: at("a/b.go", 3, 1)},
+			"./a/b.go:3:1: file is not formatted (goimports)"},
+		{diag.Diagnostic{Check: "lint", Analyzer: "errcheck", Message: "Error return value of `f.Close` is not checked", Span: at("x.go", 17, 9)},
+			"./x.go:17:9: Error return value of `f.Close` is not checked (errcheck)"},
+		{diag.Diagnostic{Check: "vet", Analyzer: "printf", Message: "fmt.Printf format %d has arg s of wrong type string (printf)", Span: at("x.go", 11, 2)},
+			"./x.go:11:2: fmt.Printf format %d has arg s of wrong type string (printf)"},
+		{diag.Diagnostic{Check: "tidy", Analyzer: "go mod tidy", Message: "go.mod and go.sum are not tidy", Span: at("go.mod", 1, 1)},
+			"./go.mod:1:1: go.mod and go.sum are not tidy (go mod tidy)"},
+	} {
+		if got := findingLine(dir, &c.d); got != c.want {
+			t.Errorf("findingLine:\n got %s\nwant %s", got, c.want)
+		}
+	}
+	// The fmt check's own diagnostic, end to end.
+	d := fmtDiag("/m/main.go", []byte("package main\nfunc f(){}\n"), []byte("package main\n\nfunc f() {}\n"))
+	if got := findingLine(dir, &d); strings.Count(got, "(gofmt)") != 1 {
+		t.Errorf("fmt finding names its formatter %d times: %s", strings.Count(got, "(gofmt)"), got)
+	}
+}

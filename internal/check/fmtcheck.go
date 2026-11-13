@@ -127,7 +127,7 @@ func fmtDiag(file string, old, new []byte) diag.Diagnostic {
 		Code:     diag.CodeNotFmt,
 		Check:    "fmt",
 		Analyzer: what,
-		Message:  "file is not formatted (" + what + ")",
+		Message:  "file is not formatted", // the analyzer says by what
 		Span:     diag.Span{File: file, Line: line, Col: 1, EndLine: line, EndCol: 1},
 		Fixes: []diag.Fix{{
 			Title:         "format the file",

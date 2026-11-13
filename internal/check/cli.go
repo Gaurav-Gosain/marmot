@@ -253,7 +253,7 @@ func findingLine(dir string, d *diag.Diagnostic) string {
 		b.WriteString(" ")
 	}
 	b.WriteString(d.Message)
-	if d.Analyzer != "" {
+	if d.Analyzer != "" && !strings.HasSuffix(d.Message, "("+d.Analyzer+")") {
 		fmt.Fprintf(&b, " (%s)", d.Analyzer)
 	}
 	return b.String()
