@@ -187,6 +187,26 @@ func TestRunDeadcode(t *testing.T) {
 	}
 }
 
+func TestDeadcodeSummaries(t *testing.T) {
+	if testing.Short() {
+		t.Skip("loads the standard library")
+	}
+	t.Setenv("GOWORK", "off")
+	dir, _ := filepath.Abs("testdata/dead2")
+	r, err := Run(Options{Dir: dir, Only: []string{"deadcode"}, CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, f := range r.Checks[0].Findings {
+		got = append(got, strings.TrimPrefix(f.Message, "unreachable func: "))
+	}
+	want := []string{"nested.unusedHelper", "hidden.String", "dead"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("dead: %v, want %v", got, want)
+	}
+}
+
 func TestVulnOffline(t *testing.T) {
 	t.Setenv("GOWORK", "off")
 	dir, _ := filepath.Abs("testdata/dead")

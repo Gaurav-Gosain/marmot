@@ -11,6 +11,7 @@ import (
 	"go/token"
 	"go/types"
 	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"runtime/debug"
@@ -161,6 +162,11 @@ type engine struct {
 	mu    sync.Mutex
 	units map[*listPkg]*unit
 
+	// Dead code summaries: built for every package that is type checked
+	// when sums is set; declarations are listed for packages under wsDirs.
+	sums   bool
+	wsDirs []string
+
 	// Stats.
 	hits, misses, analyzed int
 	slow                   []slowPkg
@@ -187,6 +193,10 @@ type unit struct {
 	reportKey string
 	outOnce   sync.Once
 	out       string // hash of the facts entry (types and facts)
+
+	sumOnce sync.Once
+	sum     *deadSummary // set by run when the engine builds summaries
+	sumErr  error
 }
 
 func newEngine(g *graph, st *store, s *suite, env, goarch string, jobs int) *engine {
@@ -557,6 +567,9 @@ func (e *engine) run(p *listPkg, root bool, deps map[string]*factsEntry) (*facts
 		analyzers = e.suite.all
 	}
 	results := e.exec(p, fset, files, pkg, info, tc.Sizes, typeErrs, facts, analyzers, hasErrors, rep)
+	if e.sums {
+		e.summarizeRun(p, fset, files, pkg, info, rep, hasErrors)
+	}
 
 	fe := &factsEntry{}
 	var tbuf bytes.Buffer
@@ -581,6 +594,85 @@ func (e *engine) run(p *listPkg, root bool, deps map[string]*factsEntry) (*facts
 	sortFindings(rep.Findings)
 	sortFindings(rep.TypeErrors)
 	return fe, rep, nil
+}
+
+// summarizeRun builds the dead code summary of a package just type
+// checked and caches it.
+func (e *engine) summarizeRun(p *listPkg, fset *token.FileSet, files []*ast.File, pkg *types.Package, info *types.Info, rep *report, hasErrors bool) {
+	u := e.keys(p)
+	var s *deadSummary
+	var err error
+	if hasErrors {
+		msg := "load errors"
+		if les := p.listErrors(); len(les) > 0 {
+			msg = les[0]
+		} else if len(rep.TypeErrors) > 0 {
+			te := rep.TypeErrors[0]
+			msg = fmt.Sprintf("%s:%d:%d: %s", te.Span.File, te.Span.Line, te.Span.Col, te.Message)
+		}
+		err = fmt.Errorf("%s", msg)
+	} else {
+		s = summarize(fset, files, pkg, info, e.inWorkspace(p))
+		e.putGob(sumKey(u), s)
+	}
+	e.mu.Lock()
+	u.sum, u.sumErr = s, err
+	e.mu.Unlock()
+}
+
+func sumKey(u *unit) string {
+	h := newHasher("deadsum-1")
+	h.str(u.factsKey)
+	return h.sum()
+}
+
+func (e *engine) inWorkspace(p *listPkg) bool {
+	for _, d := range e.wsDirs {
+		if p.Dir == d || strings.HasPrefix(p.Dir, d+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// summary returns the dead code summary of a package, from the cache or
+// by type checking it again.
+func (e *engine) summary(p *listPkg) (*deadSummary, error) {
+	u := e.keys(p)
+	get := func() (*deadSummary, error, bool) {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return u.sum, u.sumErr, u.sum != nil || u.sumErr != nil
+	}
+	u.sumOnce.Do(func() {
+		var s deadSummary
+		if data := e.st.get(sumKey(u)); data != nil && gob.NewDecoder(bytes.NewReader(data)).Decode(&s) == nil {
+			e.mu.Lock()
+			u.sum = &s
+			e.mu.Unlock()
+			return
+		}
+		if _, err := e.factsOf(p); err != nil {
+			e.mu.Lock()
+			u.sumErr = err
+			e.mu.Unlock()
+			return
+		}
+		if _, _, ok := get(); ok {
+			return
+		}
+		// The facts came from the cache: type check again for the summary.
+		if _, _, err := e.analyze(p, false); err != nil {
+			e.mu.Lock()
+			u.sumErr = err
+			e.mu.Unlock()
+		}
+	})
+	s, err, _ := get()
+	if s == nil && err == nil {
+		err = fmt.Errorf("no summary")
+	}
+	return s, err
 }
 
 // exec runs the analyzers and their prerequisites on one package and

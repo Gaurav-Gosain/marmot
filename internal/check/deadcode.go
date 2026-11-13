@@ -1,7 +1,8 @@
-// The reachability analysis follows golang.org/x/tools/cmd/deadcode
-// (Copyright 2023 The Go Authors, BSD-style license): rapid type analysis
-// from every main and test main, reporting the source functions it never
-// reaches, except in generated files and marker methods.
+// The report follows golang.org/x/tools/cmd/deadcode (Copyright 2023 The
+// Go Authors, BSD-style license): rapid type analysis from every main and
+// test main, reporting the source functions it never reaches, except in
+// generated files and marker methods. The analysis runs over per-package
+// summaries (deadsum.go).
 
 package check
 
@@ -12,18 +13,13 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
-	"golang.org/x/tools/go/callgraph/rta"
-	"golang.org/x/tools/go/packages"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 type deadFunc struct {
@@ -87,7 +83,7 @@ func runDeadcode(sc *scope, opts Options, st *store, r *CheckResult) {
 		res.Funcs = relocate(res.Funcs)
 		putGob(st, key, res)
 	default:
-		res = deadcode(sc, opts)
+		res = deadcode(sc, opts, st)
 		if res.Err == "" {
 			putGob(st, key, res)
 			if skey != "" {
@@ -114,30 +110,27 @@ func runDeadcode(sc *scope, opts Options, st *store, r *CheckResult) {
 	}
 }
 
-func deadcode(sc *scope, opts Options) deadResult {
-	var patterns []string
+// deadcode lists the workspace packages with their tests and
+// dependencies, summarizes each package (from the cache when its inputs
+// and its dependencies' export data are unchanged) and runs the
+// reachability over the summaries.
+func deadcode(sc *scope, opts Options, st *store) deadResult {
+	ws := &scope{dir: sc.dir, modules: sc.modules}
+	var dirs []string
 	for _, m := range sc.modules {
-		patterns = append(patterns, m.Dir+"/...")
+		ws.patterns = append(ws.patterns, m.Dir+"/...")
+		dirs = append(dirs, m.Dir)
 	}
-	cfg := &packages.Config{
-		Mode:  packages.LoadAllSyntax | packages.NeedModule,
-		Tests: true,
-		Dir:   sc.dir,
-		Env:   append(os.Environ(), "PWD="+sc.dir),
-	}
-	if len(opts.Tags) > 0 {
-		cfg.BuildFlags = []string{"-tags=" + strings.Join(opts.Tags, ",")}
-	}
-	initial, err := packages.Load(cfg, patterns...)
+	g, _, err := cachedGoList(st, ws, opts.Tags, nil, true)
 	if err != nil {
 		return deadResult{Err: "deadcode: " + firstLine(err.Error())}
 	}
 	var errs []string
-	packages.Visit(initial, nil, func(p *packages.Package) {
-		for _, e := range p.Errors {
-			errs = append(errs, e.Error())
+	for _, p := range g.pkgs {
+		for _, le := range p.listErrors() {
+			errs = append(errs, le)
 		}
-	})
+	}
 	if len(errs) > 0 {
 		sort.Strings(errs)
 		return deadResult{Err: fmt.Sprintf("deadcode: the packages have errors (%d), first: %s", len(errs), errs[0])}
@@ -145,23 +138,31 @@ func deadcode(sc *scope, opts Options) deadResult {
 	// Only modules with a program: in a library module every function no
 	// test calls is unreachable, which is its API, not dead code.
 	modules := map[string]bool{}
-	var libs []string
 	all := map[string]bool{}
-	for _, p := range initial {
-		if p.Module == nil || p.Module.Path == "" {
+	var roots []string
+	for _, p := range g.pkgs {
+		if p.DepOnly || p.Module == nil || p.Module.Path == "" {
 			continue
 		}
 		all[p.Module.Path] = true
-		if p.Name == "main" && !strings.HasSuffix(p.ID, ".test") && !strings.Contains(p.ID, " [") {
+		if p.Name != "main" {
+			continue
+		}
+		roots = append(roots, p.path+".init", p.path+".main")
+		if p.ForTest == "" && !strings.HasSuffix(p.ImportPath, ".test") {
 			modules[p.Module.Path] = true
 		}
 	}
+	var libs []string
 	for m := range all {
 		if !modules[m] {
 			libs = append(libs, m)
 		}
 	}
 	sort.Strings(libs)
+	if len(roots) == 0 {
+		return deadResult{Libs: libs}
+	}
 	inModules := func(path string) bool {
 		for m := range modules {
 			if path == m || strings.HasPrefix(path, m+"/") {
@@ -170,67 +171,47 @@ func deadcode(sc *scope, opts Options) deadResult {
 		}
 		return false
 	}
-	prog, pkgs := ssautil.AllPackages(initial, ssa.InstantiateGenerics)
-	mains := ssautil.MainPackages(pkgs)
-	if len(mains) == 0 {
-		return deadResult{}
-	}
-	var roots []*ssa.Function
-	for _, m := range mains {
-		roots = append(roots, m.Func("init"), m.Func("main"))
-	}
-	var sourceFuncs []*ssa.Function
-	generated := map[string]bool{}
-	ifaces := map[*types.Package][]*types.Interface{}
-	packages.Visit(initial, nil, func(p *packages.Package) {
-		var is []*types.Interface
-		scope := p.Types.Scope()
-		for _, name := range scope.Names() {
-			if tn, ok := scope.Lookup(name).(*types.TypeName); ok && types.IsInterface(tn.Type()) {
-				is = append(is, tn.Type().Underlying().(*types.Interface))
-			}
+	e := newEngine(g, st, newSuite(nil, toolID(), ""), envKey(opts.Tags, hostGOOS(), hostGOARCH()), hostGOARCH(), opts.Jobs)
+	e.sums, e.wsDirs = true, dirs
+	sums := make([]*deadSummary, len(g.pkgs))
+	sumErrs := make([]error, len(g.pkgs))
+	var wg sync.WaitGroup
+	for i, p := range g.pkgs {
+		if p.ImportPath == "unsafe" {
+			continue
 		}
-		ifaces[p.Types] = is
-		for _, f := range p.Syntax {
-			for _, d := range f.Decls {
-				if fd, ok := d.(*ast.FuncDecl); ok {
-					if obj, ok := p.TypesInfo.Defs[fd.Name].(*types.Func); ok {
-						sourceFuncs = append(sourceFuncs, prog.FuncValue(obj))
-					}
-				}
-			}
-			if ast.IsGenerated(f) {
-				generated[p.Fset.File(f.Pos()).Name()] = true
-			}
-		}
-	})
-	prog.Build()
-	fset := prog.Fset
-	res := rta.Analyze(roots, false)
-	reachable := map[token.Position]bool{}
-	for fn := range res.Reachable {
-		if fn.Pos().IsValid() || fn.Name() == "init" {
-			reachable[fset.Position(fn.Pos())] = true
+		wg.Add(1)
+		go func(i int, p *listPkg) {
+			defer wg.Done()
+			sums[i], sumErrs[i] = e.summary(p)
+		}(i, p)
+	}
+	wg.Wait()
+	for i, err := range sumErrs {
+		if err != nil {
+			errs = append(errs, g.pkgs[i].ImportPath+": "+firstLine(err.Error()))
 		}
 	}
+	if len(errs) > 0 {
+		sort.Strings(errs)
+		return deadResult{Err: fmt.Sprintf("deadcode: the packages have errors (%d), first: %s", len(errs), errs[0])}
+	}
+	reached := reach(sums, roots)
 	var out []deadFunc
-	for _, fn := range sourceFuncs {
-		if fn == nil || fn.Pkg == nil {
+	seen := map[string]bool{}
+	for i, s := range sums {
+		p := g.pkgs[i]
+		if s == nil || p.DepOnly || !inModules(p.path) {
 			continue
 		}
-		pos := fset.Position(fn.Pos())
-		if reachable[pos] {
-			continue
+		for _, d := range s.Decls {
+			k := d.Key + " " + fmt.Sprint(d.Span)
+			if seen[k] || reached[d.Key] || d.Generated || d.Marker {
+				continue
+			}
+			seen[k] = true
+			out = append(out, deadFunc{Span: d.Span, Name: d.Name, Pkg: p.path})
 		}
-		reachable[pos] = true
-		if !inModules(fn.Pkg.Pkg.Path()) || generated[pos.Filename] || isMarkerMethod(fn, ifaces[fn.Pkg.Pkg]) {
-			continue
-		}
-		out = append(out, deadFunc{
-			Span: diag.Span{File: pos.Filename, Line: pos.Line, Col: pos.Column, EndLine: pos.Line, EndCol: pos.Column},
-			Name: prettyName(fn),
-			Pkg:  fn.Pkg.Pkg.Path(),
-		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		a, b := out[i].Span, out[j].Span
@@ -240,46 +221,6 @@ func deadcode(sc *scope, opts Options) deadResult {
 		return a.Line < b.Line || a.Line == b.Line && a.Col < b.Col
 	})
 	return deadResult{Funcs: out, Libs: libs}
-}
-
-func prettyName(fn *ssa.Function) string {
-	var b strings.Builder
-	var format func(*ssa.Function)
-	format = func(fn *ssa.Function) {
-		if fn.Parent() != nil {
-			format(fn.Parent())
-			fmt.Fprintf(&b, "$%d", slices.Index(fn.Parent().AnonFuncs, fn)+1)
-			return
-		}
-		if obj, ok := fn.Object().(*types.Func); ok {
-			if recv := obj.Signature().Recv(); recv != nil {
-				t := recv.Type()
-				if p, ok := t.(*types.Pointer); ok {
-					t = p.Elem()
-				}
-				if n, ok := types.Unalias(t).(*types.Named); ok {
-					b.WriteString(n.Obj().Name())
-					b.WriteByte('.')
-				}
-			}
-		}
-		b.WriteString(fn.Name())
-	}
-	format(fn)
-	return b.String()
-}
-
-func isMarkerMethod(fn *ssa.Function, ifaces []*types.Interface) bool {
-	if !(fn.Signature.Recv() != nil && !ast.IsExported(fn.Name()) && fn.Signature.Params() == nil && fn.Signature.Results() == nil) {
-		return false
-	}
-	fd, ok := fn.Syntax().(*ast.FuncDecl)
-	if !ok || fd.Body == nil || len(fd.Body.List) > 0 {
-		return false
-	}
-	return slices.ContainsFunc(ifaces, func(i *types.Interface) bool {
-		return types.Implements(fn.Signature.Recv().Type(), i)
-	})
 }
 
 func getGob(st *store, key string, v any) bool {
