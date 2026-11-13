@@ -199,6 +199,13 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 				for _, a := range f.analyzers {
 					if a.Name == fd.Analyzer {
 						fs = append(fs, lf{fd, f.linter[a]})
+						if n == "lint" {
+							// golangci-lint reports each related location as
+							// an issue of its own, right after the finding.
+							for _, r := range fd.Related {
+								fs = append(fs, lf{finding{Analyzer: fd.Analyzer, Span: r.Span, Message: "related information: " + r.Message}, f.linter[a]})
+							}
+						}
 						break
 					}
 				}

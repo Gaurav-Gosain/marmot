@@ -657,3 +657,26 @@ func TestInlineRespectsFileVersion(t *testing.T) {
 		t.Errorf("go %s: %q", v, ms)
 	}
 }
+
+func TestLintRelatedInformation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("loads the standard library")
+	}
+	t.Setenv("GOWORK", "off")
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/r\n\ngo 1.26\n"), 0o644)
+	// S1034: the type switch could bind the value; staticcheck points at
+	// the assertion inside the case as related information.
+	os.WriteFile(filepath.Join(dir, "r.go"), []byte("package r\n\nfunc F(x any) int {\n\tswitch x.(type) {\n\tcase int:\n\t\treturn x.(int)\n\t}\n\treturn 0\n}\n"), 0o644)
+	r, err := Run(Options{Dir: dir, Only: []string{"lint"}, CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, d := range r.Checks[0].Findings {
+		got = append(got, fmt.Sprintf("%d %s %s", d.Span.Line, d.Analyzer, d.Message))
+	}
+	if len(got) != 2 || !strings.HasPrefix(got[1], "6 S1034 related information: ") {
+		t.Errorf("S1034 and its related location: %q", got)
+	}
+}
