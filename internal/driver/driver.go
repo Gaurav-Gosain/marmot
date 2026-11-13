@@ -52,6 +52,11 @@ type Config struct {
 	Stderr   io.Writer
 	// AllErrors reports every load and type error (loader.Config.AllErrors).
 	AllErrors bool
+	// AllocReport receives the code generator's allocation report (one
+	// JSON line per site); without it, $MARMOT_ALLOC_REPORT names a file
+	// it is appended to, read per build. Set NoCache too: cached objects
+	// skip the code generator.
+	AllocReport io.Writer
 }
 
 // FindRoot locates the marmot repository root.
@@ -82,6 +87,7 @@ func llvmTool(name string) string {
 
 type build struct {
 	cfg        Config
+	closers    []func() error // files opened for this build (the allocation report)
 	keepLocals bool           // link without -x (the first link of a pc table build)
 	lastOutput string         // combined output of the last tool run (run)
 	modKeys    []string       // per module: a key of its text, or ""
@@ -189,6 +195,12 @@ func build1(cfg Config) (*build, error) {
 }
 
 func (b *build) run1() (string, error) {
+	defer func() {
+		for _, c := range b.closers {
+			c()
+		}
+		b.closers = nil
+	}()
 	cfg := b.cfg
 	if cfg.Stderr == nil {
 		cfg.Stderr = os.Stderr
@@ -282,7 +294,8 @@ func (b *build) run1() (string, error) {
 		}
 	}
 	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, GoDialect: cfg.Dialect == "go", Release: cfg.Release, MergedGOROOT: lp.GOROOT, XDefs: b.xdefs(),
-		Separate: b.incr, Facts: incrementalFacts(lp), KeepExported: keepExported, ReflectCall: reflectCall})
+		Separate: b.incr, Facts: incrementalFacts(lp), KeepExported: keepExported, ReflectCall: reflectCall,
+		AllocReport: b.allocReport()})
 	if err != nil {
 		return "", err
 	}
@@ -924,3 +937,22 @@ func (b *build) writeXDefs(w io.Writer) {
 // codegen (aliasTypes), so keys made from package keys change with it. The
 // work file and the cached file of a module have the same text.
 const moduleTextVersion = "t1"
+
+// allocReport returns the writer of the allocation report for this build:
+// the configured one, or the file $MARMOT_ALLOC_REPORT names (opened per
+// build, appended to, closed when the build ends).
+func (b *build) allocReport() io.Writer {
+	if b.cfg.AllocReport != nil {
+		return b.cfg.AllocReport
+	}
+	p := os.Getenv("MARMOT_ALLOC_REPORT")
+	if p == "" {
+		return nil
+	}
+	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil
+	}
+	b.closers = append(b.closers, f.Close)
+	return f
+}

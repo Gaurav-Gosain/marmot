@@ -614,11 +614,11 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 			break
 		}
 		if f.stackConvert(v) {
-			f.reportAlloc(v, "convert", nil, "stack")
+			f.reportAlloc(v, "convert", convType(v), "stack")
 			break
 		}
 		if isString(v.X.Type()) != isString(v.Type()) && (isString(v.X.Type()) || isString(v.Type())) {
-			f.reportAlloc(v, "convert", nil, "heap")
+			f.reportAlloc(v, "convert", convType(v), "heap")
 		}
 		f.vals[v] = f.convert(f.value(v.X), v.X.Type(), v.Type())
 	case *ssa.ChangeType:

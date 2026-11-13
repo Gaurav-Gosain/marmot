@@ -3,16 +3,16 @@ package codegen
 import (
 	"encoding/json"
 	"fmt"
+	"go/constant"
 	"go/token"
 	"go/types"
-	"os"
-	"sync"
 
 	"golang.org/x/tools/go/ssa"
 )
 
-// Allocation report: with MARMOT_ALLOC_REPORT=FILE every allocation site the
-// code generator emits is appended to FILE as one JSON object per line:
+// Allocation report: with Options.AllocReport set (marmot build -allocs, or
+// MARMOT_ALLOC_REPORT=FILE, read per build by the driver) every allocation
+// site the code generator emits is written as one JSON object per line:
 //
 //	{"fn", "pos", "kind", "type", "bytes", "where", "reason", "loop", "final"}
 //
@@ -23,24 +23,7 @@ import (
 // in the frame (the first escaping use found, or the size). final is false
 // when the go dialect is emitted, since the back end may still move the
 // object. The report is a side output: it changes nothing in the code, and
-// the cost when MARMOT_ALLOC_REPORT is unset is one check per site.
-
-var allocReport = sync.OnceValue(func() *allocWriter {
-	p := os.Getenv("MARMOT_ALLOC_REPORT")
-	if p == "" {
-		return nil
-	}
-	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
-	if err != nil {
-		return nil
-	}
-	return &allocWriter{f: f}
-})
-
-type allocWriter struct {
-	mu sync.Mutex
-	f  *os.File
-}
+// the cost when no report is asked for is one nil check per site.
 
 type allocRecord struct {
 	Fn     string `json:"fn"`
@@ -57,7 +40,7 @@ type allocRecord struct {
 // reportAlloc records one allocation decision. t is the allocated type
 // (nil when the size is dynamic).
 func (f *funcGen) reportAlloc(v ssa.Value, kind string, t types.Type, where string) {
-	w := allocReport()
+	w := f.m.p.opts.AllocReport
 	if w == nil {
 		return
 	}
@@ -102,9 +85,18 @@ func (f *funcGen) reportAlloc(v ssa.Value, kind string, t types.Type, where stri
 		}
 	}
 	data, _ := json.Marshal(rec)
-	w.mu.Lock()
-	w.f.Write(append(data, '\n'))
-	w.mu.Unlock()
+	f.m.p.allocMu.Lock()
+	w.Write(append(data, '\n'))
+	f.m.p.allocMu.Unlock()
+}
+
+// convType is the type of the bytes a string conversion copies when its
+// length is constant ([N]byte for []byte("..."), nil otherwise).
+func convType(v *ssa.Convert) types.Type {
+	if c, ok := v.X.(*ssa.Const); ok && c.Value != nil && c.Value.Kind() == constant.String {
+		return types.NewArray(types.Typ[types.Byte], int64(len(constant.StringVal(c.Value))))
+	}
+	return nil
 }
 
 // allocKind names an Alloc by its SSA comment.
@@ -179,7 +171,12 @@ func (p *Program) escapeWhy(v ssa.Value, seen map[ssa.Value]bool, noPhi bool) st
 				return "passed to a call through a function value, which may keep it" + at(x)
 			}
 		case *ssa.Defer:
-			return "used by a deferred call" + at(x)
+			if inLoop(x.Block()) {
+				return "used by a deferred call in a loop" + at(x)
+			}
+			if p.callLeaks(&x.Call, v, nil) {
+				return "passed to a deferred call that may keep it" + at(x)
+			}
 		case *ssa.Go:
 			return "passed to a goroutine" + at(x)
 		case *ssa.Send:

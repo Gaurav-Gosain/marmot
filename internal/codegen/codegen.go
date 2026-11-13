@@ -10,6 +10,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"io"
 	"sort"
 	"strings"
 	"sync"
@@ -44,6 +45,9 @@ type Options struct {
 	// uses (see loader.Facts): every exported method kept, call adapters,
 	// every access possibly aliased.
 	KeepExported, ReflectCall, PunAll bool
+	// AllocReport, when not nil, receives one JSON line per allocation
+	// decision (allocreport.go). Writes are serialized by the Program.
+	AllocReport io.Writer
 }
 
 // Module is the MLIR text for one Go package (or the synthetic entry module).
@@ -72,6 +76,7 @@ func (e *Error) Error() string {
 // After NewProgram it is read only, so modules can be generated in parallel.
 type Program struct {
 	opts    Options
+	allocMu sync.Mutex // serializes writes to opts.AllocReport
 	prog    *ssa.Program
 	fset    *token.FileSet
 	runtime *ssa.Package

@@ -37,9 +37,9 @@ func main() {
 
 // buildFlags are the flags of build and run.
 type buildFlags struct {
-	out, opt, trace, pgo, emit, tags, gc, target, dialect    *string
+	out, opt, trace, pgo, emit, tags, gc, target, dialect                       *string
 	strip, pgoGen, release, work, verbose, printCmd, nocache, allocs, allocsAll *bool
-	output                                                   outputFlags
+	output                                                                      outputFlags
 }
 
 // newBuildFlags defines the flags of build and run. The same set drives
@@ -159,13 +159,14 @@ func cmdBuild(args []string, run bool) int {
 	}
 	var allocPath string
 	if *b.allocs || *b.allocsAll {
-		p, done, err := allocReportFile()
+		af, done, err := allocReportFile()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "marmot:", err)
 			return 1
 		}
 		defer done()
-		allocPath = p
+		allocPath = af.Name()
+		cfg.AllocReport = af
 		cfg.NoCache = true // cached objects would skip the code generator's report
 	}
 	exe, err := driver.Build(cfg)

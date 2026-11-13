@@ -27,15 +27,13 @@ type allocRec struct {
 	Final  bool   `json:"final"`
 }
 
-// allocReportFile prepares the report file for a build with -allocs.
-func allocReportFile() (string, func(), error) {
+// allocReportFile makes the file a build with -allocs writes its report to.
+func allocReportFile() (*os.File, func(), error) {
 	f, err := os.CreateTemp("", "marmot-allocs-*.jsonl")
 	if err != nil {
-		return "", nil, err
+		return nil, nil, err
 	}
-	f.Close()
-	os.Setenv("MARMOT_ALLOC_REPORT", f.Name())
-	return f.Name(), func() { os.Remove(f.Name()); os.Unsetenv("MARMOT_ALLOC_REPORT") }, nil
+	return f, func() { f.Close(); os.Remove(f.Name()) }, nil
 }
 
 // showAllocs prints the allocation sites of the main module (or of every
