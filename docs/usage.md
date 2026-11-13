@@ -417,3 +417,14 @@ it happens: `MARMOT_OUTPUT=json` writes one object, `{"schema":1, "kind":"panic"
 (`kind` `fatal` and code `M0021` for fatal errors). On a terminal the report lists the program's
 frames with their source lines and folds library frames. Otherwise the trace is the plain Go
 form. `marmot run` in json mode passes `MARMOT_OUTPUT=json` to the program.
+
+## Contributor notes
+
+`scripts/precommit.sh` checks what is staged for the next commit (`marmot check -staged` on
+`cmd` and `internal`, with the repository's `.golangci.yml`): fmt, vet, lint, gopls, tidy and
+cross fail it, modernize and nil only report. Run it by hand, or opt in to it as a git hook:
+
+    ln -s ../../scripts/precommit.sh .git/hooks/pre-commit
+
+The first run fills the caches (about 15 s); later commits take about a second. `git commit
+--no-verify` skips the hook; `PRECOMMIT_ONLY` and `PRECOMMIT_PACKAGES` narrow what it checks.
