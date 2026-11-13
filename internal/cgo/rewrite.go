@@ -188,6 +188,7 @@ func rewrite(dir string, bp *build.Package, mk marks) error {
 				continue
 			case name == "_cgoCheckPointer" && d.Body == nil:
 				out.WriteString("//go:linkname _cgoCheckPointer runtime.cgoCheckPointer\nfunc _cgoCheckPointer(interface{}, interface{})\n\n")
+				out.WriteString("//go:linkname _cgoCheckPointerFor runtime.cgoCheckPointerFor\nfunc _cgoCheckPointerFor(string, int, interface{}, interface{})\n\n")
 				continue
 			case name == "_cgoCheckResult" && d.Body == nil:
 				d.Doc = nil
@@ -254,6 +255,33 @@ func rewrite(dir string, bp *build.Package, mk marks) error {
 	}
 	if err := os.WriteFile(path, formatted, 0o644); err != nil {
 		return err
+	}
+	// The checks of pointer arguments name their C function and argument,
+	// for the panic report of a failed check.
+	goFiles, _ := filepath.Glob(filepath.Join(dir, "*.cgo1.go"))
+	for _, file := range goFiles {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+		lines := strings.Split(string(data), "\n")
+		changed := false
+		for i, l := range lines {
+			if !strings.Contains(l, "_cgoCheckPointer(_cgo") {
+				continue
+			}
+			m := reCfuncCall.FindStringSubmatch(l)
+			if m == nil {
+				continue
+			}
+			lines[i] = reCheckCall.ReplaceAllString(l, `_cgoCheckPointerFor("`+m[1]+`", $2, $1`)
+			changed = true
+		}
+		if changed {
+			if err := os.WriteFile(file, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+				return err
+			}
+		}
 	}
 	// The C side: bracket each wrapper, add the adapters and getters.
 	files, _ := filepath.Glob(filepath.Join(dir, "*.cgo2.c"))
@@ -486,6 +514,11 @@ func splitNonEmpty(s string) []string {
 	}
 	return strings.Split(s, ",")
 }
+
+var (
+	reCfuncCall = regexp.MustCompile(`_C2?func_(\w+)\(`)
+	reCheckCall = regexp.MustCompile(`_cgoCheckPointer\((_cgo(?:Base)?(\d+))`)
+)
 
 var reCfunc = regexp.MustCompile(`^_(Cfunc|C2func)_(\w+)$`)
 

@@ -234,6 +234,11 @@ func printpanics(p *_panic) {
 		printstring(" [recovered]")
 	}
 	printstring("\n")
+	// A failed cgo pointer check says where, under gc's message.
+	if e, ok := p.arg.(cgoPointerError); ok && e.detail != "" {
+		printindented("\t" + e.detail)
+		printstring("\n")
+	}
 }
 
 // preprintpanics converts the panic values to strings before printing,

@@ -41,6 +41,67 @@ func godebugHas(list, kv string) bool {
 	return false
 }
 
+// cgoPointerError is the panic of a failed check. Its message is gc's; the
+// panic report prints the detail under it (which call, which argument,
+// where in the memory, what to do).
+type cgoPointerError struct{ detail string }
+
+func (e cgoPointerError) Error() string {
+	return "runtime error: argument of cgo function has Go pointer to unpinned Go pointer"
+}
+
+func (cgoPointerError) RuntimeError() {}
+
+// cgoCheckPointerFor is cgoCheckPointer for argument n of the C function
+// fn (marmot's cgo output passes them).
+func cgoCheckPointerFor(fn string, n int, ptr any, arg any) {
+	if !cgocheckOn() {
+		return
+	}
+	cgoCall, cgoArg = fn, n
+	cgoCheckPointer(ptr, arg)
+	cgoCall = ""
+}
+
+// The call being checked (one goroutine panics at a time in practice; the
+// detail is best effort).
+var (
+	cgoCall string
+	cgoArg  int
+)
+
+func cgoFail(t *_type, off uintptr) {
+	if cgoCall == "" {
+		panic(errorString("argument of cgo function has Go pointer to unpinned Go pointer"))
+	}
+	what := "memory"
+	if t != nil {
+		what = "a " + cgoTypeName(t.str)
+	}
+	d := "Go side: argument " + itoa(int64(cgoArg+1)) + " of C." + cgoCall + " points to " + what +
+		" holding a Go pointer at offset " + itoa(int64(off)) + "\n" +
+		"C side: C." + cgoCall + " may keep or follow that pointer, where the garbage collector cannot see it\n" +
+		"fix: pin the pointed-to value with runtime.Pinner for the call, or keep the data in C memory (C.malloc)"
+	cgoCall = ""
+	panic(cgoPointerError{d})
+}
+
+// cgoTypeName shows cgo's generated type names as Go code spells them:
+// main._Ctype_holder is C.holder; an anonymous struct is a C struct.
+func cgoTypeName(s string) string {
+	for i := 0; i+7 <= len(s); i++ {
+		if s[i:i+7] != "_Ctype_" {
+			continue
+		}
+		rest := s[i+7:]
+		if len(rest) >= 9 && rest[:9] == "struct___" {
+			return "C struct"
+		}
+		return "C." + rest
+	}
+	return s
+}
+
 // cgoCheckPointer checks the argument ptr. arg is true when ptr is &x and
 // all of x counts (cgo writes "0 == 0"); the check is the same here.
 func cgoCheckPointer(ptr any, arg any) {
@@ -84,7 +145,7 @@ func cgoCheckUnknownPointer(p unsafe.Pointer) {
 		}
 		v := *(*unsafe.Pointer)(unsafe.Add(base, off))
 		if v != nil && rt_heap_object(v) != 0 && !isPinned(v) {
-			panic(errorString("argument of cgo function has Go pointer to unpinned Go pointer"))
+			cgoFail(nil, off)
 		}
 	}
 }
@@ -111,7 +172,7 @@ func cgoCheckValue(t *_type, p unsafe.Pointer) {
 		}
 		v := *(*unsafe.Pointer)(unsafe.Add(p, i*ptrSize))
 		if v != nil && rt_heap_object(v) != 0 && !isPinned(v) {
-			panic(errorString("argument of cgo function has Go pointer to unpinned Go pointer"))
+			cgoFail(t, i*ptrSize)
 		}
 	}
 }
