@@ -72,3 +72,34 @@ func nilMap(c bool) {
 	}
 	m["a"] = 1 // want `m may be nil when written to`
 }
+
+func maybe(c bool) *T { // want maybe:"nilResults\\[0\\]"
+	if c {
+		return nil
+	}
+	return &T{n: 1}
+}
+
+func unguarded(c bool) int {
+	p := maybe(c)
+	return p.n // want `the result of maybe may be nil when dereferenced`
+}
+
+func boolGuard(c bool) int {
+	p := maybe(c)
+	ok := p != nil && p.n > 0
+	if ok {
+		return p.n
+	}
+	q := maybe(!c)
+	notNil := !(q == nil)
+	if notNil {
+		return q.n
+	}
+	r := maybe(c)
+	bad := r == nil || r.n < 0
+	if !bad {
+		return r.n
+	}
+	return 0
+}

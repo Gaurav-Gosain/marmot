@@ -21,6 +21,7 @@ package nilcheck
 
 import (
 	"fmt"
+	"go/constant"
 	"go/token"
 	"go/types"
 	"slices"
@@ -317,22 +318,47 @@ func guarded(v ssa.Value, b *ssa.BasicBlock) bool {
 		if !ok {
 			continue
 		}
-		cmp, ok := ifi.Cond.(*ssa.BinOp)
-		if !ok || (cmp.Op != token.EQL && cmp.Op != token.NEQ) {
-			continue
-		}
-		if (cmp.X != v || !isNilConst(cmp.Y)) && (cmp.Y != v || !isNilConst(cmp.X)) {
-			continue
-		}
-		// Succs[0] is the true branch. For v != nil, the non-nil side is
-		// Succs[0]; for v == nil, Succs[1].
-		safe := idom.Succs[0]
-		if cmp.Op == token.EQL {
-			safe = idom.Succs[1]
-		}
-		if dominates(safe, b) {
+		// Succs[0] is the true branch.
+		if dominates(idom.Succs[0], b) && impliesNonNil(ifi.Cond, v, true, 0) ||
+			dominates(idom.Succs[1], b) && impliesNonNil(ifi.Cond, v, false, 0) {
 			return true
 		}
+	}
+	return false
+}
+
+// impliesNonNil reports whether cond having the value want means v is not
+// nil: v != nil, v == nil, their negations, and && and || chains (phis
+// whose incoming values that can be want come from blocks where v is
+// known not to be nil), as in ok := v != nil && len(*v) > 0; if ok {...}.
+func impliesNonNil(cond, v ssa.Value, want bool, depth int) bool {
+	if depth > 4 {
+		return false
+	}
+	switch c := cond.(type) {
+	case *ssa.BinOp:
+		if c.Op != token.EQL && c.Op != token.NEQ {
+			return false
+		}
+		if (c.X != v || !isNilConst(c.Y)) && (c.Y != v || !isNilConst(c.X)) {
+			return false
+		}
+		return (c.Op == token.NEQ) == want
+	case *ssa.UnOp:
+		return c.Op == token.NOT && impliesNonNil(c.X, v, !want, depth+1)
+	case *ssa.Phi:
+		if len(c.Edges) == 0 {
+			return false
+		}
+		for i, e := range c.Edges {
+			if k, ok := e.(*ssa.Const); ok && k.Value != nil && k.Value.Kind() == constant.Bool && constant.BoolVal(k.Value) != want {
+				continue // this edge cannot give want
+			}
+			if !impliesNonNil(e, v, want, depth+1) && !guarded(v, c.Block().Preds[i]) {
+				return false
+			}
+		}
+		return true
 	}
 	return false
 }
