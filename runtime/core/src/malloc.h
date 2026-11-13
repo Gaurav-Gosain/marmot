@@ -101,7 +101,7 @@ extern int32_t gc_percent;
 void span_free(mspan *s);   // heap_lock held
 void central_reset(void);   // heap_lock held
 void central_put(mspan *s); // heap_lock held, swept span with free or full
-void heap_scavenge(void);   // heap_lock held
+void heap_scavenge(uint64_t retain);   // heap_lock held
 void gc_collect(bool forced);
 bool gc_has_finalizers(void);
 

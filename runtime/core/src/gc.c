@@ -752,7 +752,7 @@ static void sweep_all(void) {
   }
   atomic_fetch_sub(&heap_live, atomic_load(&sweep_freed_bytes));
   atomic_fetch_add(&stat_frees, atomic_load(&sweep_freed_objs));
-  heap_scavenge();
+  heap_scavenge(next_gc == UINT64_MAX ? atomic_load(&heap_live) : next_gc);
   spin_unlock(&heap_lock);
 }
 

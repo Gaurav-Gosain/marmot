@@ -310,18 +310,29 @@ void span_free(mspan *s) {
   free_span_insert(s);
 }
 
-// Return large free spans to the OS. Called after a GC.
-void heap_scavenge(void) {
-  uintptr_t min = 64 << 10;
-  for (int pass = 0; pass < 2; pass++) {
-    for (uintptr_t k = (pass ? 0 : FREE_EXACT); pass ? k < FREE_EXACT : k == FREE_EXACT; k++) {
-      for (mspan *s = pass ? free_exact[k] : free_large; s; s = s->next) {
-        if (s->released || s->npages * PAGE_SIZE < min) continue;
-        os_release((void *)s->base, s->npages * PAGE_SIZE);  // whole OS pages only
-        s->released = 1;
-        s->needzero = 1;
-        heap_released += s->npages * PAGE_SIZE;
-      }
+// Return free memory to the OS after a GC, keeping up to retain bytes of
+// free pages backed (the heap goal): a program that frees and allocates
+// the same amount every cycle reuses its pages instead of faulting them in
+// and clearing them again after each collection. The largest spans go
+// first. Spans under 64 KiB are kept.
+void heap_scavenge(uint64_t retain) {
+  const uintptr_t min = 64 << 10;
+  uint64_t idle = 0;
+  for (mspan *s = free_large; s; s = s->next)
+    if (!s->released) idle += s->npages * PAGE_SIZE;
+  for (uintptr_t k = 0; k < FREE_EXACT; k++)
+    for (mspan *s = free_exact[k]; s; s = s->next)
+      if (!s->released) idle += s->npages * PAGE_SIZE;
+  if (idle <= retain) return;
+  for (uintptr_t k = FREE_EXACT + 1; k-- > 0 && idle > retain;) {
+    for (mspan *s = k == FREE_EXACT ? free_large : free_exact[k]; s && idle > retain; s = s->next) {
+      uintptr_t n = s->npages * PAGE_SIZE;
+      if (s->released || n < min) continue;
+      os_release((void *)s->base, n);  // whole OS pages only
+      s->released = 1;
+      s->needzero = 1;
+      heap_released += n;
+      idle -= n;
     }
   }
 }
