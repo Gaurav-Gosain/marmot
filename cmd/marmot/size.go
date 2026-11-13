@@ -122,6 +122,9 @@ func cmdSize(args []string) int {
 			name := p.Name
 			if name == "C" {
 				name = "(C and assembly: runtime core)"
+				if b.COrigins {
+					name = "(other C and assembly)"
+				}
 			}
 			fmt.Printf("  %10s  %5.1f%%  %-40s %s\n", human(p.Size), pct(p.Size, text), name, bar(p.Size))
 		}

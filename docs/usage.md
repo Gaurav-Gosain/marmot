@@ -183,6 +183,17 @@ largest functions (names come from marmot's line table, or from the symbol table
 binaries). `-pkg fmt` lists one package's functions; `-why fmt.Sprintf` prints a chain of direct
 calls from `main` to the function, which says why it is linked in.
 
+C code is listed by where it comes from: each cgo package's C files (`github.com/mattn/go-sqlite3
+(C)`), the runtime core, static libraries of `#cgo LDFLAGS` (`libz.a`) and, with `-static`,
+musl's C library. The link records this in a small table in the binary (cgo and `-static`
+builds only, not with `-s`):
+
+```
+      1.1 MB   16.1%  github.com/mattn/go-sqlite3 (C)          ######
+     69.9 KB    1.0%  runtime core (C)                         #
+     50.0 KB    0.7%  libc (musl)                              #
+```
+
 ## Allocation report
 
 `marmot build -allocs` prints, for each allocation in the main module that goes to the heap,

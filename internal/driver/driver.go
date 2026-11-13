@@ -97,11 +97,12 @@ type build struct {
 	start      time.Time
 	goos       string // target
 	goarch     string
-	testDir    string   // directory of the package under test
-	dylibs     []string // from //go:cgo_import_dynamic
-	cgoObjs    []string // objects of the C side of cgo packages
-	cgoLDFLAGS []string // #cgo LDFLAGS of the cgo packages
-	rtBitcode  string   // runtime bitcode with the cgo packages' C, when not the installed one
+	testDir    string            // directory of the package under test
+	dylibs     []string          // from //go:cgo_import_dynamic
+	cgoObjs    []string          // objects of the C side of cgo packages
+	cgoLDFLAGS []string          // #cgo LDFLAGS of the cgo packages
+	cgoObjPkg  map[string]string // cgo object -> its package (marmot size's C origins)
+	rtBitcode  string            // runtime bitcode with the cgo packages' C, when not the installed one
 	out        string
 	incr       bool // packages without a cached module are loaded from source, the others from export data
 	noIncr     bool

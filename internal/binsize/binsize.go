@@ -38,6 +38,9 @@ type Binary struct {
 	Sections []Section `json:"sections"`
 	Funcs    []Func    `json:"-"`
 	Source   string    `json:"source"` // pcln or symtab
+	// COrigins: the binary has a C origin table (C functions are named by
+	// their library; the rest of "C" is other C and assembly).
+	COrigins bool `json:"cOrigins,omitempty"`
 	text     []byte
 	textAddr uint64 // offset of the text section from the image base
 }
@@ -82,6 +85,7 @@ func (b *Binary) readMacho(f *macho.File) error {
 	}
 	if pcln != nil && b.readPcln(pcln) == nil {
 		b.Source = "pcln"
+		b.applyCOrigins(pcln)
 		return nil
 	}
 	if f.Symtab == nil {
@@ -105,7 +109,7 @@ func (b *Binary) readELF(f *elf.File) error {
 			base = p.Vaddr
 		}
 	}
-	var pcln []byte
+	var pcln, origins []byte
 	for _, s := range f.Sections {
 		if s.Name == "" {
 			continue
@@ -117,10 +121,13 @@ func (b *Binary) readELF(f *elf.File) error {
 			b.textAddr = s.Addr - base
 		case ".marmot_pcln":
 			pcln, _ = s.Data()
+		case ".marmot_corigin":
+			origins, _ = s.Data()
 		}
 	}
 	if pcln != nil && b.readPcln(pcln) == nil {
 		b.Source = "pcln"
+		b.applyCOrigins(origins)
 		return nil
 	}
 	syms, err := f.Symbols()
@@ -220,7 +227,27 @@ func (b *Binary) readPcln(t []byte) error {
 // PackageOf returns the package of a function name: the path before the
 // last dot of the first element after the last slash (pkg.F, pkg.(*T).M,
 // a/b.T.M), "C" for names without a package (C and assembly runtime code).
+// Generated helpers name their package after an @ (F@pkg$tfn), and the
+// reflect call adapters are reflect's.
 func PackageOf(name string) string {
+	if strings.HasPrefix(name, "reflectcall:") {
+		return "reflect"
+	}
+	if at := strings.LastIndexByte(name, '@'); at > 0 && !strings.ContainsAny(name[at:], "()[] ") {
+		p := name[at+1:]
+		if d := strings.IndexByte(p, '$'); d >= 0 {
+			p = p[:d]
+		}
+		if p != "" {
+			return p
+		}
+	}
+	if strings.HasPrefix(name, "(") {
+		// A method written (*pkg.T).M or (pkg.T).M.
+		if end := strings.IndexByte(name, ')'); end > 0 {
+			name = strings.TrimLeft(name[:end], "(*")
+		}
+	}
 	slash := strings.LastIndexByte(name, '/')
 	rest := name[slash+1:]
 	i := strings.IndexByte(rest, '.')
@@ -351,4 +378,73 @@ func (b *Binary) Why(name string) ([]string, bool) {
 		chain = append(chain, b.Funcs[c].Name)
 	}
 	return chain, true
+}
+
+// applyCOrigins gives the C functions the origins of the C origin table
+// at the end of t (see internal/driver/corigin.go): "PKG (C)", "runtime
+// core (C)", a static library. Without one they stay "C".
+func (b *Binary) applyCOrigins(t []byte) {
+	if len(t) < 8 || string(t[len(t)-4:]) != "MCOR" {
+		return
+	}
+	n := int(binary.LittleEndian.Uint32(t[len(t)-8:]))
+	if n > len(t)-8 {
+		return
+	}
+	d := t[len(t)-8-n : len(t)-8]
+	rd := func(k int) ([]byte, bool) {
+		if k > len(d) {
+			return nil, false
+		}
+		v := d[:k]
+		d = d[k:]
+		return v, true
+	}
+	v, ok := rd(4)
+	if !ok {
+		return
+	}
+	var labels []string
+	for range binary.LittleEndian.Uint32(v) {
+		l, ok := rd(2)
+		if !ok {
+			return
+		}
+		name, ok := rd(int(binary.LittleEndian.Uint16(l)))
+		if !ok {
+			return
+		}
+		labels = append(labels, string(name))
+	}
+	if v, ok = rd(4); !ok {
+		return
+	}
+	type rng struct {
+		start, end uint64
+		label      string
+	}
+	var rs []rng
+	for range binary.LittleEndian.Uint32(v) {
+		e, ok := rd(18)
+		if !ok {
+			return
+		}
+		k := int(binary.LittleEndian.Uint16(e[16:]))
+		if k >= len(labels) {
+			return
+		}
+		rs = append(rs, rng{binary.LittleEndian.Uint64(e), binary.LittleEndian.Uint64(e[8:]), labels[k]})
+	}
+	sort.Slice(rs, func(i, j int) bool { return rs[i].start < rs[j].start })
+	b.COrigins = true
+	for i := range b.Funcs {
+		f := &b.Funcs[i]
+		if f.Pkg != "C" {
+			continue
+		}
+		j := sort.Search(len(rs), func(j int) bool { return rs[j].start > f.Start }) - 1
+		if j >= 0 && f.Start < rs[j].end {
+			f.Pkg = rs[j].label
+		}
+	}
 }

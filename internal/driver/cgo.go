@@ -78,6 +78,7 @@ func (b *build) cgoObjects(pkgs map[string]*cgo.Package, bitcode bool) ([]string
 		flags []string
 		obj   string
 		bc    bool
+		pkg   string
 	}
 	var jobs []job
 	var ldflags []string
@@ -101,9 +102,9 @@ func (b *build) cgoObjects(pkgs map[string]*cgo.Package, bitcode bool) ([]string
 			fmt.Fprintf(h, "%s\n%s\n%q\n%s/%s\n%s\n", ccSig, filepath.Base(src), flags, b.goos, b.goarch, headers)
 			h.Write(data)
 			key := hex.EncodeToString(h.Sum(nil))[:32]
-			jobs = append(jobs, job{src, flags, filepath.Join(cacheDir, key+".o"), false})
+			jobs = append(jobs, job{src, flags, filepath.Join(cacheDir, key+".o"), false, path})
 			if bitcode && strings.HasSuffix(src, ".c") {
-				jobs = append(jobs, job{src, flags, filepath.Join(cacheDir, key+".bc"), true})
+				jobs = append(jobs, job{src, flags, filepath.Join(cacheDir, key+".bc"), true, path})
 			}
 		}
 		ldflags = append(ldflags, p.LDFLAGS...)
@@ -143,6 +144,10 @@ func (b *build) cgoObjects(pkgs map[string]*cgo.Package, bitcode bool) ([]string
 			bcs = append(bcs, j.obj)
 		} else {
 			objs = append(objs, j.obj)
+			if b.cgoObjPkg == nil {
+				b.cgoObjPkg = map[string]string{}
+			}
+			b.cgoObjPkg[j.obj] = j.pkg
 		}
 	}
 	return objs, bcs, ldflags, nil

@@ -135,10 +135,11 @@ func (b *build) linkWithPcln(objs []string, link func(extra []string, out string
 			b.logf("pcln: %v (no table)", err)
 			return b.run(llvmTool("llvm-objcopy"), "--strip-all", tmp, out)
 		}
+		origins := b.cOriginSectionArgs(tmp, b.rtLib("librtcore.a"))
 		if err := b.run(llvmTool("llvm-objcopy"), "--strip-all", tmp, tmp+".s"); err != nil {
 			return err
 		}
-		return b.run(llvmTool("llvm-objcopy"), "--add-section", ".marmot_pcln="+tbl, tmp+".s", out)
+		return b.run(llvmTool("llvm-objcopy"), append(append([]string{"--add-section", ".marmot_pcln=" + tbl}, origins...), tmp+".s", out)...)
 	}
 	// The first link carries a placeholder section so that both links have
 	// the same load commands and __TEXT does not move.
@@ -164,6 +165,12 @@ func (b *build) linkWithPcln(objs []string, link func(extra []string, out string
 		b.logf("pcln: %v (no table)", err)
 		return os.Rename(tmp, out)
 	}
+	if t := b.cOriginTable(tmp, b.rtLib("librtcore.a")); t != nil {
+		if f, err := os.OpenFile(tbl, os.O_APPEND|os.O_WRONLY, 0); err == nil {
+			_, _ = f.Write(t) // best effort: marmot size falls back to "C"
+			_ = f.Close()
+		}
+	}
 	if err := link([]string{"-Wl,-sectcreate,__TEXT,__marmot_pcln," + tbl, "-Wl,-S"}, out); err != nil {
 		return err
 	}
@@ -187,11 +194,12 @@ func (b *build) linkWithFragsELF(objs []string, link func(extra []string, out st
 		tbl := filepath.Join(b.work, "pcln.bin")
 		args := append([]string{"-frags", list}, b.pclnVersionArgs()...)
 		if err = b.run(b.pclnTool(), append(args, "-binary", tmp, "-o", tbl)...); err == nil {
+			origins := b.cOriginSectionArgs(tmp, b.rtLib("librtcore.a"))
 			if err := b.run(llvmTool("llvm-objcopy"), "--strip-all", tmp, tmp+".s"); err != nil {
 				return err
 			}
 			b.logf("pcln table added (fragments)")
-			return b.run(llvmTool("llvm-objcopy"), "--add-section", ".marmot_pcln="+tbl, tmp+".s", out)
+			return b.run(llvmTool("llvm-objcopy"), append(append([]string{"--add-section", ".marmot_pcln=" + tbl}, origins...), tmp+".s", out)...)
 		}
 	}
 	b.logf("pcln: fragments: %v (no table)", err)
@@ -283,6 +291,10 @@ func (b *build) linkWithFrags(objs []string, link func(extra []string, out strin
 				}
 			}
 			b.logf("pcln table added (fragments, %d link(s))", attempt+1)
+			if m := regexp.MustCompile(`(\d+) bytes`).FindStringSubmatch(b.lastOutput); m != nil {
+				used, _ := strconv.Atoi(m[1])
+				b.patchCOriginMacho(tmp, b.rtLib("librtcore.a"), used)
+			}
 			// The link kept the local symbols for marmot-pcln. Release builds
 			// drop them now (as -x does on a normal link; the table stays in
 			// __TEXT). Dev builds keep them, as go build does: the strip cost
