@@ -1,0 +1,5 @@
+# Targets the marmot command builds for (marmot check -only cross).
+darwin/arm64
+darwin/amd64
+linux/amd64
+linux/arm64
