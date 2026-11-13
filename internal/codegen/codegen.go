@@ -6,7 +6,6 @@ package codegen
 
 import (
 	"fmt"
-	"github.com/Gaurav-Gosain/marmot/internal/loader"
 	"go/ast"
 	"go/token"
 	"go/types"
@@ -14,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/Gaurav-Gosain/marmot/internal/loader"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
 	"golang.org/x/tools/go/ssa"

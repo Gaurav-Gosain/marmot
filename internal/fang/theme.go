@@ -197,7 +197,6 @@ func titleFirstWord(s string) string {
 	return strings.Join(words, " ")
 }
 
-
 func isCasedRune(r rune) bool {
 	if r < utf8.RuneSelf {
 		return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
