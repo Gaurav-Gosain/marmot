@@ -103,3 +103,17 @@ func boolGuard(c bool) int {
 	}
 	return 0
 }
+
+func loopFlag(c bool, xs []int) int {
+	p := maybe(c)
+	ok := p != nil && p.n > 0
+	for _, x := range xs {
+		if x < 0 {
+			ok = false
+		}
+	}
+	if ok {
+		return p.n
+	}
+	return 0
+}

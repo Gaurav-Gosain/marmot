@@ -319,8 +319,8 @@ func guarded(v ssa.Value, b *ssa.BasicBlock) bool {
 			continue
 		}
 		// Succs[0] is the true branch.
-		if dominates(idom.Succs[0], b) && impliesNonNil(ifi.Cond, v, true, 0) ||
-			dominates(idom.Succs[1], b) && impliesNonNil(ifi.Cond, v, false, 0) {
+		if dominates(idom.Succs[0], b) && impliesNonNil(ifi.Cond, v, true, map[*ssa.Phi]bool{}) ||
+			dominates(idom.Succs[1], b) && impliesNonNil(ifi.Cond, v, false, map[*ssa.Phi]bool{}) {
 			return true
 		}
 	}
@@ -331,8 +331,10 @@ func guarded(v ssa.Value, b *ssa.BasicBlock) bool {
 // nil: v != nil, v == nil, their negations, and && and || chains (phis
 // whose incoming values that can be want come from blocks where v is
 // known not to be nil), as in ok := v != nil && len(*v) > 0; if ok {...}.
-func impliesNonNil(cond, v ssa.Value, want bool, depth int) bool {
-	if depth > 4 {
+// A phi met again on a cycle (a flag cleared in a loop) is assumed to hold:
+// it holds if all the other edges do.
+func impliesNonNil(cond, v ssa.Value, want bool, visiting map[*ssa.Phi]bool) bool {
+	if len(visiting) > 16 {
 		return false
 	}
 	switch c := cond.(type) {
@@ -345,16 +347,21 @@ func impliesNonNil(cond, v ssa.Value, want bool, depth int) bool {
 		}
 		return (c.Op == token.NEQ) == want
 	case *ssa.UnOp:
-		return c.Op == token.NOT && impliesNonNil(c.X, v, !want, depth+1)
+		return c.Op == token.NOT && impliesNonNil(c.X, v, !want, visiting)
 	case *ssa.Phi:
 		if len(c.Edges) == 0 {
 			return false
 		}
+		if visiting[c] {
+			return true
+		}
+		visiting[c] = true
+		defer delete(visiting, c)
 		for i, e := range c.Edges {
 			if k, ok := e.(*ssa.Const); ok && k.Value != nil && k.Value.Kind() == constant.Bool && constant.BoolVal(k.Value) != want {
 				continue // this edge cannot give want
 			}
-			if !impliesNonNil(e, v, want, depth+1) && !guarded(v, c.Block().Preds[i]) {
+			if !impliesNonNil(e, v, want, visiting) && !guarded(v, c.Block().Preds[i]) {
 				return false
 			}
 		}
