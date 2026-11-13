@@ -4,7 +4,8 @@ error[M0006]: cannot use 42 (untyped int constant) as string value in return sta
 4 |     return 42
   |            ^^ expected `string`, found `untyped int`
   |
-  = help: to format a number as text, use `strconv.Itoa(42)` (`string(42)` gives the character with that code point)
+  = help: to format a number as text, use `strconv.Itoa(42)` (`string(42)` gives the character with
+          that code point)
 
 error: build failed with 1 error
 for more about an error, run `marmot explain M0006`

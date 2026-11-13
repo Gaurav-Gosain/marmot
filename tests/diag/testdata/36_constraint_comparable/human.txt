@@ -6,7 +6,8 @@ error[M0026]: func() does not satisfy comparable
    |             |
    |             `func()` does not satisfy `comparable`
    |
-   = note: `comparable` holds the types that support `==`; function, slice and map types do not, nor structs and arrays that contain them
+   = note: `comparable` holds the types that support `==`; function, slice and map types do not, nor
+           structs and arrays that contain them
 
 error: build failed with 1 error
 for more about an error, run `marmot explain M0026`

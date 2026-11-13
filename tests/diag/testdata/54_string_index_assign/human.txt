@@ -4,7 +4,8 @@ error[M0016]: cannot assign to s[0] (neither addressable nor a map index express
 5 |     s[0] = 'H'
   |     ^^^^ strings are immutable
   |
-  = help: convert to bytes, change them, and convert back: `b := []byte(s); b[i] = ...; s = string(b)`
+  = help: convert to bytes, change them, and convert back:
+          `b := []byte(s); b[i] = ...; s = string(b)`
 
 error: build failed with 1 error
 for more about an error, run `marmot explain M0016`

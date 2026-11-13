@@ -7,7 +7,8 @@ error[M0028]: declared and not used: err
 8 |         data, err := os.ReadFile("x")
   |               ^^^ this `err` is a new variable that shadows the outer one
   |
-  = help: to assign the outer `err`, declare the other variables before the statement and use `=` instead of `:=`
+  = help: to assign the outer `err`, declare the other variables before the statement and use `=`
+          instead of `:=`
 
 error: build failed with 1 error
 for more about an error, run `marmot explain M0028`

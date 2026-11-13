@@ -1,4 +1,5 @@
-error[M0014]: cannot use c (variable of struct type C) as Counter value in argument to use: C does not implement Counter (method Inc has pointer receiver)
+error[M0014]: cannot use c (variable of struct type C) as Counter value in argument to use: C does
+              not implement Counter (method Inc has pointer receiver)
   --> ./main.go:13:6
    |
  3 | type Counter interface{ Inc() }

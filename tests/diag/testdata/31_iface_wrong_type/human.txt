@@ -1,4 +1,5 @@
-error[M0014]: cannot use Dog{} (value of struct type Dog) as Namer value in variable declaration: Dog does not implement Namer (wrong type for method Name)
+error[M0014]: cannot use Dog{} (value of struct type Dog) as Namer value in variable declaration:
+              Dog does not implement Namer (wrong type for method Name)
   --> ./main.go:10:16
    |
  3 | type Namer interface{ Name() string }

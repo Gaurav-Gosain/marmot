@@ -1,4 +1,5 @@
-error[M0016]: cannot range over count (value of type func() int): func must be func(yield func(...) bool): wrong argument count
+error[M0016]: cannot range over count (value of type func() int): func must be
+              func(yield func(...) bool): wrong argument count
  --> ./main.go:6:17
   |
 6 |     for i := range count {

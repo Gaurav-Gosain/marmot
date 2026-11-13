@@ -4,6 +4,7 @@ error: invalid map key type []int
 4 |     m := map[[]int]string{}
   |              ^^^^^ not comparable, so it cannot be a map key
   |
-  = help: map keys must support `==`: use a string, a struct of comparable fields, or an array such as `[4]int`
+  = help: map keys must support `==`: use a string, a struct of comparable fields, or an array such
+          as `[4]int`
 
 error: build failed with 1 error

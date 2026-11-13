@@ -1,4 +1,5 @@
-error[M0014]: cannot use Rect{…} (value of struct type Rect) as Shape value in argument to show: Rect does not implement Shape (missing method Perimeter)
+error[M0014]: cannot use Rect{…} (value of struct type Rect) as Shape value in argument to show:
+              Rect does not implement Shape (missing method Perimeter)
   --> ./main.go:15:7
    |
  3 | type Shape interface {

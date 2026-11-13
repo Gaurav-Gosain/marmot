@@ -4,7 +4,8 @@ error[M0003]: r.Read undefined (type *R is pointer to interface, not interface)
 6 |     return r.Read()
   |              ^^^^ a pointer to an interface has no methods
   |
-  = help: use the interface type itself: an interface value already holds a pointer when the dynamic type is one
+  = help: use the interface type itself: an interface value already holds a pointer when the dynamic
+          type is one
 
 error: build failed with 1 error
 for more about an error, run `marmot explain M0003`

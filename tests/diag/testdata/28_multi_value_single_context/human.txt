@@ -5,7 +5,8 @@ error[M0012]: multiple-value strconv.Atoi("12") (value of type (int, error)) in 
   |             ^^^^^^^^^^^^^^^^^^ returns more than one value
   |
   = note: `strconv.Atoi` is declared as `func Atoi(s string) (int, error)`
-  = help: receive every result in a statement of its own, for example `v, err := strconv.Atoi("12")`, and use `v` here
+  = help: receive every result in a statement of its own, for example
+          `v, err := strconv.Atoi("12")`, and use `v` here
 
 error: build failed with 1 error
 for more about an error, run `marmot explain M0012`
