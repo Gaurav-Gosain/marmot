@@ -25,25 +25,30 @@ const base = "5 2 [3 6 9] 7 {4 y} -1 1"
 
 var edits = []struct {
 	name     string
+	file     string // the file edited: in the program (default a/a.go), or lib/... in the root
 	old, new string
 	want     string
 }{
 	// A body edit that moves the lines after it: importers keep their modules.
-	{"lineshift", "func Keep(p *int) int {\n", "func Keep(p *int) int {\n\t_ = 0\n", base},
+	{"lineshift", "", "func Keep(p *int) int {\n", "func Keep(p *int) int {\n\t_ = 0\n", base},
 	// Summaries change: a function starts panicking, keeping its parameter,
 	// recovering.
-	{"panics", "func MayPanic(i int) int {\n", "func MayPanic(i int) int {\n\tif i < 0 {\n\t\tpanic(\"neg\")\n\t}\n", "recovered: neg"},
-	{"escapes", "func Keep(p *int) int {\n", "func Keep(p *int) int {\n\tsink = p\n", base},
-	{"recovers", "func Recov() (r int) {\n\treturn 1\n", "func Recov() (r int) {\n\tdefer func() {\n\t\tif recover() != nil {\n\t\t\tr = 2\n\t\t}\n\t}()\n\tpanic(\"x\")\n", "5 2 [3 6 9] 7 {4 y} -1 2"},
+	{"panics", "", "func MayPanic(i int) int {\n", "func MayPanic(i int) int {\n\tif i < 0 {\n\t\tpanic(\"neg\")\n\t}\n", "recovered: neg"},
+	{"escapes", "", "func Keep(p *int) int {\n", "func Keep(p *int) int {\n\tsink = p\n", base},
+	{"recovers", "", "func Recov() (r int) {\n\treturn 1\n", "func Recov() (r int) {\n\tdefer func() {\n\t\tif recover() != nil {\n\t\t\tr = 2\n\t\t}\n\t}()\n\tpanic(\"x\")\n", "5 2 [3 6 9] 7 {4 y} -1 2"},
 	// Generic code compiled into importers: an exported generic function, a
 	// promoted method of an unexported generic type, an unexported helper
 	// its body calls.
-	{"generic", "\tfor _, x := range xs {\n\t\tout = append(out, f(x))\n\t}\n", "\tfor i := len(xs) - 1; i >= 0; i-- {\n\t\tout = append(out, f(xs[i]))\n\t}\n", "5 2 [9 6 3] 7 {4 y} -1 1"},
-	{"promoted", "func (l *list[E]) Len() int { return len(l.items) }", "func (l *list[E]) Len() int { return len(l.items) + 100 }", "5 102 [3 6 9] 7 {4 y} -1 1"},
-	{"helper", "make([]B, 0, grow(len(xs)))", "make([]B, 0, grow(len(xs), 1))", base},
+	{"generic", "", "\tfor _, x := range xs {\n\t\tout = append(out, f(x))\n\t}\n", "\tfor i := len(xs) - 1; i >= 0; i-- {\n\t\tout = append(out, f(xs[i]))\n\t}\n", "5 2 [9 6 3] 7 {4 y} -1 1"},
+	{"promoted", "", "func (l *list[E]) Len() int { return len(l.items) }", "func (l *list[E]) Len() int { return len(l.items) + 100 }", "5 102 [3 6 9] 7 {4 y} -1 1"},
+	{"helper", "", "make([]B, 0, grow(len(xs)))", "make([]B, 0, grow(len(xs), 1))", base},
 	// The API: a struct layout and a constant.
-	{"layout", "\tX int\n\tY string\n", "\tX int\n\tZ int\n\tY string\n", "5 2 [3 6 9] 7 {4 0 y} -1 1"},
-	{"const", "const C = 3", "const C = 4", "5 2 [4 8 12] 7 {4 y} -1 1"},
+	{"layout", "", "\tX int\n\tY string\n", "\tX int\n\tZ int\n\tY string\n", "5 2 [3 6 9] 7 {4 0 y} -1 1"},
+	{"const", "", "const C = 3", "const C = 4", "5 2 [4 8 12] 7 {4 y} -1 1"},
+	// A new instantiation in the importer.
+	{"newinst", "b/b.go", "\tt := a.T{X: 4, Y: \"y\"}\n", "\tt := a.T{X: len(a.Map([]float64{0.5}, func(f float64) float64 { return f }))*3 + 1, Y: \"y\"}\n", base},
+	// The runtime, which every module depends on.
+	{"runtime", "lib/src/runtime/panic.go", "func gopanic(v any) {\n", "func gopanic(v any) {\n\t_ = 0\n", base},
 }
 
 func TestEdits(t *testing.T) {
@@ -57,7 +62,19 @@ func TestEdits(t *testing.T) {
 			if got := b.buildRun(); got != base {
 				t.Fatalf("before the edit: got %q, want %q", got, base)
 			}
-			replace(t, filepath.Join(dir, "a", "a.go"), e.old, e.new)
+			file := filepath.Join(dir, "a", "a.go")
+			switch {
+			case strings.HasPrefix(e.file, "lib/"):
+				file = filepath.Join(root, e.file)
+				orig, err := os.ReadFile(file)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer os.WriteFile(file, orig, 0o644)
+			case e.file != "":
+				file = filepath.Join(dir, e.file)
+			}
+			replace(t, file, e.old, e.new)
 			if e.name == "helper" {
 				// The helper's signature changes with its call.
 				replace(t, filepath.Join(dir, "a", "a.go"), "func grow(n int) int { return n }", "func grow(n, m int) int { return n + m - 1 }")
@@ -136,14 +153,15 @@ func marmotBin(t *testing.T) (bin, repo string) {
 	return bin, repo
 }
 
-// privateRoot is a marmot root whose cache is the test's own: lib and the
-// tools come from the repository.
+// privateRoot is a marmot root whose cache and lib (small; edits may change
+// the runtime) are the test's own; the tools come from the repository.
 func privateRoot(t *testing.T, repo string) string {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "build"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, l := range []string{"lib", "build/bin", "build/lib"} {
+	copyTree(t, filepath.Join(repo, "lib"), filepath.Join(root, "lib"))
+	for _, l := range []string{"build/bin", "build/lib"} {
 		if err := os.Symlink(filepath.Join(repo, l), filepath.Join(root, l)); err != nil {
 			t.Fatal(err)
 		}
