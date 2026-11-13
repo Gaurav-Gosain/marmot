@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,8 +66,11 @@ type graph struct {
 
 // goList runs go list for the patterns in dir and builds the graph. Env is
 // added to the environment of the go command.
-func goList(dir string, patterns []string, tags []string, env []string, stderr io.Writer) (*graph, error) {
-	args := []string{"list", "-e", "-deps", "-test", "-compiled", "-json=ImportPath,Name,Dir,ForTest,Standard,DepOnly,Goroot,Module,GoFiles,CgoFiles,CompiledGoFiles,IgnoredGoFiles,OtherFiles,SFiles,Imports,ImportMap,Error,DepsErrors,Incomplete"}
+func goList(dir string, patterns []string, tags []string, env []string, tests bool) (*graph, error) {
+	args := []string{"list", "-e", "-deps", "-compiled", "-json=ImportPath,Name,Dir,ForTest,Standard,DepOnly,Goroot,Module,GoFiles,CgoFiles,CompiledGoFiles,IgnoredGoFiles,OtherFiles,SFiles,Imports,ImportMap,Error,DepsErrors,Incomplete"}
+	if tests {
+		args = append(args, "-test")
+	}
 	if len(tags) > 0 {
 		args = append(args, "-tags", strings.Join(tags, ","))
 	}

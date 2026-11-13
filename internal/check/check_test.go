@@ -146,3 +146,23 @@ func TestMayNeedImports(t *testing.T) {
 		}
 	}
 }
+
+func TestRunCross(t *testing.T) {
+	if testing.Short() {
+		t.Skip("type checks the standard library for two targets")
+	}
+	t.Setenv("GOWORK", "off")
+	dir, _ := filepath.Abs("testdata/mod")
+	r, err := Run(Options{Dir: dir, Only: []string{"cross"}, CacheDir: t.TempDir(), Targets: []string{"linux/amd64", "windows/amd64"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := r.Checks[0]
+	if c.Status != Failed || len(c.Findings) != 1 {
+		t.Fatalf("cross: %s with %d findings, want one failure: %+v", c.Status, len(c.Findings), c.Findings)
+	}
+	d := c.Findings[0]
+	if filepath.Base(d.Span.File) != "w_windows.go" || d.Analyzer != "windows/amd64" {
+		t.Errorf("finding %s:%d from %s, want w_windows.go from windows/amd64", d.Span.File, d.Span.Line, d.Analyzer)
+	}
+}

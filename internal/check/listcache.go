@@ -33,9 +33,10 @@ type fileSig struct {
 
 // cachedGoList returns the graph for the patterns, from the cache when the
 // module trees still match it.
-func cachedGoList(st *store, sc *scope, tags, env []string) (*graph, bool, error) {
+func cachedGoList(st *store, sc *scope, tags, env []string, tests bool) (*graph, bool, error) {
 	key := newHasher("golist")
 	key.str(toolID(), sc.dir, envKey(tags, hostGOOS(), hostGOARCH()), strings.Join(env, " "))
+	key.str(fmt.Sprint(tests))
 	key.str(sc.patterns...)
 	k := key.sum()
 	files := sc.treeFiles()
@@ -46,7 +47,7 @@ func cachedGoList(st *store, sc *scope, tags, env []string) (*graph, bool, error
 			return g, true, nil
 		}
 	}
-	g, err := goList(sc.dir, sc.patterns, tags, env, nil)
+	g, err := goList(sc.dir, sc.patterns, tags, env, tests)
 	if err != nil {
 		return nil, false, err
 	}

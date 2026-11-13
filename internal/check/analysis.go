@@ -91,7 +91,7 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 
 	t0 := time.Now()
 	opts.progress("check: loading packages")
-	g, _, err := cachedGoList(st, sc, tags, nil)
+	g, _, err := cachedGoList(st, sc, tags, nil, true)
 	if err != nil {
 		for n := range fams {
 			results[n].Status = Failed
