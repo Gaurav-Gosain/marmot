@@ -182,13 +182,37 @@ func (p *listPkg) otherFiles() []string {
 	return out
 }
 
-// goVersion is the language version of the package's module, as go vet
-// passes it to the type checker ("go1.22"), or "" for the default.
-func (p *listPkg) goVersion() string {
+// goVersion is the language version go vet passes to the type checker
+// for the package ("go1.22"): its module's, for the standard library the
+// toolchain's (std is the toolchain's version, which the inliner and
+// other analyzers compare with the version of the file that calls it),
+// else "" for the default.
+func (p *listPkg) goVersion(toolchain string) string {
 	if p.Module == nil || p.Module.GoVersion == "" {
+		if p.Standard || p.Goroot {
+			return toolchain
+		}
 		return ""
 	}
 	return "go" + p.Module.GoVersion
+}
+
+// toolchainVersion is the release of the Go toolchain at root ("go1.27.4"),
+// from its VERSION file, or "".
+func toolchainVersion(root string) string {
+	if root == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(root, "VERSION"))
+	if err != nil {
+		return ""
+	}
+	v, _, _ := strings.Cut(string(data), "\n")
+	v = strings.TrimSpace(v)
+	if !strings.HasPrefix(v, "go1.") {
+		return ""
+	}
+	return v
 }
 
 // immutable reports whether the package's files cannot change without its

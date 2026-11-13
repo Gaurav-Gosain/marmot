@@ -617,3 +617,43 @@ func TestFixLeavesCgoOutputAlone(t *testing.T) {
 		t.Error("a file outside the module is editable")
 	}
 }
+
+func TestInlineRespectsFileVersion(t *testing.T) {
+	if testing.Short() {
+		t.Skip("loads the standard library")
+	}
+	t.Setenv("GOWORK", "off")
+	inline := func(goVersion string) []string {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/v\n\ngo "+goVersion+"\n"), 0o644)
+		os.WriteFile(filepath.Join(dir, "v.go"), []byte("package v\n\nimport \"io/ioutil\"\n\nfunc D() (string, error) { return ioutil.TempDir(\"\", \"x\") }\n"), 0o644)
+		r, err := Run(Options{Dir: dir, Only: []string{"modernize"}, CacheDir: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ms []string
+		for _, d := range r.Checks[0].Findings {
+			if d.Analyzer == "inline" {
+				ms = append(ms, d.Message)
+			}
+		}
+		return ms
+	}
+	// go fix inlines a call into a file only when the file's Go version is
+	// at least the callee's, and the standard library's is the toolchain's.
+	if ms := inline("1.15"); len(ms) != 1 || !strings.HasPrefix(ms[0], "cannot inline call to ioutil.TempDir (declared using go1.") {
+		t.Errorf("go 1.15: %q", ms)
+	}
+	// A file at the toolchain's own version gets the fix.
+	out, err := exec.Command("go", "env", "GOVERSION").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := strings.TrimPrefix(strings.TrimSpace(string(out)), "go")
+	if i := strings.IndexAny(v, " -"); i >= 0 {
+		v = v[:i]
+	}
+	if ms := inline(v); len(ms) != 1 || ms[0] != "Call of ioutil.TempDir should be inlined" {
+		t.Errorf("go %s: %q", v, ms)
+	}
+}

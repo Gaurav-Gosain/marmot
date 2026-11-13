@@ -162,7 +162,8 @@ type engine struct {
 	mu    sync.Mutex
 	units map[*listPkg]*unit
 
-	stat map[string]string // the run's walk of the module trees (path -> stat)
+	stat      map[string]string // the run's walk of the module trees (path -> stat)
+	toolchain string            // the Go version of the standard library ("go1.27.4")
 
 	// Dead code summaries: built for every package that is type checked
 	// when sums is set; declarations are listed for packages under wsDirs.
@@ -207,7 +208,7 @@ type unit struct {
 // packages in memory together than one engine would.
 func newEngine(g *graph, st *store, s *suite, env, goarch string, sc *scope) *engine {
 	sem, jobs := sc.jobSlots()
-	e := &engine{g: g, st: st, suite: s, env: env, goarch: goarch, sem: sem, jobs: jobs, units: map[*listPkg]*unit{}, stat: sc.walkTrees().all}
+	e := &engine{g: g, st: st, suite: s, env: env, goarch: goarch, sem: sem, jobs: jobs, units: map[*listPkg]*unit{}, stat: sc.walkTrees().all, toolchain: toolchainVersion(sc.goroot)}
 	for _, p := range g.pkgs {
 		e.units[p] = &unit{}
 	}
@@ -244,7 +245,7 @@ func (e *engine) computeKeys() {
 	for _, p := range e.g.pkgs {
 		u := e.units[p]
 		h := newHasher("own")
-		h.str(engineVersion, runtime.Version(), e.env, e.suite.factsConfig, p.ImportPath, p.Name, p.goVersion())
+		h.str(engineVersion, runtime.Version(), e.env, e.suite.factsConfig, p.ImportPath, p.Name, p.goVersion(e.toolchain))
 		if p.Module != nil {
 			h.str("module", p.Module.Path, p.Module.Version)
 		}
@@ -519,7 +520,7 @@ func (e *engine) run(p *listPkg, root bool, deps map[string]*factsEntry) (*facts
 	tc := &types.Config{
 		Importer:  importer,
 		Sizes:     types.SizesFor("gc", e.goarch),
-		GoVersion: p.goVersion(),
+		GoVersion: p.goVersion(e.toolchain),
 		Error: func(err error) {
 			if te, ok := err.(types.Error); ok {
 				typeErrs = append(typeErrs, te)
