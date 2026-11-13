@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"runtime/pprof"
 	"strings"
 	"time"
@@ -33,7 +34,20 @@ func reporter(command string, jsonFlag bool, color, version string) *diag.Report
 
 // Main runs marmot check with its command line arguments and returns the
 // exit status.
+// memoryLimit is the soft heap limit of a run. The live heap of a large
+// workspace stays well under it (the analysis holds a few packages at a
+// time; dead code holds per-package summaries); without a limit the
+// collector lets the heap grow to twice the live size.
+const memoryLimit = 1536 << 20
+
+func limitMemory() {
+	if os.Getenv("GOMEMLIMIT") == "" {
+		debug.SetMemoryLimit(memoryLimit)
+	}
+}
+
 func Main(args []string, version string) int {
+	limitMemory()
 	fs, cf := checkflags.NewCheck()
 	fs.SetOutput(io.Discard)
 	err := fs.Parse(checkflags.SplitChanged(args))
@@ -215,6 +229,7 @@ func findingLine(dir string, d *diag.Diagnostic) string {
 // status: 0 when the tree is clean or every fix applied, 1 when a fix had
 // to be rolled back.
 func FixMain(args []string, version string) int {
+	limitMemory()
 	fs, ff := checkflags.NewFix()
 	fs.SetOutput(io.Discard)
 	err := fs.Parse(args)
