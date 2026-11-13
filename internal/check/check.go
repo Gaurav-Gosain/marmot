@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -113,6 +114,9 @@ type scope struct {
 	changed   map[string]bool // absolute paths of changed files (Changed mode)
 	changedGo []string
 	base      string
+	mergeBase string
+	addedMu   sync.Mutex
+	added     map[string]map[int]bool
 }
 
 type module struct {
@@ -287,7 +291,7 @@ func makeScope(dir string, opts Options) (*scope, error) {
 	if mb == "" {
 		return nil, fmt.Errorf("no merge base with %s: run git fetch, or name a base with -changed=REF", base)
 	}
-	sc.base = base
+	sc.base, sc.mergeBase = base, mb
 	top := gitOut(dir, "rev-parse", "--show-toplevel")
 	names := strings.Fields(gitOut(dir, "diff", "--name-only", "--diff-filter=d", mb))
 	names = append(names, strings.Fields(gitOut(dir, "ls-files", "--others", "--exclude-standard", "--full-name"))...)
@@ -425,4 +429,48 @@ func (o Options) progress(format string, args ...any) {
 	if o.Progress != nil {
 		fmt.Fprintf(o.Progress, format+"\n", args...)
 	}
+}
+
+// addedLines returns, for Changed mode, the lines of a file that are new
+// or changed since the merge base (all lines of a file git does not
+// know), or nil when every line counts.
+func (sc *scope) addedLines(file string) map[int]bool {
+	if sc.changed == nil {
+		return nil
+	}
+	sc.addedMu.Lock()
+	defer sc.addedMu.Unlock()
+	if m, ok := sc.added[file]; ok {
+		return m
+	}
+	if sc.added == nil {
+		sc.added = map[string]map[int]bool{}
+	}
+	m := map[int]bool{}
+	dir := filepath.Dir(file)
+	if exec.Command("git", "-C", dir, "cat-file", "-e", sc.mergeBase+":./"+filepath.Base(file)).Run() != nil {
+		sc.added[file] = nil // new file: every line
+		return nil
+	}
+	for _, l := range strings.Split(gitOut(dir, "diff", "-U0", sc.mergeBase, "--", filepath.Base(file)), "\n") {
+		if !strings.HasPrefix(l, "@@") {
+			continue
+		}
+		// @@ -a,b +c,d @@
+		f := strings.Fields(l)
+		if len(f) < 3 {
+			continue
+		}
+		start, n := f[2][1:], "1"
+		if i := strings.IndexByte(start, ','); i >= 0 {
+			start, n = start[:i], start[i+1:]
+		}
+		a, _ := strconv.Atoi(start)
+		c, _ := strconv.Atoi(n)
+		for i := 0; i < c; i++ {
+			m[a+i] = true
+		}
+	}
+	sc.added[file] = m
+	return m
 }

@@ -68,6 +68,7 @@ import (
 	"golang.org/x/tools/go/analysis/suite/vet"
 	"golang.org/x/tools/go/ast/inspector"
 	"golang.org/x/tools/go/packages"
+	"honnef.co/go/tools/analysis/lint"
 	scconfig "honnef.co/go/tools/config"
 	"honnef.co/go/tools/quickfix"
 	"honnef.co/go/tools/simple"
@@ -556,4 +557,40 @@ func (s nosecSet) covers(pos token.Pos, rule string) bool {
 		}
 	}
 	return false
+}
+
+// goplsDefaultStaticcheck are the staticcheck checks gopls enables by
+// default (gopls v0.24 settings).
+var goplsDefaultStaticcheck = strings.Fields(`S1000 S1001 S1003 S1004 S1007 S1009 S1010 S1012 S1017 S1018 S1019 S1020
+S1023 S1024 S1028 S1030 S1031 S1032 S1033 S1034 S1035 S1036 S1037 S1038 S1039 S1040 QF1002 QF1003
+QF1004 QF1009 QF1010 QF1012 SA1001 SA1004 SA1005 SA1008 SA1012 SA1013 SA1016 SA2001 SA3000 SA3001
+SA4000 SA4001 SA4003 SA4004 SA4011 SA4013 SA4014 SA4016 SA4019 SA4020 SA4022 SA4024 SA4025 SA4026
+SA4027 SA4028 SA4029 SA4030 SA4032 SA5001 SA5003 SA5004 SA5008 SA6005 SA6006 SA9002 SA9004 SA9006
+SA9009 SA9010`)
+
+// goplsFamily is what gopls check prints: diagnostics of warning severity
+// or more, from the vet suite, the gopls analyzers that are on by default
+// at that severity and are public, and its default staticcheck subset
+// (those of information or hint severity, such as the gofmt -s
+// simplifiers, are not printed by gopls check).
+func goplsFamily() *family {
+	f := &family{}
+	f.add("gopls", vet.Suite...)
+	f.add("gopls", atomicalign.Analyzer, deepequalerrors.Analyzer, nilness.Analyzer, sortslice.Analyzer)
+	on := map[string]bool{}
+	for _, n := range goplsDefaultStaticcheck {
+		on[n] = true
+	}
+	for _, a := range slices.Concat(staticcheck.Analyzers, stylecheck.Analyzers, simple.Analyzers, quickfix.Analyzers) {
+		if !on[a.Analyzer.Name] {
+			continue
+		}
+		switch a.Doc.Severity {
+		case lint.SeverityInfo, lint.SeverityHint:
+			continue
+		}
+		f.add("gopls", a.Analyzer)
+	}
+	f.notes = append(f.notes, "not included: gopls analyzers internal to gopls (yield, embeddirective, recursiveiter, errorsastypeshadow, writestring, ptrtoerror)")
+	return f
 }

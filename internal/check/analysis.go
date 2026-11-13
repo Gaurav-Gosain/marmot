@@ -67,8 +67,9 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 		fams["modernize"] = f
 	}
 	if r := results["gopls"]; r != nil {
-		r.Status = Skipped
-		r.Notes = append(r.Notes, "the gopls only analyzers are not in marmot check yet; vet, lint and modernize cover the rest of gopls check")
+		f := goplsFamily()
+		fams["gopls"] = f
+		r.Notes = append(r.Notes, f.notes...)
 	}
 	if results["exhaustive"] != nil {
 		fams["exhaustive"] = &family{}
@@ -197,6 +198,13 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 				if n == "lint" && lintFiltered(lc, sc, rep, x.fd, x.linter, lines) {
 					continue
 				}
+				if n == "gopls" {
+					// As gopls check is run on a branch: only the lines the
+					// branch added or changed.
+					if added := sc.addedLines(x.fd.Span.File); added != nil && !added[x.fd.Span.Line] {
+						continue
+					}
+				}
 				addOnce(results[n], toDiag(n, x.linter, x.fd, p.path), seen)
 			}
 		}
@@ -205,7 +213,7 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 
 // analysisChecks are the checks that run analyzers on the package graph,
 // in reporting order.
-var analysisChecks = []string{"vet", "lint", "modernize", "exhaustive", "nil"}
+var analysisChecks = []string{"vet", "lint", "modernize", "gopls", "exhaustive", "nil"}
 
 // lintFiltered applies golangci-lint's filters: generated files, test
 // files when tests are off, exclusion rules, //nolint and one issue per
@@ -280,7 +288,9 @@ func addOnce(r *CheckResult, d diag.Diagnostic, seen map[string]bool) {
 
 // machineFixes are the analyzers whose suggested fixes are safe to apply
 // without looking (they are what go fix applies).
-func machineApplicable(check string) bool { return check == "modernize" || check == "fmt" }
+func machineApplicable(check, analyzer string) bool {
+	return check == "modernize" || check == "fmt"
+}
 
 func toDiag(check, linter string, fd finding, pkg string) diag.Diagnostic {
 	d := diag.Diagnostic{
@@ -299,7 +309,7 @@ func toDiag(check, linter string, fd finding, pkg string) diag.Diagnostic {
 		d.Notes = append(d.Notes, "linter "+linter)
 	}
 	app := diag.MaybeIncorrect
-	if machineApplicable(check) {
+	if machineApplicable(check, fd.Analyzer) {
 		app = diag.MachineApplicable
 	}
 	for _, f := range fd.Fixes {
