@@ -11,7 +11,7 @@ if(NOT TARGET MLIRLLVMDialect)
   set(CMAKE_CXX_STANDARD 17)
 endif()
 
-add_library(MarmotTier0 STATIC MachO.cpp ELF.cpp Codegen.cpp)
+add_library(MarmotTier0 STATIC MachO.cpp ELF.cpp Codegen.cpp Reader.cpp)
 # Unsupported constructs unwind out of the code generator with an exception
 # (caught inside it, never across LLVM frames).
 target_compile_options(MarmotTier0 PRIVATE -fexceptions -fno-rtti)
@@ -21,7 +21,7 @@ if(DEFINED MARMOT_LLVM_LIBS)
   # Inside the backend build: the same LLVM and MLIR libraries as the backend.
   target_link_libraries(MarmotTier0 PUBLIC ${MARMOT_LLVM_LIBS})
 else()
-  target_link_libraries(MarmotTier0 PUBLIC MLIRLLVMDialect MLIRIR)
+  target_link_libraries(MarmotTier0 PUBLIC MLIRLLVMDialect MLIRIR MLIRAsmParser)
   add_executable(tier0-run tools/tier0-run.cpp)
   target_compile_options(tier0-run PRIVATE -fno-rtti)
   target_link_libraries(tier0-run PRIVATE MarmotTier0 MLIRParser MLIRDLTIDialect MLIRLLVMDialect)

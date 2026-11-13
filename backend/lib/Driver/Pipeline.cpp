@@ -2,6 +2,7 @@
 // emit. Everything runs in-process. Each call owns its own MLIRContext and
 // LLVMContext, so calls are safe to run in parallel.
 #include "marmot/Driver/Pipeline.h"
+#include "tier0/Reader.h"
 #include <mutex>
 #include "marmot/Driver/RuntimeBitcode.h"
 #include "marmot/Driver/Targets.h"
@@ -703,6 +704,43 @@ bool verifyParsed(ParsedModule &pm, const std::string &input, llvm::raw_ostream 
   return true;
 }
 
+static bool envOn(const char *name) {
+  const char *v = getenv(name);
+  return v && *v && *v != '0';
+}
+static bool fastParse() {
+  static const bool on = envOn("MARMOT_FAST_PARSE");
+  return on;
+}
+static bool parseCheck() {
+  static const bool on = envOn("MARMOT_PARSE_CHECK");
+  return on;
+}
+
+// The two modules print the same in generic form with locations; else the
+// first differing line of each in diff.
+static bool sameModule(mlir::ModuleOp a, mlir::ModuleOp b, std::string &diff) {
+  auto print = [](mlir::ModuleOp m) {
+    std::string s;
+    llvm::raw_string_ostream os(s);
+    m->print(os, mlir::OpPrintingFlags().printGenericOpForm().enableDebugInfo().assumeVerified());
+    return s;
+  };
+  std::string pa = print(a), pb = print(b);
+  if (pa == pb)
+    return true;
+  size_t k = 0;
+  while (k < pa.size() && k < pb.size() && pa[k] == pb[k])
+    ++k;
+  auto lineAt = [&](const std::string &s) {
+    size_t ls = s.rfind('\n', k);
+    ls = ls == std::string::npos ? 0 : ls + 1;
+    return s.substr(ls, std::min<size_t>(s.find('\n', k) - ls, 400));
+  };
+  diff = "  parser: " + lineAt(pa) + "\n  reader: " + lineAt(pb) + "\n";
+  return false;
+}
+
 ParsedModulePtr parseFile(const std::string &input, const CompileOptions &opts,
                           llvm::raw_ostream &errs) {
   ParsedModulePtr pm(new ParsedModule);
@@ -724,8 +762,35 @@ ParsedModulePtr parseFile(const std::string &input, const CompileOptions &opts,
   pm->diag = std::make_unique<mlir::SourceMgrDiagnosticHandler>(pm->sm, pm->ctx.get(),
                                                                  *pm->diagStream);
   llvm::StringRef text = pm->sm.getMemoryBuffer(1)->getBuffer();
+  // tier0 batches read the frontend's text with the tier0 reader
+  // (MARMOT_FAST_PARSE=1, until it is the default), which gives up on text it
+  // does not know; the MLIR parser reads that. MARMOT_PARSE_CHECK=1 reads
+  // every module both ways and fails when the modules differ.
+  bool check = parseCheck();
+  if (opts.tier0 && (fastParse() || check)) {
+    std::string why;
+    pm->module = tier0::readModule(pm->ctx.get(), text, input, why);
+    if (check && pm->module) {
+      mlir::OwningOpRef<mlir::ModuleOp> ref = mlir::parseSourceFile<mlir::ModuleOp>(
+          pm->sm, mlir::ParserConfig(pm->ctx.get(), /*verifyAfterParse=*/false));
+      std::string diff;
+      if (!ref) {
+        errs << pm->diagText << input << ": parse check: the reader read a module the parser rejects\n";
+        return nullptr;
+      }
+      if (!sameModule(*ref, *pm->module, diff)) {
+        errs << input << ": parse check: the reader and the parser differ\n" << diff;
+        return nullptr;
+      }
+    }
+    if (pm->module && !fastParse())
+      pm->module = nullptr;  // check only: use the parser's module as before
+    if (pm->module && (!expandInits(*pm->module, *pm->diagStream) ||
+                       (verify && mlir::failed(mlir::verify(*pm->module)))))
+      pm->module = nullptr;
+  }
   // Only tier0 batches size parseThreads to the threads other jobs leave.
-  if (opts.tier0 && opts.parseThreads > 1 && text.size() >= kParallelParseMin) {
+  if (!pm->module && opts.tier0 && opts.parseThreads > 1 && text.size() >= kParallelParseMin) {
     pm->module = parseParallel(pm->ctx.get(), text, input, opts.parseThreads, verify);
     if (!pm->module)
       pm->diagText.clear();
