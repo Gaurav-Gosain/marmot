@@ -116,10 +116,10 @@ func (b *build) incrementalConfig(cfg *loader.Config) {
 			b.srcKey(p)
 		}
 	}
-	// Code generation looks up runtime functions and types by name,
-	// unexported ones included, which export data leaves out.
+	// Runtime's export data keeps its unexported names (rtexport), which
+	// code generation looks up, so it loads from export data like the rest.
 	cfg.NeedSource = func(p *packages.Package, base string) bool {
-		return p.PkgPath == "runtime" || !b.moduleCached(p, base)
+		return !b.moduleCached(p, base)
 	}
 }
 

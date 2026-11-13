@@ -22,6 +22,7 @@ import (
 
 	"github.com/Gaurav-Gosain/marmot/internal/cgo"
 	"github.com/Gaurav-Gosain/marmot/internal/genapi"
+	"github.com/Gaurav-Gosain/marmot/internal/rtexport"
 	"golang.org/x/tools/go/gcexportdata"
 	"golang.org/x/tools/go/packages"
 )
@@ -239,6 +240,9 @@ func filesSig(files []string) string {
 func (st *incrState) keyOf(p *packages.Package, own string) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\n%s\n%s\n", st.confSig, p.PkgPath, p.Name)
+	if p.PkgPath == "runtime" {
+		fmt.Fprintf(h, "export data with every name\n")
+	}
 	fmt.Fprintf(h, "%s\n", own)
 	var deps []string
 	for path, d := range p.Imports {
@@ -274,7 +278,13 @@ func (st *incrState) readMeta(key string) (*pkgMeta, bool) {
 
 func (st *incrState) writeCache(key string, tpkg *types.Package, m *pkgMeta) error {
 	var buf bytes.Buffer
-	if err := gcexportdata.Write(&buf, st.fset, tpkg); err != nil {
+	write := gcexportdata.Write
+	if tpkg.Path() == "runtime" {
+		// Code generation looks up unexported runtime functions and types
+		// by name: keep them all, so runtime too loads from export data.
+		write = rtexport.WriteAll
+	}
+	if err := write(&buf, st.fset, tpkg); err != nil {
 		return err
 	}
 	data := buf.Bytes()
@@ -583,6 +593,12 @@ func loadIncremental(cfg Config, pcfg *packages.Config, patterns []string, confS
 		// Generic packages that the packages compiled from source used to
 		// instantiate (recorded by package path) come from source too.
 		for _, p := range all {
+			if p.PkgPath == "unsafe" {
+				// As loadOne has it: no export data, an empty hash.
+				st.meta[p] = &pkgMeta{}
+				st.srcKeys[p], st.apiKeys[p], st.genKeys[p] = "unsafe", "unsafe", "unsafe"
+				continue
+			}
 			own := filesSig(ownFiles(p))
 			k := st.keyOf(p, own)
 			st.srcKeyOf(p, own)
