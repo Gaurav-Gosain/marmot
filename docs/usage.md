@@ -20,6 +20,7 @@ marmot follows the `go` command where it can. Run it inside a Go module.
 | `marmot size BINARY` | Size by section, package and function; `-why FUNC` shows a chain of calls from `main` to a function. |
 | `marmot bench [package]` | Run benchmarks several times; `-vs go` compares with `go test`, `-compare FILE` with a saved run. |
 | `marmot prof PROFILE` | Read a pprof profile: top functions, call tree (`-tree`), annotated source (`-list`). |
+| `marmot sysroot add linux/arm64` | Fetch the C headers of a target, to cross compile cgo packages. |
 | `marmot bind HEADER` | Generate Go bindings (a plain cgo file) from a C header; see [Bindings from C headers](#bindings-from-c-headers). |
 | `marmot doctor` | Check the installation and the environment and say what to fix. |
 | `marmot completion SHELL` | Print shell completion for bash, zsh, fish or powershell. |
@@ -263,10 +264,15 @@ gets the conversion: `C.int(x)` (applied by `marmot fix`), or `C.CString` and `C
 string.
 
 Programs without `import "C"` are built exactly as before, and the standard library is always
-built without cgo (`net` and `os/user` behave as with `CGO_ENABLED=0`). Cross compiling a cgo
-package needs the target's C headers and libraries: set `MARMOT_SYSROOT` to a copy of the
-target's root (`usr/include` and `usr/lib` are enough), for example
-`MARMOT_SYSROOT=$HOME/sysroots/linux-amd64 marmot build -target linux/amd64 .`.
+built without cgo (`net` and `os/user` behave as with `CGO_ENABLED=0`).
+
+Cross compiling a cgo package needs the target's C headers. `marmot sysroot add linux/arm64`
+(or `linux/amd64`) fetches them once: the glibc and kernel headers of Debian stable, checked
+against Debian's package index, into marmot's cache (about 20 MB). After that `marmot build
+-target linux/arm64 .` compiles the C of cgo packages for the target with nothing else
+installed. `marmot sysroot list` shows what is there and `marmot sysroot remove` deletes one.
+`MARMOT_SYSROOT` points at another sysroot instead (a copy of the target's `usr/include` and
+`usr/lib`).
 
 ## Bindings from C headers
 

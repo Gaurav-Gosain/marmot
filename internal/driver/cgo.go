@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/Gaurav-Gosain/marmot/internal/cgo"
+	"github.com/Gaurav-Gosain/marmot/internal/sysroot"
 )
 
 // cgo packages: the C files internal/cgo generates (the wrappers of the C
@@ -169,10 +170,13 @@ func (b *build) cgoTargetFlags() ([]string, error) {
 		return nil, fmt.Errorf("cgo: no C target for %s/%s", b.goos, b.goarch)
 	}
 	flags := []string{"--target=" + triple}
-	if sr := os.Getenv("MARMOT_SYSROOT"); sr != "" {
+	switch sr := os.Getenv("MARMOT_SYSROOT"); {
+	case sr != "":
 		flags = append(flags, "--sysroot="+sr)
-	} else if b.goos != runtime.GOOS {
-		return nil, fmt.Errorf("cgo: cross compiling C for %s/%s needs its headers: set MARMOT_SYSROOT to a copy of the target's root (usr/include, usr/lib)", b.goos, b.goarch)
+	case sysroot.Installed(b.cfg.Root, b.goos, b.goarch):
+		flags = append(flags, "--sysroot="+sysroot.Dir(b.cfg.Root, b.goos, b.goarch))
+	case b.goos != runtime.GOOS:
+		return nil, fmt.Errorf("cgo: cross compiling C for %s/%s needs its headers: run marmot sysroot add %s/%s (or set MARMOT_SYSROOT to a copy of the target's root)", b.goos, b.goarch, b.goos, b.goarch)
 	}
 	return flags, nil
 }
