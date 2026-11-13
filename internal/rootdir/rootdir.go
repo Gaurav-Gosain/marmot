@@ -81,7 +81,15 @@ func cacheEntries(dir string) ([]cacheEntry, int64) {
 	var total int64
 	// The callback skips what it cannot read, so the walk cannot fail.
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if p == filepath.Join(dir, "sysroot") {
+				// Installed by marmot sysroot add, not a cache: its files
+				// keep the packages' old times and would go first.
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if strings.HasPrefix(d.Name(), ".trim") {
