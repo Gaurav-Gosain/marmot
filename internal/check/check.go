@@ -29,7 +29,7 @@ var Names = checkflags.Names
 
 // reportOnly checks print their findings but never fail the run, as the
 // modernizers and dead code are in most CI gates.
-var reportOnly = map[string]bool{"modernize": true, "deadcode": true}
+var reportOnly = map[string]bool{"modernize": true, "deadcode": true, "exhaustive": true, "nil": true}
 
 // Codes of check findings, one per check.
 var Codes = map[string]string{
@@ -175,7 +175,7 @@ func Run(opts Options) (*Result, error) {
 	}
 	// The analysis checks share one package graph and one pass.
 	analysis := []string{}
-	for _, n := range []string{"vet", "lint", "modernize", "gopls"} {
+	for _, n := range []string{"vet", "lint", "modernize", "gopls", "exhaustive", "nil"} {
 		if results[n] != nil {
 			analysis = append(analysis, n)
 		}

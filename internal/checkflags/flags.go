@@ -11,7 +11,7 @@ import (
 )
 
 // Names are the checks, in the order they run and are reported.
-var Names = []string{"fmt", "vet", "lint", "modernize", "gopls", "vuln", "tidy", "cross", "deadcode"}
+var Names = []string{"fmt", "vet", "lint", "modernize", "gopls", "exhaustive", "nil", "vuln", "tidy", "cross", "deadcode"}
 
 // Check are the flags of marmot check.
 type Check struct {

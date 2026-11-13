@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
+	"github.com/Gaurav-Gosain/marmot/internal/exhaustive"
+	"github.com/Gaurav-Gosain/marmot/internal/nilcheck"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -68,7 +70,15 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 		r.Status = Skipped
 		r.Notes = append(r.Notes, "the gopls only analyzers are not in marmot check yet; vet, lint and modernize cover the rest of gopls check")
 	}
-	for _, n := range []string{"vet", "lint", "modernize"} {
+	if results["exhaustive"] != nil {
+		fams["exhaustive"] = &family{}
+		fams["exhaustive"].add("exhaustive", exhaustive.Analyzer)
+	}
+	if results["nil"] != nil {
+		fams["nil"] = &family{}
+		fams["nil"].add("nil", nilcheck.Analyzer)
+	}
+	for _, n := range analysisChecks {
 		if f := fams[n]; f != nil {
 			all = append(all, f.analyzers...)
 		}
@@ -128,7 +138,7 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 	// Type and load errors stop go vet; report them once, in the first
 	// analysis check that runs.
 	errCheck := ""
-	for _, n := range []string{"vet", "lint", "modernize"} {
+	for _, n := range analysisChecks {
 		if fams[n] != nil {
 			errCheck = n
 			break
@@ -159,7 +169,7 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 				results[n].Notes = append(results[n].Notes, "analyzer failed: "+msg)
 			}
 		}
-		for _, n := range []string{"vet", "lint", "modernize"} {
+		for _, n := range analysisChecks {
 			f := fams[n]
 			if f == nil {
 				continue
@@ -192,6 +202,10 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 		}
 	}
 }
+
+// analysisChecks are the checks that run analyzers on the package graph,
+// in reporting order.
+var analysisChecks = []string{"vet", "lint", "modernize", "exhaustive", "nil"}
 
 // lintFiltered applies golangci-lint's filters: generated files, test
 // files when tests are off, exclusion rules, //nolint and one issue per
@@ -314,6 +328,10 @@ func checkCode(check string) string {
 		return diag.CodeCross
 	case "deadcode":
 		return diag.CodeDeadcode
+	case "exhaustive":
+		return diag.CodeExhaustive
+	case "nil":
+		return diag.CodeNil
 	}
 	return diag.CodeOther
 }
