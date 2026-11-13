@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/scanner"
 	"go/token"
 	"go/types"
 	"os"
@@ -254,14 +255,23 @@ func (st *incrState) parseFiles(p *packages.Package) ([]*ast.File, error) {
 			if data, ok := st.overlay[name]; ok {
 				src = data
 			}
-			files[i], errs[i] = parser.ParseFile(st.fset, name, src, parser.ParseComments|parser.SkipObjectResolution)
+			files[i], errs[i] = parser.ParseFile(st.fset, name, src, parser.AllErrors|parser.ParseComments|parser.SkipObjectResolution)
 		}()
 	}
 	wg.Wait()
+	var msgs []string
 	for _, e := range errs {
-		if e != nil {
-			return nil, e
+		if list, ok := e.(scanner.ErrorList); ok {
+			// One error per line, as go/packages reports them.
+			for _, x := range list {
+				msgs = append(msgs, x.Error())
+			}
+		} else if e != nil {
+			msgs = append(msgs, e.Error())
 		}
+	}
+	if len(msgs) > 0 {
+		return nil, fmt.Errorf("%s", strings.Join(msgs, "\n"))
 	}
 	return files, nil
 }
