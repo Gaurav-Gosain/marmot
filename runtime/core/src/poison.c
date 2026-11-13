@@ -136,7 +136,7 @@ bool poison_fault(uintptr_t addr, uintptr_t pc) {
     rt_print("\n");
     return true;
   }
-  if ((addr >> 32) == 0xfafafafa || addr == 0) {
+  if (((uint64_t)addr >> 32) == 0xfafafafa || addr == 0) {
     rt_print("MARMOT_POISON: the fault address ");
     rt_printx(addr);
     rt_print(" may come from a pointer read out of freed memory (pattern 0xfafafafafafafafa; non-canonical addresses fault at 0 on amd64)\n");

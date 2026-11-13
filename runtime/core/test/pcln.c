@@ -1,6 +1,7 @@
 // rt_pcln finds a pc table section in the binary (here one made with a
 // section attribute) and the image base.
 // expect-stdout: ok
+// wasm: skip (no pc table section yet)
 #include "rtest.h"
 #include <string.h>
 

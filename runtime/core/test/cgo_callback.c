@@ -3,6 +3,7 @@
 // must come back on the same thread. Then C threads unknown to the runtime
 // call Go twice each (attach, block, collect, detach).
 // expect-stdout: ok
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <pthread.h>
 #include <stdatomic.h>

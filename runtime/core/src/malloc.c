@@ -128,7 +128,13 @@ static void allspans_remove(mspan *s) {
 // ---- arena ----
 
 static void arena_init(void) {
+#if RT_ARCH_WASM32
+  // wasm32: 4 GiB of linear memory in all, and a reservation is memory
+  // grown at once (zeroed, backed by the engine only as it is touched).
+  uintptr_t size = (uintptr_t)1 << 30;
+#else
   uintptr_t size = (uintptr_t)64 << 30;
+#endif
   void *p = NULL;
   while (size >= ((uintptr_t)256 << 20)) {
     p = os_reserve(size);
@@ -143,7 +149,7 @@ static void arena_init(void) {
   rt_arena_used = start;
   uintptr_t npages = (rt_arena_end - start) >> PAGE_SHIFT;
   rt_pagemap = os_reserve(npages * sizeof(mspan *) + rt_pagesize);
-  rt_heapbits = os_reserve((rt_arena_end - start) / 64 + rt_pagesize);
+  rt_heapbits = os_reserve((rt_arena_end - start) / (8 * WORDSZ) + rt_pagesize);
   if (!rt_pagemap || !rt_heapbits) rt_throw("cannot reserve heap metadata");
 }
 
@@ -155,8 +161,8 @@ static void meta_commit(uintptr_t upto) {
   pm_lo &= ~(ps - 1);
   pm_hi = (pm_hi + ps - 1) & ~(ps - 1);
   if (!os_commit((uint8_t *)rt_pagemap + pm_lo, pm_hi - pm_lo)) rt_throw("out of memory (pagemap)");
-  uintptr_t hb_lo = (meta_committed / 64) & ~(ps - 1);
-  uintptr_t hb_hi = (upto / 64 + ps - 1) & ~(ps - 1);
+  uintptr_t hb_lo = (meta_committed / (8 * WORDSZ)) & ~(ps - 1);
+  uintptr_t hb_hi = (upto / (8 * WORDSZ) + ps - 1) & ~(ps - 1);
   if (hb_hi > hb_lo && !os_commit((uint8_t *)rt_heapbits + hb_lo, hb_hi - hb_lo))
     rt_throw("out of memory (heapbits)");
   meta_committed = upto;
@@ -541,15 +547,15 @@ void mcache_flush_all(void) {
 void rt_heapbits_set(uintptr_t p, uintptr_t size, uintptr_t clsize, const uint8_t *ptrmap,
                      uintptr_t elemsize) {
   static const uint8_t all_ptrs[1] = {1};
-  if (!ptrmap || elemsize == 0 || elemsize % 8 != 0) {
+  if (!ptrmap || elemsize == 0 || elemsize % WORDSZ != 0) {
     // Invalid precise request: every word may be a pointer.
     ptrmap = all_ptrs;
-    elemsize = 8;
+    elemsize = WORDSZ;
     size = clsize;
   }
-  uintptr_t w0 = (p - rt_arena_start) / 8;
-  uintptr_t nw = clsize / 8;
-  uintptr_t ew = elemsize / 8;
+  uintptr_t w0 = (p - rt_arena_start) / WORDSZ;
+  uintptr_t nw = clsize / WORDSZ;
+  uintptr_t ew = elemsize / WORDSZ;
   uintptr_t used = (size / elemsize) * ew;  // words covered by whole elements
   uintptr_t e = 0;                          // word index within the element
   for (uintptr_t i = 0; i < nw;) {
@@ -624,7 +630,7 @@ static void *alloc_slow(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, ui
                         bool zero) {
   if (size == 0) return zerobase;
   if (kind > RT_ALLOC_PRECISE) rt_throw("rt_alloc: bad kind");
-  if (kind == RT_ALLOC_PRECISE && (!ptrmap || elemsize == 0 || elemsize % 8 != 0))
+  if (kind == RT_ALLOC_PRECISE && (!ptrmap || elemsize == 0 || elemsize % WORDSZ != 0))
     kind = RT_ALLOC_CONSERVATIVE;
   rt_safepoint();
   if (UNLIKELY(rt_gcstress) &&
@@ -705,15 +711,15 @@ RT_API void *rt_alloc_nozero(uintptr_t size) {
 }
 
 // Heap bits for a single-element precise object of at most 8 words (one
-// ptrmap byte) in a class of at most 64 bytes.
+// ptrmap byte) in a class of at most 8 words.
 INLINE void heapbits_byte(uintptr_t p, uintptr_t size, uintptr_t clsize, uint8_t pm) {
-  uint64_t bits = pm & ((1u << (size / 8)) - 1);
-  uint64_t mask = (1ull << (clsize / 8)) - 1;
-  uintptr_t w = (p - rt_arena_start) / 8;
+  uint64_t bits = pm & ((1u << (size / WORDSZ)) - 1);
+  uint64_t mask = (1ull << (clsize / WORDSZ)) - 1;
+  uintptr_t w = (p - rt_arena_start) / WORDSZ;
   uintptr_t sh = w % 64;
   uint64_t *hb = &rt_heapbits[w / 64];
   hb[0] = (hb[0] & ~(mask << sh)) | (bits << sh);
-  if (sh + clsize / 8 > 64) hb[1] = (hb[1] & ~(mask >> (64 - sh))) | (bits >> (64 - sh));
+  if (sh + clsize / WORDSZ > 64) hb[1] = (hb[1] & ~(mask >> (64 - sh))) | (bits >> (64 - sh));
 }
 
 // Cold part of the fast path: zeroing larger objects and general heap bits.
@@ -738,7 +744,7 @@ RT_API void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uint
       uintptr_t p = (uintptr_t)fr, es = rt_class_size[cls];
       m->mcache->nreuse++;
       m->mcache->reuse_bytes += es;
-      if (LIKELY(es <= 64 && (kind != RT_ALLOC_PRECISE || (elemsize == size && ptrmap)))) {
+      if (LIKELY(es <= 8 * WORDSZ && (kind != RT_ALLOC_PRECISE || (elemsize == size && ptrmap)))) {
         uint64_t *q = (uint64_t *)p;
         for (uintptr_t i = 0; i < es / 8; i++) __atomic_store_n(&q[i], 0, __ATOMIC_RELAXED);
         if (kind == RT_ALLOC_PRECISE) heapbits_byte(p, size, es, ptrmap[0]);
@@ -760,7 +766,7 @@ RT_API void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uint
         uintptr_t es = s->elemsize;
         uintptr_t p = s->base + idx * es;
         bool zero = s->needzero;
-        if (LIKELY(es <= 64 && (kind != RT_ALLOC_PRECISE || (elemsize == size && ptrmap)))) {
+        if (LIKELY(es <= 8 * WORDSZ && (kind != RT_ALLOC_PRECISE || (elemsize == size && ptrmap)))) {
           if (zero) {
             uint64_t *q = (uint64_t *)p;
             for (uintptr_t i = 0; i < es / 8; i++) __atomic_store_n(&q[i], 0, __ATOMIC_RELAXED);
@@ -840,17 +846,17 @@ RT_API int32_t rt_heap_object_span(void *ptr, void **base, uintptr_t *size) {
 }
 
 // For an object rt_heap_object_span reported as RT_HEAPOBJ_PRECISE: 1 if
-// the word at byte offset off (a multiple of 8) of the object at base is a
+// the word at byte offset off (a multiple of the word size) of the object at base is a
 // pointer slot.
 RT_API int32_t rt_heap_ptr_word(void *base, uintptr_t off) {
   uintptr_t b = (uintptr_t)base;
   mspan *s = rt_pagemap[(b - rt_arena_start) >> PAGE_SHIFT];
   if (off >= s->elemsize) return 0;
   if (s->cls) {
-    uintptr_t w = (b + off - rt_arena_start) / 8;
+    uintptr_t w = (b + off - rt_arena_start) / WORDSZ;
     return (int32_t)((rt_heapbits[w / 64] >> (w % 64)) & 1);
   }
-  uintptr_t e = off / s->ptrelem, i = (off % s->ptrelem) / 8;
+  uintptr_t e = off / s->ptrelem, i = (off % s->ptrelem) / WORDSZ;
   if (e >= s->ptrcount) return 0;
   return (s->ptrmap[i / 8] >> (i % 8)) & 1;
 }

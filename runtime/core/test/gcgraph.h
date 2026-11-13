@@ -12,7 +12,7 @@ typedef struct node {
   uintptr_t pay[];  // npay words
 } node;
 
-#define MAGIC 0x5eed5eed5eed5eedull
+#define MAGIC ((uintptr_t)0x5eed5eed5eed5eedull)
 static const uint8_t node_ptrmap[6100 / 8] = {0x3c};  // words 2..5; covers the largest node
 
 static uint64_t rng_state;
@@ -25,13 +25,13 @@ static inline uint64_t rng(void) {
 
 static node *node_new(uintptr_t id, uint64_t r) {
   uintptr_t npay = r % 6 == 0 ? (r >> 8) % 6000 : (r >> 8) % 12;  // some large ones
-  uintptr_t size = sizeof(node) + npay * 8;
+  uintptr_t size = sizeof(node) + npay * sizeof(uintptr_t);
   node *n;
   if (r % 3 == 0)
     n = rt_alloc(size, RT_ALLOC_CONSERVATIVE, 0, 0);
   else
     n = rt_alloc(size, RT_ALLOC_PRECISE, node_ptrmap, size);
-  for (uintptr_t i = 0; i < size / 8; i++) CHECK(((uintptr_t *)n)[i] == 0);
+  for (uintptr_t i = 0; i < size / sizeof(uintptr_t); i++) CHECK(((uintptr_t *)n)[i] == 0);
   n->magic = MAGIC;
   n->id = id;
   n->npay = npay;

@@ -1,7 +1,10 @@
 #!/bin/sh
 # Build and run runtime core tests.
 #
-# Environment: CC, CFLAGS, LIB (archive or source files), OUT (build dir).
+# Environment: CC, CFLAGS, LIB (archive or source files), OUT (build dir),
+# LDLIBS (default -lpthread), POSTLINK (a command run as POSTLINK BIN -o BIN
+# after linking), RUN (a command the test runs under, as RUN BIN), WASM (set
+# for wasm: tests marked "// wasm: skip" are left out).
 # Tests run one at a time under nice (shared machine). On the laptop run a
 # subset: make test TESTS="test/sort.c test/simd.c"; full runs go to the Linux test host
 # (linux-build.sh).
@@ -21,8 +24,12 @@ for src in "$@"; do
   if [ -n "${TSAN:-}" ] && grep -q '^// tsan: skip' "$src"; then
     echo "skip $name (tsan)"; continue
   fi
+  if [ -n "${WASM:-}" ] && grep -q '^// wasm: skip' "$src"; then
+    echo "skip $name (wasm)"; continue
+  fi
   bin="$OUT/$name"
-  if ! $CC $CFLAGS "$src" $LIB -lpthread -o "$bin" 2> "$OUT/$name.build"; then
+  if ! { $CC $CFLAGS "$src" $LIB ${LDLIBS--lpthread} -o "$bin" &&
+         { [ -z "${POSTLINK:-}" ] || $POSTLINK "$bin" -o "$bin"; }; } 2> "$OUT/$name.build"; then
     echo "FAIL $name (build)"; cat "$OUT/$name.build"
     fail=$((fail+1)); failed="$failed $name"; continue
   fi
@@ -32,7 +39,7 @@ for src in "$@"; do
   env_vars=$(sed -n 's|^// env: *||p' "$src" | head -1)
   tmo=$(sed -n 's|^// timeout: *||p' "$src" | head -1); tmo=${tmo:-60}
   start=$(date +%s)
-  env $env_vars nice -n 10 perl -e 'alarm shift; exec @ARGV' "$tmo" "$bin" > "$OUT/$name.out" 2> "$OUT/$name.err"
+  env $env_vars nice -n 10 perl -e 'alarm shift; exec @ARGV' "$tmo" ${RUN:-} "$bin" > "$OUT/$name.out" 2> "$OUT/$name.err"
   code=$?
   dur=$(( $(date +%s) - start ))
   ok=1

@@ -1,6 +1,7 @@
 // rt_sigpipe with SIGPIPE enabled for os/signal queues it instead of dying;
 // with SIGPIPE ignored it returns.
 // expect-stdout: ok
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <signal.h>
 

@@ -4,6 +4,7 @@
 // expect-stdout: ok
 // env: GOMAXPROCS=1
 // timeout: 120
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <stdatomic.h>
 #include <stdlib.h>

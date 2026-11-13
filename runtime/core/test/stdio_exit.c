@@ -1,6 +1,7 @@
 // rt_exit flushes C stdio on darwin (as gc's exit through libc does): a
 // buffered printf without fflush still reaches a piped stdout.
 // expect-stdout: buffered
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <stdio.h>
 

@@ -4,6 +4,7 @@
 // Go side, with register and stack arguments, from inside a call and from
 // threads the runtime does not know.
 // expect-stdout: ok
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <errno.h>
 #include <pthread.h>

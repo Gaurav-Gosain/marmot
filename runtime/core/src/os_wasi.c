@@ -11,6 +11,8 @@
 
 #if RT_OS_WASI
 
+#include <stddef.h>
+
 #define WASI(name) __attribute__((import_module("wasi_snapshot_preview1"), import_name(#name)))
 
 typedef struct {
@@ -43,19 +45,39 @@ typedef struct {
 } wasi_fdstat;
 WASI(fd_fdstat_get) int32_t wasi_fd_fdstat_get(int32_t fd, wasi_fdstat *st);
 
-uintptr_t rt_pagesize;
+WASI(args_sizes_get) int32_t wasi_args_sizes_get(uint32_t *argc, uint32_t *size);
+WASI(args_get) int32_t wasi_args_get(char **argv, char *buf);
+WASI(environ_sizes_get) int32_t wasi_environ_sizes_get(uint32_t *n, uint32_t *size);
+WASI(environ_get) int32_t wasi_environ_get(char **env, char *buf);
+
+// The runtime's page: memory is handed out in these (a wasm page is 64 KiB,
+// too coarse for stacks and tables).
+uintptr_t rt_pagesize = 4096;
 rt_m *rt_wasi_m;  // the current M (one thread)
 
 void setm(rt_m *m) { rt_wasi_m = m; }
 
-void os_init(void) { rt_pagesize = 65536; }  // the wasm page
+void os_init(void) {}
 
-// n bytes of new memory at the end of linear memory, zeroed, or NULL.
+// Memory handed out so far ends at brk_cur; linear memory ends at brk_end.
+static uintptr_t brk_cur, brk_end;
+
+// n bytes (rounded up to pages) of new zeroed memory, or NULL: what is left
+// of linear memory, grown in wasm pages as needed.
 static void *grow(uintptr_t n) {
-  uintptr_t pages = (n + 65535) >> 16;
-  uintptr_t old = __builtin_wasm_memory_grow(0, pages);
-  if (old == (uintptr_t)-1) return NULL;
-  return (void *)(old << 16);
+  uintptr_t mem = __builtin_wasm_memory_size(0) << 16;
+  if (mem != brk_end) brk_cur = brk_end = mem;  // first call
+  if (n > ((uintptr_t)3 << 30)) return NULL;
+  n = (n + 4095) & ~(uintptr_t)4095;
+  if (n > brk_end - brk_cur) {
+    uintptr_t pages = (n - (brk_end - brk_cur) + 65535) >> 16;
+    if ((brk_end >> 16) + pages > 65535) return NULL;  // past 4 GiB - 64 KiB
+    if (__builtin_wasm_memory_grow(0, pages) == (uintptr_t)-1) return NULL;
+    brk_end += pages << 16;
+  }
+  void *p = (void *)brk_cur;
+  brk_cur += n;
+  return p;
 }
 
 void *os_reserve(uintptr_t n) { return grow(n); }
@@ -178,6 +200,9 @@ RT_API int32_t rt_prof_start(int32_t hz) { return -WASI_ENOSYS; }
 RT_API void rt_prof_stop(void) {}
 RT_API intptr_t rt_prof_read(uint64_t *buf, intptr_t n) { return -1; }
 
+_Atomic int32_t netpoll_waiters;
+_Atomic int32_t netpoll_blocked;
+_Atomic int64_t netpoll_last;
 bool netpoll_inited(void) { return false; }
 void netpoll_break(void) {}
 int32_t netpoll(int64_t ns) { return 0; }
@@ -238,6 +263,88 @@ RT_API intptr_t rt_libcall(void *fn, const uintptr_t *args, int32_t nargs, int32
 RT_API intptr_t rt_libcall_f64(void *fn, const uintptr_t *args, double f0, int32_t *err) {
   *err = WASI_ENOSYS;
   return -1;
+}
+
+// ---- program entry ----
+
+void rt_wasi_main(int argc, char **argv, char **envp);
+
+static void wasi_main(void *arg) {
+  uint32_t argc = 0, asize = 0, envc = 0, esize = 0;
+  wasi_args_sizes_get(&argc, &asize);
+  wasi_environ_sizes_get(&envc, &esize);
+  char **argv = grow((argc + 1 + envc + 1) * sizeof(char *) + asize + esize);
+  if (!argv) os_exit(2);
+  char **envp = argv + argc + 1;
+  char *abuf = (char *)(envp + envc + 1);
+  wasi_args_get(argv, abuf);
+  wasi_environ_get(envp, abuf + asize);
+  argv[argc] = NULL;
+  envp[envc] = NULL;
+  rt_wasi_main((int)argc, argv, envp);
+}
+
+// The module's entry: every context runs on top of rt_ctx_start's loop.
+RT_API void _start(void) { rt_ctx_start(wasi_main, NULL); }
+
+// ---- the C library functions the compiler calls (no libc here) ----
+// memory.copy and memory.fill (bulk memory) do the work; the loops are
+// kept from being turned back into calls of themselves.
+#define NOBUILTIN __attribute__((no_builtin))
+
+RT_API void *memcpy(void *restrict d, const void *restrict s, size_t n) {
+  __builtin_memcpy(d, s, n);
+  return d;
+}
+
+RT_API void *memmove(void *d, const void *s, size_t n) {
+  __builtin_memmove(d, s, n);
+  return d;
+}
+
+RT_API void *memset(void *d, int c, size_t n) {
+  __builtin_memset(d, c, n);
+  return d;
+}
+
+NOBUILTIN RT_API int memcmp(const void *a, const void *b, size_t n) {
+  const unsigned char *x = a, *y = b;
+  for (size_t i = 0; i < n; i++)
+    if (x[i] != y[i]) return x[i] < y[i] ? -1 : 1;
+  return 0;
+}
+
+RT_API int bcmp(const void *a, const void *b, size_t n) { return memcmp(a, b, n); }
+
+// 128-bit multiply (compiler-rt's; there is no builtins library here).
+typedef unsigned __int128 u128;
+RT_API u128 __multi3(u128 a, u128 b) {
+  uint64_t al = (uint64_t)a, ah = (uint64_t)(a >> 64), bl = (uint64_t)b, bh = (uint64_t)(b >> 64);
+  uint64_t a0 = al & 0xffffffff, a1 = al >> 32, b0 = bl & 0xffffffff, b1 = bl >> 32;
+  uint64_t p00 = a0 * b0, p01 = a0 * b1, p10 = a1 * b0, p11 = a1 * b1;
+  uint64_t mid = (p00 >> 32) + (uint32_t)p01 + (uint32_t)p10;
+  uint64_t lo = (mid << 32) | (uint32_t)p00;
+  uint64_t hi = p11 + (p01 >> 32) + (p10 >> 32) + (mid >> 32) + al * bh + ah * bl;
+  return ((u128)hi << 64) | lo;
+}
+
+NOBUILTIN RT_API size_t strlen(const char *s) {
+  size_t n = 0;
+  while (s[n]) n++;
+  return n;
+}
+
+NOBUILTIN RT_API int strcmp(const char *a, const char *b) {
+  while (*a && *a == *b) a++, b++;
+  return (unsigned char)*a - (unsigned char)*b;
+}
+
+NOBUILTIN RT_API int strncmp(const char *a, const char *b, size_t n) {
+  for (; n; n--, a++, b++) {
+    if (*a != *b) return (unsigned char)*a - (unsigned char)*b;
+    if (!*a) return 0;
+  }
+  return 0;
 }
 
 #endif

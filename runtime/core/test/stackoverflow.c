@@ -2,6 +2,7 @@
 // expect-exit: 2
 // expect-stderr: fatal error: stack overflow
 // env: MARMOT_STACKSIZE=256k
+// wasm: skip (no guard pages)
 #include "rtest.h"
 
 static int recurse(volatile char *p, int n) {

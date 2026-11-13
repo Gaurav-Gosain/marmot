@@ -1,6 +1,7 @@
 // A goroutine (not only main) can recurse deeply: std's depth-limit tests
 // recurse about 10^4-10^5 levels, which gc's growable stacks allow.
 // expect-stdout: ok
+// wasm: skip (small fixed stacks)
 #include "rtest.h"
 #include <stdatomic.h>
 

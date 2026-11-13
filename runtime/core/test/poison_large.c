@@ -3,6 +3,7 @@
 // expect-exit: 2
 // expect-stderr: MARMOT_POISON: use after free: access to
 // env: MARMOT_POISON=1
+// wasm: skip (no page protection)
 #include "rtest.h"
 
 static char *volatile keep;

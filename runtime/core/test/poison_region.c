@@ -3,6 +3,7 @@
 // expect-exit: 2
 // expect-stderr: in a freed region chunk
 // env: MARMOT_POISON=1
+// wasm: skip (no page protection)
 #include "rtest.h"
 
 static char *volatile keep;

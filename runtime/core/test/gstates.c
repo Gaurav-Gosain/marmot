@@ -1,5 +1,6 @@
 // rt_gstates counts live user goroutines by state.
 // expect-stdout: running 1 waiting 2
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <stdio.h>
 

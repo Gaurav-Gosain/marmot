@@ -27,7 +27,7 @@ typedef struct rchunk {
   uint32_t big;            // dedicated chunk (not a standard 64 KiB one)
   uintptr_t used;          // bytes in use when not the region's current chunk
   uintptr_t pad;
-} rchunk;  // data follows, 48 bytes, so data stays 16-byte aligned
+} __attribute__((aligned(16))) rchunk;  // data follows, 48 bytes (32 on wasm32), so data stays 16-byte aligned
 
 // A standard chunk is CHUNK_SIZE bytes including its header.
 #define STD_DATA (CHUNK_SIZE - sizeof(rchunk))

@@ -4,6 +4,7 @@
 // tsan: skip (ThreadSanitizer defers async signals until a syscall, so tight loops never stop)
 // env: GOMAXPROCS=4
 // timeout: 180
+// wasm: skip (needs preemption by signal)
 #include "gcgraph.h"
 
 static waitgroup wg;

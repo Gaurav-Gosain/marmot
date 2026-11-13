@@ -153,6 +153,12 @@ void *rt_ctx_init(void *top, void (*fn)(void *), void *arg);
 // Spill callee-saved registers into buf (at least 24 words) and return the
 // current stack pointer. Used before conservative scans of a stack.
 void *rt_spill_regs(void *buf);
+#if RT_ARCH_WASM32
+// wasm (arch_wasm32.c): rt_ctx_init with the stack's bottom too, and the
+// start of the first context on the program's stack (never returns).
+void *rt_ctx_init_wasm(uintptr_t lo, uintptr_t hi, void (*fn)(void *), void *arg);
+void rt_ctx_start(void (*fn)(void *), void *arg) NORETURN;
+#endif
 
 // ---- Goroutines and scheduler (sched.c) ----
 

@@ -54,10 +54,12 @@ void marmot_main(void) {
   rt_lock(&mu);
   rt_unlock(&mu);
 
+#if !defined(__wasm__)  // no /dev/null under WASI
   char path[] = "/dev/null";
   intptr_t fd = rt_open(path, 1 /* O_WRONLY */, 0);
   CHECK(fd >= 0);
   CHECK(rt_write((int32_t)fd, msg, 3) == 3);
   CHECK(rt_close((int32_t)fd) == 0);
+#endif
   CHECK(rt_open("/nonexistent/x", 0, 0) < 0);
 }

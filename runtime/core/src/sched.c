@@ -39,8 +39,16 @@ static rt_m m0;
 // levels) run in any goroutine, as gc's growable stacks do. 10^6 goroutines
 // reserve 64 TiB, inside the 47-bit address space; if mmap still fails a
 // stack falls back to 1 MiB (stack_alloc).
+#if RT_ARCH_WASM32
+// wasm: linear memory is committed as it grows and never returns, and the
+// address space is 4 GiB: small stacks, half of each the Asyncify buffer
+// (arch_wasm32.c).
+static uintptr_t g_stacksize = (uintptr_t)64 << 10;
+static uintptr_t main_stacksize = (uintptr_t)8 << 20;
+#else
 static uintptr_t g_stacksize = (uintptr_t)64 << 20;  // default goroutine stack reservation
 static uintptr_t main_stacksize = 1ull << 30;  // main goroutine
+#endif
 static bool sysmon_started;
 static rt_spin sysmon_lock;
 static fixalloc g_alloc, m_alloc, p_alloc;
@@ -503,6 +511,7 @@ static void checkdead(void) {
 
 // ---- Ms ----
 
+#if !RT_OS_WASI  // one thread on WASI
 static void mstart(void *arg) {
   rt_m *m = arg;
   setm(m);
@@ -534,6 +543,7 @@ static void newm(rt_p *p, bool spinning) {
   if (!ok) rt_throw("newm: cannot create thread");
   sysmon_start_h();
 }
+#endif
 
 // Run some M with p (or an idle P if p is NULL). spinning: the caller
 // already incremented nmspinning for it.
@@ -556,7 +566,15 @@ static void startm(rt_p *p, bool spinning) {
     return;
   }
   spin_unlock(&sched.lock);
+#if RT_OS_WASI
+  // One thread: the P waits idle for this M (back from a system call).
+  spin_lock(&sched.lock);
+  pidleput(p);
+  spin_unlock(&sched.lock);
+  if (spinning) atomic_fetch_sub(&sched.nmspinning, 1);
+#else
   newm(p, spinning);
+#endif
 }
 
 void wakep(void) {
@@ -753,6 +771,15 @@ static void mcall(int32_t req) {
 
 static void goexit_final(rt_g *g);
 
+// A context on g's stack that calls fn(g) when switched to.
+static void *ctx_init_g(rt_g *g, void (*fn)(void *)) {
+#if RT_ARCH_WASM32
+  return rt_ctx_init_wasm(g->stack_lo, g->stack_hi, fn, g);
+#else
+  return rt_ctx_init((void *)g->stack_hi, fn, g);
+#endif
+}
+
 static void gstart(void *arg) {
   rt_g *g = arg;
   getm()->locks--;  // taken by execute
@@ -769,7 +796,7 @@ static void execute(rt_m *m, rt_g *g) {
   if (UNLIKELY(!g->sp)) {
     // First run: take a stack now.
     if (!g->stack_hi) stack_take(m->p, g);
-    g->sp = rt_ctx_init((void *)g->stack_hi, gstart, g);
+    g->sp = ctx_init_g(g, gstart);
   }
   m->curg = g;
   g->m = m;
@@ -1416,6 +1443,9 @@ static rt_p *pnew(int32_t id) {
 
 RT_API int32_t rt_gomaxprocs(int32_t n) {
   int32_t old = atomic_load(&sched.nprocs);
+#if RT_OS_WASI
+  return old;  // one thread, one P
+#endif
   if (n < 1 || n == old) return old;
   if (n > 256) n = 256;
   stop_the_world();
@@ -1768,6 +1798,9 @@ static void sysmon(void *arg) {
 }
 
 void sysmon_start(void) {
+#if RT_OS_WASI
+  return;  // one thread: the scheduler checks timers itself
+#endif
   if (__atomic_load_n(&sysmon_started, __ATOMIC_ACQUIRE)) return;
   spin_lock(&sysmon_lock);
   if (!sysmon_started) {
@@ -1970,6 +2003,9 @@ void sched_init(void) {
   int64_t env = rt_atoi(rt_getenv("GOMAXPROCS"), &ok);
   if (ok && env > 0) n = (int32_t)env;
   if (n > 256) n = 256;
+#if RT_OS_WASI
+  n = 1;  // one thread
+#endif
   for (int32_t i = 0; i < n; i++) sched.allp[i] = pnew(i);
   atomic_store(&sched.nallp, n);
   atomic_store(&sched.nprocs, n);
@@ -1988,7 +2024,7 @@ void sched_start_main(void) {
   rt_g *g = galloc(main_stacksize);
   g->fn = main_entry;
   g->id = atomic_fetch_add(&sched.goidgen, 1) + 1;
-  g->sp = rt_ctx_init((void *)g->stack_hi, gstart, g);
+  g->sp = ctx_init_g(g, gstart);
   glive_set(g, true);
   atomic_fetch_add(&sched.ngoroutines, 1);
   atomic_store(&g->status, G_RUNNABLE);

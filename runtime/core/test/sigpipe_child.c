@@ -2,6 +2,7 @@
 // handles SIGPIPE with a no-op handler (reset by exec), not SIG_IGN (which
 // exec keeps). A shell that sends itself SIGPIPE must die from it.
 // expect-stdout: ok
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <signal.h>
 #include <spawn.h>

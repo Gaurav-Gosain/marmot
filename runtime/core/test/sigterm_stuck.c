@@ -4,6 +4,7 @@
 // expect-exit: 143
 // expect-stderr: not received by the program for 3 s
 // timeout: 30
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <signal.h>
 #include <unistd.h>

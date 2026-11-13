@@ -3,6 +3,7 @@
 // expect-stdout: ok
 // env: GOMAXPROCS=8
 // timeout: 120
+// wasm: skip (threads)
 #include "rtest.h"
 
 static waitgroup wg;

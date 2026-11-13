@@ -2,6 +2,7 @@
 // expect-exit: 2
 // expect-stdout: sigpanic kind 1
 // expect-stderr: panic: runtime error: invalid memory address or nil pointer dereference
+// wasm: skip (faults are traps, not signals)
 #include "rtest.h"
 
 static void *jb[RT_JMPBUF_WORDS];

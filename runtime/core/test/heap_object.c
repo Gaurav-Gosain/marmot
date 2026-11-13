@@ -2,6 +2,7 @@
 // interior, small or large, fresh from a cached span), 0 for globals,
 // stacks, region memory and C memory.
 // expect-stdout: ok
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <stdlib.h>
 

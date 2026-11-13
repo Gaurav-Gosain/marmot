@@ -5,6 +5,10 @@
 
 #include "internal.h"
 
+// The heap's word: the unit of the pointer bitmaps (rt_heapbits, ptrmaps)
+// and of conservative scans. 8 bytes, or 4 on wasm32.
+#define WORDSZ ((uintptr_t)sizeof(uintptr_t))
+
 #pragma GCC visibility push(hidden)
 
 #define PAGE_SHIFT 13

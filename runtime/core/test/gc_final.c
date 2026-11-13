@@ -26,7 +26,7 @@ __attribute__((noinline)) static void setup(void) {
   obj *a = mk(2);                         // reachable via registered root
   hidden_roots[0] = (uintptr_t)a;
   obj *b = mk(3);
-  interior = (char *)b + 16;              // interior pointer keeps it
+  interior = (char *)b + 2 * sizeof(uintptr_t);  // interior pointer keeps it
   obj *c = mk(4);                         // referenced only from precise non-pointer word
   obj *d = mk(5);
   d->nonptr = (uintptr_t)c;
@@ -47,8 +47,11 @@ __attribute__((noinline)) static void clobber_stack(void) {
 
 void marmot_main(void) {
   rt_gc_add_roots(hidden_roots, hidden_roots + 2);
-  setup();
-  clobber_stack();
+  // Through pointers: wasm-opt inlines across noinline, and Asyncify saves
+  // every local of a frame, dead or not.
+  void (*volatile setup_p)(void) = setup, (*volatile clobber_p)(void) = clobber_stack;
+  setup_p();
+  clobber_p();
   for (int round = 0; round < 6; round++) {
     rt_gc_collect();
     for (int i = 0; i < 20; i++) rt_gosched();  // let the finalizer goroutine run
@@ -63,7 +66,7 @@ void marmot_main(void) {
   CHECK(finalized[8] == 1);
   CHECK(finalized[9] == 1);
   CHECK(((obj *)hidden_roots[0])->tag == 2);
-  CHECK(((obj *)((char *)interior - 16))->tag == 3);
+  CHECK(((obj *)((char *)interior - 2 * sizeof(uintptr_t)))->tag == 3);
   CHECK(((obj *)*rt_gslot())->tag == 6);
   out("ok\n");
 }

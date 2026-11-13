@@ -5,15 +5,16 @@
 #include "rtest.h"
 
 static const uint8_t map101[1] = {0x5};  // words 0 and 2 of 3
+#define W sizeof(uintptr_t)
 
 static void check_precise(uintptr_t size) {
-  char *p = rt_alloc(size, RT_ALLOC_PRECISE, map101, 24);
+  char *p = rt_alloc(size, RT_ALLOC_PRECISE, map101, 3 * W);
   void *base = 0;
   uintptr_t sz = 0;
   CHECK(rt_heap_object_span(p + size / 2, &base, &sz) == RT_HEAPOBJ_PRECISE);
   CHECK(base == p && sz >= size);
-  for (uintptr_t off = 0; off < size; off += 8) {
-    int want = (off % 24) != 8;
+  for (uintptr_t off = 0; off < size; off += W) {
+    int want = (off % (3 * W)) != W;
     CHECK(rt_heap_ptr_word(base, off) == want);
   }
 }
@@ -31,8 +32,8 @@ void marmot_main(void) {
   char *c = rt_alloc(64, RT_ALLOC_CONSERVATIVE, 0, 0);
   CHECK(rt_heap_object_span(c + 8, &base, &sz) == RT_HEAPOBJ_CONSERVATIVE);
   CHECK(base == c);
-  check_precise(24);
-  check_precise(24 * 40);
-  check_precise(24 * 10000);  // large
+  check_precise(3 * W);
+  check_precise(3 * W * 40);
+  check_precise(3 * W * 10000);  // large
   out("ok\n");
 }

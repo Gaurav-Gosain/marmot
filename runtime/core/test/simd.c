@@ -1,6 +1,7 @@
 // SIMD byte primitives against naive versions, all lengths and offsets, and
 // at a page boundary so over-reads would fault.
 // expect-stdout: ok
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <sys/mman.h>
 #include <unistd.h>

@@ -1,6 +1,7 @@
 // rt_prof_start samples a busy loop; records carry the pc and the frame
 // pointer chain; rt_prof_read returns -1 once stopped and drained.
 // expect-stdout: ok
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <stdio.h>
 #include <time.h>

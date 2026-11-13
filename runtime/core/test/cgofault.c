@@ -2,6 +2,7 @@
 // panic must not unwind through C frames.
 // expect-exit: 2
 // expect-stderr: signal arrived during cgo execution
+// wasm: skip (cgo)
 #include "rtest.h"
 
 static void on_fault(uintptr_t addr, int32_t kind) {

@@ -1,6 +1,7 @@
 // rt_sort_*: against qsort on many sizes and distributions.
 // expect-stdout: ok
 // env: GOMAXPROCS=4
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <math.h>
 #include <stdlib.h>

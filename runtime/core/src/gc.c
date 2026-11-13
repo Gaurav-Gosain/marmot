@@ -290,8 +290,8 @@ NO_SANITIZE INLINE void mark_ptr(gcw *w, uintptr_t p) {
 }
 
 NO_SANITIZE static void scan_range_w(gcw *w, uintptr_t lo, uintptr_t hi) {
-  lo = (lo + 7) & ~(uintptr_t)7;
-  for (uintptr_t p = lo; p + 8 <= hi; p += 8) mark_ptr(w, *(uintptr_t *)p);
+  lo = (lo + WORDSZ - 1) & ~(WORDSZ - 1);
+  for (uintptr_t p = lo; p + WORDSZ <= hi; p += WORDSZ) mark_ptr(w, *(uintptr_t *)p);
 }
 
 // Root scanning runs on the collecting thread, into worker 0.
@@ -303,8 +303,8 @@ NO_SANITIZE static void scan_object(gcw *w, uintptr_t obj) {
     scan_range_w(w, obj, obj + s->elemsize);
   } else if (s->cls) {
     // Small precise object: heap bits.
-    uintptr_t w0 = (obj - rt_arena_start) / 8;
-    uintptr_t nw = s->elemsize / 8;
+    uintptr_t w0 = (obj - rt_arena_start) / WORDSZ;
+    uintptr_t nw = s->elemsize / WORDSZ;
     const uintptr_t *o = (const uintptr_t *)obj;
     for (uintptr_t i = 0; i < nw;) {
       uintptr_t wd = w0 + i;
@@ -323,7 +323,7 @@ NO_SANITIZE static void scan_object(gcw *w, uintptr_t obj) {
     }
   } else {
     // Large precise object: repeat the element ptrmap.
-    uintptr_t ew = s->ptrelem / 8;
+    uintptr_t ew = s->ptrelem / WORDSZ;
     const uint8_t *pm = s->ptrmap;
     for (uintptr_t e = 0; e < s->ptrcount; e++) {
       const uintptr_t *elem = (const uintptr_t *)(obj + e * s->ptrelem);

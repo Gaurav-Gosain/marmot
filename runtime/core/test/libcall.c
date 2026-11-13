@@ -1,5 +1,6 @@
 // rt_libcall: fixed and variadic calls, errno reporting.
 // expect-stdout: ok
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <errno.h>
 #include <fcntl.h>

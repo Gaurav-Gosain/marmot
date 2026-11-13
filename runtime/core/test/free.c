@@ -51,7 +51,7 @@ void marmot_main(void) {
       }
     }
     if (round % 20 == 0) rt_gc_collect();
-    long last = 1L << 62;
+    long last = (long)(~0ul >> 1);
     for (cell *x = head; x; x = x->next) {
       CHECK(x->v < last);
       last = x->v;

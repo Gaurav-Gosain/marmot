@@ -5,6 +5,7 @@
 // expect-stderr: no scheduling progress for 1 s
 // env: MARMOT_DEADLOCK_DEBUG=2 MARMOT_DEADLOCK_SECS=1
 // timeout: 30
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <unistd.h>
 

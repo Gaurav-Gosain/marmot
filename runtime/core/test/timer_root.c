@@ -3,6 +3,7 @@
 // when fn runs (the Go runtime passes fresh timer tokens this way).
 // expect-stdout: ok
 // env: GOGC=1
+// wasm: skip (timers fire only at scheduling points (one thread))
 #include "rtest.h"
 #include <stdatomic.h>
 

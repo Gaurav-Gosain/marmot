@@ -2,6 +2,7 @@
 // kernels must match the CPU bit for bit (CPU side without FMA contraction).
 // expect-stdout: ok
 // env: GOMAXPROCS=4 MARMOT_GPU=1
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <stdio.h>
 

@@ -93,7 +93,15 @@ static void rt_init(int argc, char **argv, char **envp) {
 #endif
 }
 
+#if RT_OS_WASI
+// WASI: _start (os_wasi.c) gets the arguments and calls this.
+void rt_wasi_main(int argc, char **argv, char **envp) {
+  rt_init(argc, argv, envp);
+  sched_start_main();
+}
+#else
 RT_API int main(int argc, char **argv, char **envp) {
   rt_init(argc, argv, envp);
   sched_start_main();
 }
+#endif

@@ -15,6 +15,12 @@
 #include <emmintrin.h>
 #define RT_SSE2 1
 #endif
+#if !(RT_NEON || RT_SSE2)
+// The portable versions (wasm) leave some of the vector code's helpers and
+// values unused.
+#pragma clang diagnostic ignored "-Wunused-variable"
+#pragma clang diagnostic ignored "-Wunused-function"
+#endif
 
 typedef const uint8_t *bp;
 

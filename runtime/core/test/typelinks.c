@@ -1,6 +1,7 @@
 // rt_typelinks finds the type link section (here made with a section
 // attribute) with all its entries.
 // expect-stdout: ok
+// wasm: skip (no type link sections yet)
 #include "rtest.h"
 
 #if defined(__APPLE__)

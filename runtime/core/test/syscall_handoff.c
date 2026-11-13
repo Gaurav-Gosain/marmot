@@ -2,6 +2,7 @@
 // timers fire while main is blocked in a syscall.
 // expect-stdout: ok
 // env: GOMAXPROCS=1
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <unistd.h>
 

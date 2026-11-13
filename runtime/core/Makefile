@@ -6,6 +6,7 @@
 #   make test-tsan       tests with ThreadSanitizer
 #   make bench           build and run bench/*.c
 #   make check-targets   compile check for linux/amd64, linux/arm64, darwin/amd64
+#   make GOOS=wasip1 GOARCH=wasm [test]   WASI preview 1 (tests run under Node)
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
@@ -43,9 +44,34 @@ TRIPLE_linux_amd64  := x86_64-linux-$(LIBCTRIPLE)
 TRIPLE_linux_arm64  := aarch64-linux-$(LIBCTRIPLE)
 TRIPLE_darwin_arm64 := arm64-apple-macosx11.0
 TRIPLE_darwin_amd64 := x86_64-apple-macosx11.0
+TRIPLE_wasip1_wasm  := wasm32-unknown-wasip1
 TRIPLE  := $(TRIPLE_$(GOOS)_$(GOARCH))
 TARGET_FLAGS := --target=$(TRIPLE) $(if $(SYSROOT_DIR),--sysroot=$(SYSROOT_DIR),)
 endif
+
+# wasip1/wasm: no libc (os_wasi.c has the few C functions the compiler
+# calls); programs are linked with wasm-ld and then rewritten by wasm-opt's
+# Asyncify pass for goroutine switching (src/arch_wasm32.c). These are the
+# flags of that pass.
+WASM    := $(filter wasm,$(GOARCH))
+ifneq ($(WASM),)
+TARGET_FLAGS += -ffreestanding -nostdlibinc
+endif
+ifeq ($(UNAME_S),Darwin)
+WASMLD  ?= /opt/homebrew/opt/lld@22/bin/wasm-ld
+else
+WASMLD  ?= $(LLVM)/bin/wasm-ld
+endif
+WASMOPT ?= wasm-opt
+NODE    ?= node
+# Asyncify runs before any optimization (wasm-opt runs passes in order):
+# the optimizer may inline ctx_run, which must stay out of the rewrite.
+# clang's own wasm-opt run after linking is turned off (--no-wasm-opt).
+# Code that calls setjmp (Go functions with defer frames) is compiled with
+# WASM_SJLJ_FLAGS.
+WASM_SJLJ_FLAGS := -mexception-handling -mllvm -wasm-enable-sjlj -mllvm -wasm-use-legacy-eh=true
+ASYNCIFY_FLAGS := --asyncify --pass-arg=asyncify-imports@asyncify.start_unwind \
+	--pass-arg=asyncify-removelist@ctx_run
 OUT     := $(ROOT)/build/lib$(SUFFIX)
 OBJ     := $(ROOT)/build/rtcore$(SUFFIX)
 # build/lib only ever holds a committed state: with uncommitted changes
@@ -62,6 +88,9 @@ ifeq ($(UNAME_S),Darwin)
 SDK     := $(shell xcrun --show-sdk-path 2>/dev/null)
 SYSROOT := $(if $(SDK),-isysroot $(SDK),)
 endif
+ifneq ($(WASM),)
+SYSROOT :=
+endif
 
 CFLAGS_COMMON := $(TARGET_FLAGS) -std=c11 -Wall -Wextra -Wno-unused-parameter -Iinclude -Isrc $(SYSROOT) \
 	-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables \
@@ -70,12 +99,12 @@ CFLAGS_COMMON := $(TARGET_FLAGS) -std=c11 -Wall -Wextra -Wno-unused-parameter -I
 CFLAGS  ?= -O2
 ALL_CFLAGS := $(CFLAGS_COMMON) $(CFLAGS)
 
-C_SRCS  := $(wildcard src/*.c) $(wildcard gpu/*.c)
+C_SRCS  := $(wildcard src/*.c) $(if $(WASM),,$(wildcard gpu/*.c))
 # Cold code (startup, signals, timers, I/O, OS glue) is built for size.
 COLD    := cpu entry io libcall netpoll os_darwin os_linux pcln gcpar poison signal timer util par gpu watchdog
 COLD_OBJS := $(patsubst %,$(OBJ)/%.o,$(COLD))
 COLD_BCS  := $(patsubst %,$(OBJ)/%.bc,$(COLD))
-S_SRCS  := $(wildcard src/*.S)
+S_SRCS  := $(if $(WASM),,$(wildcard src/*.S))
 C_OBJS  := $(patsubst %.c,$(OBJ)/%.o,$(notdir $(C_SRCS)))
 S_OBJS  := $(patsubst src/%.S,$(OBJ)/%.o,$(S_SRCS))
 BCS     := $(patsubst %.c,$(OBJ)/%.bc,$(notdir $(C_SRCS)))
@@ -111,9 +140,19 @@ $(OBJ) $(OUT):
 TESTS ?= $(wildcard test/*.c)
 TEST_SRCS := $(TESTS)
 
+ifneq ($(WASM),)
+# Tests marked "// wasm: skip" (threads, signals, processes, libc) are left
+# out; test/wasm has the libc headers the others include.
+test: all
+	@WASM=1 OUT=$(OBJ)/test LIB=$(OUT)/librtcore.a LDLIBS= CC="$(CC)" \
+		CFLAGS="$(TARGET_FLAGS) $(WASM_SJLJ_FLAGS) -O1 -g -Iinclude -Itest/wasm -nostdlib -fuse-ld=$(WASMLD) --no-wasm-opt" \
+		POSTLINK="$(WASMOPT) $(ASYNCIFY_FLAGS) -O" RUN="$(NODE) $(ROOT)/tests/wasm/run.mjs" \
+		sh test/run.sh $(TEST_SRCS)
+else
 test: all
 	@OUT=$(OBJ)/test LIB=$(OUT)/librtcore.a CC="$(CC)" CFLAGS="-O1 -g $(SYSROOT) -Iinclude" \
 		sh test/run.sh $(TEST_SRCS)
+endif
 
 # Sanitizer builds compile the runtime sources directly into each test.
 SAN_SRC := $(C_SRCS) $(S_SRCS)

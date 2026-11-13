@@ -1,6 +1,7 @@
 // os/signal support: enable, recv, ignore, no deadlock report while waiting.
 // expect-stdout: ok
 // env: GOMAXPROCS=2
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <pthread.h>
 #include <signal.h>

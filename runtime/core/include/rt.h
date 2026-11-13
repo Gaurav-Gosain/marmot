@@ -428,7 +428,14 @@ void rt_cgo_callback_exit(int32_t tok);
 // pointer-sized words in the frame and calls rt_setjmp directly (the call
 // must be marked returns_twice). rt_longjmp never returns.
 #define RT_JMPBUF_WORDS 32
+#if defined(__wasm__)
+// wasm: the compiler lowers setjmp itself (wasm exceptions; see
+// src/arch_wasm32.c), so rt_setjmp is setjmp there.
+int setjmp(void *buf) __attribute__((returns_twice));
+#define rt_setjmp setjmp
+#else
 int32_t rt_setjmp(void *buf) __attribute__((returns_twice));
+#endif
 void rt_longjmp(void *buf, int32_t val) __attribute__((noreturn));
 
 // ---- Bytes and strings (SIMD: NEON on arm64, SSE2 on x86-64) ----

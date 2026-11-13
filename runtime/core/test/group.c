@@ -4,6 +4,7 @@
 // durable member counts it again.
 // expect-stdout: ok
 // env: GOMAXPROCS=4
+// wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <stdatomic.h>
 #include <unistd.h>
