@@ -232,16 +232,40 @@ func printSingle(r *benchstat.Results) {
 }
 
 func printCompare(rows []benchstat.Row, oldName, newName string) {
+	printCompareWidth(os.Stdout, rows, oldName, newName, diag.TermWidth(os.Stdout))
+}
+
+// printCompareWidth writes the comparison table for a terminal width w:
+// under 100 columns the p value and run counts are left out, a name that
+// does not fit takes a line of its own, and notes wrap.
+func printCompareWidth(out io.Writer, rows []benchstat.Row, oldName, newName string, w int) {
 	units := []string{}
 	seen := map[string]bool{}
+	nameW := 7 // "geomean"
 	for _, r := range rows {
 		if !seen[r.Unit] {
 			seen[r.Unit] = true
 			units = append(units, r.Unit)
 		}
+		nameW = max(nameW, len(r.Name), len(r.Unit))
+	}
+	wide := w >= 100
+	// Columns after the name: two "value ± spread" columns and the change
+	// (and in the wide layout the p value and counts, 16 columns).
+	const valW, deltaW = 18, 10
+	rest := 2*(valW+1) + deltaW
+	if wide {
+		rest += 17
+	}
+	maxName := max(10, w-rest-1)
+	if nameW > maxName {
+		nameW = maxName
+	}
+	cell := func(v float64, spread float64, u string) string {
+		return fmt.Sprintf("%s ± %.0f%%", benchstat.FormatValue(v, u), 100*spread)
 	}
 	for _, u := range units {
-		fmt.Printf("%-32s %18s %18s %10s\n", u, oldName, newName, "vs "+oldName)
+		fmt.Fprintf(out, "%-*s %*s %*s %*s\n", nameW, u, valW, oldName, valW, newName, deltaW, "vs "+oldName)
 		for _, r := range rows {
 			if r.Unit != u {
 				continue
@@ -250,19 +274,52 @@ func printCompare(rows []benchstat.Row, oldName, newName string) {
 			if r.Significant(0.05) && !math.IsNaN(r.Delta) {
 				delta = fmt.Sprintf("%+.1f%%", 100*r.Delta)
 			}
-			fmt.Printf("%-32s %12s ± %2.0f%% %12s ± %2.0f%% %10s (p=%.3f n=%d+%d)\n", r.Name,
-				benchstat.FormatValue(r.Old.Median, u), 100*r.Old.Spread,
-				benchstat.FormatValue(r.New.Median, u), 100*r.New.Spread, delta, r.P, r.Old.N, r.New.N)
+			name := r.Name
+			if len(name) > nameW {
+				fmt.Fprintln(out, name) // a long name on its own line
+				name = ""
+			}
+			line := fmt.Sprintf("%-*s %*s %*s %*s", nameW, name, valW, cell(r.Old.Median, r.Old.Spread, u),
+				valW, cell(r.New.Median, r.New.Spread, u), deltaW, delta)
+			if wide {
+				line += fmt.Sprintf(" (p=%.3f n=%d+%d)", r.P, r.Old.N, r.New.N)
+			}
+			fmt.Fprintln(out, line)
 		}
 		if g, n := benchstat.Geomean(rows, u); n > 1 {
-			fmt.Printf("%-32s %18s %18s %+9.1f%%\n", "geomean", "", "", 100*(g-1))
+			fmt.Fprintf(out, "%-*s %*s %*s %+*.1f%%\n", nameW, "geomean", valW, "", valW, "", deltaW-1, 100*(g-1))
 		}
-		fmt.Println()
+		fmt.Fprintln(out)
 	}
-	fmt.Println("~: no significant difference (p >= 0.05); more runs (-count) narrow it down")
+	note := "~: no significant difference (p >= 0.05); more runs (-count) narrow it down"
+	if !wide {
+		note += ". p values and run counts are shown in a terminal of 100 columns or more"
+	}
+	fmt.Fprint(out, wrapText(note, w))
 	for _, r := range rows {
 		if r.Unit == "ns/op" && r.New.Median < 1 {
-			fmt.Printf("note: %s takes under 1ns per iteration with marmot: the optimizer probably removed the work because its result is unused; store the result in a package level variable\n", r.Name)
+			fmt.Fprint(out, wrapText(fmt.Sprintf("note: %s takes under 1ns per iteration with marmot: the optimizer probably removed the work because its result is unused; store the result in a package level variable", r.Name), w))
 		}
 	}
+}
+
+// wrapText wraps prose at word boundaries to w columns, continuation lines
+// indented by two spaces.
+func wrapText(s string, w int) string {
+	var b strings.Builder
+	n := 0
+	for _, word := range strings.Fields(s) {
+		switch {
+		case n == 0:
+		case n+1+len(word) > w:
+			b.WriteString("\n  ")
+			n = 2
+		default:
+			b.WriteString(" ")
+			n++
+		}
+		b.WriteString(word)
+		n += len(word)
+	}
+	return b.String() + "\n"
 }
