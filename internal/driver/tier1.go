@@ -21,13 +21,15 @@ const tier1Default = false
 
 // tier1 reports whether this build spools its modules for background
 // tier 1 and links the objects tier 1 made: tier0 builds with a cache.
-// MARMOT_TIER1=1 turns it on, MARMOT_TIER1=0 off.
+// MARMOT_TIER1=1 turns it on, MARMOT_TIER1=0 off. MARMOT_TIER1=sync is
+// on, and the build waits for the runner (tests: every later build of a
+// test run links the -O2 objects of the packages earlier builds compiled).
 func (b *build) tier1() bool {
 	if !b.tier0() || b.cfg.NoCache || !b.haveBackend() {
 		return false
 	}
 	switch os.Getenv("MARMOT_TIER1") {
-	case "1":
+	case "1", "sync":
 		return true
 	case "0":
 		return false
@@ -67,6 +69,13 @@ func (b *build) startTier1() {
 	}
 	if err := cmd.Start(); err != nil {
 		b.logf("tier1: %v", err)
+		return
+	}
+	if os.Getenv("MARMOT_TIER1") == "sync" {
+		if err := cmd.Wait(); err != nil {
+			b.logf("tier1: %v", err)
+		}
+		b.logf("tier1: done")
 		return
 	}
 	b.logf("tier1: started")
