@@ -1,9 +1,10 @@
 package driver
 
 import (
-	"fmt"
 	"os"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -15,8 +16,14 @@ import (
 // are left alone.
 // MARMOT_NO_TYPEALIAS=1 turns it off.
 func aliasTypes(text string) string {
+	return string(appendAliasTypes(nil, text))
+}
+
+// appendAliasTypes appends text with its struct types aliased (aliasTypes)
+// to dst, so the result is written without another copy.
+func appendAliasTypes(dst []byte, text string) []byte {
 	if os.Getenv("MARMOT_NO_TYPEALIAS") != "" {
-		return text
+		return append(dst, text...)
 	}
 	const prefix = "!llvm.struct<"
 	type span struct{ start, end int }
@@ -69,24 +76,29 @@ func aliasTypes(text string) string {
 		}
 	}
 	if len(types) == 0 {
-		return text
+		return append(dst, text...)
 	}
 	sort.Strings(types)
-	name := map[string]string{}
-	var out strings.Builder
-	out.Grow(len(text))
+	name := make(map[string]string, len(types))
+	size := len(text)
+	for _, t := range types {
+		size += len(t) + 12
+	}
+	dst = slices.Grow(dst, size)
 	for k, t := range types {
-		name[t] = fmt.Sprintf("!mt%d", k)
-		fmt.Fprintf(&out, "%s = %s\n", name[t], t)
+		name[t] = "!mt" + strconv.Itoa(k)
+		dst = append(dst, name[t]...)
+		dst = append(dst, " = "...)
+		dst = append(dst, t...)
+		dst = append(dst, '\n')
 	}
 	last := 0
 	for _, s := range spans {
 		if n, ok := name[text[s.start:s.end]]; ok {
-			out.WriteString(text[last:s.start])
-			out.WriteString(n)
+			dst = append(dst, text[last:s.start]...)
+			dst = append(dst, n...)
 			last = s.end
 		}
 	}
-	out.WriteString(text[last:])
-	return out.String()
+	return append(dst, text[last:]...)
 }

@@ -393,7 +393,7 @@ func (m *moduleGen) drainRegions() {
 			m: m, fn: fn, tm: m.tm, vals: map[ssa.Value]string{},
 			blkName: map[*ssa.BasicBlock]string{}, region: "%region",
 		}
-		f.b = &f.body
+		m.initBufs(f)
 		func() {
 			defer func() {
 				if r := recover(); r != nil {

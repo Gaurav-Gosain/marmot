@@ -1,16 +1,16 @@
 package codegen
 
 import (
-	"fmt"
 	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 // Source locations. Every op of a function and the function
 // itself carry loc("/abs/file.go":line:col) through #locN aliases defined
-// after the module, so the backend can emit DWARF line tables and
+// before the module, so the backend can emit DWARF line tables and
 // marmot-pcln can build the pc -> function, file:line table for
 // tracebacks. Instructions without a position take the last position seen
 // in the function. MARMOT_NO_LOCS=1 turns locations off.
@@ -22,21 +22,58 @@ func (m *moduleGen) loc(pos token.Pos) string {
 	if locsOff || !pos.IsValid() {
 		return ""
 	}
-	p := m.p.fset.Position(pos)
+	if pos == m.locLast {
+		return m.locLastRef
+	}
+	if n, ok := m.locPos[pos]; ok {
+		m.locLast, m.locLastRef = pos, m.locRef[n]
+		return m.locLastRef
+	}
+	tf := m.locTF
+	if tf == nil || int(pos) < tf.Base() || int(pos) > tf.Base()+tf.Size() {
+		if tf = m.p.fset.File(pos); tf == nil {
+			return ""
+		}
+		m.locTF = tf
+	}
+	p := tf.Position(pos)
 	if p.Filename == "" {
 		return ""
 	}
-	key := fmt.Sprintf("%q:%d:%d", m.p.locFile(p.Filename), p.Line, p.Column)
+	if p.Filename != m.locName {
+		m.locName = p.Filename
+		m.locQuoted = strconv.Quote(m.p.locFile(p.Filename))
+	}
+	key := locKey{m.locQuoted, p.Line, p.Column}
 	n, ok := m.locs[key]
 	if !ok {
 		if m.locs == nil {
-			m.locs = map[string]int{}
+			m.locs = map[locKey]int{}
+			m.locPos = map[token.Pos]int{}
 		}
 		n = len(m.locs)
 		m.locs[key] = n
-		fmt.Fprintf(&m.locDefs, "#loc%d = loc(%s)\n", n, key)
+		ref := " loc(#loc" + strconv.Itoa(n) + ")"
+		m.locRef = append(m.locRef, ref)
+		d := &m.locDefs
+		d.WriteString(ref[5 : len(ref)-1])
+		d.WriteString(" = loc(")
+		d.WriteString(key.file)
+		d.WriteByte(':')
+		d.WriteString(strconv.Itoa(key.line))
+		d.WriteByte(':')
+		d.WriteString(strconv.Itoa(key.col))
+		d.WriteString(")\n")
 	}
-	return fmt.Sprintf(" loc(#loc%d)", n)
+	m.locPos[pos] = n
+	m.locLast, m.locLastRef = pos, m.locRef[n]
+	return m.locLastRef
+}
+
+// locKey is a location: quoted file name, line and column.
+type locKey struct {
+	file      string
+	line, col int
 }
 
 // opLoc is the location suffix for the op being emitted.

@@ -1,6 +1,7 @@
 package codegen
 
 import (
+	"bytes"
 	"fmt"
 	"go/constant"
 	"go/token"
@@ -17,10 +18,10 @@ type funcGen struct {
 	m    *moduleGen
 	fn   *ssa.Function
 	tm   *typeMapper
-	b    *strings.Builder // current output
-	body strings.Builder
-	pro  strings.Builder // allocas, emitted at the top of the entry block
-	cold strings.Builder // panic paths, emitted after all blocks
+	b    *bytes.Buffer // current output
+	body bytes.Buffer
+	pro  bytes.Buffer // allocas, emitted at the top of the entry block
+	cold bytes.Buffer // panic paths, emitted after all blocks
 
 	vals    map[ssa.Value]string
 	nval    int
@@ -77,7 +78,7 @@ func (m *moduleGen) function(fn *ssa.Function, shared bool) {
 		vals:    map[ssa.Value]string{},
 		blkName: map[*ssa.BasicBlock]string{},
 	}
-	f.b = &f.body
+	m.initBufs(f)
 	defer func() {
 		if r := recover(); r != nil {
 			if e, ok := r.(*Error); ok {
@@ -250,9 +251,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 	// Prologue (allocas) first; the body starts with the free variable
 	// loads, then (when block 0 has predecessors, which the entry block of
 	// an MLIR region cannot have) the branch to block 0's header.
-	out.WriteString(f.pro.String())
-	out.WriteString(f.body.String())
-	out.WriteString(f.cold.String())
+	f.flushBufs(out)
 	out.WriteString("  }" + f.m.loc(fn.Pos()) + "\n")
 }
 

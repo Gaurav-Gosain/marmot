@@ -214,13 +214,13 @@ func (b *build) saveModule(k, text string) string {
 	dir := filepath.Join(b.cfg.Root, "build", "cache", "mlir")
 	os.MkdirAll(dir, 0o755)
 	p := filepath.Join(dir, k+".mlir")
-	head := ""
+	var head []byte
 	if strings.HasPrefix(text, partsHeader) {
 		// The parts line stays first (cachedParts reads it).
 		n := strings.IndexByte(text, '\n') + 1
-		head, text = text[:n], text[n:]
+		head, text = []byte(text[:n]), text[n:]
 	}
-	if loader.WriteAtomic(p, []byte(head+aliasTypes(text))) == nil {
+	if loader.WriteAtomic(p, appendAliasTypes(head, text)) == nil {
 		return p
 	}
 	return ""

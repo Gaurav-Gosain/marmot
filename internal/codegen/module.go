@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"fmt"
+	"go/token"
 	"go/types"
 	"sort"
 	"strings"
@@ -17,11 +18,19 @@ type moduleGen struct {
 	pkg *ssa.Package // nil for the entry module
 	tm  *typeMapper
 
-	defs         textBuf        // definitions: globals and functions
-	used         []cv           // llvm.used entries
-	compilerUsed []cv           // llvm.compiler.used entries (kept by LLVM, not by ld)
-	tlinks       []string       // unnamed composite type descriptors defined here
-	locs         map[string]int // location aliases (locs.go)
+	defs         textBuf           // definitions: globals and functions
+	spare        [][]byte          // storage of written function buffers, for reuse
+	used         []cv              // llvm.used entries
+	compilerUsed []cv              // llvm.compiler.used entries (kept by LLVM, not by ld)
+	tlinks       []string          // unnamed composite type descriptors defined here
+	locs         map[locKey]int    // location aliases (locs.go)
+	locPos       map[token.Pos]int // position -> index in locs
+	locRef       []string          // index -> " loc(#locN)"
+	locTF        *token.File       // file of the last position looked up
+	locName      string            // its name and the quoted resolved name
+	locQuoted    string
+	locLast      token.Pos // the last position looked up and its suffix
+	locLastRef   string
 	locDefs      strings.Builder
 	decls        map[string]string
 	defined      map[string]bool
@@ -81,10 +90,7 @@ func (p *Program) Generate(pkg *ssa.Package) (Module, error) {
 // linkonce, so it may repeat across the parts.
 func (p *Program) GenerateParts(pkg *ssa.Package, partInstrs int) ([]Module, error) {
 	fns := p.byPkg[pkg]
-	total := 0
-	for _, fn := range fns {
-		total += funcInstrs(fn)
-	}
+	total := p.PackageInstrs(pkg)
 	if partInstrs <= 0 || total <= partInstrs*3/2 {
 		m, err := p.Generate(pkg)
 		return []Module{m}, err
@@ -122,6 +128,16 @@ func (p *Program) GenerateParts(pkg *ssa.Package, partInstrs int) ([]Module, err
 		}
 	}
 	return mods, nil
+}
+
+// PackageInstrs is the number of SSA instructions in the functions of pkg,
+// an estimate of the cost of generating it.
+func (p *Program) PackageInstrs(pkg *ssa.Package) int {
+	n := 0
+	for _, fn := range p.byPkg[pkg] {
+		n += funcInstrs(fn)
+	}
+	return n
 }
 
 func funcInstrs(fn *ssa.Function) int {
@@ -236,13 +252,15 @@ func (m *moduleGen) finish(name string) (Module, error) {
 	if m.p.usedMethodsHash != "" {
 		fmt.Fprintf(&out, "// methods: %s\n", m.p.usedMethodsHash)
 	}
+	// Location aliases come first: the parser then resolves each op's
+	// loc(#locN) at once instead of through a forward reference.
+	out.WriteString(m.locDefs.String())
 	out.WriteString("module {\n")
 	for _, k := range keys {
 		out.WriteString(m.decls[k])
 	}
 	m.defs.writeTo(&out)
 	out.WriteString("}\n")
-	out.WriteString(m.locDefs.String())
 	return Module{Name: name, Text: out.String()}, nil
 }
 

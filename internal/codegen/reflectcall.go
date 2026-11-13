@@ -17,16 +17,14 @@ import (
 // newAdapterGen returns a function generator for compiler written helpers.
 func (m *moduleGen) newAdapterGen() *funcGen {
 	f := &funcGen{m: m, tm: m.tm, vals: map[ssa.Value]string{}, blkName: map[*ssa.BasicBlock]string{}}
-	f.b = &f.body
+	m.initBufs(f)
 	return f
 }
 
 func (f *funcGen) finishAdapter(head string) string {
 	var out strings.Builder
 	out.WriteString(head)
-	out.WriteString(f.pro.String())
-	out.WriteString(f.body.String())
-	out.WriteString(f.cold.String())
+	f.flushBufs(&out)
 	out.WriteString("  }\n")
 	return out.String()
 }

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
-	"strings"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
 	"golang.org/x/tools/go/ssa"
@@ -287,7 +286,7 @@ func (m *moduleGen) openDeferRunner(parent *funcGen, od *openDefers) string {
 	sym := fmt.Sprintf("%s$opendefer%d", m.p.symbol(parent.fn), m.nthunk)
 	m.defined[sym] = true
 	t := &funcGen{m: m, fn: parent.fn, tm: m.tm, vals: map[ssa.Value]string{}, blkName: map[*ssa.BasicBlock]string{}, deferThunk: true}
-	t.b = &t.body
+	m.initBufs(t)
 	slots := t.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", t.gepByte("%ctx", 8))
 	rec := t.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", t.gepByte("%ctx", 16))
 	mt := m.tm.memType(od.slotT)
@@ -333,12 +332,8 @@ func (m *moduleGen) openDeferRunner(parent *funcGen, od *openDefers) string {
 		fmt.Fprintf(t.b, "  %s:\n", next)
 	}
 	t.emit("llvm.return")
-	var out strings.Builder
-	fmt.Fprintf(&out, "  llvm.func internal %s(%%ctx: !llvm.ptr) attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n", mlir.Symbol(sym))
-	out.WriteString(t.pro.String())
-	out.WriteString(t.body.String())
-	out.WriteString(t.cold.String())
-	out.WriteString("  }\n")
-	m.defs.WriteString(out.String())
+	fmt.Fprintf(&m.defs, "  llvm.func internal %s(%%ctx: !llvm.ptr) attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n", mlir.Symbol(sym))
+	t.flushBufs(&m.defs)
+	m.defs.WriteString("  }\n")
 	return sym
 }

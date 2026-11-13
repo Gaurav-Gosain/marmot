@@ -1,6 +1,10 @@
 package codegen
 
-import "strings"
+import (
+	"bytes"
+	"io"
+	"strings"
+)
 
 // textBuf is an append-only text buffer made of fixed-size chunks: unlike
 // strings.Builder, growing it never copies what was already written. Module
@@ -59,4 +63,29 @@ func (t *textBuf) String() string {
 	b.Grow(t.n)
 	t.writeTo(&b)
 	return b.String()
+}
+
+// initBufs gives f its output buffers, reusing the storage of functions
+// already written, and makes the body the current output.
+func (m *moduleGen) initBufs(f *funcGen) {
+	for _, b := range []*bytes.Buffer{&f.body, &f.pro, &f.cold} {
+		if n := len(m.spare); n > 0 {
+			*b = *bytes.NewBuffer(m.spare[n-1])
+			m.spare = m.spare[:n-1]
+		}
+	}
+	f.b = &f.body
+}
+
+// flushBufs writes f's prologue, body and cold code to w and keeps their
+// storage for the next function of the module.
+func (f *funcGen) flushBufs(w io.Writer) {
+	for _, b := range []*bytes.Buffer{&f.pro, &f.body, &f.cold} {
+		w.Write(b.Bytes())
+		b.Reset()
+		if cap(b.Bytes()) > 0 {
+			f.m.spare = append(f.m.spare, b.Bytes()[:0])
+		}
+		*b = bytes.Buffer{}
+	}
 }

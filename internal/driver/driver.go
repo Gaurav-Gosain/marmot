@@ -98,6 +98,7 @@ type build struct {
 	goarch     string
 	testDir    string   // directory of the package under test
 	dylibs     []string // from //go:cgo_import_dynamic
+	cgoLDFLAGS []string // #cgo LDFLAGS of the cgo packages
 	out        string
 	incr       bool // packages without a cached module are loaded from source, the others from export data
 	noIncr     bool
@@ -249,7 +250,7 @@ func (b *build) run1() (string, error) {
 	defer releaseSlot()
 	lcfg := loader.Config{
 		Dir: cfg.Dir, Root: cfg.Root, Tags: cfg.Tags, GOOS: goos, GOARCH: goarch, Patterns: cfg.Patterns,
-		Log: b.logf, Tests: cfg.Test, AllErrors: cfg.AllErrors,
+		Log: b.logf, Tests: cfg.Test, AllErrors: cfg.AllErrors, CC: llvmTool("clang"),
 		BeforeSSA: func(all []*packages.Package) error {
 			return specialize.BeforeSSA(&specialize.Input{Packages: all, Release: cfg.Release, GOOS: goos, GOARCH: goarch, Log: b.logf})
 		},
@@ -330,18 +331,29 @@ func (b *build) run1() (string, error) {
 	cacheable := func(i int) bool {
 		return i < len(pkgs) && pkgKeys[i] != "" && !cfg.NoCache && cfg.Emit != "mlir"
 	}
+	// Generation starts the largest packages first, so that none of them
+	// is left running alone at the end.
+	order := make([]int, n)
+	cost := make([]int, n)
+	for i := range order {
+		order[i] = i
+		if i < len(pkgs) {
+			cost[i] = cg.PackageInstrs(pkgs[i])
+		}
+	}
+	sort.SliceStable(order, func(a, b int) bool { return cost[order[a]] > cost[order[b]] })
 	gen := func(need func(i int) bool) error {
 		errs := make([]error, n)
 		var wg sync.WaitGroup
 		sem := make(chan struct{}, genJobs())
-		for i := 0; i < n; i++ {
+		for _, i := range order {
 			if !need(i) || mods[i].Text != "" || mods[i].Path != "" {
 				continue
 			}
 			wg.Add(1)
+			sem <- struct{}{}
 			go func() {
 				defer wg.Done()
-				sem <- struct{}{}
 				defer func() { <-sem }()
 				var parts []codegen.Module
 				switch {
@@ -456,6 +468,12 @@ func (b *build) run1() (string, error) {
 		}
 	}
 	b.dylibs = cg.DynamicLibraries()
+	cobjs, cldflags, err := b.cgoObjects(lp.Cgo)
+	if err != nil {
+		return "", err
+	}
+	objs = append(objs, cobjs...)
+	b.cgoLDFLAGS = cldflags
 	if err := b.link(objs, out); err != nil {
 		return "", err
 	}
@@ -482,11 +500,7 @@ func (b *build) spill(i int, m *codegen.Module, cacheable bool, keys []string) e
 		}
 	}
 	p := filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", i))
-	text := aliasTypes(m.Text)
-	if b.cfg.Work {
-		text = "// " + m.Name + "\n" + text
-	}
-	if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+	if err := os.WriteFile(p, b.moduleFile(m), 0o644); err != nil {
 		return err
 	}
 	m.Path, m.Text = p, ""
@@ -494,6 +508,16 @@ func (b *build) spill(i int, m *codegen.Module, cacheable bool, keys []string) e
 		b.stream.send(i, p, "")
 	}
 	return nil
+}
+
+// moduleFile is the file content for module m in the work directory: its
+// text with struct types aliased, after its name with -work.
+func (b *build) moduleFile(m *codegen.Module) []byte {
+	var head []byte
+	if b.cfg.Work {
+		head = []byte("// " + m.Name + "\n")
+	}
+	return appendAliasTypes(head, m.Text)
 }
 
 func defaultOutput(p *packages.Package, emit string) string {
@@ -532,11 +556,7 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 		ins[i] = m.Path
 		if m.Text != "" {
 			ins[i] = filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", i))
-			text := aliasTypes(m.Text)
-			if b.cfg.Work {
-				text = "// " + m.Name + "\n" + text
-			}
-			werrs[i] = os.WriteFile(ins[i], []byte(text), 0o644)
+			werrs[i] = os.WriteFile(ins[i], b.moduleFile(&m), 0o644)
 		}
 		objs[i] = filepath.Join(b.work, fmt.Sprintf("m%03d%s", i, ext))
 	})
@@ -625,6 +645,7 @@ func (b *build) link1(objs []string, rt, out string, extra []string) error {
 		args = append(args, "-fprofile-generate")
 	}
 	args = append(args, linkLibraries(b.dylibs)...)
+	args = append(args, b.cgoLDFLAGS...)
 	if mp := os.Getenv("MARMOT_LINKMAP"); mp != "" && runtime.GOOS == "darwin" {
 		args = append(args, "-Wl,-map,"+mp)
 	}
@@ -642,7 +663,10 @@ func (b *build) link1(objs []string, rt, out string, extra []string) error {
 			}
 		}
 	} else {
-		args = append(args, "-Wl,--gc-sections")
+		// start-stop-gc: __start_marmot_tlinks does not keep the type link
+		// entries alive, so an entry goes with its dead descriptor (each is
+		// SHF_LINK_ORDER on that descriptor's section).
+		args = append(args, "-Wl,--gc-sections", "-Wl,-z,start-stop-gc")
 		if !b.wantPcln() {
 			args = append(args, "-s")
 		}
@@ -848,7 +872,7 @@ dir="$(cd "$(dirname "$0")" && pwd)"
 out="${1:-$dir/%s}"
 case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
 cd "$dir"
-${CC:-clang} -o "$out" %s librtcore.a -lpthread -Wl,--gc-sections -s
+${CC:-clang} -o "$out" %s librtcore.a -lpthread -Wl,--gc-sections -Wl,-z,start-stop-gc -s
 `, b.goos, b.goarch, exe, exe, strings.Join(names, " "))
 	return os.WriteFile(filepath.Join(out, "link.sh"), []byte(script), 0o755)
 }

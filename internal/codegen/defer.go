@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
-	"strings"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
 	"golang.org/x/tools/go/ssa"
@@ -247,7 +246,7 @@ func (m *moduleGen) thunk(parent *funcGen, c *ssa.CallCommon, caps []ssa.Value, 
 		vals:    map[ssa.Value]string{},
 		blkName: map[*ssa.BasicBlock]string{},
 	}
-	t.b = &t.body
+	m.initBufs(t)
 	t.ctx = "%ctx"
 	t.noinlineCalls = true
 	t.deferThunk = true
@@ -258,13 +257,9 @@ func (m *moduleGen) thunk(parent *funcGen, c *ssa.CallCommon, caps []ssa.Value, 
 	}
 	t.call(c, nil)
 	t.emit("llvm.return")
-	var out strings.Builder
-	fmt.Fprintf(&out, "  llvm.func internal %s(%%ctx: !llvm.ptr) attributes {no_unwind, no_inline, passthrough = [[\"disable-tail-calls\", \"true\"], [\"frame-pointer\", \"all\"], \"nooutline\"]} {\n", mlir.Symbol(sym))
-	out.WriteString(t.pro.String())
-	out.WriteString(t.body.String())
-	out.WriteString(t.cold.String())
-	out.WriteString("  }\n")
-	m.defs.WriteString(out.String())
+	fmt.Fprintf(&m.defs, "  llvm.func internal %s(%%ctx: !llvm.ptr) attributes {no_unwind, no_inline, passthrough = [[\"disable-tail-calls\", \"true\"], [\"frame-pointer\", \"all\"], \"nooutline\"]} {\n", mlir.Symbol(sym))
+	t.flushBufs(&m.defs)
+	m.defs.WriteString("  }\n")
 	return sym
 }
 
