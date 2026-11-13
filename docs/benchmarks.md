@@ -93,9 +93,8 @@ Dev builds use a fast code generator that writes machine code directly, without 
 (`MARMOT_TIER0=0` turns it off; then the first build takes 11.6 s). It is never used with
 `-release`. Its code is not optimized; for fast binaries use `-release`.
 
-The incremental front end (`MARMOT_INCREMENTAL=1`) type checks and compiles only the changed
-packages and the packages that import them. It will become the default once it passes the full
-test suite.
+The incremental front end (the default; `MARMOT_INCREMENTAL=0` turns it off) type checks and
+compiles only the changed packages and the packages that import them.
 
 ## Memory
 

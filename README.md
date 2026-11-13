@@ -34,8 +34,9 @@ Details and method in [docs/benchmarks.md](docs/benchmarks.md).
 | rebuild, nothing changed | 0.04 s | 0.12 s |
 | rebuild after a one line edit | 0.33 to 0.62 s | 0.32 to 0.75 s |
 
-Dev builds use a fast code generator by default (`MARMOT_TIER0=0` turns it off). Rebuild times
-are with the incremental front end, `MARMOT_INCREMENTAL=1`, which becomes the default soon.
+Dev builds use a fast code generator by default (`MARMOT_TIER0=0` turns it off). Rebuilds use
+the incremental front end, which compiles only changed packages and their importers
+(`MARMOT_INCREMENTAL=0` turns it off).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/overview-dark.svg">
