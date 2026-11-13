@@ -274,12 +274,47 @@ func cmdTest(args []string) int {
 		pkgs = []string{"."}
 	}
 	status := 0
-	for _, p := range pkgs {
-		if c := testOne(buildArgs, p, testArgs); c != 0 {
+	for _, p := range expandTestPatterns(pkgs) {
+		if p.noTests {
+			fmt.Printf("?   \t%s\t[no test files]\n", p.path)
+			continue
+		}
+		if c := testOne(buildArgs, p.path, testArgs); c != 0 {
 			status = c
 		}
 	}
 	return status
+}
+
+type testPkg struct {
+	path    string
+	noTests bool
+}
+
+// expandTestPatterns turns patterns with "..." into the packages they
+// match (go list), as go test does; other patterns stay as they are.
+func expandTestPatterns(pats []string) []testPkg {
+	var out []testPkg
+	for _, p := range pats {
+		if !strings.Contains(p, "...") {
+			out = append(out, testPkg{path: p})
+			continue
+		}
+		cmd := exec.Command("go", "list", "-e", "-f", "{{.ImportPath}} {{len .TestGoFiles}} {{len .XTestGoFiles}}", p)
+		data, err := cmd.Output()
+		if err != nil {
+			out = append(out, testPkg{path: p}) // let the build report the error
+			continue
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			f := strings.Fields(line)
+			if len(f) != 3 {
+				continue
+			}
+			out = append(out, testPkg{path: f[0], noTests: f[1] == "0" && f[2] == "0"})
+		}
+	}
+	return out
 }
 
 // testBuildFlags are the build flags marmot test takes.
