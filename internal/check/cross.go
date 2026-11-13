@@ -86,18 +86,40 @@ func runCross(sc *scope, opts Options, st *store, r *CheckResult) {
 		notes []string
 	}
 	res := make([]out, len(ts))
-	// Targets one after another: each one type checks a whole program.
+	// The targets run at once; their engines share the run's job slots.
 	var mu sync.Mutex
+	var tw sync.WaitGroup
 	for i, t := range ts {
+		tw.Add(1)
+		go func(i int, t string) {
+			defer tw.Done()
+			crossTarget(sc, opts, st, s, r, &mu, &res[i].ds, &res[i].notes, t)
+		}(i, t)
+	}
+	tw.Wait()
+	seen := map[string]bool{}
+	for _, o := range res {
+		r.Notes = append(r.Notes, o.notes...)
+		for _, d := range o.ds {
+			addOnce(r, d, seen)
+		}
+	}
+}
+
+// crossTarget type checks the packages for one target.
+func crossTarget(sc *scope, opts Options, st *store, s *suite, r *CheckResult, mu *sync.Mutex, ds *[]diag.Diagnostic, notes *[]string, t string) {
+	{
 		goos, goarch, _ := strings.Cut(t, "/")
 		env := []string{"GOOS=" + goos, "GOARCH=" + goarch, "CGO_ENABLED=0"}
 		g, _, err := cachedGoList(st, sc, opts.Tags, env, false)
 		if err != nil {
-			res[i].notes = append(res[i].notes, fmt.Sprintf("%s: %v", t, firstLine(err.Error())))
+			mu.Lock()
+			*notes = append(*notes, fmt.Sprintf("%s: %v", t, firstLine(err.Error())))
 			r.Status = Failed
-			continue
+			mu.Unlock()
+			return
 		}
-		e := newEngine(g, st, s, envKey(opts.Tags, goos, goarch)+"|cgo0", goarch, opts.Jobs)
+		e := newEngine(g, st, s, envKey(opts.Tags, goos, goarch)+"|cgo0", goarch, sc)
 		var wg sync.WaitGroup
 		for _, p := range g.roots {
 			wg.Add(1)
@@ -107,7 +129,7 @@ func runCross(sc *scope, opts Options, st *store, r *CheckResult) {
 				mu.Lock()
 				defer mu.Unlock()
 				if err != nil {
-					res[i].notes = append(res[i].notes, fmt.Sprintf("%s: %s: %v", t, p.ImportPath, firstLine(err.Error())))
+					*notes = append(*notes, fmt.Sprintf("%s: %s: %v", t, p.ImportPath, firstLine(err.Error())))
 					return
 				}
 				for _, le := range p.listErrors() {
@@ -115,22 +137,15 @@ func runCross(sc *scope, opts Options, st *store, r *CheckResult) {
 						continue // a package for other systems
 					}
 					d := diagFromText(le, sc.dir)
-					res[i].ds = append(res[i].ds, crossDiag(d, t))
+					*ds = append(*ds, crossDiag(d, t))
 				}
 				for _, te := range rep.TypeErrors {
 					d := diag.Diagnostic{Kind: "diagnostic", Severity: diag.Error, Message: te.Message, Span: te.Span, Related: te.Related}
-					res[i].ds = append(res[i].ds, crossDiag(d, t))
+					*ds = append(*ds, crossDiag(d, t))
 				}
 			}(p)
 		}
 		wg.Wait()
-	}
-	seen := map[string]bool{}
-	for _, o := range res {
-		r.Notes = append(r.Notes, o.notes...)
-		for _, d := range o.ds {
-			addOnce(r, d, seen)
-		}
 	}
 }
 

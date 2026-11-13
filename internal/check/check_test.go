@@ -418,3 +418,32 @@ func TestFixLeavesConcurrentEdits(t *testing.T) {
 		t.Error("the fix of a file modified after the analysis began was kept")
 	}
 }
+
+func TestRunMemo(t *testing.T) {
+	if testing.Short() {
+		t.Skip("loads the standard library")
+	}
+	t.Setenv("GOWORK", "off")
+	src, _ := filepath.Abs("testdata/dead")
+	dir := t.TempDir()
+	for _, n := range []string{"go.mod", "main.go"} {
+		data, _ := os.ReadFile(filepath.Join(src, n))
+		os.WriteFile(filepath.Join(dir, n), data, 0o644)
+	}
+	opts := Options{Dir: dir, Only: []string{"vet", "deadcode"}, CacheDir: t.TempDir()}
+	a, err := Run(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := Run(opts)
+	if !b.Checks[0].Cached || !slices.Equal(findings(a), findings(b)) {
+		t.Errorf("unchanged tree: cached %v, %v then %v", b.Checks[0].Cached, findings(a), findings(b))
+	}
+	main := filepath.Join(dir, "main.go")
+	data, _ := os.ReadFile(main)
+	os.WriteFile(main, append(data, []byte("\nfunc Dead2() {}\n")...), 0o644)
+	c, _ := Run(opts)
+	if c.Checks[0].Cached && c.Checks[1].Cached || len(findings(c)) != len(findings(a))+1 {
+		t.Errorf("after an edit: %v", findings(c))
+	}
+}

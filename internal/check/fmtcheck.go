@@ -49,6 +49,10 @@ func runFmt(sc *scope, st *store, r *CheckResult) {
 			if err != nil {
 				return
 			}
+			stat := statKey(info)
+			if st.fmtClean(f, stat) {
+				return // this version was formatted
+			}
 			// Keyed by size and time: an unchanged file is not read.
 			h := newHasher("fmt")
 			h.str(toolID(), f, fmt.Sprint(info.Size(), info.ModTime().UnixNano()))
@@ -70,6 +74,9 @@ func runFmt(sc *scope, st *store, r *CheckResult) {
 				if gob.NewEncoder(&buf).Encode(fr) == nil {
 					st.put(key, buf.Bytes())
 				}
+			}
+			if fr.Err == "" && fr.Formatted == nil {
+				st.setFmtClean(f, stat)
 			}
 			if fr.Err != "" {
 				d := diagFromText(fr.Err, filepath.Dir(f))

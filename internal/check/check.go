@@ -23,6 +23,7 @@ import (
 
 	"github.com/Gaurav-Gosain/marmot/internal/checkflags"
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
+	"golang.org/x/sync/semaphore"
 )
 
 // Names are the checks, in the order they run and are reported.
@@ -137,6 +138,11 @@ type scope struct {
 	added     map[string]map[int]bool
 	shapeMu   sync.Mutex
 	shapes    map[string]string // package ID -> shape hash, from the analysis
+	tree      *treeMemo         // the walk of the module trees, shared by the checks
+	goroot    string            // of the toolchain the go command selects
+	slotsOnce sync.Once
+	slots     *semaphore.Weighted // the job slots every engine of the run shares
+	jobs      int64
 }
 
 type module struct {
@@ -160,7 +166,8 @@ func Run(opts Options) (*Result, error) {
 	if d, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = d
 	}
-	sc, err := makeScope(dir, opts)
+	st := openStore(opts.CacheDir)
+	sc, err := makeScope(dir, opts, st)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +193,20 @@ func Run(opts Options) (*Result, error) {
 			results[n] = &CheckResult{Name: n, Gate: !reportOnly[n]}
 		}
 	}
-	st := openStore(opts.CacheDir)
+	defer st.saveStats()
+	memo := ""
+	if st != nil && !opts.Changed {
+		var checks []string
+		for _, n := range Names {
+			if results[n] != nil {
+				checks = append(checks, n)
+			}
+		}
+		memo = runKey(sc, opts, lc, checks)
+		if r := loadRun(st, memo); r != nil {
+			return r, nil
+		}
+	}
 
 	var wg sync.WaitGroup
 	run := func(name string, f func(*CheckResult)) {
@@ -207,6 +227,10 @@ func Run(opts Options) (*Result, error) {
 			analysis = append(analysis, n)
 		}
 	}
+	// Everything runs at once: the engines of the analysis, the cross
+	// targets and dead code share the run's job slots, which bound the
+	// packages held in memory. Dead code follows the analysis, whose
+	// shapes key its cache.
 	if len(analysis) > 0 || results["deadcode"] != nil {
 		wg.Go(func() {
 			t0 := time.Now()
@@ -214,39 +238,26 @@ func Run(opts Options) (*Result, error) {
 			for _, n := range analysis {
 				results[n].Duration = time.Since(t0)
 			}
+			if r := results["deadcode"]; r != nil {
+				t1 := time.Now()
+				runDeadcode(sc, opts, st, r)
+				r.Duration = time.Since(t1)
+			}
 		})
 	}
 	run("fmt", func(r *CheckResult) { runFmt(sc, st, r) })
 	run("tidy", func(r *CheckResult) { runTidy(sc, st, r) })
-	wg.Wait()
-	// Cross builds and dead code load whole programs; run them one after
-	// the other, after the analysis, so they do not compete for memory.
-	// The vulnerability scan waits mostly on the database and runs beside
-	// them.
 	run("vuln", func(r *CheckResult) { runVuln(sc, opts, st, r) })
-	var seq sync.WaitGroup
-	seq.Go(func() {
-		for _, n := range []string{"cross", "deadcode"} {
-			r := results[n]
-			if r == nil {
-				continue
-			}
-			t0 := time.Now()
-			if n == "cross" {
-				runCross(sc, opts, st, r)
-			} else {
-				runDeadcode(sc, opts, st, r)
-			}
-			r.Duration = time.Since(t0)
-		}
-	})
-	seq.Wait()
+	run("cross", func(r *CheckResult) { runCross(sc, opts, st, r) })
 	wg.Wait()
 	for _, n := range Names {
 		if r := results[n]; r != nil {
 			finish(r)
 			res.Checks = append(res.Checks, r)
 		}
+	}
+	if memo != "" && memoizable(res, opts) {
+		saveRun(st, memo, res)
 	}
 	return res, nil
 }
@@ -279,9 +290,10 @@ func dedupStrings(s []string) []string {
 }
 
 // makeScope finds the modules and, in Changed mode, the changed files.
-func makeScope(dir string, opts Options) (*scope, error) {
-	sc := &scope{dir: dir}
-	mods, err := workspaceModules(dir)
+func makeScope(dir string, opts Options, st *store) (*scope, error) {
+	sc := &scope{dir: dir, jobs: int64(opts.Jobs)}
+	mods, goroot, err := workspaceModulesCached(st, dir)
+	sc.goroot = goroot
 	if err != nil {
 		return nil, err
 	}
@@ -351,24 +363,83 @@ func makeScope(dir string, opts Options) (*scope, error) {
 
 // workspaceModules returns the modules of the go.work that covers dir, or
 // the one module of dir.
-func workspaceModules(dir string) ([]module, error) {
-	out, err := goCmd(dir, nil, "env", "-json", "GOWORK", "GOMOD")
-	if err != nil {
-		return nil, err
+// workspaceModulesCached is workspaceModules from the store while the
+// go.work and go.mod files it read (and those that could appear above dir)
+// keep their size and time: it runs the go command once per module.
+func workspaceModulesCached(st *store, dir string) ([]module, string, error) {
+	if st == nil {
+		return workspace(dir)
 	}
-	var env struct{ GOWORK, GOMOD string }
+	h := newHasher("workspace-1")
+	h.str(toolID(), dir)
+	for _, k := range []string{"GOWORK", "GOFLAGS", "GOTOOLCHAIN"} {
+		h.str(k + "=" + os.Getenv(k))
+	}
+	if p, err := exec.LookPath("go"); err == nil {
+		h.str(p, statOf(p))
+	}
+	for d := dir; ; d = filepath.Dir(d) {
+		h.str(d, statOf(filepath.Join(d, "go.work")), statOf(filepath.Join(d, "go.mod")))
+		if filepath.Dir(d) == d {
+			break
+		}
+	}
+	key := h.sum()
+	type entry struct {
+		Mods   []module
+		GOROOT string
+		Stats  map[string]string // go.mod of each module
+	}
+	var e entry
+	if getGob(st, key, &e) {
+		ok := true
+		for p, s := range e.Stats {
+			if statOf(p) != s {
+				ok = false
+			}
+		}
+		if ok {
+			return e.Mods, e.GOROOT, nil
+		}
+	}
+	mods, goroot, err := workspace(dir)
+	if err != nil {
+		return nil, "", err
+	}
+	e = entry{Mods: mods, GOROOT: goroot, Stats: map[string]string{}}
+	for _, m := range mods {
+		p := filepath.Join(m.Dir, "go.mod")
+		e.Stats[p] = statOf(p)
+	}
+	putGob(st, key, e)
+	return mods, goroot, nil
+}
+
+func workspaceModules(dir string) ([]module, error) {
+	mods, _, err := workspace(dir)
+	return mods, err
+}
+
+// workspace returns the modules of the workspace around dir and the
+// GOROOT of the toolchain the go command selects there.
+func workspace(dir string) ([]module, string, error) {
+	out, err := goCmd(dir, nil, "env", "-json", "GOWORK", "GOMOD", "GOROOT")
+	if err != nil {
+		return nil, "", err
+	}
+	var env struct{ GOWORK, GOMOD, GOROOT string }
 	if err := json.Unmarshal([]byte(out), &env); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var dirs []string
 	if env.GOWORK != "" && env.GOWORK != "off" {
 		w, err := goCmd(dir, nil, "work", "edit", "-json", env.GOWORK)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		var wf struct{ Use []struct{ DiskPath string } }
 		if err := json.Unmarshal([]byte(w), &wf); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		for _, u := range wf.Use {
 			dirs = append(dirs, filepath.Join(filepath.Dir(env.GOWORK), u.DiskPath))
@@ -376,7 +447,7 @@ func workspaceModules(dir string) ([]module, error) {
 	} else if env.GOMOD != "" && env.GOMOD != os.DevNull {
 		dirs = append(dirs, filepath.Dir(env.GOMOD))
 	} else {
-		return nil, fmt.Errorf("%s is not in a Go module", dir)
+		return nil, "", fmt.Errorf("%s is not in a Go module", dir)
 	}
 	var mods []module
 	for _, d := range dirs {
@@ -392,7 +463,7 @@ func workspaceModules(dir string) ([]module, error) {
 		}
 		mods = append(mods, m)
 	}
-	return mods, nil
+	return mods, env.GOROOT, nil
 }
 
 func goCmd(dir string, env []string, args ...string) (string, error) {
@@ -506,4 +577,20 @@ func (sc *scope) setShape(id, h string) {
 		sc.shapes = map[string]string{}
 	}
 	sc.shapes[id] = h
+}
+
+// jobSlots returns the run's shared job semaphore and its size. Each job
+// holds a package with the types of all its imports and its SSA forms;
+// more than 8 at once costs memory, not time.
+func (sc *scope) jobSlots() (*semaphore.Weighted, int64) {
+	sc.slotsOnce.Do(func() {
+		if sc.slots != nil {
+			return
+		}
+		if sc.jobs <= 0 {
+			sc.jobs = int64(min(runtime.GOMAXPROCS(0), 8))
+		}
+		sc.slots = semaphore.NewWeighted(sc.jobs)
+	})
+	return sc.slots, sc.jobs
 }

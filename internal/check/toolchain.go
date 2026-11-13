@@ -22,13 +22,12 @@ var toolchainNames struct {
 // GOROOT. marmot links a newer x/tools; restricting go vet and go fix
 // to these names makes marmot check report what the installed go vet and
 // go fix report. It returns nil when GOROOT has no vendored copy.
-func toolchainAnalyzers(dir string) map[string]bool {
+func toolchainAnalyzers(root string) map[string]bool {
 	toolchainNames.once.Do(func() {
-		root, err := goCmd(dir, nil, "env", "GOROOT")
-		if err != nil {
+		if root == "" {
 			return
 		}
-		passes := filepath.Join(strings.TrimSpace(root), "src", "cmd", "vendor", "golang.org", "x", "tools", "go", "analysis", "passes")
+		passes := filepath.Join(root, "src", "cmd", "vendor", "golang.org", "x", "tools", "go", "analysis", "passes")
 		names := map[string]bool{}
 		// The callback skips what it cannot read, so the walk cannot fail.
 		_ = filepath.WalkDir(passes, func(p string, d os.DirEntry, err error) error {

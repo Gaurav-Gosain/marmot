@@ -43,6 +43,12 @@ const memoryLimit = 1536 << 20
 func limitMemory() {
 	if os.Getenv("GOMEMLIMIT") == "" {
 		debug.SetMemoryLimit(memoryLimit)
+		// Under the limit, collect less often than the default: a warm run
+		// allocates much and keeps little, and the limit still bounds a
+		// cold one.
+		if os.Getenv("GOGC") == "" {
+			debug.SetGCPercent(400)
+		}
 	}
 }
 

@@ -42,7 +42,7 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 	}
 	if r := results["vet"]; r != nil {
 		f := vetFamily()
-		if d := f.restrict(toolchainAnalyzers(sc.dir)); len(d) > 0 {
+		if d := f.restrict(toolchainAnalyzers(sc.goroot)); len(d) > 0 {
 			r.Notes = append(r.Notes, "analyzers newer than this go vet, not run: "+strings.Join(d, ", "))
 		}
 		fams["vet"] = f
@@ -62,7 +62,7 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 	}
 	if r := results["modernize"]; r != nil {
 		f := modernizeFamily()
-		if d := f.restrict(toolchainAnalyzers(sc.dir)); len(d) > 0 {
+		if d := f.restrict(toolchainAnalyzers(sc.goroot)); len(d) > 0 {
 			r.Notes = append(r.Notes, "modernizers newer than this go fix, not run: "+strings.Join(d, ", "))
 		}
 		fams["modernize"] = f
@@ -117,7 +117,7 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 	}
 	stats.ListTime = time.Since(t0)
 	stats.Packages, stats.Roots = len(g.pkgs), len(g.roots)
-	e := newEngine(g, st, s, envKey(tags, hostGOOS(), hostGOARCH()), hostGOARCH(), opts.Jobs)
+	e := newEngine(g, st, s, envKey(tags, hostGOOS(), hostGOARCH()), hostGOARCH(), sc)
 	opts.progress("check: analyzing %d packages (%d with their dependencies)", len(g.roots), len(g.pkgs))
 	t1 := time.Now()
 	reps := make([]*report, len(g.roots))

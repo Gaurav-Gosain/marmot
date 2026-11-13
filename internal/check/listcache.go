@@ -42,7 +42,7 @@ func cachedGoList(st *store, sc *scope, tags, env []string, tests bool) (*graph,
 	files := sc.treeFiles()
 	if data := st.get(k); data != nil {
 		var e listEntry
-		if gob.NewDecoder(bytes.NewReader(data)).Decode(&e) == nil && e.matches(files) {
+		if gob.NewDecoder(bytes.NewReader(data)).Decode(&e) == nil && e.matches(st, files) {
 			g := newGraph(e.Pkgs)
 			return g, true, nil
 		}
@@ -53,7 +53,7 @@ func cachedGoList(st *store, sc *scope, tags, env []string, tests bool) (*graph,
 	}
 	e := listEntry{Pkgs: g.pkgs, Files: map[string]fileSig{}}
 	for p, stat := range files {
-		e.Files[p] = fileSig{Stat: stat, Head: headHash(p)}
+		e.Files[p] = fileSig{Stat: stat, Head: st.headHashAt(p, stat)}
 	}
 	var buf bytes.Buffer
 	if gob.NewEncoder(&buf).Encode(&e) == nil {
@@ -65,7 +65,7 @@ func cachedGoList(st *store, sc *scope, tags, env []string, tests bool) (*graph,
 // matches reports whether the trees still have the same files with the
 // same heads, and the generated files the graph names (cgo output in the
 // build cache) still exist.
-func (e *listEntry) matches(files map[string]string) bool {
+func (e *listEntry) matches(st *store, files map[string]string) bool {
 	if len(files) != len(e.Files) {
 		return false
 	}
@@ -74,7 +74,7 @@ func (e *listEntry) matches(files map[string]string) bool {
 		if !ok {
 			return false
 		}
-		if old.Stat != stat && headHash(p) != old.Head {
+		if old.Stat != stat && st.headHashAt(p, stat) != old.Head {
 			return false
 		}
 	}
@@ -94,11 +94,10 @@ func (e *listEntry) matches(files map[string]string) bool {
 // size and time: Go and assembly sources and go.mod, go.sum and go.work
 // files, in every directory go would look at.
 func (sc *scope) treeFiles() map[string]string {
-	out := map[string]string{}
-	for _, m := range sc.modules {
-		walkModule(m.Dir, func(p string, info os.FileInfo) {
-			out[p] = fmt.Sprintf("%d.%d", info.Size(), info.ModTime().UnixNano())
-		})
+	t := sc.walkTrees()
+	out := make(map[string]string, len(t.all)+2)
+	for p, s := range t.all {
+		out[p] = s
 	}
 	if w := workRoot(sc.dir); w != "" {
 		for _, n := range []string{"go.work", "go.work.sum"} {

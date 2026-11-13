@@ -162,6 +162,8 @@ type engine struct {
 	mu    sync.Mutex
 	units map[*listPkg]*unit
 
+	stat map[string]string // the run's walk of the module trees (path -> stat)
+
 	// Dead code summaries: built for every package that is type checked
 	// when sums is set; declarations are listed for packages under wsDirs.
 	sums   bool
@@ -199,13 +201,13 @@ type unit struct {
 	sumErr  error
 }
 
-func newEngine(g *graph, st *store, s *suite, env, goarch string, jobs int) *engine {
-	if jobs <= 0 {
-		// Each job holds a package with the types of all its imports and
-		// its SSA forms; more than 8 at once costs memory, not time.
-		jobs = min(runtime.GOMAXPROCS(0), 8)
-	}
-	e := &engine{g: g, st: st, suite: s, env: env, goarch: goarch, sem: semaphore.NewWeighted(int64(jobs)), jobs: int64(jobs), units: map[*listPkg]*unit{}}
+// newEngine makes an engine for one package graph. Every engine of a run
+// takes its job slots from the scope's one semaphore, so the analysis, the
+// cross targets and dead code can run at once and still hold no more
+// packages in memory together than one engine would.
+func newEngine(g *graph, st *store, s *suite, env, goarch string, sc *scope) *engine {
+	sem, jobs := sc.jobSlots()
+	e := &engine{g: g, st: st, suite: s, env: env, goarch: goarch, sem: sem, jobs: jobs, units: map[*listPkg]*unit{}, stat: sc.walkTrees().all}
 	for _, p := range g.pkgs {
 		e.units[p] = &unit{}
 	}
@@ -230,7 +232,7 @@ func (e *engine) computeKeys() {
 			sem <- struct{}{}
 			go func(f string) {
 				defer wg.Done()
-				h := fileHash(f)
+				h := e.st.fileHashAt(f, e.stat[f])
 				mu.Lock()
 				hashes[f] = h
 				mu.Unlock()

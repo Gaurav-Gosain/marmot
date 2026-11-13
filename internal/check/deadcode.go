@@ -115,7 +115,7 @@ func runDeadcode(sc *scope, opts Options, st *store, r *CheckResult) {
 // and its dependencies' export data are unchanged) and runs the
 // reachability over the summaries.
 func deadcode(sc *scope, opts Options, st *store) deadResult {
-	ws := &scope{dir: sc.dir, modules: sc.modules}
+	ws := &scope{dir: sc.dir, modules: sc.modules, tree: sc.walkTrees(), slots: sc.slots, jobs: sc.jobs}
 	var dirs []string
 	for _, m := range sc.modules {
 		ws.patterns = append(ws.patterns, m.Dir+"/...")
@@ -169,7 +169,7 @@ func deadcode(sc *scope, opts Options, st *store) deadResult {
 		}
 		return false
 	}
-	e := newEngine(g, st, newSuite(nil, toolID(), ""), envKey(opts.Tags, hostGOOS(), hostGOARCH()), hostGOARCH(), opts.Jobs)
+	e := newEngine(g, st, newSuite(nil, toolID(), ""), envKey(opts.Tags, hostGOOS(), hostGOARCH()), hostGOARCH(), sc)
 	e.sums, e.wsDirs = true, dirs
 	sums := make([]*deadSummary, len(g.pkgs))
 	sumErrs := make([]error, len(g.pkgs))

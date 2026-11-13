@@ -26,7 +26,7 @@ func runTidy(sc *scope, st *store, r *CheckResult) {
 		if sc.changed != nil && !sc.moduleTouched(&m) {
 			continue
 		}
-		key := tidyKey(sc, &m)
+		key := tidyKey(sc, st, &m)
 		var tr tidyResult
 		if c := st.get(key); c != nil && gob.NewDecoder(bytes.NewReader(c)).Decode(&tr) == nil {
 		} else {
@@ -74,38 +74,22 @@ func runTidy(sc *scope, st *store, r *CheckResult) {
 	}
 }
 
-// tidyKey covers what go mod tidy reads: go.mod, go.sum and the imports
-// of the module's Go files (approximated by their names, sizes and times).
-func tidyKey(sc *scope, m *module) string {
-	h := newHasher("tidy")
+// tidyKey covers what go mod tidy reads: go.mod, go.sum and the heads
+// (package clause, imports, build constraints) of the module's Go files,
+// so an edit inside a body keeps it.
+func tidyKey(sc *scope, st *store, m *module) string {
+	h := newHasher("tidy-2")
 	h.str(toolID(), envKey(nil, hostGOOS(), hostGOARCH()), m.Dir)
 	for _, n := range []string{"go.mod", "go.sum"} {
 		data, _ := os.ReadFile(filepath.Join(m.Dir, n))
 		h.bytes(data)
 	}
-	// The callback skips what it cannot read, so the walk cannot fail.
-	_ = filepath.WalkDir(m.Dir, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			if p != m.Dir {
-				if strings.HasPrefix(d.Name(), ".") || strings.HasPrefix(d.Name(), "_") || d.Name() == "testdata" || d.Name() == "vendor" {
-					return filepath.SkipDir
-				}
-				if _, err := os.Stat(filepath.Join(p, "go.mod")); err == nil {
-					return filepath.SkipDir
-				}
-			}
-			return nil
-		}
+	t := sc.walkTrees()
+	for _, p := range t.byMod[m.Dir] {
 		if strings.HasSuffix(p, ".go") {
-			if info, err := d.Info(); err == nil {
-				h.str(p, fmt.Sprint(info.Size(), info.ModTime().UnixNano()))
-			}
+			h.str(p, st.headHashAt(p, t.all[p]))
 		}
-		return nil
-	})
+	}
 	return h.sum()
 }
 

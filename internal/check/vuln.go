@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -61,7 +60,7 @@ func runVuln(sc *scope, opts Options, st *store, r *CheckResult) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[i] = vulnModule(st, m, opts.Tags)
+			results[i] = vulnModule(st, sc.walkTrees(), m, opts.Tags)
 		}(i, m)
 	}
 	wg.Wait()
@@ -109,30 +108,25 @@ func runVuln(sc *scope, opts Options, st *store, r *CheckResult) {
 }
 
 // vulnModule returns the cached or fresh result for one module.
-func vulnModule(st *store, m module, tags []string) vulnResult {
+func vulnModule(st *store, t *treeMemo, m module, tags []string) vulnResult {
+	day := time.Now().UTC().Format("2006-01-02")
 	h := newHasher("vuln")
-	h.str(toolID(), envKey(tags, hostGOOS(), hostGOARCH()), m.Dir, time.Now().UTC().Format("2006-01-02"))
-	var files []string
-	walkModule(m.Dir, func(p string, info os.FileInfo) {
-		files = append(files, fmt.Sprintf("%s %d %d", p, info.Size(), info.ModTime().UnixNano()))
-	})
-	sort.Strings(files)
-	h.str(files...)
+	h.str(toolID(), envKey(tags, hostGOOS(), hostGOARCH()), m.Dir, day)
+	for _, p := range t.byMod[m.Dir] {
+		h.str(p, t.all[p])
+	}
 	key := h.sum()
-	// The imports key: go.mod, go.sum and every file's imports.
-	ih := newHasher("vuln-imports")
-	ih.str(toolID(), envKey(tags, hostGOOS(), hostGOARCH()), m.Dir, time.Now().UTC().Format("2006-01-02"))
-	var heads []string
-	walkModule(m.Dir, func(p string, info os.FileInfo) {
-		heads = append(heads, p+" "+headHash(p))
-	})
-	sort.Strings(heads)
-	ih.str(heads...)
-	ikey := ih.sum()
 	var res vulnResult
 	if c := st.get(key); c != nil && gob.NewDecoder(bytes.NewReader(c)).Decode(&res) == nil {
 		return res
 	}
+	// The imports key: go.mod, go.sum and every file's imports.
+	ih := newHasher("vuln-imports")
+	ih.str(toolID(), envKey(tags, hostGOOS(), hostGOARCH()), m.Dir, day)
+	for _, p := range t.byMod[m.Dir] {
+		ih.str(p, st.headHashAt(p, t.all[p]))
+	}
+	ikey := ih.sum()
 	if c := st.get(ikey); c != nil && gob.NewDecoder(bytes.NewReader(c)).Decode(&res) == nil && res.Imported == 0 {
 		return res
 	}
