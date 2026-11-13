@@ -21,6 +21,8 @@ type Reporter struct {
 	// Version and Args go into internal error bundles.
 	Version string
 	Args    []string
+	// Width is the column count human output wraps to (0: the terminal's).
+	Width int
 }
 
 // Diagnose parses a build error into diagnostics, enriched, deduplicated
@@ -50,7 +52,7 @@ func (r *Reporter) Fail(err error) int {
 		if r.Color {
 			st = Colors
 		}
-		h := &Human{W: r.W, Style: st, Dir: r.Dir, Width: WidthOf(r.W)}
+		h := &Human{W: r.W, Style: st, Dir: r.Dir, Width: r.width()}
 		h.Render(ds)
 	case ModeJSON:
 		ds := r.Diagnose(err)
@@ -74,14 +76,18 @@ func (r *Reporter) OK(output string) {
 	}
 }
 
-// Usage reports a command line error (exit code 2).
+// Usage reports a command line error (M0017) and returns the exit code 2.
+// The first line of msg is the message. A later line that starts with
+// "run `" is a help line, any other a note; help adds help lines (a close
+// match, the command that shows the usage). It is an ordinary diagnostic:
+// error[M0017]: on a terminal, JSON Lines for agents, and the message with
+// tab-indented help lines otherwise.
 // The reporter writes to r.W, the terminal or an agent's pipe: as with
 // fmt.Fprint, a failed write there has nowhere to be reported.
-
-func (r *Reporter) Usage(msg string) int {
+func (r *Reporter) Usage(msg string, help ...string) int {
+	d := UsageDiagnostic(msg, help...)
 	switch r.Mode {
 	case ModeJSON:
-		d := Diagnostic{Kind: "diagnostic", Severity: Error, Code: CodeUsage, Message: msg}
 		_ = WriteJSON(r.W, []Diagnostic{d})
 		_ = WriteResult(r.W, Result{Command: r.Command, OK: false, Errors: 1, DurationMs: r.ms(), ExitCode: 2})
 	case ModeHuman:
@@ -89,11 +95,53 @@ func (r *Reporter) Usage(msg string) int {
 		if r.Color {
 			st = Colors
 		}
-		fmt.Fprintf(r.W, "%serror:%s %s\n", st.Error, st.Reset, msg)
+		h := &Human{W: r.W, Style: st, Dir: r.Dir, Width: r.width()}
+		h.RenderOne(&d)
 	default:
-		fmt.Fprintln(r.W, msg)
+		fmt.Fprintln(r.W, d.Message)
+		for _, n := range d.Notes {
+			fmt.Fprintln(r.W, "\t"+n)
+		}
+		for _, x := range d.Help {
+			fmt.Fprintln(r.W, "\thelp: "+x)
+		}
 	}
 	return 2
+}
+
+// UsageDiagnostic is the M0017 diagnostic Usage reports.
+func UsageDiagnostic(msg string, help ...string) Diagnostic {
+	lines := strings.Split(strings.TrimRight(msg, "\n"), "\n")
+	d := Diagnostic{Kind: "diagnostic", Severity: Error, Code: CodeUsage, Message: lines[0]}
+	for _, l := range lines[1:] {
+		switch l = strings.TrimSpace(l); {
+		case l == "":
+		case strings.HasPrefix(l, "run `"):
+			d.Help = append(d.Help, l)
+		default:
+			d.Notes = append(d.Notes, l)
+		}
+	}
+	// The command that shows the usage goes last, after a close match.
+	var run []string
+	for _, x := range help {
+		if strings.HasPrefix(x, "run `") {
+			run = append(run, x)
+		} else {
+			d.Help = append(d.Help, x)
+		}
+	}
+	d.Help = append(d.Help, run...)
+	return d
+}
+
+// width is the column count human output wraps to: Width, or the
+// terminal's when 0.
+func (r *Reporter) width() int {
+	if r.Width != 0 {
+		return r.Width
+	}
+	return WidthOf(r.W)
 }
 
 func (r *Reporter) ms() int64 {

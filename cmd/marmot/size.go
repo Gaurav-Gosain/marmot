@@ -39,7 +39,7 @@ func cmdSize(args []string) int {
 	}
 	rep := sf.output.reporter("size")
 	if fs.NArg() != 1 {
-		return rep.Usage("usage: marmot size [-n N] [-pkg PATH] [-why FUNC] BINARY")
+		return argError(rep, "size", "marmot size [-n N] [-pkg PATH] [-why FUNC] BINARY", fs.Args(), "BINARY")
 	}
 	b, err := binsize.Open(fs.Arg(0))
 	if err != nil {

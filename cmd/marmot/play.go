@@ -63,8 +63,7 @@ func cmdPlay(args []string) int {
 		return usageError("play", err)
 	}
 	if fs.NArg() > 1 {
-		fmt.Fprintln(os.Stderr, "usage: marmot play [-addr HOST:PORT] [-open] [dir or file.go]")
-		return 2
+		return argError((outputFlags{}).reporter("play"), "play", "marmot play [-addr HOST:PORT] [-open] [dir or file.go]", fs.Args(), "dir")
 	}
 	initial := playSample
 	if fs.NArg() == 1 {

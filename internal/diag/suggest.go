@@ -732,6 +732,12 @@ func closest(name string, cands []string) string {
 	return best
 }
 
+// Closest returns the candidate nearest to name by edit distance, or ""
+// when none is close (or name is one of them). cands is not changed.
+func Closest(name string, cands []string) string {
+	return closest(name, append([]string(nil), cands...))
+}
+
 // backtickList formats names as `a`, `b`, `c`.
 func backtickList(xs []string) string {
 	var b strings.Builder

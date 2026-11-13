@@ -52,8 +52,7 @@ func cmdBind(args []string) int {
 		cfg.Header = fs.Arg(0)
 	}
 	if cfg.Header == "" {
-		fmt.Fprintln(os.Stderr, "usage: marmot bind [-config bind.toml] [-o file.go] [-pkg name] [-pkg-config name] HEADER")
-		return 2
+		return argError((outputFlags{}).reporter("bind"), "bind", "marmot bind [-config bind.toml] [-o file.go] [-pkg name] [-pkg-config name] HEADER", fs.Args(), "HEADER")
 	}
 	if *bf.pkg != "" {
 		cfg.Package = *bf.pkg

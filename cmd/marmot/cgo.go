@@ -64,16 +64,24 @@ var (
 func cmdCgo(args []string) int {
 	fs, cf := newCgoFlags()
 	fs.SetOutput(io.Discard)
+	const usage = "marmot cgo show [-go] [-c] FILE.go"
 	if len(args) == 0 || args[0] != "show" {
-		fmt.Fprintln(os.Stderr, "usage: marmot cgo show [-go] [-c] FILE.go")
-		return 2
+		rep := cf.output.reporter("cgo")
+		help := []string{"the usage is `" + usage + "`"}
+		if len(args) == 0 {
+			return rep.Usage("missing subcommand `show`", help...)
+		}
+		return rep.Usage("unknown subcommand `"+args[0]+"` of `marmot cgo`", help...)
 	}
 	if err := fs.Parse(args[1:]); err != nil {
 		return usageError("cgo", err)
 	}
 	rep := cf.output.reporter("cgo")
-	if fs.NArg() != 1 || !strings.HasSuffix(fs.Arg(0), ".go") {
-		return rep.Usage("usage: marmot cgo show [-go] [-c] FILE.go")
+	if fs.NArg() != 1 {
+		return argError(rep, "cgo", usage, fs.Args(), "FILE.go")
+	}
+	if !strings.HasSuffix(fs.Arg(0), ".go") {
+		return rep.Usage("`"+fs.Arg(0)+"` is not a .go file", "the usage is `"+usage+"`")
 	}
 	file, err := filepath.Abs(fs.Arg(0))
 	if err != nil {

@@ -46,7 +46,7 @@ func cmdProf(args []string) int {
 	}
 	rep := pf.output.reporter("prof")
 	if fs.NArg() != 1 {
-		return rep.Usage("usage: marmot prof [-n N] [-tree] [-list REGEXP] [-sample TYPE] PROFILE")
+		return argError(rep, "prof", "marmot prof [-n N] [-tree] [-list REGEXP] [-sample TYPE] PROFILE", fs.Args(), "PROFILE")
 	}
 	data, err := os.ReadFile(fs.Arg(0))
 	if err != nil {

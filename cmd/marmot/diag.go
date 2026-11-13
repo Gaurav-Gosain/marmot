@@ -29,6 +29,13 @@ func addOutputFlags(fs *flag.FlagSet) outputFlags {
 	}
 }
 
+// errOut and errWidth are where reporters write and the width they wrap to
+// (0: the terminal's); tests set them.
+var (
+	errOut   io.Writer = os.Stderr
+	errWidth int
+)
+
 // reporter builds the diagnostic reporter for a command.
 func (o outputFlags) reporter(command string) *diag.Reporter {
 	jsonFlag, color := false, "auto"
@@ -38,7 +45,8 @@ func (o outputFlags) reporter(command string) *diag.Reporter {
 	wd, _ := os.Getwd()
 	return &diag.Reporter{
 		Settings: diag.Resolve(jsonFlag, color, os.Getenv, diag.IsTerminal(os.Stderr)),
-		W:        os.Stderr,
+		W:        errOut,
+		Width:    errWidth,
 		Dir:      wd,
 		Command:  command,
 		Start:    time.Now(),
@@ -76,7 +84,7 @@ func cmdExplain(args []string) int {
 	}
 	c := diag.Lookup(fs.Arg(0))
 	if c == nil {
-		return rep.Usage(fmt.Sprintf("marmot explain: unknown code %q (marmot explain lists all)", fs.Arg(0)))
+		return rep.Usage("unknown error code `"+fs.Arg(0)+"`", "run `marmot explain` for the list of codes")
 	}
 	if rep.Mode == diag.ModeJSON {
 		enc := json.NewEncoder(os.Stdout)

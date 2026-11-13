@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
@@ -60,19 +60,68 @@ func mirrorFlags(fs *flag.FlagSet, pf *pflag.FlagSet) {
 	})
 }
 
-// usageError reports a bad command line: the flag package's message, then
-// where to look. It returns the exit code 2.
+// usageError reports a bad command line found by the flag package of
+// marmot CMD: an unknown flag (with the closest one), a flag without its
+// value, a value that does not parse. It returns the exit code 2.
 func usageError(cmd string, err error) int {
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
-	of := outputFlags{}
-	rep := of.reporter(cmd)
-	msg := err.Error()
-	if rep.Mode != diag.ModeJSON {
-		msg += "\nrun `marmot " + cmd + " -h` for the flags"
+	rep := (outputFlags{}).reporter(cmd)
+	msg, help := flagUsage(cmd, err.Error())
+	return rep.Usage(msg, help...)
+}
+
+var (
+	reFlagUndefined = regexp.MustCompile(`^flag provided but not defined: -+(\S+)$`)
+	reFlagNoValue   = regexp.MustCompile(`^flag needs an argument: -+(\S+)$`)
+	reFlagBadValue  = regexp.MustCompile(`^invalid (?:boolean )?value "(.*)" for (?:flag )?-+(\S+?):? (.*)$`)
+)
+
+// flagUsage turns a flag package error of marmot CMD into the message and
+// help lines of its diagnostic.
+func flagUsage(cmd, msg string) (string, []string) {
+	flags := "run `marmot " + cmd + " -h` for the flags"
+	if m := reFlagUndefined.FindStringSubmatch(msg); m != nil {
+		var help []string
+		if c := diag.Closest(m[1], commandFlags(cmd)); c != "" {
+			help = append(help, "the closest flag is `-"+c+"`")
+		}
+		return "unknown flag `-" + m[1] + "`", append(help, flags)
 	}
-	return rep.Usage(msg)
+	if m := reFlagNoValue.FindStringSubmatch(msg); m != nil {
+		return "flag `-" + m[1] + "` needs a value", []string{"write it after the flag: `-" + m[1] + " VALUE` or `-" + m[1] + "=VALUE`", flags}
+	}
+	if m := reFlagBadValue.FindStringSubmatch(msg); m != nil {
+		return "invalid value `" + m[1] + "` for flag `-" + m[2] + "`: " + m[3], []string{flags}
+	}
+	return msg, []string{flags}
+}
+
+// commandFlags lists the flag names of marmot CMD (help excluded).
+func commandFlags(cmd string) []string {
+	var names []string
+	for _, c := range newRoot().Commands() {
+		if c.Name() != cmd {
+			continue
+		}
+		c.Flags().VisitAll(func(f *pflag.Flag) {
+			if f.Name != "help" {
+				names = append(names, f.Name)
+			}
+		})
+	}
+	return names
+}
+
+// argError reports a missing or extra argument of marmot CMD (got holds
+// the arguments given; want names the one it takes) with the usage line.
+func argError(rep *diag.Reporter, cmd, usage string, got []string, want string) int {
+	help := []string{"the usage is `" + usage + "`", "run `marmot " + cmd + " -h` for the flags"}
+	if len(got) == 0 {
+		return rep.Usage("missing argument `"+want+"`", help...)
+	}
+	return rep.Usage("unexpected argument `"+got[len(got)-1]+"`", help...)
 }
 
 func newRoot() *cobra.Command {
@@ -215,38 +264,76 @@ func run(args []string) int {
 	root := newRoot()
 	root.SetArgs(args)
 	rep := (outputFlags{}).reporter("marmot")
-	styled := rep.Mode == diag.ModeHuman && diag.IsTerminal(os.Stdout)
 	var err error
-	if styled {
+	if rep.Mode == diag.ModeHuman && diag.IsTerminal(os.Stdout) {
+		// fang styles the help; errors are marmot's own diagnostics.
 		fang.GoStyleFlags = true
-		err = fang.Execute(context.Background(), root, fang.WithVersion(version), fang.WithErrorHandler(fangError))
+		err = fang.Execute(context.Background(), root, fang.WithVersion(version), fang.WithErrorHandler(func(io.Writer, fang.Styles, error) {}))
 	} else {
 		err = root.ExecuteContext(context.Background())
-		if err != nil {
-			return usageErrorText(rep, err)
-		}
 	}
 	if err != nil {
-		return 2
+		msg, help := cobraUsage(root, args, err.Error())
+		return rep.Usage(msg, help...)
 	}
 	return exitCode
 }
 
-// fangError renders cobra's errors (unknown command, bad arguments) on a
-// terminal: the message and the command that helps.
-func fangError(w io.Writer, styles fang.Styles, err error) {
-	msg := err.Error()
-	fmt.Fprintf(w, "%s %s\n", styles.ErrorHeader.Render(" ERROR "), msg)
-	if strings.Contains(msg, "unknown command") {
-		fmt.Fprintln(w, "run `marmot --help` for the commands")
-	}
-}
+var (
+	reUnknownCommand = regexp.MustCompile(`^unknown command "([^"]*)" for "([^"]*)"`)
+	reUnknownFlag    = regexp.MustCompile(`^unknown flag: (\S+)`)
+	reUnknownShort   = regexp.MustCompile(`^unknown shorthand flag: '.' in (\S+)`)
+)
 
-// usageErrorText reports a cobra error without styling.
-func usageErrorText(rep *diag.Reporter, err error) int {
-	msg := err.Error()
-	if rep.Mode != diag.ModeJSON && strings.Contains(msg, "unknown command") {
-		msg += "\nrun `marmot --help` for the commands"
+// cobraUsage turns an error of cobra's (an unknown command or flag of
+// marmot itself; args is the command line) into the message and help
+// lines of its diagnostic.
+func cobraUsage(root *cobra.Command, args []string, msg string) (string, []string) {
+	if m := reUnknownCommand.FindStringSubmatch(msg); m != nil {
+		var names []string
+		for _, c := range root.Commands() {
+			if c.IsAvailableCommand() || c.Name() == "help" {
+				names = append(names, c.Name())
+				names = append(names, c.Aliases...)
+			}
+		}
+		var help []string
+		if c := diag.Closest(m[1], names); c != "" {
+			help = append(help, "the closest command is `"+c+"`")
+		}
+		return "unknown command `" + m[1] + "`", append(help, "run `marmot --help` for the commands")
 	}
-	return rep.Usage("marmot: " + msg)
+	m := reUnknownFlag.FindStringSubmatch(msg)
+	if m == nil {
+		// cobra names what is left after the shorthands it took: "-ersion"
+		// for -version. The argument as typed ends with it.
+		if m = reUnknownShort.FindStringSubmatch(msg); m != nil {
+			for _, a := range args {
+				if strings.HasPrefix(a, "-") && strings.HasSuffix(a, m[1][1:]) {
+					m[1] = a
+					break
+				}
+			}
+		}
+	}
+	if m != nil {
+		var help, names []string
+		name := strings.TrimLeft(m[1], "-")
+		root.Flags().VisitAll(func(f *pflag.Flag) { names = append(names, f.Name) })
+		if root.Flags().Lookup(name) != nil {
+			help = append(help, "marmot's own flags take two dashes: `--"+name+"`")
+		} else if c := diag.Closest(name, names); c != "" {
+			help = append(help, "the closest flag is `--"+c+"`")
+		}
+		for _, f := range commandFlags("build") {
+			if f == name {
+				// marmot -o app build: a build flag before the command.
+				help = append(help, "`-"+name+"` is a flag of `marmot build`; it goes after the command: `marmot build -"+name+" ...`")
+				break
+			}
+		}
+		return "unknown flag `" + m[1] + "`", append(help, "run `marmot --help` for the commands and their flags")
+	}
+	first, _, _ := strings.Cut(msg, "\n")
+	return first, []string{"run `marmot --help` for the commands"}
 }

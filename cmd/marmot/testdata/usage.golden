@@ -1,0 +1,265 @@
+== marmot plya (human, width 60): exit 2
+error[M0017]: unknown command `plya`
+  = help: the closest command is `play`
+  = help: run `marmot --help` for the commands
+
+== marmot plya (human, width 80): exit 2
+error[M0017]: unknown command `plya`
+  = help: the closest command is `play`
+  = help: run `marmot --help` for the commands
+
+== marmot plya (human, width 120): exit 2
+error[M0017]: unknown command `plya`
+  = help: the closest command is `play`
+  = help: run `marmot --help` for the commands
+
+== marmot pley main.go (human, width 60): exit 2
+error[M0017]: unknown command `pley`
+  = help: the closest command is `play`
+  = help: run `marmot --help` for the commands
+
+== marmot pley main.go (human, width 80): exit 2
+error[M0017]: unknown command `pley`
+  = help: the closest command is `play`
+  = help: run `marmot --help` for the commands
+
+== marmot pley main.go (human, width 120): exit 2
+error[M0017]: unknown command `pley`
+  = help: the closest command is `play`
+  = help: run `marmot --help` for the commands
+
+== marmot zzz (human, width 60): exit 2
+error[M0017]: unknown command `zzz`
+  = help: run `marmot --help` for the commands
+
+== marmot zzz (human, width 80): exit 2
+error[M0017]: unknown command `zzz`
+  = help: run `marmot --help` for the commands
+
+== marmot zzz (human, width 120): exit 2
+error[M0017]: unknown command `zzz`
+  = help: run `marmot --help` for the commands
+
+== marmot --foo (human, width 60): exit 2
+error[M0017]: unknown flag `--foo`
+  = help: run `marmot --help` for the commands and their
+          flags
+
+== marmot --foo (human, width 80): exit 2
+error[M0017]: unknown flag `--foo`
+  = help: run `marmot --help` for the commands and their flags
+
+== marmot --foo (human, width 120): exit 2
+error[M0017]: unknown flag `--foo`
+  = help: run `marmot --help` for the commands and their flags
+
+== marmot --verison (human, width 60): exit 2
+error[M0017]: unknown flag `--verison`
+  = help: the closest flag is `--version`
+  = help: run `marmot --help` for the commands and their
+          flags
+
+== marmot --verison (human, width 80): exit 2
+error[M0017]: unknown flag `--verison`
+  = help: the closest flag is `--version`
+  = help: run `marmot --help` for the commands and their flags
+
+== marmot --verison (human, width 120): exit 2
+error[M0017]: unknown flag `--verison`
+  = help: the closest flag is `--version`
+  = help: run `marmot --help` for the commands and their flags
+
+== marmot -version (human, width 60): exit 2
+error[M0017]: unknown flag `-version`
+  = help: marmot's own flags take two dashes: `--version`
+  = help: run `marmot --help` for the commands and their
+          flags
+
+== marmot -version (human, width 80): exit 2
+error[M0017]: unknown flag `-version`
+  = help: marmot's own flags take two dashes: `--version`
+  = help: run `marmot --help` for the commands and their flags
+
+== marmot -version (human, width 120): exit 2
+error[M0017]: unknown flag `-version`
+  = help: marmot's own flags take two dashes: `--version`
+  = help: run `marmot --help` for the commands and their flags
+
+== marmot -release (human, width 60): exit 2
+error[M0017]: unknown flag `-release`
+  = help: `-release` is a flag of `marmot build`; it goes
+          after the command: `marmot build -release ...`
+  = help: run `marmot --help` for the commands and their
+          flags
+
+== marmot -release (human, width 80): exit 2
+error[M0017]: unknown flag `-release`
+  = help: `-release` is a flag of `marmot build`; it goes after the command:
+          `marmot build -release ...`
+  = help: run `marmot --help` for the commands and their flags
+
+== marmot -release (human, width 120): exit 2
+error[M0017]: unknown flag `-release`
+  = help: `-release` is a flag of `marmot build`; it goes after the command:
+          `marmot build -release ...`
+  = help: run `marmot --help` for the commands and their flags
+
+== marmot build -relase (human, width 60): exit 2
+error[M0017]: unknown flag `-relase`
+  = help: the closest flag is `-release`
+  = help: run `marmot build -h` for the flags
+
+== marmot build -relase (human, width 80): exit 2
+error[M0017]: unknown flag `-relase`
+  = help: the closest flag is `-release`
+  = help: run `marmot build -h` for the flags
+
+== marmot build -relase (human, width 120): exit 2
+error[M0017]: unknown flag `-relase`
+  = help: the closest flag is `-release`
+  = help: run `marmot build -h` for the flags
+
+== marmot build -o (human, width 60): exit 2
+error[M0017]: flag `-o` needs a value
+  = help: write it after the flag: `-o VALUE` or `-o=VALUE`
+  = help: run `marmot build -h` for the flags
+
+== marmot build -o (human, width 80): exit 2
+error[M0017]: flag `-o` needs a value
+  = help: write it after the flag: `-o VALUE` or `-o=VALUE`
+  = help: run `marmot build -h` for the flags
+
+== marmot build -o (human, width 120): exit 2
+error[M0017]: flag `-o` needs a value
+  = help: write it after the flag: `-o VALUE` or `-o=VALUE`
+  = help: run `marmot build -h` for the flags
+
+== marmot size (human, width 60): exit 2
+error[M0017]: missing argument `BINARY`
+  = help: the usage is
+          `marmot size [-n N] [-pkg PATH] [-why FUNC] BINARY`
+  = help: run `marmot size -h` for the flags
+
+== marmot size (human, width 80): exit 2
+error[M0017]: missing argument `BINARY`
+  = help: the usage is `marmot size [-n N] [-pkg PATH] [-why FUNC] BINARY`
+  = help: run `marmot size -h` for the flags
+
+== marmot size (human, width 120): exit 2
+error[M0017]: missing argument `BINARY`
+  = help: the usage is `marmot size [-n N] [-pkg PATH] [-why FUNC] BINARY`
+  = help: run `marmot size -h` for the flags
+
+== marmot size a b (human, width 60): exit 2
+error[M0017]: unexpected argument `b`
+  = help: the usage is
+          `marmot size [-n N] [-pkg PATH] [-why FUNC] BINARY`
+  = help: run `marmot size -h` for the flags
+
+== marmot size a b (human, width 80): exit 2
+error[M0017]: unexpected argument `b`
+  = help: the usage is `marmot size [-n N] [-pkg PATH] [-why FUNC] BINARY`
+  = help: run `marmot size -h` for the flags
+
+== marmot size a b (human, width 120): exit 2
+error[M0017]: unexpected argument `b`
+  = help: the usage is `marmot size [-n N] [-pkg PATH] [-why FUNC] BINARY`
+  = help: run `marmot size -h` for the flags
+
+== marmot size -n x a (human, width 60): exit 2
+error[M0017]: invalid value `x` for flag `-n`: parse error
+  = help: run `marmot size -h` for the flags
+
+== marmot size -n x a (human, width 80): exit 2
+error[M0017]: invalid value `x` for flag `-n`: parse error
+  = help: run `marmot size -h` for the flags
+
+== marmot size -n x a (human, width 120): exit 2
+error[M0017]: invalid value `x` for flag `-n`: parse error
+  = help: run `marmot size -h` for the flags
+
+== marmot cgo (human, width 60): exit 2
+error[M0017]: missing subcommand `show`
+  = help: the usage is `marmot cgo show [-go] [-c] FILE.go`
+
+== marmot cgo (human, width 80): exit 2
+error[M0017]: missing subcommand `show`
+  = help: the usage is `marmot cgo show [-go] [-c] FILE.go`
+
+== marmot cgo (human, width 120): exit 2
+error[M0017]: missing subcommand `show`
+  = help: the usage is `marmot cgo show [-go] [-c] FILE.go`
+
+== marmot cgo show (human, width 60): exit 2
+error[M0017]: missing argument `FILE.go`
+  = help: the usage is `marmot cgo show [-go] [-c] FILE.go`
+  = help: run `marmot cgo -h` for the flags
+
+== marmot cgo show (human, width 80): exit 2
+error[M0017]: missing argument `FILE.go`
+  = help: the usage is `marmot cgo show [-go] [-c] FILE.go`
+  = help: run `marmot cgo -h` for the flags
+
+== marmot cgo show (human, width 120): exit 2
+error[M0017]: missing argument `FILE.go`
+  = help: the usage is `marmot cgo show [-go] [-c] FILE.go`
+  = help: run `marmot cgo -h` for the flags
+
+== marmot sysroot ad linux/arm64 (human, width 60): exit 2
+error[M0017]: unknown subcommand `ad` of `marmot sysroot`
+  = help: the closest subcommand is `add`
+  = help: the usage is
+          `marmot sysroot add|remove [-libc musl] GOOS/GOARCH`
+          or `marmot sysroot list`; the targets are
+          linux/amd64, linux/arm64
+
+== marmot sysroot ad linux/arm64 (human, width 80): exit 2
+error[M0017]: unknown subcommand `ad` of `marmot sysroot`
+  = help: the closest subcommand is `add`
+  = help: the usage is `marmot sysroot add|remove [-libc musl] GOOS/GOARCH` or
+          `marmot sysroot list`; the targets are linux/amd64, linux/arm64
+
+== marmot sysroot ad linux/arm64 (human, width 120): exit 2
+error[M0017]: unknown subcommand `ad` of `marmot sysroot`
+  = help: the closest subcommand is `add`
+  = help: the usage is `marmot sysroot add|remove [-libc musl] GOOS/GOARCH` or
+          `marmot sysroot list`; the targets are linux/amd64, linux/arm64
+
+== marmot explain M9999 (human, width 60): exit 2
+error[M0017]: unknown error code `M9999`
+  = help: run `marmot explain` for the list of codes
+
+== marmot explain M9999 (human, width 80): exit 2
+error[M0017]: unknown error code `M9999`
+  = help: run `marmot explain` for the list of codes
+
+== marmot explain M9999 (human, width 120): exit 2
+error[M0017]: unknown error code `M9999`
+  = help: run `marmot explain` for the list of codes
+
+== marmot plya (json, width 0): exit 2
+{"schema":1,"kind":"diagnostic","severity":"error","code":"M0017","message":"unknown command `plya`","span":{"file":"","line":0,"col":0,"endLine":0,"endCol":0},"help":["the closest command is `play`","run `marmot --help` for the commands"],"explain":"marmot explain M0017"}
+{"kind":"result","schema":1,"command":"marmot","ok":false,"errors":1,"warnings":0,"durationMs":0,"exitCode":2}
+
+== marmot plya (plain, width 0): exit 2
+unknown command `plya`
+	help: the closest command is `play`
+	help: run `marmot --help` for the commands
+
+== marmot pley main.go (json, width 0): exit 2
+{"schema":1,"kind":"diagnostic","severity":"error","code":"M0017","message":"unknown command `pley`","span":{"file":"","line":0,"col":0,"endLine":0,"endCol":0},"help":["the closest command is `play`","run `marmot --help` for the commands"],"explain":"marmot explain M0017"}
+{"kind":"result","schema":1,"command":"marmot","ok":false,"errors":1,"warnings":0,"durationMs":0,"exitCode":2}
+
+== marmot pley main.go (plain, width 0): exit 2
+unknown command `pley`
+	help: the closest command is `play`
+	help: run `marmot --help` for the commands
+
+== marmot zzz (json, width 0): exit 2
+{"schema":1,"kind":"diagnostic","severity":"error","code":"M0017","message":"unknown command `zzz`","span":{"file":"","line":0,"col":0,"endLine":0,"endCol":0},"help":["run `marmot --help` for the commands"],"explain":"marmot explain M0017"}
+{"kind":"result","schema":1,"command":"marmot","ok":false,"errors":1,"warnings":0,"durationMs":0,"exitCode":2}
+
+== marmot zzz (plain, width 0): exit 2
+unknown command `zzz`
+	help: run `marmot --help` for the commands
+

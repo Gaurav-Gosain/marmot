@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Gaurav-Gosain/marmot/internal/diag"
 	"github.com/Gaurav-Gosain/marmot/internal/driver"
 	"github.com/Gaurav-Gosain/marmot/internal/sysroot"
 )
@@ -13,17 +14,26 @@ import (
 // [GOOS/GOARCH]: the C headers and libraries of a target for cross
 // compiling cgo packages and linking (-libc musl: for -static).
 func cmdSysroot(args []string) int {
+	usage := func(msg string, help ...string) int {
+		help = append(help, "the usage is `marmot sysroot add|remove [-libc musl] GOOS/GOARCH` or `marmot sysroot list`; the targets are "+strings.Join(sysroot.Supported(), ", "))
+		return (outputFlags{}).reporter("sysroot").Usage(msg, help...)
+	}
+	if len(args) == 0 {
+		return usage("missing subcommand `add`, `list` or `remove`")
+	}
+	switch args[0] {
+	case "add", "list", "remove":
+	default:
+		var help []string
+		if c := diag.Closest(args[0], []string{"add", "list", "remove"}); c != "" {
+			help = append(help, "the closest subcommand is `"+c+"`")
+		}
+		return usage("unknown subcommand `"+args[0]+"` of `marmot sysroot`", help...)
+	}
 	root, err := driver.FindRoot()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "marmot:", err)
 		return 2
-	}
-	usage := func() int {
-		fmt.Fprintf(os.Stderr, "usage: marmot sysroot add|remove [-libc musl] GOOS/GOARCH, or marmot sysroot list (targets: %s)\n", strings.Join(sysroot.Supported(), ", "))
-		return 2
-	}
-	if len(args) == 0 {
-		return usage()
 	}
 	musl := false
 	if len(args) >= 3 && args[1] == "-libc" {
@@ -44,11 +54,20 @@ func cmdSysroot(args []string) int {
 		goos, goarch, ok := strings.Cut(args[1], "/")
 		return goos, goarch, ok
 	}
+	badTarget := func() int {
+		if len(args) < 2 {
+			return usage("missing argument `GOOS/GOARCH`")
+		}
+		if len(args) > 2 {
+			return usage("unexpected argument `" + args[2] + "`")
+		}
+		return usage("`" + args[1] + "` is not a GOOS/GOARCH target")
+	}
 	switch args[0] {
 	case "add":
 		goos, goarch, ok := target()
 		if !ok {
-			return usage()
+			return badTarget()
 		}
 		log := func(s string) { fmt.Fprintln(os.Stderr, s) }
 		var m *sysroot.Manifest
@@ -66,7 +85,7 @@ func cmdSysroot(args []string) int {
 	case "remove":
 		goos, goarch, ok := target()
 		if !ok {
-			return usage()
+			return badTarget()
 		}
 		if musl {
 			goarch = sysroot.MuslArch(goarch)
@@ -88,7 +107,7 @@ func cmdSysroot(args []string) int {
 			}
 		}
 	default:
-		return usage()
+		panic("unreachable")
 	}
 	return 0
 }
