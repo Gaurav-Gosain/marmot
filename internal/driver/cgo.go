@@ -162,14 +162,21 @@ var cgoTriples = map[string]string{
 // needs its C headers and libraries: MARMOT_SYSROOT names that tree (a copy
 // of the target's /usr/include and /usr/lib is enough).
 func (b *build) cgoTargetFlags() ([]string, error) {
-	if !b.cross() {
+	if !b.cross() && !b.cfg.Static {
 		return nil, nil
 	}
-	triple, ok := cgoTriples[b.goos+"/"+b.goarch]
-	if !ok {
+	triple := b.cTriple()
+	if triple == "" {
 		return nil, fmt.Errorf("cgo: no C target for %s/%s", b.goos, b.goarch)
 	}
 	flags := []string{"--target=" + triple}
+	if b.cfg.Static {
+		sr := b.crossSysroot()
+		if sr == "" {
+			return nil, fmt.Errorf("cgo: -static needs the musl sysroot: run marmot sysroot add -libc musl %s/%s", b.goos, b.goarch)
+		}
+		return append(flags, "--sysroot="+sr), nil
+	}
 	switch sr := os.Getenv("MARMOT_SYSROOT"); {
 	case sr != "":
 		flags = append(flags, "--sysroot="+sr)

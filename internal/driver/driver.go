@@ -46,6 +46,7 @@ type Config struct {
 	PGOGen   bool   // instrument for profile generation
 	PGO      string // indexed profile to optimize with
 	Strip    bool   // -s: no pc table
+	Static   bool   // -static: a static executable (Linux: musl)
 	Trace    string // -trace=full: release builds keep the inlined frames of each call site apart
 	Tags     []string
 	Patterns []string
@@ -241,6 +242,9 @@ func (b *build) run1() (string, error) {
 		return "", err
 	}
 	b.goos, b.goarch = goos, goarch
+	if cfg.Static && goos != "linux" {
+		return "", fmt.Errorf("-static links Linux executables (with musl); %s executables link the system C library dynamically: add -target linux/%s", goos, goarch)
+	}
 	stamp := ""
 	if cfg.Output != "" && cfg.Emit == "exe" && !cfg.Test {
 		stamp = b.buildStamp(goos, goarch)
@@ -629,6 +633,12 @@ func (b *build) link(objs []string, out string) error {
 	if !fileExists(rt) {
 		return fmt.Errorf("%s is missing; run make rtcore", rt)
 	}
+	if b.cfg.Static {
+		if ok, err := b.linkCross(objs, rt, out); ok {
+			return err
+		}
+		return fmt.Errorf("-static needs the musl sysroot of %s/%s and ld.lld: %s", b.goos, b.goarch, b.crossLinkNote())
+	}
 	if b.cross() {
 		if ok, err := b.linkCross(objs, rt, out); ok {
 			return err // an executable for the target, linked here
@@ -866,6 +876,10 @@ func (b *build) cross() bool { return b.goos != runtime.GOOS || b.goarch != runt
 
 // rtLib returns the runtime core library file for the target.
 func (b *build) rtLib(name string) string {
+	if b.cfg.Static {
+		// The runtime of static builds is compiled against musl.
+		return filepath.Join(b.cfg.Root, "build", "lib", b.goos+"-"+b.goarch+"-musl", name)
+	}
 	if b.cross() {
 		return filepath.Join(b.cfg.Root, "build", "lib", b.goos+"-"+b.goarch, name)
 	}

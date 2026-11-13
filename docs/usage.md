@@ -54,6 +54,7 @@ Release builds never use tier 0.
 | `-release` | Release mode: whole program optimization at `-O3`. |
 | `-O level` | Optimization level: `0`, `1`, `2`, `3`, `s` or `z`. `z` gives the smallest binary. |
 | `-s` | Leave out file and line tables. Smaller binary, but panics show no source lines. |
+| `-static` | Link a static Linux executable with musl (needs `marmot sysroot add -libc musl linux/ARCH`). |
 | `-target triple` | Build for another platform, for example `linux/amd64`. |
 | `-tags a,b` | Build tags. |
 | `-pgo-gen`, `-pgo file` | Profile guided optimization: build an instrumented binary, run it, then build again with the profile. |
@@ -273,6 +274,19 @@ against Debian's package index, into marmot's cache (about 20 MB). After that `m
 installed. `marmot sysroot list` shows what is there and `marmot sysroot remove` deletes one.
 `MARMOT_SYSROOT` points at another sysroot instead (a copy of the target's `usr/include` and
 `usr/lib`).
+
+`-static` links a fully static Linux executable, with musl in place of glibc:
+
+```sh
+marmot sysroot add -libc musl linux/amd64     # builds musl 1.2.5 from source with clang, once
+marmot build -static -target linux/amd64 -o app .
+```
+
+The musl sysroot is musl compiled from its release source (checked against its SHA256) with
+the kernel headers of the glibc sysroot, which is added first when missing. The executable
+needs no C library on the target machine, cgo packages included; their C is compiled against
+musl. It links with `ld.lld` (`lld` from Homebrew on macOS). `-static` is for Linux targets
+only.
 
 ## Bindings from C headers
 

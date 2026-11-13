@@ -20,6 +20,12 @@ func (b *build) crossSysroot() string {
 	if b.goos != "linux" {
 		return ""
 	}
+	if b.cfg.Static {
+		if sysroot.Installed(b.cfg.Root, b.goos, sysroot.MuslArch(b.goarch)) {
+			return sysroot.Dir(b.cfg.Root, b.goos, sysroot.MuslArch(b.goarch))
+		}
+		return ""
+	}
 	if sr := os.Getenv("MARMOT_SYSROOT"); sr != "" {
 		return sr
 	}
@@ -46,18 +52,21 @@ func ldLLD() string {
 // cannot (no sysroot or no ld.lld).
 func (b *build) linkCross(objs []string, rt, out string) (ok bool, err error) {
 	sr, lld := b.crossSysroot(), ldLLD()
-	triple := cgoTriples[b.goos+"/"+b.goarch]
+	triple := b.cTriple()
 	if sr == "" || lld == "" || triple == "" {
 		return false, nil
 	}
 	link := func(extra []string, o string) error {
 		args := []string{"--target=" + triple, "--sysroot=" + sr, "-fuse-ld=" + lld}
-		if g := sysroot.GCCDir(sr); g != "" {
+		if g := b.gccDir(sr); g != "" {
 			args = append(args, "--gcc-install-dir="+g)
 		}
 		args = append(args, "-o", o)
 		args = append(args, objs...)
 		args = append(args, rt, "-lpthread", "-Wl,--gc-sections", "-Wl,-z,start-stop-gc")
+		if b.cfg.Static {
+			args = append(args, "-static")
+		}
 		if !b.wantPcln() {
 			args = append(args, "-s")
 		}
@@ -76,10 +85,33 @@ func (b *build) linkCross(objs []string, rt, out string) (ok bool, err error) {
 func (b *build) crossLinkNote() string {
 	var why []string
 	if b.crossSysroot() == "" {
-		why = append(why, "marmot sysroot add "+b.goos+"/"+b.goarch)
+		if b.cfg.Static {
+			why = append(why, "marmot sysroot add -libc musl "+b.goos+"/"+b.goarch)
+		} else {
+			why = append(why, "marmot sysroot add "+b.goos+"/"+b.goarch)
+		}
 	}
 	if ldLLD() == "" {
 		why = append(why, "install ld.lld (brew install lld@22)")
 	}
 	return strings.Join(why, " and ")
+}
+
+// cTriple is the clang target of the build's C and link: the musl triple
+// for -static.
+func (b *build) cTriple() string {
+	t := cgoTriples[b.goos+"/"+b.goarch]
+	if b.cfg.Static {
+		t = strings.Replace(t, "-linux-gnu", "-linux-musl", 1)
+	}
+	return t
+}
+
+// gccDir is gcc's runtime directory (crtbegin.o, libgcc) for the link: in
+// the sysroot, or for a musl sysroot in the glibc one it was made from.
+func (b *build) gccDir(sr string) string {
+	if g := sysroot.GCCDir(sr); g != "" {
+		return g
+	}
+	return sysroot.GCCDir(sysroot.Dir(b.cfg.Root, b.goos, b.goarch))
 }
