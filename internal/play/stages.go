@@ -241,7 +241,7 @@ func llvmLines(text, main string) (string, []int) {
 	var out []string
 	var lines []int
 	for _, l := range strings.Split(text, "\n") {
-		if strings.HasPrefix(l, "!") || strings.HasPrefix(l, "attributes #") || strings.HasPrefix(l, "source_filename") {
+		if strings.HasPrefix(l, "!") || strings.HasPrefix(l, "attributes #") || strings.HasPrefix(l, "source_filename") || strings.HasPrefix(l, "; ModuleID") {
 			continue
 		}
 		n := 0

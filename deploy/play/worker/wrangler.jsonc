@@ -1,0 +1,30 @@
+// The Worker in front of the playground's compile service: per-IP rate limits, CORS for the
+// docs site, request checks, and the container instances that compile.
+// Set ALLOWED_ORIGINS (comma separated) at deploy time; with SERVICE_URL set (local
+// development) requests go there instead of to a container.
+{
+  "name": "marmot-play",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-10-01",
+  "containers": [
+    {
+      "class_name": "PlayService",
+      "image": "../Dockerfile",
+      "image_build_context": "../../..",
+      "max_instances": 3,
+      "instance_type": "standard"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "PLAY", "class_name": "PlayService" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PlayService"] }],
+  // 20 compiles a minute per address, and a burst cap of 5 in 10 seconds.
+  "ratelimits": [
+    { "name": "PER_MINUTE", "namespace_id": "4201", "simple": { "limit": 20, "period": 60 } },
+    { "name": "PER_BURST", "namespace_id": "4202", "simple": { "limit": 5, "period": 10 } }
+  ],
+  "vars": { "ALLOWED_ORIGINS": "", "INSTANCES": "3" },
+  "dev": { "enable_containers": false },
+  "observability": { "enabled": true }
+}

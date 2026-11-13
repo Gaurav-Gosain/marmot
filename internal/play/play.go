@@ -45,6 +45,8 @@ import (
 	"time"
 
 	"golang.org/x/tools/txtar"
+
+	"github.com/Gaurav-Gosain/marmot/internal/diag"
 )
 
 //go:embed static
@@ -89,6 +91,9 @@ type Server struct {
 	queue chan struct{}
 	mu    sync.Mutex
 	cache map[string]*Response
+	// lastHuman: the human form of the last diagnostics of each request
+	// directory.
+	lastHuman sync.Map
 }
 
 // New returns a server.
@@ -146,6 +151,7 @@ type Response struct {
 	OK          bool             `json:"ok"` // the program builds
 	Error       string           `json:"error,omitempty"`
 	Diagnostics []Diagnostic     `json:"diagnostics"`
+	Human       string           `json:"human,omitempty"` // the messages as marmot prints them: ANSI colours, 72 columns
 	Stages      map[string]Stage `json:"stages"`
 	Size        *SizeReport      `json:"size,omitempty"`
 	Wasm        string           `json:"wasm,omitempty"` // base64
@@ -325,6 +331,11 @@ func (s *Server) Compile(ctx context.Context, q *Request) (*Response, error) {
 	res := &Response{Stages: map[string]Stage{}, Diagnostics: []Diagnostic{}}
 	if bad := checkImports(files); len(bad) > 0 {
 		res.Diagnostics = bad
+		var b strings.Builder
+		for _, d := range bad {
+			fmt.Fprintf(&b, "\x1b[1;31merror\x1b[0m: %s\n --> %s:%d:%d\n", d.Message, d.File, d.Line, d.Col)
+		}
+		res.Human = b.String()
 		res.Millis = time.Since(t0).Milliseconds()
 		return res, nil
 	}
@@ -347,6 +358,9 @@ func (s *Server) Compile(ctx context.Context, q *Request) (*Response, error) {
 	}
 	diags, other, ok := s.build(ctx, dir, q.Mode, exeFlags...)
 	res.Diagnostics, res.OK = diags, ok
+	if h, ok := s.lastHuman.LoadAndDelete(dir); ok {
+		res.Human = h.(string)
+	}
 	if !ok {
 		res.Error = other
 		res.Millis = time.Since(t0).Milliseconds()
@@ -472,6 +486,9 @@ func (s *Server) build(ctx context.Context, dir, mode string, extra ...string) (
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	out, err := cmd.CombinedOutput()
 	diags, other := parseDiagnostics(out)
+	if len(diags) > 0 {
+		s.lastHuman.Store(dir, humanText(out, dir))
+	}
 	if ctx.Err() != nil {
 		other = strings.TrimSpace(other + "\nthe compile took too long")
 	}
@@ -519,6 +536,25 @@ func parseDiagnostics(out []byte) ([]Diagnostic, string) {
 	return diags, strings.Join(other, "\n")
 }
 
+// humanText renders marmot's JSON diagnostics as it prints them for a
+// person, in colour and 72 columns wide, with paths relative to dir.
+func humanText(out []byte, dir string) string {
+	var ds []diag.Diagnostic
+	for _, l := range strings.Split(string(out), "\n") {
+		var d diag.Diagnostic
+		if json.Unmarshal([]byte(l), &d) == nil && d.Kind == "diagnostic" {
+			ds = append(ds, d)
+		}
+	}
+	if len(ds) == 0 {
+		return ""
+	}
+	var b bytes.Buffer
+	h := &diag.Human{W: &b, Style: diag.Colors, Dir: dir, Width: 72}
+	h.Render(ds)
+	return strings.ReplaceAll(b.String(), dir+string(filepath.Separator), "")
+}
+
 // stage builds one stage in dir (where the program already builds).
 func (s *Server) stage(ctx context.Context, dir, mode, stage string) Stage {
 	main := filepath.Join(dir, "main.go")
@@ -564,6 +600,8 @@ func (s *Server) stage(ctx context.Context, dir, mode, stage string) Stage {
 		}
 	}
 	st.File = "main.go"
+	// No server paths in what goes out.
+	st.Text = strings.NewReplacer(dir+string(filepath.Separator), "", dir, ".", s.opt.Root, "$MARMOT").Replace(st.Text)
 	return st
 }
 
