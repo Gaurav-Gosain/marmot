@@ -1,0 +1,116 @@
+/* marmot, direction D (Lowering): design tokens for web pages.
+   Light is the default; dark applies with prefers-color-scheme or [data-theme="dark"].
+   Fonts are in ./fonts (Latin subset, OFL). The docs site (marmot-docs/app/global.css) uses
+   the same values. */
+
+@font-face {
+  font-family: 'Archivo';
+  src: url('fonts/Archivo.woff2') format('woff2');
+  font-weight: 100 900;
+  font-stretch: 62% 125%;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Fragment Mono';
+  src: url('fonts/FragmentMono.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+
+:root {
+  /* type: one family, Archivo. Display is condensed and heavy, text is normal width. */
+  --font-sans: 'Archivo', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-mono: 'Fragment Mono', ui-monospace, SFMono-Regular, Menlo, monospace; /* code only */
+  --display-stretch: 64%;   /* font-stretch for headings */
+  --display-weight: 800;
+  --text-weight: 430;
+  --text-xs: 0.8125rem;     /* 13 px: captions, code */
+  --text-sm: 0.875rem;      /* 14 px */
+  --text-base: 1rem;        /* 16 px, line-height 1.65 */
+  --text-lg: 1.1875rem;     /* 19 px: lead paragraphs */
+  --text-h3: 1.25rem;
+  --text-h2: 2.6rem;        /* condensed, line-height 1 */
+  --text-h1: clamp(2.6rem, 5vw, 4rem);
+  --text-hero: clamp(4.2rem, 7vw, 5.4rem);
+  --leading-text: 1.65;
+  --leading-display: 0.95;
+  --measure: 36rem;         /* prose line length, under 80 characters */
+
+  /* spacing, a 4 px base */
+  --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem; --space-4: 1rem;
+  --space-5: 1.25rem; --space-6: 1.5rem; --space-8: 2rem; --space-10: 2.5rem;
+  --space-14: 3.5rem; --space-20: 5rem;
+
+  /* radii: small and few. Code panes and buttons 4 px; nothing pill shaped. */
+  --radius: 4px;
+  --radius-sm: 2px;
+
+  /* colour, light */
+  --bg: #e8ecee;            /* fog: the page */
+  --surface: #f7f9fa;       /* snow: code panes, cards */
+  --surface-2: #dde3e6;     /* inline code, muted fills */
+  --border: #c9d2d8;
+  --text: #22303a;          /* granite */
+  --muted: #5d6b75;         /* scree, AA on bg and surface */
+  --accent: #1c6694;        /* glacier: links, primary buttons */
+  --on-accent: #ffffff;
+  --danger: #b4232f;
+  --lichen: #c6cf3c;        /* a highlight band behind marked code; never text on light */
+  --on-lichen: #22303a;
+  /* the stage ramp: the levels of lowering, Go to machine code */
+  --stage-1: #2a8fc4; --stage-2: #1c6694; --stage-3: #23557a; --stage-4: #283f55; --stage-5: #22303a;
+
+  /* terminal (ANSI) colours, for diagnostics drawn as text; all AA on --surface */
+  --term-bg: #f7f9fa;
+  --term-fg: #22303a;
+  --term-red: #b4232f; --term-green: #566b10; --term-yellow: #7f5c00; --term-blue: #1c6694;
+  --term-magenta: #7a3d9e; --term-cyan: #1a6f66; --term-dim-opacity: 0.62;
+
+  /* syntax colours, from the terminal palette so code and diagnostics match */
+  --code-keyword: #7a3d9e;  --code-string: #566b10; --code-number: #1a6f66;
+  --code-func: #1c6694;     --code-type: #23557a;   --code-comment: #5d6b75;
+  --code-punct: #22303a;    --code-error: #b4232f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #172027; --surface: #1e2a33; --surface-2: #24323c; --border: #33434f;
+    --text: #e3e8eb; --muted: #a3b0b8; --accent: #7fbde6; --on-accent: #172027;
+    --danger: #f08a8a; --lichen: #c6cf3c; --on-lichen: #22303a;
+    --stage-1: #a8d4f1; --stage-2: #7fbde6; --stage-3: #5a9cc8; --stage-4: #8fa9bf; --stage-5: #e3e8eb;
+    --term-bg: #1e2a33; --term-fg: #e3e8eb;
+    --term-red: #f08a8a; --term-green: #b9c94a; --term-yellow: #e5c46a; --term-blue: #7fbde6;
+    --term-magenta: #c7a3e6; --term-cyan: #74cfc6;
+    --code-keyword: #c7a3e6; --code-string: #b9c94a; --code-number: #74cfc6;
+    --code-func: #7fbde6;    --code-type: #a8d4f1;   --code-comment: #a3b0b8;
+    --code-punct: #e3e8eb;   --code-error: #f08a8a;
+  }
+}
+:root[data-theme='dark'] {
+  --bg: #172027; --surface: #1e2a33; --surface-2: #24323c; --border: #33434f;
+  --text: #e3e8eb; --muted: #a3b0b8; --accent: #7fbde6; --on-accent: #172027;
+  --danger: #f08a8a; --lichen: #c6cf3c; --on-lichen: #22303a;
+  --stage-1: #a8d4f1; --stage-2: #7fbde6; --stage-3: #5a9cc8; --stage-4: #8fa9bf; --stage-5: #e3e8eb;
+  --term-bg: #1e2a33; --term-fg: #e3e8eb;
+  --term-red: #f08a8a; --term-green: #b9c94a; --term-yellow: #e5c46a; --term-blue: #7fbde6;
+  --term-magenta: #c7a3e6; --term-cyan: #74cfc6;
+  --code-keyword: #c7a3e6; --code-string: #b9c94a; --code-number: #74cfc6;
+  --code-func: #7fbde6;    --code-type: #a8d4f1;   --code-comment: #a3b0b8;
+  --code-punct: #e3e8eb;   --code-error: #f08a8a;
+}
+
+/* base, if the page wants it */
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: var(--text-weight) var(--text-base) / var(--leading-text) var(--font-sans);
+}
+h1, h2 {
+  font-stretch: var(--display-stretch);
+  font-weight: var(--display-weight);
+  line-height: var(--leading-display);
+}
+code, pre, kbd { font-family: var(--font-mono); }
+a { color: var(--accent); }
+.mark { background: var(--lichen); color: var(--on-lichen); padding: 0 0.15em; border-radius: var(--radius-sm); }

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>marmot play</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="play.css">
+</head>
+<body>
+<header class="top">
+  <h1>marmot play</h1>
+  <div class="controls">
+    <div class="seg" id="modes" role="radiogroup" aria-label="Build mode"></div>
+    <button id="run" class="primary" title="Run (Cmd or Ctrl + Enter)">Run</button>
+  </div>
+</header>
+<main class="grid">
+  <section class="left">
+    <div class="pane editor-pane">
+      <div class="pane-head"><span>main.go</span><span id="status" class="muted"></span></div>
+      <div class="editor" id="editor">
+        <div class="gutter" id="gutter" aria-hidden="true"></div>
+        <div class="code-wrap">
+          <pre class="code-layer" id="layer" aria-hidden="true"></pre>
+          <textarea id="src" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Go source"></textarea>
+        </div>
+      </div>
+      <div id="diags" class="diags"></div>
+    </div>
+    <div class="pane output-pane">
+      <div class="pane-head"><span>output</span><span id="runinfo" class="muted"></span></div>
+      <pre id="output" class="output"><span class="muted">Run the program to see its output.</span></pre>
+    </div>
+  </section>
+  <section class="right pane">
+    <nav class="tabs" id="tabs" role="tablist"></nav>
+    <p class="note" id="note"></p>
+    <div class="stage" id="stage" tabindex="0"></div>
+  </section>
+</main>
+<script src="play.js"></script>
+</body>
+</html>
