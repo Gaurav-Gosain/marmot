@@ -1881,9 +1881,30 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     return mods[a].bitcode.size() > mods[b].bitcode.size();
   });
   std::atomic<unsigned> internalized{0};
+  // Large modules are split into groups after the whole-program rewrite
+  // (as in dev mode, splitModule): the groups compile in parallel and are
+  // cached by their bitcode, so an edit recompiles the groups it changed.
+  // The main module of cmd/marmot (4.3 MB of MLIR) took 3.1 s on one
+  // thread after every edit.
+  struct Group {
+    unsigned job, index;
+    std::string bitcode, key;
+  };
+  std::vector<Group> groups;
+  auto partPath = [&](unsigned i, unsigned g) {
+    return g == 0 ? jobs[i].out : jobs[i].out + "." + std::to_string(g) + ".o";
+  };
+  auto writeParts = [&](unsigned i, unsigned k, raw_ostream &es) {
+    std::string list;
+    for (unsigned g = 0; g < k; ++g)
+      list += partPath(i, g) + "\n";
+    if (!writeFile(jobs[i].out + ".parts", list))
+      es << jobs[i].out << ".parts: cannot write\n";
+  };
   parallel([&](unsigned i, raw_ostream &es, PhaseTimes &t) {
     ModuleInfo &info = mods[i];
     auto t0 = std::chrono::steady_clock::now();
+    sys::fs::remove(info.job.out + ".parts");
     // The key: this module's bitcode, which of its definitions are live, what
     // it internalizes, and the bitcode of every module it imports from.
     std::string key;
@@ -1915,6 +1936,26 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         internalized += internal[i].size();
         t.link += msSince(t0);
         return;
+      }
+      // A split module whose groups are all cached.
+      if (auto list = opts.splitInstrs ? cache.get(key, "parts") : std::nullopt) {
+        SmallVector<StringRef, 16> keys;
+        StringRef(*list).split(keys, '\n', -1, false);
+        std::vector<std::string> objs;
+        for (StringRef gk : keys)
+          if (auto obj = cache.get(gk.str(), "o"))
+            objs.push_back(std::move(*obj));
+        if (objs.size() == keys.size()) {
+          for (unsigned g = 0; g < objs.size(); ++g) {
+            if (!writeFile(partPath(i, g), objs[g]))
+              es << partPath(i, g) << ": cannot write\n";
+            fragment(partPath(i, g), objs[g], keys[g].str());
+          }
+          writeParts(i, objs.size(), es);
+          internalized += internal[i].size();
+          t.link += msSince(t0);
+          return;
+        }
       }
     }
     std::string err;
@@ -2067,6 +2108,31 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         }
       }
     }
+    if (opts.splitInstrs && opts.emit == Emit::Obj && opts.optLevel != '0') {
+      unsigned n = 0, nfuncs = 0;
+      for (Function &f : *m) {
+        n += f.getInstructionCount();
+        nfuncs += !f.isDeclaration();
+      }
+      if (n > opts.splitInstrs) {
+        unsigned half = std::max(1u, opts.splitInstrs / 2);
+        unsigned k = std::min({16u, nfuncs, (n + half - 1) / half});
+        auto bcs = splitModule(*m, k, info.keyB);
+        std::string list;
+        std::lock_guard<std::mutex> lock(mu);
+        for (unsigned g = 0; g < k; ++g) {
+          std::string gk = hashHex(fp + "|wpo-group|" + bcs[g]);
+          list += gk + "\n";
+          groups.push_back({i, g, std::move(bcs[g]), gk});
+        }
+        ++stats.splitModules;
+        stats.groups += k;
+        if (cacheObjects && !key.empty())
+          cache.put(key, "parts", list);
+        t.link += msSince(t0);
+        return;
+      }
+    }
     t.link += msSince(t0);
     if (!optimizeAndEmit(*m, *tm, info.job.in, info.job.out, opts, t, es))
       return;
@@ -2077,6 +2143,59 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       fragment(info.job.out, (*obj)->getBuffer(), key);
     }
   });
+  // D: the groups, largest first, on all threads.
+  if (!groups.empty()) {
+    llvm::stable_sort(groups, [](const Group &a, const Group &b) {
+      return a.bitcode.size() > b.bitcode.size();
+    });
+    std::vector<unsigned> nparts(jobs.size(), 0);
+    for (const Group &g : groups)
+      nparts[g.job] = std::max(nparts[g.job], g.index + 1);
+    DefaultThreadPool pool(hardware_concurrency(threads));
+    for (Group &g : groups)
+      pool.async([&, gp = &g] {
+        std::string name = jobs[gp->job].in + "#" + std::to_string(gp->index);
+        watchdogBegin(name);
+        std::string msgs;
+        raw_string_ostream es(msgs);
+        PhaseTimes t;
+        std::string out = partPath(gp->job, gp->index);
+        bool done = false;
+        if (cacheObjects)
+          if (auto obj = cache.get(gp->key, "o")) {
+            if (!writeFile(out, *obj))
+              es << out << ": cannot write\n";
+            fragment(out, *obj, gp->key);
+            done = true;
+          }
+        if (!done) {
+          std::string err;
+          auto tm = createTargetMachine(opts, err);
+          LLVMContext ctx;
+          auto mOr = parseBitcodeFile(MemoryBufferRef(gp->bitcode, name), ctx);
+          if (!tm || !mOr) {
+            es << name << ": " << (tm ? toString(mOr.takeError()) : err) << "\n";
+          } else if (optimizeAndEmit(**mOr, *tm, name, out, opts, t, es)) {
+            ++stats.compiled;
+            if (auto obj = MemoryBuffer::getFile(out, false, false)) {
+              if (cacheObjects)
+                cache.put(gp->key, "o", (*obj)->getBuffer());
+              fragment(out, (*obj)->getBuffer(), gp->key);
+            }
+          }
+        }
+        watchdogEnd(name);
+        report(gp->job, msgs, t);
+      });
+    pool.wait();
+    for (unsigned i = 0; i < jobs.size(); ++i)
+      if (nparts[i]) {
+        std::string msgs;
+        raw_string_ostream es(msgs);
+        writeParts(i, nparts[i], es);
+        report(i, msgs, PhaseTimes());
+      }
+  }
   stats.internalized = internalized;
   stats.cacheHits = cache.hits;
   stats.cacheMisses = cache.misses;

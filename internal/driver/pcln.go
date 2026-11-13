@@ -81,14 +81,15 @@ func (b *build) backendBuildArgs(emit string) []string {
 	var a []string
 	if emit == "exe" || emit == "obj" {
 		// Large modules as function groups in parallel, cached one by one
-		// ("Large modules"); dev builds only (with -wpo the
-		// whole program is one optimization unit). MARMOT_SPLIT=N overrides
-		// the size, 0 turns it off.
+		// ("Large modules"); with -wpo the groups are cut after the
+		// whole-program rewrite (an edit of cmd/marmot's main package
+		// recompiled its 4.3 MB module on one thread). MARMOT_SPLIT=N
+		// overrides the size, 0 turns it off.
 		split := "20000"
 		if v := os.Getenv("MARMOT_SPLIT"); v != "" {
 			split = v
 		}
-		if !b.wpo() && split != "0" && b.cfg.Emit == "exe" {
+		if split != "0" && b.cfg.Emit == "exe" {
 			a = append(a, "-split-large="+split)
 		}
 	}
