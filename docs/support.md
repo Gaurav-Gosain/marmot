@@ -14,7 +14,12 @@
 The whole language is supported, including generics, closures, `defer`, `panic` and `recover`,
 goroutines, channels, `select`, range over functions, and `unsafe`.
 
-Not supported: cgo, plugins, and the race detector.
+cgo works: packages that `import "C"` build unchanged, with calls both ways (`//export`,
+also from C threads), the package's C and assembly files, `#cgo` flags and `pkg-config`, and
+gc's pointer passing check. A call to C is a direct native call. Cross compiling cgo packages
+is not supported yet. See [cgo](usage.md#cgo).
+
+Not supported: plugins and the race detector.
 
 ## Standard library
 
