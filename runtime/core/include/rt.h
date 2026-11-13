@@ -402,6 +402,12 @@ void rt_cgo_exit_fast(void);
 void rt_cgo_exit_errno(int32_t e);
 int32_t rt_cgo_errno(void);
 void rt_cgo_keep(void *p);
+// cgo callbacks (C calling an exported Go function): the generated C
+// wrapper brackets the Go function with tok = rt_cgo_callback_enter() and
+// rt_cgo_callback_exit(tok). The goroutine stays on the calling thread for
+// the whole callback; a thread unknown to the runtime is attached for it.
+int32_t rt_cgo_callback_enter(void);
+void rt_cgo_callback_exit(int32_t tok);
 
 // ---- Panic support ----
 

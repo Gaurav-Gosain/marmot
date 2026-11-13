@@ -1504,11 +1504,12 @@ static rt_g *lockedm_wait(rt_m *m) {
     }
     handoffp(releasep(m));
   }
-  while (!__atomic_load_n(&m->nextp, __ATOMIC_ACQUIRE)) {
-    notesleep(&m->park);
-    noteclear(&m->park);
-  }
+  // Exactly one wakeup per handoff, after nextp is set (only startlockedm
+  // wakes a locked M: it is never on the idle list).
+  notesleep(&m->park);
+  noteclear(&m->park);
   rt_p *p = m->nextp;
+  if (!p) rt_throw("lockedm_wait: woken without a P");
   m->nextp = NULL;
   acquirep(m, p);
   return g;
@@ -1582,6 +1583,10 @@ static void cgo_needm(rt_m *m) {
     if (!st) rt_throw("cgo callback: cannot allocate a scheduler stack");
     m->g0stack = (uintptr_t)st + G0_STACK;
     m->foreign_g = galloc(0);
+#ifdef RT_TSAN
+    m->g0.tsan_fiber = __tsan_create_fiber(0);
+    m->foreign_g->tsan_fiber = __tsan_get_current_fiber();
+#endif
   }
   rt_g *g = m->foreign_g;
   uintptr_t lo, hi;
