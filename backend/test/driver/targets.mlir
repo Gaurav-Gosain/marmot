@@ -7,7 +7,7 @@
 // NATIVE: "target-cpu"="{{[a-z0-9-]+}}"
 // RUN: %llvm-readobj --file-headers %t.o | %FileCheck %s --check-prefix=ELF
 // AMD64: target triple = "x86_64-unknown-linux-gnu"
-// AMD64: "target-cpu"="x86-64-v2"
+// AMD64: "target-cpu"="x86-64"
 // ARM64: target triple = "aarch64-unknown-linux-gnu"
 // ARM64: "target-cpu"="generic"
 // V3: "target-cpu"="x86-64-v3"

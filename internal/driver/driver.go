@@ -758,11 +758,29 @@ func (b *build) backendArgs(emitKind, batch string) []string {
 	if b.cross() {
 		args = append(args, "--target="+b.goos+"/"+b.goarch)
 	}
+	if cpu := b.amd64CPU(); cpu != "" && !strings.Contains(os.Getenv("MARMOT_BACKEND_FLAGS"), "-mcpu") {
+		args = append(args, "-mcpu="+cpu)
+	}
 	args = append(args, b.backendBuildArgs(b.cfg.Emit)...)
 	if b.cfg.Verbose {
 		args = append(args, "-time")
 	}
 	return args
+}
+
+// amd64CPU is the x86-64 level GOAMD64 asks for beyond v1 (the backend's
+// default, as gc's): v3 adds AVX2 and FMA, so the code no longer runs on
+// CPUs without them, and float results may change where multiply and add
+// fuse (as with gc). "" for v1 and other architectures.
+func (b *build) amd64CPU() string {
+	if b.goarch != "amd64" {
+		return ""
+	}
+	switch v := os.Getenv("GOAMD64"); v {
+	case "v2", "v3", "v4":
+		return "x86-64-" + v
+	}
+	return ""
 }
 
 // logBackendTimes prints the backend's phase totals (-time).

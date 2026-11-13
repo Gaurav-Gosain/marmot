@@ -18,7 +18,7 @@
 // CHECK: call void @rt_parallel_for(i64 %{{.*}}, i64 %{{.*}}, ptr {{.*}}%[[B]], ptr
 // CHECK: define internal void @"scale$par"({{.*}}) #[[A0:[0-9]+]]
 // CHECK: define internal void @"scale$par.v3"({{.*}}) #[[A3:[0-9]+]]
-// CHECK-DAG: attributes #[[A0]] = {{.*}}"target-cpu"="x86-64-v2"
+// CHECK-DAG: attributes #[[A0]] = {{.*}}"target-cpu"="x86-64"
 // CHECK-DAG: attributes #[[A3]] = {{.*}}"target-cpu"="x86-64-v3"
 
 // V4: select i1 %{{.*}}, ptr @"scale$par.v4", ptr
