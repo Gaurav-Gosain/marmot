@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -96,9 +97,7 @@ func (e *listEntry) matches(st *store, files map[string]string) bool {
 func (sc *scope) treeFiles() map[string]string {
 	t := sc.walkTrees()
 	out := make(map[string]string, len(t.all)+2)
-	for p, s := range t.all {
-		out[p] = s
-	}
+	maps.Copy(out, t.all)
 	if w := workRoot(sc.dir); w != "" {
 		for _, n := range []string{"go.work", "go.work.sum"} {
 			p := filepath.Join(w, n)

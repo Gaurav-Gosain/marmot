@@ -196,9 +196,9 @@ func writeWatchText(w io.Writer, rep *diag.Reporter, dir string, added, gone []d
 			fmt.Fprintln(w)
 			continue
 		}
-		fmt.Fprintf(w, "%s+%s %s\n", st.Error, st.Reset, findingLine(dir, &added[i]))
+		writeWrapped(w, findingLine(dir, &added[i]), st.Error+"+"+st.Reset+" ", "    ")
 	}
 	for i := range gone {
-		fmt.Fprintf(w, "%s- %s%s\n", st.Dim, findingLine(dir, &gone[i]), st.Reset)
+		writeWrapped(w, findingLine(dir, &gone[i]), "- ", "    ")
 	}
 }

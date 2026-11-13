@@ -71,7 +71,7 @@ func stagedTree(dir, cacheDir string) (snapDir, root string, err error) {
 	}
 	type entry struct{ mode, blob string }
 	index := map[string]entry{}
-	for _, rec := range bytes.Split(ls, []byte{0}) {
+	for rec := range bytes.SplitSeq(ls, []byte{0}) {
 		if len(rec) == 0 {
 			continue
 		}
@@ -88,7 +88,7 @@ func stagedTree(dir, cacheDir string) (snapDir, root string, err error) {
 	// Paths whose working copy differs from the index.
 	dirty := map[string]bool{}
 	if out, err := gitBytes(root, "diff", "--name-only", "-z"); err == nil {
-		for _, p := range bytes.Split(out, []byte{0}) {
+		for p := range bytes.SplitSeq(out, []byte{0}) {
 			if len(p) > 0 {
 				dirty[string(p)] = true
 			}

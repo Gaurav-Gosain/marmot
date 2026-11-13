@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
 )
@@ -513,5 +514,18 @@ func TestStagedTree(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(filepath.Join(snap, "main.go")); strings.Contains(string(data), "staged") {
 		t.Error("the staged tree kept the old version")
+	}
+}
+
+func TestWrapWords(t *testing.T) {
+	got := wrapWords("modernizers newer than this go fix, not run: importcomment, reflecttypeassert, slicesclip", 40)
+	want := []string{"modernizers newer than this go fix, not", "run: importcomment, reflecttypeassert,", "slicesclip"}
+	if !slices.Equal(got, want) {
+		t.Errorf("wrap: %q", got)
+	}
+	for _, l := range got {
+		if utf8.RuneCountInString(l) > 40 {
+			t.Errorf("line over 40 columns: %q", l)
+		}
 	}
 }

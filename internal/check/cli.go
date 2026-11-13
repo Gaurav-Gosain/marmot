@@ -12,6 +12,7 @@ import (
 	"runtime/pprof"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Gaurav-Gosain/marmot/internal/checkflags"
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
@@ -204,7 +205,7 @@ func writeCheckText(w io.Writer, rep *diag.Reporter, res *Result, details, verbo
 				fmt.Fprintln(w)
 				continue
 			}
-			fmt.Fprintln(w, findingLine(res.Dir, d))
+			writeWrapped(w, findingLine(res.Dir, d), "", "    ")
 		}
 	}
 	fmt.Fprintln(w)
@@ -229,7 +230,9 @@ func writeCheckText(w io.Writer, rep *diag.Reporter, res *Result, details, verbo
 		}
 		fmt.Fprintln(w, line)
 		for _, n := range c.Notes {
-			fmt.Fprintf(w, "%s           %s%s\n", st.Dim, n, st.Reset)
+			for _, l := range wrapWords(n, diag.WidthOf(w)-noteIndent) {
+				fmt.Fprintf(w, "%s%*s%s%s\n", st.Dim, noteIndent, "", l, st.Reset)
+			}
 		}
 	}
 	if verbose {
@@ -334,4 +337,51 @@ func FixMain(args []string, version string) int {
 		fmt.Printf("%d fixed in %d rounds, %d rolled back\n", len(res.Applied), res.Rounds, len(res.RolledBack))
 	}
 	return code
+}
+
+// noteIndent is the column of the notes under the summary table.
+const noteIndent = 11
+
+// wrapWords breaks text at spaces into lines of at most width columns; a
+// word longer than the width stays whole on its own line.
+func wrapWords(text string, width int) []string {
+	if width < 20 {
+		width = 20
+	}
+	var lines []string
+	var cur strings.Builder
+	n := 0
+	for word := range strings.FieldsSeq(text) {
+		wl := utf8.RuneCountInString(word)
+		switch {
+		case n == 0:
+			cur.WriteString(word)
+			n = wl
+		case n+1+wl <= width:
+			cur.WriteString(" " + word)
+			n += 1 + wl
+		default:
+			lines = append(lines, cur.String())
+			cur.Reset()
+			cur.WriteString(word)
+			n = wl
+		}
+	}
+	if n > 0 {
+		lines = append(lines, cur.String())
+	}
+	return lines
+}
+
+// writeWrapped writes text wrapped to w's width at word boundaries: the
+// first line after first, the others after cont.
+func writeWrapped(w io.Writer, text, first, cont string) {
+	width := diag.WidthOf(w) - len(cont)
+	for i, l := range wrapWords(text, width) {
+		if i == 0 {
+			fmt.Fprintf(w, "%s%s\n", first, l)
+		} else {
+			fmt.Fprintf(w, "%s%s\n", cont, l)
+		}
+	}
 }
