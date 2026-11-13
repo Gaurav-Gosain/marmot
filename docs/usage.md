@@ -47,6 +47,7 @@ There are two modes, because fast rebuilds and deep optimization pull in opposit
 | `-pgo-gen`, `-pgo file` | Profile guided optimization: build an instrumented binary, run it, then build again with the profile. |
 | `-emit kind` | Stop early and write `mlir`, `llvm` or `obj` instead of an executable. |
 | `-v`, `-x` | Print progress and timing, or the commands that run. |
+| `-allocs`, `-allocs-all` | Report the allocation sites of the main module (or of every package): heap or stack, and why (see [Allocation report](#allocation-report)). |
 
 ## Examples
 
@@ -128,6 +129,7 @@ change the cap.
 | `MARMOT_RELEASE=1` | Make `-release` the default. |
 | `MARMOT_OUTPUT` | Diagnostic output: `json`, `human` or `plain`. See below. |
 | `NO_COLOR` | Turn off color in human output. |
+| `MARMOT_ALLOC_REPORT=FILE` | Write the code generator's allocation decisions to FILE, one JSON object per line (see [Allocation report](#allocation-report)). |
 | `MARMOT_TIER0=0` | Dev builds use LLVM instead of the fast code generator (the default). Slower builds, faster code. |
 | `MARMOT_TIER1=0` | Turn off background tier 1: after a dev build returns, the packages it compiled are compiled again with LLVM at -O2 on idle cores, and later builds link those objects. |
 
@@ -150,12 +152,67 @@ and cumulative), the hottest path, `-tree` for the call tree as a text flame gra
 REGEXP` for the source of matching functions with the cost of each line, `-sample
 alloc_space` and friends for memory profiles, `-json` for programs.
 
+Programs built by marmot record CPU profiles with the standard `runtime/pprof` API
+(`pprof.StartCPUProfile`), so the same profile can be read with `marmot prof` or `go tool
+pprof`. On Linux each thread is sampled on its own CPU clock; on macOS the process timer is used.
+
 ## Binary size
 
 `marmot size app` lists the sections of the executable, the code of each package and the
 largest functions (names come from marmot's line table, or from the symbol table for other
 binaries). `-pkg fmt` lists one package's functions; `-why fmt.Sprintf` prints a chain of direct
 calls from `main` to the function, which says why it is linked in.
+
+## Allocation report
+
+`marmot build -allocs` prints, for each allocation in the main module that goes to the heap,
+where it is, what it allocates and why it could not stay in the stack frame. `-allocs-all`
+does the same for every package, the standard library included. Packages are compiled again
+for the report, so the build cache does not hide them.
+
+```text
+note[M0111]: heap allocation: composite of `point` (16 bytes) in example.com/ad.newPoint
+ --> ./main.go:9:42
+  |
+9 | func newPoint(x, y int) *point { return &point{x, y} }
+  |                                          ^^^^^^^^^^^ returned from the function
+
+note[M0111]: heap allocation: make-slice of `[4]point` (64 bytes) in example.com/ad.main
+  --> ./main.go:20:8
+   |
+20 |     ps := make([]point, 0, 4)
+   |           ^^^^^^^^^^^^^^^^^^^ passed to append, which may keep it (line 22)
+
+note[M0111]: heap allocation: box of `int` (8 bytes) in example.com/ad.main
+  --> ./main.go:27:23
+   |
+27 |     fmt.Println(sum(ps), keep.x)
+   |                          ^^^^^^ stored in the variadic arguments, which are passed to fmt.Println, which may keep it
+
+6 allocation sites: 5 on the heap, 1 on the stack
+```
+
+The reason is the first use that makes the value escape: returned, stored in a global or in
+memory that outlives the function, passed to a call that may keep it, captured by a closure,
+sent on a channel, converted to an interface, or too large for the frame. A heap allocation
+inside a loop gets a note, since it happens once per iteration. Sites the back end may still
+move to the stack are marked as such.
+
+The kinds are `new`, `composite`, `var` (a local whose address escapes), `varargs`, `closure`,
+`make-slice`, `make-map`, `make-chan`, `box` (a value converted to an interface) and `convert`
+(string and byte or rune slice conversions). With `-json` each site is a diagnostic with code
+M0111, followed by a summary line `{"kind": "allocs", "sites", "heap", "heapInLoops",
+"stack", "region", "static"}`.
+
+`MARMOT_ALLOC_REPORT=FILE` writes the raw decisions of any build, stack sites included, one
+JSON object per line:
+
+```json
+{"fn":"example.com/ad.newPoint","pos":"/src/ad/main.go:9:47","kind":"composite","type":"point","bytes":16,"where":"heap","reason":"returned from the function (line 9)","final":true}
+```
+
+`where` is `stack`, `heap`, `region` (in the caller's region, freed when the caller is done) or
+`static`. `final` is false when the back end may still change the decision.
 
 ## Cached code generation
 

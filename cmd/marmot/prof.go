@@ -89,7 +89,7 @@ func cmdProf(args []string) int {
 	}
 	fmt.Println()
 	if total == 0 {
-		fmt.Println("the profile has no samples (marmot builds do not record profiles yet; profile a go build of the program)")
+		fmt.Println("the profile has no samples (the program ran too briefly, or did not use the CPU)")
 		return 0
 	}
 	switch {
@@ -113,17 +113,33 @@ func cmdProf(args []string) int {
 		}
 		// The hottest path, top down.
 		fmt.Printf("\n%shottest path%s\n", st.Bold, st.Reset)
+		// The runtime's entry frames are left out and recursion is folded.
 		n := p.Tree(idx)
 		depth := 0
 		for len(n.Children) > 0 && depth < 20 {
 			n = n.Children[0]
-			fmt.Printf("%s%s %s(%.1f%%)%s\n", strings.Repeat("  ", depth), n.Name, st.Dim, pct64(n.Value, total), st.Reset)
+			if runtimeEntry[n.Name] {
+				continue
+			}
+			rec, v := 0, n.Value
+			for len(n.Children) > 0 && n.Children[0].Name == n.Name && n.Children[0].Value*2 >= n.Value {
+				n = n.Children[0]
+				rec++
+			}
+			more := ""
+			if rec > 0 {
+				more = fmt.Sprintf(", recursive: %d more frames", rec)
+			}
+			fmt.Printf("%s%s %s(%.1f%%%s)%s\n", strings.Repeat("  ", depth), n.Name, st.Dim, pct64(v, total), more, st.Reset)
 			depth++
 		}
 		fmt.Printf("\n%s(-tree for the call tree, -list FUNC for source lines)%s\n", st.Dim, st.Reset)
 	}
 	return 0
 }
+
+// runtimeEntry names the frames below main.main in a marmot program.
+var runtimeEntry = map[string]bool{"rt_ctx_init": true, "gstart": true, "marmot_main": true, "runtime.goexit": true, "runtime.main": true}
 
 func bar(v, total int64, st diag.Style) string {
 	w := int(30 * float64(v) / float64(max(total, 1)))
