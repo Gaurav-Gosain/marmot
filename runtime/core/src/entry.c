@@ -2,6 +2,8 @@
 
 #include "internal.h"
 
+#include <stdlib.h>
+
 static int32_t g_argc;
 static char **g_argv;
 static char **g_envp;
@@ -10,7 +12,18 @@ RT_API int32_t rt_argc(void) { return g_argc; }
 RT_API char **rt_argv(void) { return g_argv; }
 RT_API char **rt_envp(void) { return g_envp; }
 
-RT_API void rt_exit(int32_t code) { os_exit(code); }
+// A normal exit (os.Exit, main returning). On darwin it goes through libc
+// exit, as gc does: C stdio buffers of cgo and purego code are flushed and
+// atexit handlers run (output piped to a file was lost with _exit). Linux
+// exits directly, as gc does there. Fatal errors use os_exit, which never
+// runs user code (it can be reached from a signal handler).
+RT_API void rt_exit(int32_t code) {
+#if RT_OS_DARWIN
+  exit(code);
+#else
+  os_exit(code);
+#endif
+}
 
 RT_API int32_t rt_output_json(void) {
   const char *v = rt_getenv("MARMOT_OUTPUT");
