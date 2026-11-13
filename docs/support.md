@@ -8,6 +8,7 @@
 | Linux on x86-64 | Works, tested with the same suites. |
 | Linux on arm64 | Builds. Not yet run under test. |
 | Windows | Not supported. |
+| WebAssembly (wasip1/wasm) | In progress. See [WebAssembly](#webassembly). |
 
 ## Language
 
@@ -71,3 +72,18 @@ yet match what the standard Go compiler does.
 | Floating point | `math.Log` can differ in the last bit for some inputs on arm64. |
 | Stack traces | Panic messages match Go. The stack trace that follows has a different layout. |
 | String data | In `-release` builds, equal strings built at compile time may share their bytes. Only visible through `unsafe`. |
+
+## WebAssembly
+
+The wasm target (`-target wasip1/wasm`) is in progress. It compiles to 32-bit WebAssembly
+(wasm32) and runs under a WASI runtime such as wasmtime. Planned limits: one thread
+(GOMAXPROCS=1), no network, no `os/exec`, no cgo.
+
+Known differences from Go's `GOOS=wasip1 GOARCH=wasm`, which uses 8-byte pointers:
+
+| Area | Difference |
+| --- | --- |
+| Pointer size | Pointers, `uintptr` and `unsafe.Pointer` are 4 bytes. `int` and `uint` stay 8 bytes, as in Go. |
+| `unsafe.Sizeof`, `unsafe.Alignof`, `unsafe.Offsetof` | Smaller results for pointers and for types that contain them: slices are 20 bytes instead of 24, strings 12 instead of 16, interfaces 8 instead of 16, maps, channels and functions 4 instead of 8. |
+| Struct layout | Fields after a pointer start earlier, so offsets differ. |
+| `reflect` | `Type.Size`, `Type.Align` and `Type.FieldAlign` report the sizes above. |
