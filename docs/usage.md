@@ -234,7 +234,6 @@ optimizes it together with the Go code, so small C functions inline into their G
 
 Go pointers passed to C are checked as with gc (`GODEBUG=cgocheck=0` turns the check off):
 Go memory passed to C may not hold Go pointers unless they are pinned with `runtime.Pinner`.
-Arguments passed as `unsafe.Pointer` are not checked yet.
 
 Programs without `import "C"` are built exactly as before, and the standard library is always
 built without cgo (`net` and `os/user` behave as with `CGO_ENABLED=0`). Cross compiling cgo
