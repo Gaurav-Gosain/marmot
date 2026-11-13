@@ -661,12 +661,17 @@ type Pinner struct {
 	refs []unsafe.Pointer
 }
 
-// Pin pins a Go object.
+// Pin pins a Go object. The pins are recorded for cgo's pointer check.
 func (p *Pinner) Pin(pointer any) {
-	p.refs = append(p.refs, efaceOf(&pointer).data)
+	ptr := efaceOf(&pointer).data
+	p.refs = append(p.refs, ptr)
+	pinAdd(ptr, 1)
 }
 
 // Unpin unpins all pinned objects of the Pinner.
 func (p *Pinner) Unpin() {
+	for _, ptr := range p.refs {
+		pinAdd(ptr, -1)
+	}
 	p.refs = nil
 }

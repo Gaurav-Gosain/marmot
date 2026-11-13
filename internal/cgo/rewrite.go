@@ -186,7 +186,10 @@ func rewrite(dir string, bp *build.Package, mk marks) error {
 			case name == "_Cgo_no_callback" && d.Body == nil:
 				out.WriteString("func _Cgo_no_callback(bool) {}\n\n")
 				continue
-			case (name == "_cgoCheckPointer" || name == "_cgoCheckResult") && d.Body == nil:
+			case name == "_cgoCheckPointer" && d.Body == nil:
+				out.WriteString("//go:linkname _cgoCheckPointer runtime.cgoCheckPointer\nfunc _cgoCheckPointer(interface{}, interface{})\n\n")
+				continue
+			case name == "_cgoCheckResult" && d.Body == nil:
 				d.Doc = nil
 				d.Body = &ast.BlockStmt{}
 				out.WriteString(src(d) + "\n\n")

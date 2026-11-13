@@ -1,0 +1,4 @@
+pointer-free memory: ok
+nil pointer inside: ok
+pinned pointer inside: ok
+C pointer inside: ok
