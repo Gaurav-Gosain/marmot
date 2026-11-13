@@ -47,8 +47,11 @@ static int32_t prof_hz;
 
 // prof_timer_start gives m a timer on its thread's CPU clock; self says
 // that m is the calling thread (a new thread has no pthread_t stored yet).
+// The starting thread and a new M may race to give m a timer: the timer is
+// created first and claimed with a compare-exchange, and the loser deletes
+// its own, so a thread never has two.
 static void prof_timer_start(rt_m *m, bool self) {
-  if (m->prof_timer || m->tid == 0) return;
+  if (__atomic_load_n(&m->prof_timer, __ATOMIC_ACQUIRE) || m->tid == 0) return;
   clockid_t cid = CLOCK_THREAD_CPUTIME_ID;
   if (!self && (!m->thread || pthread_getcpuclockid((pthread_t)m->thread, &cid) != 0)) return;
   struct sigevent sev;
@@ -63,18 +66,21 @@ static void prof_timer_start(rt_m *m, bool self) {
   its.it_interval.tv_sec = ns / 1000000000L;
   its.it_interval.tv_nsec = ns % 1000000000L;
   its.it_value = its.it_interval;
-  if (timer_settime(t, 0, &its, NULL) != 0) {
-    timer_delete(t);
+  void *none = NULL;
+  if (!__atomic_compare_exchange_n(&m->prof_timer, &none, (void *)t, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    timer_delete(t);  // another thread gave m its timer first
     return;
   }
-  m->prof_timer = (void *)t;
+  if (timer_settime(t, 0, &its, NULL) != 0 || !atomic_load(&prof_on)) {
+    // Failed, or profiling stopped meanwhile: take it back if still ours.
+    void *mine = (void *)t;
+    if (__atomic_compare_exchange_n(&m->prof_timer, &mine, NULL, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) timer_delete(t);
+  }
 }
 
 static void prof_timer_stop(rt_m *m) {
-  if (m->prof_timer) {
-    timer_delete((timer_t)m->prof_timer);
-    m->prof_timer = NULL;
-  }
+  void *t = __atomic_exchange_n(&m->prof_timer, NULL, __ATOMIC_ACQ_REL);
+  if (t) timer_delete((timer_t)t);
 }
 #endif
 

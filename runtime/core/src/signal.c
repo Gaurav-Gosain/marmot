@@ -13,11 +13,9 @@
 #include <signal.h>
 #include <pthread.h>
 #if RT_OS_LINUX
-#include <ucontext.h>
-#if RT_OS_LINUX
 #include <sys/syscall.h>
+#include <ucontext.h>
 #include <unistd.h>
-#endif
 #endif
 
 static void (*sigpanic_fn)(uintptr_t addr, int32_t kind);
