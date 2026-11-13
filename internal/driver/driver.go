@@ -98,7 +98,6 @@ type build struct {
 	goarch     string
 	testDir    string   // directory of the package under test
 	dylibs     []string // from //go:cgo_import_dynamic
-	cgoLDFLAGS []string // #cgo LDFLAGS of the cgo packages
 	out        string
 	incr       bool // packages without a cached module are loaded from source, the others from export data
 	noIncr     bool
@@ -250,7 +249,7 @@ func (b *build) run1() (string, error) {
 	defer releaseSlot()
 	lcfg := loader.Config{
 		Dir: cfg.Dir, Root: cfg.Root, Tags: cfg.Tags, GOOS: goos, GOARCH: goarch, Patterns: cfg.Patterns,
-		Log: b.logf, Tests: cfg.Test, AllErrors: cfg.AllErrors, CC: llvmTool("clang"),
+		Log: b.logf, Tests: cfg.Test, AllErrors: cfg.AllErrors,
 		BeforeSSA: func(all []*packages.Package) error {
 			return specialize.BeforeSSA(&specialize.Input{Packages: all, Release: cfg.Release, GOOS: goos, GOARCH: goarch, Log: b.logf})
 		},
@@ -468,12 +467,6 @@ func (b *build) run1() (string, error) {
 		}
 	}
 	b.dylibs = cg.DynamicLibraries()
-	cobjs, cldflags, err := b.cgoObjects(lp.Cgo)
-	if err != nil {
-		return "", err
-	}
-	objs = append(objs, cobjs...)
-	b.cgoLDFLAGS = cldflags
 	if err := b.link(objs, out); err != nil {
 		return "", err
 	}
@@ -645,7 +638,6 @@ func (b *build) link1(objs []string, rt, out string, extra []string) error {
 		args = append(args, "-fprofile-generate")
 	}
 	args = append(args, linkLibraries(b.dylibs)...)
-	args = append(args, b.cgoLDFLAGS...)
 	if mp := os.Getenv("MARMOT_LINKMAP"); mp != "" && runtime.GOOS == "darwin" {
 		args = append(args, "-Wl,-map,"+mp)
 	}
@@ -663,10 +655,7 @@ func (b *build) link1(objs []string, rt, out string, extra []string) error {
 			}
 		}
 	} else {
-		// start-stop-gc: __start_marmot_tlinks does not keep the type link
-		// entries alive, so an entry goes with its dead descriptor (each is
-		// SHF_LINK_ORDER on that descriptor's section).
-		args = append(args, "-Wl,--gc-sections", "-Wl,-z,start-stop-gc")
+		args = append(args, "-Wl,--gc-sections")
 		if !b.wantPcln() {
 			args = append(args, "-s")
 		}
@@ -872,7 +861,7 @@ dir="$(cd "$(dirname "$0")" && pwd)"
 out="${1:-$dir/%s}"
 case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
 cd "$dir"
-${CC:-clang} -o "$out" %s librtcore.a -lpthread -Wl,--gc-sections -Wl,-z,start-stop-gc -s
+${CC:-clang} -o "$out" %s librtcore.a -lpthread -Wl,--gc-sections -s
 `, b.goos, b.goarch, exe, exe, strings.Join(names, " "))
 	return os.WriteFile(filepath.Join(out, "link.sh"), []byte(script), 0o755)
 }
