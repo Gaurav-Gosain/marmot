@@ -1,0 +1,3029 @@
+{
+ "git": "7b2c578",
+ "results": [
+  {
+   "name": "goroot/235",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/alias1",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/align",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/append",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/armimm",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/atomicload",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/bigalg",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/bigmap",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/blank",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/chancap",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/char_lit",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/clear",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/closedchan",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/closure1",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/closure2",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/closure4",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/closure7",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/cmp",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/complit",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/complit2",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/compos",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/const",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/const3",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/const4",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/const8",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/convT2X",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/convert",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/convert4",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/copy",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/ddd",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/decl",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/defer",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/defernil",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/deferprint",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/divide",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/env",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/escape",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/escape3",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/float_lit",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/float_lit2",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/floatcmp",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/for",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/func",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/func5",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/func6",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/func7",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/gc1",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/genmeth",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/genmeth1",
+   "status": "fail",
+   "known_failure": true
+  },
+  {
+   "name": "goroot/genmeth2",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/helloworld",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/if",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/indirect",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/initcomma",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/initialize",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/int_lit",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/intcvt",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/iota",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/literal",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/literal2",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/makeslice",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/map",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/mapclear",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/method",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/method3",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/method5",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/method7",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/named",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/newexpr",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/nil",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/nilptr2",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/peano",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/print",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/printbig",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/range",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/range3",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/range4",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/recover2",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/recover3",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/reflectmethod1",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/reflectmethod2",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/reflectmethod3",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/reflectmethod4",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/reflectmethod5",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/reflectmethod6",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/reflectmethod7",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/reorder",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/reorder2",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/shift3",
+   "status": "fail",
+   "known_failure": true
+  },
+  {
+   "name": "goroot/simassign",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/sizeof",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/slicecap",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/stack",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/strcopy",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/string_lit",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/stringrange",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/struct0",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/switch",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/turing",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/typeswitch1",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/unsafe_slice_data",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/unsafe_string",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/unsafe_string_data",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/unsafebuiltins",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/utf",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/varinit",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/zerodivide",
+   "status": "pass"
+  },
+  {
+   "name": "goroot/zerosize",
+   "status": "pass"
+  },
+  {
+   "name": "run/apps/bignum_calc",
+   "status": "pass"
+  },
+  {
+   "name": "run/apps/expr_interp",
+   "status": "pass"
+  },
+  {
+   "name": "run/apps/graph_algos",
+   "status": "pass"
+  },
+  {
+   "name": "run/apps/huffman",
+   "status": "pass"
+  },
+  {
+   "name": "run/apps/json_parser",
+   "status": "pass"
+  },
+  {
+   "name": "run/apps/lru_cache",
+   "status": "pass"
+  },
+  {
+   "name": "run/apps/matrix_generic",
+   "status": "pass"
+  },
+  {
+   "name": "run/apps/scheduler_sim",
+   "status": "pass"
+  },
+  {
+   "name": "run/apps/state_machine",
+   "status": "pass"
+  },
+  {
+   "name": "run/apps/text_wrapper",
+   "status": "pass"
+  },
+  {
+   "name": "run/apps/tokenizer",
+   "status": "pass"
+  },
+  {
+   "name": "run/apps/worker_pool",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/deadinit_bigmake",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/deadinit_ifacekey",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/deadinit_index",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/deadinit_nilderef",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/deadinit_shift",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/defer_builtin_recover",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/defer_cmp_iface",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/defer_iface_recover_mixed",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/defer_methodvalue_recover",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/evalorder_gaps",
+   "status": "fail",
+   "known_failure": true
+  },
+  {
+   "name": "run/audit/fma_complex_mul",
+   "status": "fail"
+  },
+  {
+   "name": "run/audit/make_huge_const",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/math_exp_log_bits",
+   "status": "fail",
+   "known_failure": true
+  },
+  {
+   "name": "run/audit/merge_recover_Os",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/method_value_nil_iface",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/minmax_nan_payload",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/panic_nil_error_text",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/panic_value_string_panics",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/par_runtime",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_aggcopy_edges",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_bce_edges",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_boolpack_edges",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_defer_matrix",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_devirt_edges",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_esc_deep_recursion",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_esc_loop_slot",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_esc_select_phi",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_esc_xmod_retain",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_loop_alias",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_loop_idioms",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_loop_liveout",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_loop_masked",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_loop_panics",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_loop_search",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_loop_shapes",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_str_nocopy_concat_empty",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_wpo_closed_world",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/probe_wpo_init_roots",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/replace_nomatch_alias",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/simd_encode_overlap",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/str_concat_flatten",
+   "status": "pass"
+  },
+  {
+   "name": "run/audit/tempstring_write",
+   "status": "pass"
+  },
+  {
+   "name": "run/cgo/blocking",
+   "status": "pass"
+  },
+  {
+   "name": "run/cgo/cgocheck",
+   "status": "pass"
+  },
+  {
+   "name": "run/cgo/cgocheck_typed",
+   "status": "pass"
+  },
+  {
+   "name": "run/cgo/consts",
+   "status": "pass"
+  },
+  {
+   "name": "run/cgo/errno",
+   "status": "pass"
+  },
+  {
+   "name": "run/cgo/export",
+   "status": "pass"
+  },
+  {
+   "name": "run/cgo/export_threads",
+   "status": "pass"
+  },
+  {
+   "name": "run/cgo/funcptr",
+   "status": "pass"
+  },
+  {
+   "name": "run/cgo/gc",
+   "status": "pass"
+  },
+  {
+   "name": "run/cgo/globals",
+   "status": "pass"
+  },
+  {
+   "name": "run/cgo/scalars",
+   "status": "pass"
+  },
+  {
+   "name": "run/cgo/strings",
+   "status": "pass"
+  },
+  {
+   "name": "run/cgo/structs",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/array_compare",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/array_value",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/bool_ops",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/bounds_index",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/bounds_slice",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/bounds_uncaught",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/builtin_len_cap",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/builtin_make_new",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/builtin_print_forms",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/chan_buffered",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/chan_close_panics",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/chan_dir",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/chan_struct_values",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/chan_unbuffered",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/charm_style",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/closure_basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/closure_capture",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/closure_loopvar",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/complex_basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/complex_conv",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/const_iota",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/const_untyped",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/ctl_for",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/ctl_goto",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/ctl_if",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/ctl_labels",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/ctl_range_func",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/ctl_range_func_panic",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/ctl_switch",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/ctl_switch_order",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/defer_args",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/defer_loop_many",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/defer_order",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/defer_return_values",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/embed_modcache",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/eval_order_nested_literal",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/eval_order_var_after_call",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/float_arith",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/float_compare",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/float_conv",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/float_print",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/float_special",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/func_multi",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/func_value",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/generic_constraints",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/generic_funcs",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/generic_instances",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/generic_methods_iface",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/generic_types",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/global_struct_layout",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/goroutine_basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/hard_closure_defer_loop",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/hard_eval_order",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/hard_float_edges",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/hard_goroutine_closure_sync",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/hard_int_conv_edges",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/hard_method_set_embed_iface",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/hard_panic_in_defer_chain",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/hard_select_loop",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/hard_shadow_scope",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/hard_string_edge",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/hard_struct_array_copy",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/iface_any_container",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/iface_assert_fail",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/iface_assert_msgs",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/iface_basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/iface_compare",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/iface_embed",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/iface_method_expr",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/iface_nil",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/iface_typeswitch",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/iface_uncomparable",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/iface_values",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/init_deps",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/init_map_slice_literal",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/init_order",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/int_bitops",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/int_compare",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/int_const_expr",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/int_conv",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/int_divmod",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/int_loops_sum",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/int_minmax_builtin",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/int_print",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/int_shift",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/int_wrap16_32",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/int_wrap64",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/int_wrap8",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/loop_break_inner_range",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/loop_break_nested",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/map_basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/map_grow",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/map_iter_delete",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/map_iter_sum",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/map_keys",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/map_nil_write",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/map_of_map",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/map_value_semantics",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/method_on_types",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/method_values",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/panic_custom_error_uncaught",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/panic_divzero",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/panic_divzero_kinds",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/panic_goexit_free",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/panic_nested_defer",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/panic_nil_deref",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/panic_nil_deref_recover",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/panic_nil_panic",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/panic_recover",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/panic_recover_not_direct",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/panic_repanic",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/panic_uncaught_int",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/panic_uncaught_string",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/select_basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/select_nil_closed",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/select_send_recv",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/slice_2d",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/slice_alias",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/slice_append",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/slice_basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/slice_cap_growth",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/slice_clear_min",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/slice_copy",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/slice_of_struct",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/slice_range",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/slice_to_array",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/strings_alias",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/strings_basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/strings_compare",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/strings_concat",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/strings_conv",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/strings_range",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/struct_basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/struct_blank_padding",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/struct_compare",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/struct_embed",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/struct_embed_shadow",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/struct_ptr_methods",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/unsafe_basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/core/xsys_unix",
+   "status": "pass"
+  },
+  {
+   "name": "run/gc/append_growth_stress",
+   "status": "pass"
+  },
+  {
+   "name": "run/gc/bounded_memory",
+   "status": "pass"
+  },
+  {
+   "name": "run/gc/closures_retain",
+   "status": "pass"
+  },
+  {
+   "name": "run/gc/cycle_graph",
+   "status": "pass"
+  },
+  {
+   "name": "run/gc/iface_boxed",
+   "status": "pass"
+  },
+  {
+   "name": "run/gc/interior_pointers",
+   "status": "pass"
+  },
+  {
+   "name": "run/gc/linked_list",
+   "status": "pass"
+  },
+  {
+   "name": "run/gc/many_small",
+   "status": "pass"
+  },
+  {
+   "name": "run/gc/map_pointers",
+   "status": "pass"
+  },
+  {
+   "name": "run/gc/slice_of_slices",
+   "status": "pass"
+  },
+  {
+   "name": "run/gc/string_garbage",
+   "status": "pass"
+  },
+  {
+   "name": "run/gc/tree_alloc",
+   "status": "pass"
+  },
+  {
+   "name": "run/gc/zero_on_alloc",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_01",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_02",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_03",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_04",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_05",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_06",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_07",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_08",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_09",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_10",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_11",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_12",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_13",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_14",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_15",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_16",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_17",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_18",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_19",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_20",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_21",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_22",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_23",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_24",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_25",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_26",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_27",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_28",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_29",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_30",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_31",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_32",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_33",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_34",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_35",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_36",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_37",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_38",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_39",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_40",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_41",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_42",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_43",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_44",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_45",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_46",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_47",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/mix_48",
+   "status": "pass"
+  },
+  {
+   "name": "run/layout/static_mixed",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/append_chain_old_values",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/append_to_param",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/array_of_slices",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/byte_size_classes",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/bytes_buffer_alias",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/chan_pipeline_sender_grows",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/closure_captures_slice",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/closure_factory",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/copy_source",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/defer_args_slice",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/defer_recover_across",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/embedded_slice_struct",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/exact_result_stability",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/finalizer_retained",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/frameregion",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/global_holds_slice",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/goroutine_holds_struct",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/goroutine_started_before",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/interface_receiver",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/keep_each_iteration",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/large_slices",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/list_node_retained",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/loop_region_keep_one",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/map_of_slices_grow",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/method_value",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/pointer_to_element",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/pointer_to_slice",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/pointer_to_struct_field",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/range_old_header",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/recursion_shared_prefix",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/reflect_value_slice",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/regionstore",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/results_multiple_frames",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/reusealias",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/rows_grown",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/select_send_slice",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/shared_backing_classic",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/slice_in_chan",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/slice_in_interface",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/slice_in_map",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/slice_in_struct",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/slices_pkg_ops",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/string_from_bytes",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/strings_builder",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/subslice_of_old",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/syncpool_retained",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/three_index_slice",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/tree_node_retained",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/unsafe_slice_retained",
+   "status": "pass"
+  },
+  {
+   "name": "run/mem/variadic_args",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/alias_saxpy",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/byte_scans",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/early_exit_loops",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/float_reduction_order",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/fma_cases",
+   "status": "fail"
+  },
+  {
+   "name": "run/opt/fma_fusion_gc",
+   "status": "fail"
+  },
+  {
+   "name": "run/opt/fmt_badfmt",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/fmt_exact",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/int_reductions",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/json_exact",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/map_semantics",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/matmul_shapes",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/overflow_loops",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/overlap_copy",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/panic_in_loop",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/parallel_independent",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/regexp_const",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/sort_exact",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/sortstablefunc_negative",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/stencil_boundaries",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/strconv_const_fold",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/strided_range",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/verify_appendcap",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/verify_bceedge",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/verify_escdefer",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/verify_polyinduct16",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/verify_reduce",
+   "status": "pass"
+  },
+  {
+   "name": "run/opt/verify_versionedge",
+   "status": "pass"
+  },
+  {
+   "name": "run/sched/chain_of_goroutines",
+   "status": "pass"
+  },
+  {
+   "name": "run/sched/deadlock",
+   "status": "pass"
+  },
+  {
+   "name": "run/sched/deadlock_goroutines",
+   "status": "pass"
+  },
+  {
+   "name": "run/sched/deadlock_select_empty",
+   "status": "pass"
+  },
+  {
+   "name": "run/sched/deep_recursion_goroutine",
+   "status": "pass"
+  },
+  {
+   "name": "run/sched/fan_in_out",
+   "status": "pass"
+  },
+  {
+   "name": "run/sched/goroutine_panic",
+   "status": "pass"
+  },
+  {
+   "name": "run/sched/main_exits_first",
+   "status": "pass"
+  },
+  {
+   "name": "run/sched/many_goroutines",
+   "status": "pass"
+  },
+  {
+   "name": "run/sched/mutex_via_chan",
+   "status": "pass"
+  },
+  {
+   "name": "run/sched/pingpong",
+   "status": "pass"
+  },
+  {
+   "name": "run/sched/pipeline",
+   "status": "pass"
+  },
+  {
+   "name": "run/sched/timer_free_worker_pool",
+   "status": "pass"
+  },
+  {
+   "name": "run/sched/unbuffered_sync_order",
+   "status": "pass"
+  },
+  {
+   "name": "run/sched/yield_fairness",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/atomic/atomic_cas_swap",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/atomic/atomic_counters",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/atomic/atomic_flags",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/atomic/atomic_pointer_value",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/atomic/atomic_spin",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/atomic/atomic_types",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/atomic/counter_struct",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/atomic/lockfree_stack",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/atomic/once_flag",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/atomic/overflow_wrap",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/big/int_ops",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/big/number_theory",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/big/rat_float",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bufio/basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bufio/copy_large",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bufio/reader_methods",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bufio/reader_small_buffer",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bufio/readwriter",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bufio/scanner_lines",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bufio/scanner_long_line",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bufio/scanner_split",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bufio/stdin_eof",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bufio/writer_basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bufio/writer_errors",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bytes/basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bytes/buffer_grow",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bytes/buffer_rw",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bytes/buffer_strings",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bytes/compare_edge",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bytes/minus_alias",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bytes/reader",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bytes/search",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bytes/split_join",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/bytes/trim_case",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/compress/gzip_flate_zlib",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/context/cancel",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/context/timeout",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/encoding/asn1_pem_base32",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/encoding/base64_hex",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/encoding/binary_csv",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/encoding/xml_gob",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/errors/as_types",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/errors/basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/errors/custom_is",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/errors/errorf_wrap",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/errors/identity",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/errors/is_chain",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/errors/join_multi",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/errors/nil_handling",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/errors/panic_error_value",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/errors/sentinel_switch",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/exec/run",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/filepath/clean_join",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/filepath/ext_split",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/filepath/match_rel",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/filepath/path_pkg",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/filepath/walk_glob",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/flag/parse",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/fmt/bad_verbs",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/fmt/basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/fmt/errorf_forms",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/fmt/fprint_writers",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/fmt/large_output",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/fmt/println_sprint",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/fmt/sprint_scan",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/fmt/sscan_family",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/fmt/stringers",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/fmt/verbs_composite",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/fmt/verbs_float",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/fmt/verbs_int",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/fmt/verbs_string",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/fmt/width_flags",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/heap/int_heap",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/heap/list_ring",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/heap/priority_queue",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/http/chunked_keepalive",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/http/context_cancel",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/http/cookies_auth",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/http/fileserver",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/http/https_selfsigned",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/http/httptest_server",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/http/roundtrip",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/http/shutdown",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/io/custom_reader",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/io/eof_errors",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/io/limited_big",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/io/offset_writer",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/io/pipe_concurrent",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/io/pipe_goroutines",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/io/readers",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/io/readfull_limits",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/io/rw_interfaces",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/io/seekers",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/io/writers",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/json/custom_marshalers",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/json/embedded_tags",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/json/encoder_decoder",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/json/errors_types",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/json/marshal_basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/json/unmarshal_any",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/json/unmarshal_struct",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/json/valid_indent",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/log/basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/log/fatal",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/maps/basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/maps/clear_len",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/maps/clone_equal",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/maps/copy_delete",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/maps/generic_keys",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/maps/iterators",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/maps/large",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/maps/named_types",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/maps/nested",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/maps/sum_values",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/math/basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/math/bits",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/math/complex_pkg",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/math/constants",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/math/float_bits",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/math/int_math",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/math/powers",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/math/rand_distribution",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/math/rand_seeded",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/math/rounding",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/math/special_values",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/math/trig",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/net/dns_localhost",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/net/ip_parse",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/net/tcp_deadline",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/net/tcp_echo",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/net/udp_roundtrip",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/net/unix_socket",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/os/args_env",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/os/basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/os/cwd_temp",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/os/dirs",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/os/errors",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/os/exec_pipes",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/os/exit_code",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/os/exit_in_goroutine",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/os/exit_paths",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/os/files_rw",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/os/stdio",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/os/user_current",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/rand/perm_shuffle",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/rand/read_bytes",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/rand/seeded_sequences",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/reflect/deep_equal",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/reflect/interfaces_conv",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/reflect/kinds_names",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/reflect/make_new",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/reflect/slices_maps",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/reflect/struct_fields",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/reflect/value_get_set",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/reflect/walk_generic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/regexp/bytes_reader",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/regexp/large_text",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/regexp/match_basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/regexp/replace",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/regexp/split_named",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/regexp/syntax_features",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/runtime/goroutines_gc",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sha256/hashes",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/signal/notify",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/slices/basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/slices/cmp_package",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/slices/compact",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/slices/generic_types",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/slices/iter",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/slices/large",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/slices/modify",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/slices/search_contains",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/slices/sort_search",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/slices/stable_func",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/slog/handlers",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sort/basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sort/by_multiple",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sort/interface_reverse",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sort/large_random",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sort/nan_floats",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sort/search",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sort/sort_equal_elems",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sort/sort_kinds",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sort/sort_slice_funcs",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sort/stable_keys",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sql/fake_driver",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strconv/atoi_errors",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strconv/basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strconv/float_roundtrip",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strconv/format_float",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strconv/format_int",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strconv/int_roundtrip",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strconv/parsebool_misc",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strconv/parsefloat_forms",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strconv/parseint_bases",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strconv/quote_unquote",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strings/basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strings/builder_ops",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strings/builder_reader",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strings/case_map",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strings/compare_misc",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strings/index_family",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strings/reader_ops",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strings/replace_family",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strings/split_family",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/strings/trim_family",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sync/cond_map",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sync/cond_queue",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sync/map_ops",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sync/mutex_contention",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sync/mutex_wg",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sync/negative_waitgroup",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sync/once_pool",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sync/once_variants",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sync/pool_reuse",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sync/rwmutex_readers",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sync/unlock_unlocked",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/sync/waitgroup_nested",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/tabwriter/basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/template/basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/template/control_flow",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/template/errors",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/template/nested_named",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/template/pipelines_funcs",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/time/basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/time/compare_sub",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/time/date_fields",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/time/duration",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/time/format_layouts",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/time/month_weekday",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/time/parse_layouts",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/time/select_timeout",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/time/sleep_since",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/time/ticker",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/time/timer_reset",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/time/timers",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/time/timezones",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/time/tzdata",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/url/parse_query",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/utf8/append_valid",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/utf8/basic",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/utf8/counting",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/utf8/decode_encode",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/utf8/invalid_seqs",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/utf8/iterate_manual",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/utf8/last_rune",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/utf8/rune_funcs",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/utf8/unicode_pkg",
+   "status": "pass"
+  },
+  {
+   "name": "run/std/utf8/utf16_pkg",
+   "status": "pass"
+  },
+  {
+   "name": "world/audit_linkname_var",
+   "status": "pass"
+  },
+  {
+   "name": "world/audit_unexported",
+   "status": "pass"
+  },
+  {
+   "name": "world/base58",
+   "status": "pass"
+  },
+  {
+   "name": "world/blackfriday",
+   "status": "pass"
+  },
+  {
+   "name": "world/cgo_package",
+   "status": "pass"
+  },
+  {
+   "name": "world/cobra",
+   "status": "pass"
+  },
+  {
+   "name": "world/decimal",
+   "status": "pass"
+  },
+  {
+   "name": "world/difflib",
+   "status": "pass"
+  },
+  {
+   "name": "world/doublestar",
+   "status": "pass"
+  },
+  {
+   "name": "world/embedfs",
+   "status": "pass"
+  },
+  {
+   "name": "world/fuzzysearch",
+   "status": "pass"
+  },
+  {
+   "name": "world/gjson",
+   "status": "pass"
+  },
+  {
+   "name": "world/gocmp",
+   "status": "pass"
+  },
+  {
+   "name": "world/godiff",
+   "status": "pass"
+  },
+  {
+   "name": "world/goldmark",
+   "status": "pass"
+  },
+  {
+   "name": "world/gotoml",
+   "status": "pass"
+  },
+  {
+   "name": "world/govaluate",
+   "status": "pass"
+  },
+  {
+   "name": "world/humanize",
+   "status": "pass"
+  },
+  {
+   "name": "world/ini",
+   "status": "pass"
+  },
+  {
+   "name": "world/levenshtein",
+   "status": "pass"
+  },
+  {
+   "name": "world/lru",
+   "status": "pass"
+  },
+  {
+   "name": "world/mapstructure",
+   "status": "pass"
+  },
+  {
+   "name": "world/pflag",
+   "status": "pass"
+  },
+  {
+   "name": "world/pkgerrors",
+   "status": "pass"
+  },
+  {
+   "name": "world/rate",
+   "status": "pass"
+  },
+  {
+   "name": "world/semver",
+   "status": "pass"
+  },
+  {
+   "name": "world/sqlite",
+   "status": "pass"
+  },
+  {
+   "name": "world/strcase",
+   "status": "pass"
+  },
+  {
+   "name": "world/tablewriter",
+   "status": "pass"
+  },
+  {
+   "name": "world/testify",
+   "status": "pass"
+  },
+  {
+   "name": "world/toml",
+   "status": "pass"
+  },
+  {
+   "name": "world/ulid",
+   "status": "pass"
+  },
+  {
+   "name": "world/uuid",
+   "status": "pass"
+  },
+  {
+   "name": "world/xtext",
+   "status": "pass"
+  },
+  {
+   "name": "world/xxhash",
+   "status": "pass"
+  },
+  {
+   "name": "world/yaml",
+   "status": "pass"
+  }
+ ]
+}
