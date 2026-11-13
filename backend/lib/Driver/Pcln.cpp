@@ -13,6 +13,11 @@
 
 #include <algorithm>
 #include <cstring>
+#ifdef __APPLE__
+#include <fcntl.h>
+#include <sys/clonefile.h>
+#include <unistd.h>
+#endif
 
 using namespace llvm;
 using namespace llvm::object;
@@ -548,7 +553,9 @@ bool patchMachO(const std::string &binary, StringRef table, std::string &err) {
     err = binary + ": " + bufOr.getError().message();
     return false;
   }
-  std::string data = (*bufOr)->getBuffer().str();
+  // The file stays mapped; only the section and the signature change, and
+  // they are built apart (a copy of the whole file cost more than the rest).
+  StringRef data = (*bufOr)->getBuffer();
   auto objOr = ObjectFile::createObjectFile(MemoryBufferRef(data, binary));
   if (!objOr) {
     err = toString(objOr.takeError());
@@ -589,34 +596,45 @@ bool patchMachO(const std::string &binary, StringRef table, std::string &err) {
           " bytes, the __marmot_pcln section has " + std::to_string(size);
     return false;
   }
-  objOr->reset(); // data is changed below
-  std::memcpy(&data[off], table.data(), table.size());
-  std::memset(&data[off + table.size()], 0, size - table.size());
+  if (off + size > data.size() || (sigSize && uint64_t(sigOff) + sigSize > data.size())) {
+    err = binary + ": bad section or code signature offset";
+    return false;
+  }
+  objOr->reset();
+  std::string sect(size, '\0');
+  std::memcpy(sect.data(), table.data(), table.size());
+  std::string sig(data.substr(sigOff, sigSize));
 
   // Ad hoc code signature: rehash the pages that hold the section in every
   // code directory.
   if (sigSize) {
-    auto *sb = reinterpret_cast<const uint8_t *>(data.data()) + sigOff;
-    if (be32(sb) != 0xfade0cc0) {
+    auto *sb = reinterpret_cast<const uint8_t *>(sig.data());
+    if (sigSize < 12 || be32(sb) != 0xfade0cc0) {
       err = binary + ": unknown code signature";
       return false;
     }
     uint32_t count = be32(sb + 8);
+    std::string page;
     for (uint32_t b = 0; b < count; ++b) {
       uint32_t blobOff = be32(sb + 12 + 8 * b + 4);
-      auto *cd = reinterpret_cast<uint8_t *>(&data[sigOff + blobOff]);
+      auto *cd = reinterpret_cast<uint8_t *>(&sig[blobOff]);
       if (be32(cd) != 0xfade0c02)
         continue;
       uint32_t hashOffset = be32(cd + 16), nCodeSlots = be32(cd + 28), codeLimit = be32(cd + 32);
       uint8_t hashSize = cd[36], hashType = cd[37], pageShift = cd[39];
-      uint64_t page = pageShift ? uint64_t(1) << pageShift : 4096;
+      uint64_t pageSize = pageShift ? uint64_t(1) << pageShift : 4096;
       if (hashType != 1 && hashType != 2) {
         err = binary + ": unsupported code signature hash";
         return false;
       }
-      for (uint64_t p = off / page; p <= (off + size - 1) / page && p < nCodeSlots; ++p) {
-        uint64_t lo = p * page, hi = std::min<uint64_t>(lo + page, codeLimit);
-        ArrayRef<uint8_t> bytes(reinterpret_cast<const uint8_t *>(data.data()) + lo, hi - lo);
+      for (uint64_t p = off / pageSize; p <= (off + size - 1) / pageSize && p < nCodeSlots; ++p) {
+        uint64_t lo = p * pageSize, hi = std::min<uint64_t>(lo + pageSize, codeLimit);
+        // The page as it is after the patch.
+        page.assign(data.data() + lo, hi - lo);
+        uint64_t a = std::max(lo, off), z = std::min(hi, off + size);
+        if (a < z)
+          std::memcpy(&page[a - lo], sect.data() + (a - off), z - a);
+        ArrayRef<uint8_t> bytes(reinterpret_cast<const uint8_t *>(page.data()), page.size());
         uint8_t *slot = cd + hashOffset + p * hashSize;
         if (hashType == 2) {
           auto h = SHA256::hash(bytes);
@@ -634,6 +652,23 @@ bool patchMachO(const std::string &binary, StringRef table, std::string &err) {
   sys::fs::file_status st;
   sys::fs::status(binary, st);
   std::string tmp = binary + ".pcln.tmp";
+#ifdef __APPLE__
+  // A clone shares the blocks of the binary: only the section and the
+  // signature are written.
+  sys::fs::remove(tmp);
+  if (clonefile(binary.c_str(), tmp.c_str(), 0) == 0) {
+    int fd = ::open(tmp.c_str(), O_WRONLY);
+    auto put = [&](const std::string &b, uint64_t at) {
+      return ::pwrite(fd, b.data(), b.size(), off_t(at)) == ssize_t(b.size());
+    };
+    bool ok = fd >= 0 && put(sect, off) && put(sig, sigOff);
+    if (fd >= 0)
+      ok = ::close(fd) == 0 && ok;
+    if (ok && !sys::fs::rename(tmp, binary))
+      return true;
+    sys::fs::remove(tmp);
+  }
+#endif
   {
     std::error_code ec;
     raw_fd_ostream os(tmp, ec);
@@ -641,7 +676,21 @@ bool patchMachO(const std::string &binary, StringRef table, std::string &err) {
       err = tmp + ": " + ec.message();
       return false;
     }
-    os << data;
+    // In file order: the section and the signature replace their bytes.
+    struct Piece {
+      uint64_t at;
+      const std::string *b;
+    } pieces[2] = {{off, &sect}, {sigOff, &sig}};
+    if (sigOff < off)
+      std::swap(pieces[0], pieces[1]);
+    uint64_t pos = 0;
+    for (const Piece &pc : pieces) {
+      if (pc.b->empty())
+        continue;
+      os << data.slice(pos, pc.at) << *pc.b;
+      pos = pc.at + pc.b->size();
+    }
+    os << data.substr(pos);
   }
   sys::fs::setPermissions(tmp, st.permissions());
   if (std::error_code ec = sys::fs::rename(tmp, binary)) {
