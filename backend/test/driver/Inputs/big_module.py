@@ -2,7 +2,8 @@
 """Writes a module of about 3 MB in the shape the frontend prints: type
 aliases before the module, location aliases after it, strings and comments
 with braces. main returns 42 through a call into the last function.
-With "bad", the last function has a type error; prints its line on stderr."""
+With "bad", the last function has a type error; prints its line on stderr.
+With "locsfirst", the location aliases come before the module line."""
 import sys
 
 out, mode = sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "ok"
@@ -44,8 +45,11 @@ lines.append(f"    %r = llvm.call @f{n - 1}(%a) : (i64) -> i64")
 lines.append("    llvm.return %r : i64")
 lines.append("  }")
 lines.append("}")
-for j in range(loc):
-    lines.append(f'#loc{j} = loc("big.go":{j + 1}:1)')
+locs = [f'#loc{j} = loc("big.go":{j + 1}:1)' for j in range(loc)]
+if mode == "locsfirst":
+    lines[2:2] = locs
+else:
+    lines += locs
 open(out, "w").write("\n".join(lines) + "\n")
 if bad_line:
     print(bad_line, file=sys.stderr)

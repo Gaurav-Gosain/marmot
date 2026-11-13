@@ -326,10 +326,20 @@ constexpr size_t kParallelParseMin = 2u << 20;
 constexpr size_t kParseChunk = 1u << 20;
 
 struct ModuleSplit {
-  llvm::StringRef head;                     // through the "module ... {" line
+  std::string head;                         // before the "module ... {" line, but aliases
+  llvm::StringRef moduleLine;               // that line
   std::vector<llvm::StringRef> chunks;      // the body, cut between ops
-  llvm::StringMap<llvm::StringRef> aliases; // after the body: name -> line
+  llvm::StringMap<llvm::StringRef> aliases; // attribute aliases: name -> line
 };
+
+// An attribute alias line ("#loc3 = loc(...)") goes in aliases.
+bool addAlias(llvm::StringRef line, ModuleSplit &out) {
+  size_t eq = line.find(" = ");
+  if (!line.starts_with("#") || eq == llvm::StringRef::npos)
+    return false;
+  out.aliases[line.take_front(eq)] = line;
+  return true;
+}
 
 bool aliasChar(char c) { return llvm::isAlnum(c) || c == '_' || c == '$' || c == '.' || c == '-'; }
 
@@ -344,10 +354,15 @@ bool splitModule(llvm::StringRef text, unsigned n, ModuleSplit &out) {
     if (line.starts_with("module")) {
       if (!line.rtrim().ends_with("{"))
         return false;
+      out.moduleLine = text.slice(eol - line.size(), pos);
       break;
     }
+    // Location aliases before the module (where the frontend writes them,
+    // so no op refers to one ahead of its definition): each chunk takes
+    // the ones it uses.
+    if (!addAlias(line, out))
+      out.head.append(text.data() + (eol - line.size()), line.size() + 1);
   }
-  out.head = text.take_front(pos);
   size_t per = (text.size() - pos) / n + 1, start = pos, target = pos + per;
   size_t end = llvm::StringRef::npos;
   int depth = 0;
@@ -395,10 +410,8 @@ bool splitModule(llvm::StringRef text, unsigned n, ModuleSplit &out) {
     rest = next;
     if (line.trim().empty())
       continue;
-    size_t eq = line.find(" = ");
-    if (!line.starts_with("#") || eq == llvm::StringRef::npos)
+    if (!addAlias(line, out))
       return false;
-    out.aliases[line.take_front(eq)] = line;
   }
   return true;
 }
@@ -424,18 +437,20 @@ std::string chunkText(const ModuleSplit &sp, size_t i) {
   }
   // In the order of the file.
   llvm::sort(used, [](llvm::StringRef a, llvm::StringRef b) { return a.data() < b.data(); });
-  size_t size = sp.head.size() + chunk.size() + 2;
+  // The aliases before the module line: defined before their uses.
+  size_t size = sp.head.size() + sp.moduleLine.size() + chunk.size() + 2;
   for (llvm::StringRef u : used)
     size += u.size() + 1;
   std::string s;
   s.reserve(size);
-  s.append(sp.head.data(), sp.head.size());
-  s.append(chunk.data(), chunk.size());
-  s += "}\n";
+  s += sp.head;
   for (llvm::StringRef u : used) {
     s.append(u.data(), u.size());
     s += '\n';
   }
+  s.append(sp.moduleLine.data(), sp.moduleLine.size());
+  s.append(chunk.data(), chunk.size());
+  s += "}\n";
   return s;
 }
 
