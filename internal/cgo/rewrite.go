@@ -657,7 +657,7 @@ func callC(w, cname, kind string, ext, d *ast.FuncDecl, proto cProto, types map[
 			// do it in Go rather than rely on signext and zeroext.
 			extParams = append(extParams, name+" "+w)
 			if w == "uint32" && isBool(p.Type, types) {
-				args = append(args, "_cgo_b2u("+name+")")
+				args = append(args, "_cgo_b2u(bool("+name+"))")
 			} else {
 				args = append(args, w+"("+name+")")
 			}

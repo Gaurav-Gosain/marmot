@@ -18,6 +18,7 @@ static double many(int a, double b, int c, double d, int e, double f, int g, dou
 }
 static long sum9(long a, long b, long c, long d, long e, long f, long g, long h, long i) { return a+b+c+d+e+f+g+h+i; }
 static _Bool odd(int x) { return x & 1; }
+static int notb(_Bool b) { return !b; }
 static void bump(int *p) { (*p)++; }
 static int *same(int *p) { return p; }
 static char sign(void) { return -3; }
@@ -33,7 +34,7 @@ func main() {
 	fmt.Println(C.half(3), C.hyp(3, 4))
 	fmt.Println(C.many(1, 0.5, 2, 0.25, 3, 0.125, 4, 0.0625, 5, 0.03125))
 	fmt.Println(C.sum9(1, 2, 3, 4, 5, 6, 7, 8, 9))
-	fmt.Println(C.odd(3), C.odd(4), bool(C.odd(5)))
+	fmt.Println(C.odd(3), C.odd(4), bool(C.odd(5)), C.notb(true), C.notb(C.odd(3)))
 	x := C.int(41)
 	C.bump(&x)
 	fmt.Println(x, *C.same(&x), C.same(nil) == nil)
