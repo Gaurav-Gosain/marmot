@@ -17,6 +17,7 @@ import (
 
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
 	"github.com/Gaurav-Gosain/marmot/internal/driver"
+	"github.com/Gaurav-Gosain/marmot/internal/sysroot"
 )
 
 // A doctorCheck is one line of marmot doctor.
@@ -107,6 +108,39 @@ func cmdDoctor(args []string) int {
 			add("llvm", "warn", first, "marmot is built against LLVM 22; other versions may not read its output")
 		} else {
 			add("llvm", "ok", first, "")
+		}
+	}
+	// cgo: the same clang compiles C; nothing else is needed but headers.
+	if _, err := run(clang, "--version"); err == nil {
+		probe := exec.Command(clang, "-fsyntax-only", "-x", "c", "-")
+		probe.Stdin = strings.NewReader("#include <stdio.h>\n#include <stdlib.h>\nint main(void) { return 0; }\n")
+		if out, err := probe.CombinedOutput(); err != nil {
+			first, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+			add("cgo", "warn", "clang cannot find the C library headers: "+first, "on macOS: xcode-select --install; on Linux: install the libc development package (libc6-dev, glibc)")
+		} else {
+			add("cgo", "ok", "C for cgo packages is compiled with marmot's clang; no other C toolchain is needed", "")
+		}
+	}
+	if out, err := run("pkg-config", "--version"); err != nil {
+		add("pkg-config", "warn", "pkg-config is not on PATH", "only cgo packages with #cgo pkg-config lines need it: install pkg-config (or pkgconf)")
+	} else {
+		add("pkg-config", "ok", "pkg-config "+out, "")
+	}
+	if root != "" {
+		var have, missing []string
+		for _, t := range sysroot.Supported() {
+			goos, goarch, _ := strings.Cut(t, "/")
+			if sysroot.Installed(root, goos, goarch) {
+				have = append(have, t)
+			} else if goos != runtime.GOOS || goarch != runtime.GOARCH {
+				missing = append(missing, t)
+			}
+		}
+		switch {
+		case len(have) > 0:
+			add("sysroots", "ok", "cgo cross builds for "+strings.Join(have, ", "), "")
+		default:
+			add("sysroots", "ok", "none (only cross builds of cgo packages need one)", "marmot sysroot add "+missing[0])
 		}
 	}
 	if runtime.GOOS == "darwin" {
