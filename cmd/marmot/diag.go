@@ -238,7 +238,11 @@ func cmdFix(args []string) int {
 		if remaining > 0 {
 			diag.WriteJSON(os.Stderr, last)
 		}
-		diag.WriteResult(os.Stderr, diag.Result{Command: "fix", OK: remaining == 0, Errors: remaining, DurationMs: time.Since(rep.Start).Milliseconds()})
+		// When the check fixes follow, marmot-check writes the one result
+		// line of the command.
+		if remaining > 0 || *codesFlag != "" {
+			diag.WriteResult(os.Stderr, diag.Result{Command: "fix", OK: remaining == 0, Errors: remaining, DurationMs: time.Since(rep.Start).Milliseconds()})
+		}
 	} else {
 		for _, a := range done {
 			fmt.Printf("%s:%d: %s [%s]\n", diag.RelPath(rep.Dir, a.File), a.Line, a.Title, a.Code)

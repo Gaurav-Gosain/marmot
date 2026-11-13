@@ -9,7 +9,7 @@ marmot follows the `go` command where it can. Run it inside a Go module.
 | `marmot build [packages]` | Compile packages and their dependencies into an executable. |
 | `marmot run file.go` | Compile and run a program. |
 | `marmot test [packages]` | Compile and run package tests, like `go test`. |
-| `marmot fix [packages]` | Apply the machine applicable fixes of build errors. `-code M0004,M0005` limits it to those codes; `-all` adds fixes that may be incorrect, such as typo corrections. |
+| `marmot fix [packages]` | Apply the machine applicable fixes of build errors, then of check findings (formatting, modernizers). `-code M0004,M0005` limits it to those build error codes; `-all` adds fixes that may be incorrect, such as typo corrections and vet or lint suggestions. `-only fmt,modernize` applies only those check fixes, `-diff` prints them as patches, `-test` keeps a fix only if its package tests pass, `-upgrade go1.N` raises the go version first. |
 | `marmot explain CODE` | Describe an error code. With no code, list all of them. |
 | `marmot check [packages]` | Run vet, lint, format and the other code checks in one pass (see [Checks](#checks)). |
 | `marmot watch [build\|run\|test]` | Build, run or test again after every change to a `.go` file, `go.mod` or `go.sum`. |
