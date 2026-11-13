@@ -439,6 +439,143 @@ std::string chunkText(const ModuleSplit &sp, size_t i) {
   return s;
 }
 
+// Constant globals (type descriptors, itabs, closures) come from the
+// frontend without an initializer region: a "go.init" string holds the
+// value tree, and the region is built here. An initializer as text is about
+// 36 ops for one type descriptor, and parsing an op (SSA names, a type, a
+// location, the op itself) cost a third of the parse of a cold build.
+// Grammar, types taken from the enclosing aggregate (the global's type at
+// the top):
+//   value := 'i' DEC ';'          integer of the element type
+//          | 'f' HEX16             float: the bits of a double
+//          | 'z'                   zero
+//          | 'a' DEC ':' NAME      address of the symbol NAME of DEC bytes
+//          | '(' value* ')'        aggregate, one value per element
+// The ops are the ones the text form had, in the same order: the elements
+// first, then undef and one insertvalue per element.
+constexpr llvm::StringLiteral kGoInit = "go.init";
+
+struct InitBuilder {
+  mlir::OpBuilder &b;
+  mlir::Location loc;
+  llvm::StringRef s;
+  size_t pos = 0;
+  mlir::Type ptr;
+
+  bool fail() { return false; }
+  bool number(int64_t &v) {
+    bool neg = pos < s.size() && s[pos] == '-';
+    if (neg)
+      ++pos;
+    size_t start = pos;
+    uint64_t u = 0;
+    while (pos < s.size() && llvm::isDigit(s[pos]))
+      u = u * 10 + uint64_t(s[pos++] - '0');
+    v = neg ? int64_t(-u) : int64_t(u);
+    return pos > start;
+  }
+  mlir::Value value(mlir::Type ty) {
+    if (pos >= s.size())
+      return {};
+    char c = s[pos++];
+    switch (c) {
+    case 'i': {
+      int64_t v;
+      if (!number(v) || pos >= s.size() || s[pos++] != ';')
+        return {};
+      auto it = llvm::dyn_cast<mlir::IntegerType>(ty);
+      if (!it)
+        return {};
+      llvm::APInt ap(64, uint64_t(v));
+      return b.create<mlir::LLVM::ConstantOp>(
+          loc, ty, b.getIntegerAttr(ty, ap.trunc(it.getWidth())));
+    }
+    case 'f': {
+      if (pos + 16 > s.size())
+        return {};
+      uint64_t bits;
+      if (s.substr(pos, 16).getAsInteger(16, bits))
+        return {};
+      pos += 16;
+      double d = llvm::bit_cast<double>(bits);
+      mlir::FloatAttr a;
+      if (ty.isF64())
+        a = b.getF64FloatAttr(d);
+      else if (ty.isF32())
+        a = b.getF32FloatAttr(float(d));
+      else
+        return {};
+      return b.create<mlir::LLVM::ConstantOp>(loc, ty, a);
+    }
+    case 'z':
+      return b.create<mlir::LLVM::ZeroOp>(loc, ty);
+    case 'a': {
+      int64_t n;
+      if (!number(n) || n < 0 || pos >= s.size() || s[pos++] != ':' || pos + n > s.size())
+        return {};
+      llvm::StringRef name = s.substr(pos, n);
+      pos += n;
+      return b.create<mlir::LLVM::AddressOfOp>(loc, ptr, name);
+    }
+    case '(': {
+      llvm::SmallVector<mlir::Value, 8> elems;
+      auto st = llvm::dyn_cast<mlir::LLVM::LLVMStructType>(ty);
+      auto at = llvm::dyn_cast<mlir::LLVM::LLVMArrayType>(ty);
+      if (!st && !at)
+        return {};
+      while (pos < s.size() && s[pos] != ')') {
+        unsigned i = elems.size();
+        mlir::Type et;
+        if (st) {
+          if (i >= st.getBody().size())
+            return {};
+          et = st.getBody()[i];
+        } else {
+          if (i >= at.getNumElements())
+            return {};
+          et = at.getElementType();
+        }
+        mlir::Value v = value(et);
+        if (!v)
+          return {};
+        elems.push_back(v);
+      }
+      if (pos >= s.size())
+        return {};
+      ++pos;
+      mlir::Value agg = b.create<mlir::LLVM::UndefOp>(loc, ty);
+      for (auto [i, v] : llvm::enumerate(elems))
+        agg = b.create<mlir::LLVM::InsertValueOp>(loc, agg, v, llvm::ArrayRef<int64_t>{int64_t(i)});
+      return agg;
+    }
+    }
+    return {};
+  }
+};
+
+// Builds the initializer region of each global with a go.init string.
+bool expandInits(mlir::ModuleOp m, llvm::raw_ostream &errs) {
+  mlir::OpBuilder b(m.getContext());
+  mlir::Type ptr = mlir::LLVM::LLVMPointerType::get(m.getContext());
+  for (auto g : m.getOps<mlir::LLVM::GlobalOp>()) {
+    auto init = g->getAttrOfType<mlir::StringAttr>(kGoInit);
+    if (!init)
+      continue;
+    g->removeAttr(kGoInit);
+    mlir::Block *blk = new mlir::Block;
+    g.getInitializerRegion().push_back(blk);
+    b.setInsertionPointToEnd(blk);
+    InitBuilder ib{b, g.getLoc(), init.getValue(), 0, ptr};
+    mlir::Value v = ib.value(g.getGlobalType());
+    if (!v || ib.pos != ib.s.size()) {
+      errs << "global " << g.getSymName() << ": bad " << kGoInit << " at offset " << ib.pos << "\n";
+      return false;
+    }
+    b.create<mlir::LLVM::ReturnOp>(g.getLoc(), v);
+  }
+  return true;
+}
+
 // Parses text into one module in parallel; null if it cannot (the caller
 // parses serially).
 mlir::OwningOpRef<mlir::ModuleOp> parseParallel(mlir::MLIRContext *ctx, llvm::StringRef text,
@@ -462,6 +599,9 @@ mlir::OwningOpRef<mlir::ModuleOp> parseParallel(mlir::MLIRContext *ctx, llvm::St
         sm.AddNewSourceBuffer(llvm::MemoryBuffer::getMemBuffer(t, name, false), llvm::SMLoc());
         mods[i] = mlir::parseSourceFile<mlir::ModuleOp>(
             sm, mlir::ParserConfig(ctx, /*verifyAfterParse=*/false));
+        // A bad go.init fails here too; the serial parse reports it.
+        if (mods[i] && !expandInits(*mods[i], llvm::nulls()))
+          mods[i] = nullptr;
       });
     for (std::thread &t : ts)
       t.join();
@@ -506,9 +646,14 @@ ParsedModulePtr parseFile(const std::string &input, const CompileOptions &opts,
     if (!pm->module)
       pm->diagText.clear();
   }
-  // The parser verifies the module once.
-  if (!pm->module)
-    pm->module = mlir::parseSourceFile<mlir::ModuleOp>(pm->sm, mlir::ParserConfig(pm->ctx.get()));
+  // Verified once, after the initializers are built.
+  if (!pm->module) {
+    pm->module = mlir::parseSourceFile<mlir::ModuleOp>(
+        pm->sm, mlir::ParserConfig(pm->ctx.get(), /*verifyAfterParse=*/false));
+    if (pm->module && (!expandInits(*pm->module, *pm->diagStream) ||
+                       mlir::failed(mlir::verify(*pm->module))))
+      pm->module = nullptr;
+  }
   if (!pm->module) {
     errs << pm->diagText << input << ": failed to parse\n";
     return nullptr;

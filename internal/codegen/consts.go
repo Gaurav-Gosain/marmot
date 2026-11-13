@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
+	"strconv"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
 )
@@ -85,10 +87,71 @@ func (m *moduleGen) constGlobal(sym, linkage string, constant bool, c cv) {
 	if constant {
 		k = "constant "
 	}
-	fmt.Fprintf(b, "  llvm.mlir.global %s %s%s() {addr_space = 0 : i32} : %s {\n", linkage, k, mlir.Symbol(sym), c.typ)
-	n := 0
-	v := writeCV(b, &n, c)
-	fmt.Fprintf(b, "    llvm.return %s : %s\n  }\n", v, c.typ)
+	var init []byte
+	if init = appendInit(init, c); init == nil {
+		fmt.Fprintf(b, "  llvm.mlir.global %s %s%s() {addr_space = 0 : i32} : %s {\n", linkage, k, mlir.Symbol(sym), c.typ)
+		n := 0
+		v := writeCV(b, &n, c)
+		fmt.Fprintf(b, "    llvm.return %s : %s\n  }\n", v, c.typ)
+		return
+	}
+	fmt.Fprintf(b, "  llvm.mlir.global %s %s%s() {addr_space = 0 : i32, go.init = %s} : %s\n",
+		linkage, k, mlir.Symbol(sym), mlir.Quote(string(init)), c.typ)
+}
+
+// appendInit appends c in the go.init form, which the backend expands into
+// the initializer region writeCV writes (a type descriptor's region is about
+// 36 ops of text; parsing them was a third of a cold build's parse time).
+// The backend takes each value's type from the enclosing aggregate (an
+// element's type is the aggregate's element type, as the insertvalue ops
+// of the region need); nil if c holds a value the form has no letter for,
+// and the caller writes the region.
+//
+//	i<decimal>;  integer      f<16 hex digits>  float (bits of a double)
+//	z            zero         a<len>:<symbol>   address of symbol
+//	( ... )      aggregate, one value per element
+func appendInit(out []byte, c cv) []byte {
+	switch c.kind {
+	case cvInt:
+		if c.typ == mlir.F32 || c.typ == mlir.F64 {
+			return appendFloatInit(out, float64(c.i), c.typ)
+		}
+		out = append(out, 'i')
+		out = strconv.AppendInt(out, c.i, 10)
+		return append(out, ';')
+	case cvFloat:
+		return appendFloatInit(out, c.f, c.typ)
+	case cvZero:
+		return append(out, 'z')
+	case cvAddr:
+		out = append(out, 'a')
+		out = strconv.AppendInt(out, int64(len(c.sym)), 10)
+		out = append(out, ':')
+		return append(out, c.sym...)
+	case cvAgg:
+		out = append(out, '(')
+		for _, e := range c.elems {
+			if out = appendInit(out, e); out == nil {
+				return nil
+			}
+		}
+		return append(out, ')')
+	}
+	return nil
+}
+
+func appendFloatInit(out []byte, f float64, typ string) []byte {
+	if typ == mlir.F32 {
+		f = float64(float32(f))
+	} else if typ != mlir.F64 {
+		return nil
+	}
+	out = append(out, 'f')
+	h := strconv.FormatUint(math.Float64bits(f), 16)
+	for i := len(h); i < 16; i++ {
+		out = append(out, '0')
+	}
+	return append(out, h...)
 }
 
 // cvWriter is where writeCV writes.
