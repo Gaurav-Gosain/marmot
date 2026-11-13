@@ -258,6 +258,8 @@ struct rt_m {
   void *thread;              // pthread_t
   uint64_t fastrand;
   uintptr_t sigstack;        // alternate signal stack
+  int32_t tid;               // kernel thread id (linux), for per-thread profile timers
+  void *prof_timer;          // linux: this thread's CPU profile timer (timer_t), or NULL
   // MARMOT_DEADLOCK_DEBUG: SIGURG deliveries, stops, and why the last one
   // did not stop (sigurg's checks, in order: 1 no gcwaiting, 2 locks, 3 no
   // curg, 4 no P, 5 P not running, 6 P owned by another M, 7 not on the
@@ -352,6 +354,9 @@ rt_g *new_system_g(void (*fn)(void *), void *arg);
 // signal.c
 void signal_init(void);
 void signal_init_thread(rt_m *m);
+// prof.c: called on every new M thread; starts its profile timer when
+// profiling is on (linux).
+void prof_thread_start(rt_m *m);
 void signal_preempt(rt_m *m);
 void signal_raise_sigpipe(void);
 // Ready the goroutine in rt_signal_recv if signals are pending (sysmon).

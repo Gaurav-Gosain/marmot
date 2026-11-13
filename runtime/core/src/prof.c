@@ -1,7 +1,9 @@
 // prof.c: CPU profile sampling for runtime/pprof.
 //
-// SIGPROF from setitimer(ITIMER_PROF) interrupts whatever thread is using
-// CPU; the handler records the interrupted pc and the return addresses of
+// SIGPROF interrupts a thread that is using CPU: on linux each M has its
+// own timer on its thread CPU clock (timer_create, SIGEV_THREAD_ID), so
+// every thread is sampled in proportion to its CPU time; on darwin the
+// process wide setitimer(ITIMER_PROF) is used. The handler records the interrupted pc and the return addresses of
 // the frame pointer chain into a ring of fixed size records. The Go side
 // (lib/src/runtime/profile.go) reads the ring in the record format of gc's
 // profBuf, so the stock runtime/pprof writes the profile and symbolizes it
@@ -18,6 +20,10 @@
 
 #include <signal.h>
 #include <sys/time.h>
+#if RT_OS_LINUX
+#include <pthread.h>
+#include <time.h>
+#endif
 
 #define PROF_DEPTH 64
 #define PROF_WORDS (3 + PROF_DEPTH)
@@ -32,6 +38,53 @@ static prof_slot *prof_ring;
 static _Atomic uint64_t prof_wpos, prof_rpos, prof_lost;
 static _Atomic int32_t prof_on;
 static int32_t prof_installed;
+static int32_t prof_hz;
+
+#if RT_OS_LINUX
+#ifndef sigev_notify_thread_id
+#define sigev_notify_thread_id _sigev_un._tid
+#endif
+
+// prof_timer_start gives m a timer on its thread's CPU clock; self says
+// that m is the calling thread (a new thread has no pthread_t stored yet).
+static void prof_timer_start(rt_m *m, bool self) {
+  if (m->prof_timer || m->tid == 0) return;
+  clockid_t cid = CLOCK_THREAD_CPUTIME_ID;
+  if (!self && (!m->thread || pthread_getcpuclockid((pthread_t)m->thread, &cid) != 0)) return;
+  struct sigevent sev;
+  __builtin_memset(&sev, 0, sizeof sev);
+  sev.sigev_notify = SIGEV_THREAD_ID;
+  sev.sigev_signo = SIGPROF;
+  sev.sigev_notify_thread_id = m->tid;
+  timer_t t;
+  if (timer_create(cid, &sev, &t) != 0) return;
+  struct itimerspec its;
+  long ns = 1000000000L / prof_hz;
+  its.it_interval.tv_sec = ns / 1000000000L;
+  its.it_interval.tv_nsec = ns % 1000000000L;
+  its.it_value = its.it_interval;
+  if (timer_settime(t, 0, &its, NULL) != 0) {
+    timer_delete(t);
+    return;
+  }
+  m->prof_timer = (void *)t;
+}
+
+static void prof_timer_stop(rt_m *m) {
+  if (m->prof_timer) {
+    timer_delete((timer_t)m->prof_timer);
+    m->prof_timer = NULL;
+  }
+}
+#endif
+
+void prof_thread_start(rt_m *m) {
+#if RT_OS_LINUX
+  if (atomic_load(&prof_on)) prof_timer_start(m, true);
+#else
+  (void)m;
+#endif
+}
 
 // frame_ok checks a frame pointer before it is read: aligned, above the
 // previous one, and inside the goroutine's stack when it is known.
@@ -112,7 +165,14 @@ RT_API int32_t rt_prof_start(int32_t hz) {
     prof_installed = 1;
   }
   atomic_store(&prof_lost, 0);
+  prof_hz = hz;
   atomic_store(&prof_on, 1);
+#if RT_OS_LINUX
+  // Ms only ever join the list; new threads start their timer themselves.
+  rt_m *self = getm();
+  for (rt_m *m = __atomic_load_n(&sched.allm, __ATOMIC_ACQUIRE); m; m = m->alllink) prof_timer_start(m, m == self);
+  return 0;
+#else
   struct itimerval it;
   it.it_interval.tv_sec = 0;
   it.it_interval.tv_usec = 1000000 / hz;
@@ -120,12 +180,18 @@ RT_API int32_t rt_prof_start(int32_t hz) {
   it.it_value = it.it_interval;
   if (setitimer(ITIMER_PROF, &it, NULL) != 0) return -1;
   return 0;
+#endif
 }
 
 RT_API void rt_prof_stop(void) {
+#if RT_OS_LINUX
+  atomic_store(&prof_on, 0);
+  for (rt_m *m = __atomic_load_n(&sched.allm, __ATOMIC_ACQUIRE); m; m = m->alllink) prof_timer_stop(m);
+#else
   struct itimerval it;
   __builtin_memset(&it, 0, sizeof it);
   setitimer(ITIMER_PROF, &it, NULL);
+#endif
   // The handler stays installed so a signal still in flight is ignored.
   atomic_store(&prof_on, 0);
 }

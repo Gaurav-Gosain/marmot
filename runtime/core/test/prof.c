@@ -4,6 +4,9 @@
 #include "rtest.h"
 #include <stdio.h>
 #include <time.h>
+#ifndef __APPLE__
+#define __APPLE__ 0
+#endif
 
 static volatile uint64_t sink;
 
@@ -24,7 +27,7 @@ __attribute__((noinline)) static void busy(int64_t ns) {
 void marmot_main(void) {
   if (rt_prof_start(1000) != 0) {
     printf("start failed\n");
-    rt_exit(1);
+    fflush(stdout); rt_exit(1);
   }
   busy(300000000);
   rt_prof_stop();
@@ -38,13 +41,13 @@ void marmot_main(void) {
       uint64_t len = buf[i];
       if (len < 4 || i + (intptr_t)len > k) {
         printf("bad record len %llu\n", (unsigned long long)len);
-        rt_exit(1);
+        fflush(stdout); rt_exit(1);
       }
       if (buf[i + 2] == 1) {
         records++;
         if (buf[i + 3] == 0) {
           printf("zero pc\n");
-          rt_exit(1);
+          fflush(stdout); rt_exit(1);
         }
         if (len >= 5) deep++;
       }
@@ -53,11 +56,14 @@ void marmot_main(void) {
   }
   if (records < 50) {
     printf("only %d samples\n", records);
-    rt_exit(1);
+    fflush(stdout); rt_exit(1);
   }
-  if (deep * 2 < records) {
+  // C code on linux is compiled without frame pointers at -O1, so only
+  // darwin (which always keeps them) can check the walk here; Go code
+  // compiled by marmot keeps frame pointers on every target.
+  if (__APPLE__ && deep * 2 < records) {
     printf("stacks too short: %d of %d have callers\n", deep, records);
-    rt_exit(1);
+    fflush(stdout); rt_exit(1);
   }
   printf("ok\n");
   fflush(stdout);

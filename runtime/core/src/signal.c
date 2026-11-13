@@ -14,6 +14,10 @@
 #include <pthread.h>
 #if RT_OS_LINUX
 #include <ucontext.h>
+#if RT_OS_LINUX
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 #endif
 
 static void (*sigpanic_fn)(uintptr_t addr, int32_t kind);
@@ -318,6 +322,10 @@ void signal_init_thread(rt_m *m) {
   ss.ss_flags = 0;
   sigaltstack(&ss, NULL);
   m->sigstack = (uintptr_t)p;
+#if RT_OS_LINUX
+  m->tid = (int32_t)syscall(SYS_gettid);
+#endif
+  prof_thread_start(m);
   // Make sure SIGURG is not blocked in this thread.
   sigset_t set;
   sigemptyset(&set);
