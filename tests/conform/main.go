@@ -24,6 +24,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -402,14 +403,14 @@ func runOne(root, testsDir, work, marmot, name string, cfg config) result {
 	defer func() { r.Seconds = time.Since(start).Seconds() }()
 
 	gbase, srcDir, src := goldenBase(testsDir, name)
-	wantOut, err := os.ReadFile(gbase + ".out")
+	wantOut, err := os.ReadFile(golden(gbase, ".out"))
 	if err != nil {
 		r.Reason, r.Detail = "no golden", "missing "+gbase+".out (run go run ./tests/conform -update)"
 		return r
 	}
-	wantErr, _ := os.ReadFile(gbase + ".err")
+	wantErr, _ := os.ReadFile(golden(gbase, ".err"))
 	wantExit := 0
-	if b, err := os.ReadFile(gbase + ".exit"); err == nil {
+	if b, err := os.ReadFile(golden(gbase, ".exit")); err == nil {
 		fmt.Sscanf(strings.TrimSpace(string(b)), "%d", &wantExit)
 	}
 
@@ -528,15 +529,15 @@ func updateOne(testsDir, work, name string) error {
 	base := gbase
 	write := func(ext, content string) error {
 		if content == "" {
-			err := os.Remove(base + ext)
+			err := os.Remove(golden(base, ext))
 			if os.IsNotExist(err) {
 				return nil
 			}
 			return err
 		}
-		return os.WriteFile(base+ext, []byte(content), 0o644)
+		return os.WriteFile(golden(base, ext), []byte(content), 0o644)
 	}
-	if err := os.WriteFile(base+".out", []byte(ro.stdout), 0o644); err != nil {
+	if err := os.WriteFile(golden(base, ".out"), []byte(ro.stdout), 0o644); err != nil {
 		return err
 	}
 	if err := write(".err", normStderr(ro.stderr)); err != nil {
@@ -786,4 +787,15 @@ func tier1Off() []string {
 		return nil
 	}
 	return []string{"MARMOT_TIER1=0"}
+}
+
+// golden is the expected-output file base+ext, or base+ext+"."+GOARCH when
+// that exists: gc's own results differ by architecture where the spec
+// leaves them open (gc fuses x*y+z into FMA on arm64, not with GOAMD64=v1).
+func golden(base, ext string) string {
+	a := base + ext + "." + runtime.GOARCH
+	if _, err := os.Stat(a); err == nil {
+		return a
+	}
+	return base + ext
 }
