@@ -26,6 +26,7 @@ type listPkg struct {
 	GoFiles           []string
 	CompiledGoFiles   []string
 	OtherFiles        []string `json:",omitempty"`
+	IgnoredFiles      []string `json:",omitempty"`
 	EmbedFiles        []string `json:",omitempty"`
 	EmbedPatterns     []string `json:",omitempty"`
 	Imports           map[string]string
@@ -98,7 +99,7 @@ func statSig(path string) string {
 func listSig(pcfg *packages.Config, patterns []string) string {
 	h := sha256.New()
 	// v2: graphs with errors are no longer cached (older ones may be).
-	fmt.Fprintf(h, "v2\n%s\n%q\n%v\n", pcfg.Dir, patterns, pcfg.Tests)
+	fmt.Fprintf(h, "v3\n%s\n%q\n%v\n", pcfg.Dir, patterns, pcfg.Tests)
 	env := append([]string(nil), pcfg.Env...)
 	sort.Strings(env)
 	for _, e := range env {
@@ -191,7 +192,7 @@ func readListCache(path, sig, dir string) ([]*packages.Package, bool) {
 		lp := &c.Pkgs[i]
 		byID[lp.PkgPath+"\x00"+lp.ID] = &packages.Package{
 			ID: lp.ID, Name: lp.Name, PkgPath: lp.PkgPath,
-			GoFiles: lp.GoFiles, CompiledGoFiles: lp.CompiledGoFiles, OtherFiles: lp.OtherFiles,
+			GoFiles: lp.GoFiles, CompiledGoFiles: lp.CompiledGoFiles, OtherFiles: lp.OtherFiles, IgnoredFiles: lp.IgnoredFiles,
 			EmbedFiles: lp.EmbedFiles, EmbedPatterns: lp.EmbedPatterns, Module: lp.Module,
 		}
 	}
@@ -230,7 +231,7 @@ func writeListCache(path, sig string, roots []*packages.Package, dir string) {
 	}
 	packages.Visit(roots, nil, func(p *packages.Package) {
 		lp := listPkg{ID: p.ID, Name: p.Name, PkgPath: p.PkgPath, GoFiles: p.GoFiles,
-			CompiledGoFiles: p.CompiledGoFiles, OtherFiles: p.OtherFiles, EmbedFiles: p.EmbedFiles,
+			CompiledGoFiles: p.CompiledGoFiles, OtherFiles: p.OtherFiles, IgnoredFiles: p.IgnoredFiles, EmbedFiles: p.EmbedFiles,
 			EmbedPatterns: p.EmbedPatterns, Module: p.Module, Imports: map[string]string{}}
 		for path, d := range p.Imports {
 			lp.Imports[path] = d.ID
@@ -284,6 +285,12 @@ func CachedInputFiles(cfg Config) (files []string, goroot string, ok bool) {
 	packages.Visit(roots, nil, func(p *packages.Package) {
 		files = append(files, p.GoFiles...)
 		files = append(files, p.EmbedFiles...)
+		// cgo files and the C files beside them outside std (go list runs
+		// without cgo; std never uses cgo here).
+		if !isStdPkg(p, goroot) {
+			files = append(files, p.IgnoredFiles...)
+			files = append(files, p.OtherFiles...)
+		}
 	})
 	return files, goroot, true
 }

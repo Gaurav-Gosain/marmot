@@ -98,6 +98,9 @@ type build struct {
 	goarch     string
 	testDir    string   // directory of the package under test
 	dylibs     []string // from //go:cgo_import_dynamic
+	cgoObjs    []string // objects of the C side of cgo packages
+	cgoLDFLAGS []string // #cgo LDFLAGS of the cgo packages
+	rtBitcode  string   // runtime bitcode with the cgo packages' C, when not the installed one
 	out        string
 	incr       bool // packages without a cached module are loaded from source, the others from export data
 	noIncr     bool
@@ -249,7 +252,7 @@ func (b *build) run1() (string, error) {
 	defer releaseSlot()
 	lcfg := loader.Config{
 		Dir: cfg.Dir, Root: cfg.Root, Tags: cfg.Tags, GOOS: goos, GOARCH: goarch, Patterns: cfg.Patterns,
-		Log: b.logf, Tests: cfg.Test, AllErrors: cfg.AllErrors,
+		Log: b.logf, Tests: cfg.Test, AllErrors: cfg.AllErrors, CC: llvmTool("clang"),
 		BeforeSSA: func(all []*packages.Package) error {
 			return specialize.BeforeSSA(&specialize.Input{Packages: all, Release: cfg.Release, GOOS: goos, GOARCH: goarch, Log: b.logf})
 		},
@@ -279,6 +282,9 @@ func (b *build) run1() (string, error) {
 	}
 	if root.Name != "main" && cfg.Emit == "exe" {
 		return "", fmt.Errorf("%s is not a main package", root.PkgPath)
+	}
+	if err := b.prepareCgo(lp.Cgo); err != nil {
+		return "", err
 	}
 
 	var keepExported, reflectCall bool
@@ -467,6 +473,7 @@ func (b *build) run1() (string, error) {
 		}
 	}
 	b.dylibs = cg.DynamicLibraries()
+	objs = append(objs, b.cgoObjs...)
 	if err := b.link(objs, out); err != nil {
 		return "", err
 	}
@@ -638,6 +645,7 @@ func (b *build) link1(objs []string, rt, out string, extra []string) error {
 		args = append(args, "-fprofile-generate")
 	}
 	args = append(args, linkLibraries(b.dylibs)...)
+	args = append(args, b.cgoLDFLAGS...)
 	if mp := os.Getenv("MARMOT_LINKMAP"); mp != "" && runtime.GOOS == "darwin" {
 		args = append(args, "-Wl,-map,"+mp)
 	}
@@ -738,7 +746,9 @@ func (b *build) backendArgs(emitKind, batch string) []string {
 			args = append(args, "-tier1-spool", b.tier1Spool())
 		}
 	}
-	if bc := b.rtLib("rtcore.bc"); fileExists(bc) {
+	if b.rtBitcode != "" {
+		args = append(args, "--rt-bitcode="+b.rtBitcode)
+	} else if bc := b.rtLib("rtcore.bc"); fileExists(bc) {
 		args = append(args, "--rt-bitcode="+bc)
 	}
 	if b.cross() {

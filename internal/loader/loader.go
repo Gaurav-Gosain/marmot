@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Gaurav-Gosain/marmot/internal/cgo"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -34,6 +35,8 @@ type Config struct {
 	// Tests loads the test variant of the (single) package pattern; the
 	// root becomes the generated "pkg.test" main package (go list -test).
 	Tests bool
+	// CC is the C compiler for cgo packages (default clang).
+	CC string
 	// AllErrors reports every load and type error: no caps per package or
 	// overall, and no "could not import" follow-ons of a package that
 	// already has errors.
@@ -69,6 +72,8 @@ type Program struct {
 	Incremental map[string]*IncrementalPackage
 	RealGOROOT  string
 	Sizes       types.Sizes
+	// Cgo holds the C side of the cgo packages, by package path.
+	Cgo map[string]*cgo.Package
 }
 
 // setup returns the go/packages configuration and patterns of a load.
@@ -139,15 +144,31 @@ func Load(cfg Config) (*Program, error) {
 	t0 := time.Now()
 	var pkgs []*packages.Package
 	var incr map[*packages.Package]*IncrementalPackage
+	var cgoPkgs map[string]*cgo.Package
 	if cfg.Incremental {
-		roots, _, res, _, err := loadIncremental(cfg, pcfg, patterns, confSig(cfg, goroot, pcfg), cfg.NeedSource)
+		roots, _, res, _, cg, err := loadIncremental(cfg, pcfg, patterns, confSig(cfg, goroot, pcfg), cfg.NeedSource)
 		if err != nil {
 			return nil, err
 		}
-		pkgs, incr = roots, res
+		pkgs, incr, cgoPkgs = roots, res, cg
 	} else {
 		if pkgs, err = loadFull(pcfg, patterns, filePatterns); err != nil {
 			return nil, err
+		}
+		var all []*packages.Package
+		packages.Visit(pkgs, nil, func(p *packages.Package) { all = append(all, p) })
+		if usesCgo(all, goroot) {
+			// cgo packages need the incremental loader's file handling:
+			// load through it, every package from source.
+			// The driver did not ask for an incremental load: lp.Incremental
+			// stays unset (no per-package facts or keys).
+			cfg.Incremental = true
+			roots, _, _, _, cg, err := loadIncremental(cfg, pcfg, patterns, confSig(cfg, goroot, pcfg),
+				func(*packages.Package, string) bool { return true })
+			if err != nil {
+				return nil, err
+			}
+			pkgs, cgoPkgs = roots, cg
 		}
 	}
 	if cfg.Log != nil {
@@ -251,6 +272,7 @@ func Load(cfg Config) (*Program, error) {
 			lp.Incremental[p.PkgPath] = ip
 		}
 	}
+	lp.Cgo = cgoPkgs
 	return lp, nil
 }
 
@@ -297,7 +319,8 @@ func buildSSA(pkgs []*packages.Package) (prog *ssa.Program, ssaPkgs []*ssa.Packa
 }
 
 // InputFiles lists every Go file the build of cfg.Patterns reads (all
-// packages and dependencies, the runtime included), using the merged
+// packages and dependencies, the runtime included, and outside std the cgo
+// and C files go list leaves out without cgo), using the merged
 // GOROOT. It is cheap compared with Load and is used for up-to-date checks.
 func InputFiles(cfg Config) ([]string, string, error) {
 	realRoot, err := goEnv("GOROOT")
@@ -317,7 +340,7 @@ func InputFiles(cfg Config) ([]string, string, error) {
 		"GOARCH="+cfg.GOARCH, "GOFLAGS=-tags="+strings.Join(tags, ","), "GOTOOLCHAIN=local")
 	list := func(patterns ...string) (string, error) {
 		cmd := exec.Command("go", append([]string{"list", "-e", "-deps", "-f",
-			"{{.Dir}}{{range .GoFiles}}\t{{.}}{{end}}{{range .EmbedFiles}}\t{{.}}{{end}}{{if .Error}}\tERROR{{end}}"}, patterns...)...)
+			"{{.Dir}}{{range .GoFiles}}\t{{.}}{{end}}{{range .EmbedFiles}}\t{{.}}{{end}}{{if not .Standard}}{{range .IgnoredGoFiles}}\t{{.}}{{end}}{{range .IgnoredOtherFiles}}\t{{.}}{{end}}{{range .HFiles}}\t{{.}}{{end}}{{end}}{{if .Error}}\tERROR{{end}}"}, patterns...)...)
 		cmd.Dir = cfg.Dir
 		cmd.Env = env
 		out, err := cmd.Output()

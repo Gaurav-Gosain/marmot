@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Gaurav-Gosain/marmot/internal/cgo"
 	"golang.org/x/tools/go/gcexportdata"
 	"golang.org/x/tools/go/packages"
 )
@@ -435,7 +436,7 @@ func callsRecoverAST(body *ast.BlockStmt) bool {
 // source this build (for example because its compiled code is not cached);
 // roots and changed packages are always loaded from source.
 func loadIncremental(cfg Config, pcfg *packages.Config, patterns []string, confSig string,
-	needSrc func(p *packages.Package, key string) bool) ([]*packages.Package, []*packages.Package, map[*packages.Package]*IncrementalPackage, *token.FileSet, error) {
+	needSrc func(p *packages.Package, key string) bool) ([]*packages.Package, []*packages.Package, map[*packages.Package]*IncrementalPackage, *token.FileSet, map[string]*cgo.Package, error) {
 	light := lightConfig(pcfg)
 	if cfg.CacheDir == "" {
 		cfg.CacheDir = filepath.Join(cfg.Root, "build", "cache", "types")
@@ -443,7 +444,11 @@ func loadIncremental(cfg Config, pcfg *packages.Config, patterns []string, confS
 	tl := time.Now()
 	roots, err := loadList(light, patterns, cfg.CacheDir)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
+	}
+	roots, cgoPkgs, err := cgoPackages(cfg, pcfg, roots, cgoRelist(light, patterns, cfg.CacheDir))
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
 	}
 	if cfg.Log != nil {
 		cfg.Log("go list: %v", time.Since(tl).Round(time.Millisecond))
@@ -457,7 +462,7 @@ func loadIncremental(cfg Config, pcfg *packages.Config, patterns []string, confS
 		}
 	})
 	if len(listErrs) > 0 {
-		return nil, nil, nil, nil, fmt.Errorf("%s", strings.Join(listErrs, "\n"))
+		return nil, nil, nil, nil, nil, fmt.Errorf("%s", strings.Join(listErrs, "\n"))
 	}
 	if cfg.Listed != nil {
 		cfg.Listed(all)
@@ -518,7 +523,7 @@ func loadIncremental(cfg Config, pcfg *packages.Config, patterns []string, confS
 		st.meta = map[*packages.Package]*pkgMeta{}
 		tr := time.Now()
 		if err := st.run(all); err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
 		if cfg.Log != nil {
 			n := 0
@@ -530,7 +535,7 @@ func loadIncremental(cfg Config, pcfg *packages.Config, patterns []string, confS
 			cfg.Log("types: %v (%d of %d packages from source)", time.Since(tr).Round(time.Millisecond), n, len(all))
 		}
 		if len(st.retry) == 0 || attempt == 3 {
-			return roots, all, st.result, st.fset, nil
+			return roots, all, st.result, st.fset, cgoPkgs, nil
 		}
 		for _, d := range st.retry {
 			force[d] = true
