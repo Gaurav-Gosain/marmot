@@ -26,4 +26,4 @@ mv "$tmp" "$PREFIX"
 
 mkdir -p "$BINDIR"
 ln -sf "$PREFIX/build/bin/marmot" "$BINDIR/marmot"
-echo "installed $("$BINDIR/marmot" version 2>/dev/null || echo marmot) in $PREFIX, command at $BINDIR/marmot"
+echo "installed $(MARMOT_OUTPUT=plain "$BINDIR/marmot" version 2>/dev/null || echo marmot) in $PREFIX, command at $BINDIR/marmot"
