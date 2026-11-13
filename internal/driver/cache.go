@@ -178,9 +178,12 @@ func sweepWorkDirs(logf func(string, ...any)) {
 			continue
 		}
 		age := time.Since(info.ModTime())
+		if age < time.Hour {
+			continue // written to recently: a build may be using it whatever its pid says
+		}
 		if data, err := os.ReadFile(filepath.Join(d, ".pid")); err == nil {
 			pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
-			if pid > 0 && syscall.Kill(pid, 0) == nil && age < 24*time.Hour {
+			if err := syscall.Kill(pid, 0); pid > 0 && (err == nil || err == syscall.EPERM) && age < 24*time.Hour {
 				continue // alive (a reused pid ages out after a day)
 			}
 		} else if age < 6*time.Hour {
