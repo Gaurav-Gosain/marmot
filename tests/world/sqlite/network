@@ -1,0 +1,3 @@
+This test takes github.com/mattn/go-sqlite3 from the module cache at the version in
+go.mod and go.sum instead of a vendor directory (the sqlite amalgamation is 9 MB of C).
+The conformance harness skips it when the module cannot be downloaded.

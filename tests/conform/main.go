@@ -261,6 +261,10 @@ func discover(testsDir, dir string, filter *regexp.Regexp) []string {
 			if filter != nil && !filter.MatchString(rel) {
 				continue
 			}
+			if !modulesAvailable(filepath.Join(testsDir, rel)) {
+				fmt.Printf("skip %s: its modules are not in the module cache and cannot be downloaded (offline?)\n", rel)
+				continue
+			}
 			out = append(out, rel)
 		}
 	}
@@ -507,11 +511,7 @@ func updateOne(testsDir, work, name string) error {
 	}
 	defer os.RemoveAll(tdir)
 	exe := filepath.Join(tdir, "ref")
-	var refEnv []string
-	if strings.HasPrefix(name, "world/") {
-		refEnv = []string{"GOFLAGS=-mod=vendor"}
-	}
-	bo, err := execute(*flBuildTO, srcDir, refEnv, "go", "build", "-o", exe, src)
+	bo, err := execute(*flBuildTO, srcDir, refEnv(name, srcDir), "go", "build", "-o", exe, src)
 	if err != nil {
 		return err
 	}
@@ -739,6 +739,35 @@ func inDirs(rel, dirs string) bool {
 		}
 	}
 	return false
+}
+
+// A world test with a file named "network" does not vendor its modules
+// (mattn/go-sqlite3 would put megabytes of C in the repository): they come
+// from the module cache, downloaded at the pinned versions in its go.sum.
+
+func usesNetwork(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "network"))
+	return err == nil
+}
+
+// modulesAvailable reports whether a network world test's modules are in
+// the module cache or can be downloaded; other tests are always available.
+func modulesAvailable(dir string) bool {
+	if !usesNetwork(dir) {
+		return true
+	}
+	cmd := exec.Command("go", "mod", "download")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod")
+	return cmd.Run() == nil
+}
+
+// refEnv is the environment of the stock Go build of a test.
+func refEnv(name, srcDir string) []string {
+	if strings.HasPrefix(name, "world/") && !usesNetwork(srcDir) {
+		return []string{"GOFLAGS=-mod=vendor"}
+	}
+	return nil
 }
 
 // buildDir is the working directory for a compile: the module directory for world tests,
