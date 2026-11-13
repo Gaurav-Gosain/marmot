@@ -180,6 +180,6 @@ func (h *Human) emit(prefix string, cols int, cont, text, on, off string) {
 		if i > 0 {
 			p = cont
 		}
-		h.W.Write([]byte(p + on + l + off + "\n"))
+		_, _ = io.WriteString(h.W, p+on+l+off+"\n") // output to the user; the other lines of Human ignore write errors too
 	}
 }
