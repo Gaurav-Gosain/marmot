@@ -40,6 +40,19 @@ RT_API void rt_cgo_exit_fast(void) {
   if (m) m->incgo--;
 }
 
+// The quick bracket with one thread pointer read: the M cannot change
+// during a quick call (it never switches goroutines).
+RT_API void *rt_cgo_fast_enter(void) {
+  rt_m *m = getm();
+  if (m) m->incgo++;
+  return m;
+}
+
+RT_API void rt_cgo_fast_exit(void *mp) {
+  rt_m *m = mp;
+  if (m) m->incgo--;
+}
+
 RT_API void rt_cgo_exit_errno(int32_t e) {
   rt_m *m = getm();
   if (m) {

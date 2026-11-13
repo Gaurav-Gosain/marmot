@@ -20,8 +20,15 @@ void marmot_main(void) {
     rt_cgo_exit_fast();
   }
   double t2 = now_s();
+  for (long i = 0; i < n; i++) {
+    void *m = rt_cgo_fast_enter();
+    __asm__ volatile("" ::: "memory");
+    rt_cgo_fast_exit(m);
+  }
+  double t3 = now_s();
   printf("cgo bracketed  %6.2f ns/call\n", (t1 - t0) / n * 1e9);
   printf("cgo fast       %6.2f ns/call\n", (t2 - t1) / n * 1e9);
+  printf("cgo fast (m)   %6.2f ns/call\n", (t3 - t2) / n * 1e9);
   fflush(stdout);
   rt_exit(0);
 }

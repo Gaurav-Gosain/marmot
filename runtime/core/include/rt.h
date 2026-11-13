@@ -408,6 +408,10 @@ void rt_cgo_enter(void);
 void rt_cgo_exit(void);
 void rt_cgo_enter_fast(void);
 void rt_cgo_exit_fast(void);
+// The same quick bracket with one thread pointer read: m = rt_cgo_fast_enter();
+// call; rt_cgo_fast_exit(m).
+void *rt_cgo_fast_enter(void);
+void rt_cgo_fast_exit(void *m);
 void rt_cgo_exit_errno(int32_t e);
 int32_t rt_cgo_errno(void);
 void rt_cgo_keep(void *p);
