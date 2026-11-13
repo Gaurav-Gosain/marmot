@@ -27,8 +27,10 @@ func (b *build) wantPcln() bool {
 	return fileExists(b.pclnTool())
 }
 
-// pclnV3 turns on version 3 tables (inlined frames) for dev builds and
-// -release -trace=full, once the runtime reads them (rtgo).
+// pclnV3 turns on version 3 tables (inlined frames) for every build:
+// runtime.Caller counts logical frames, as with gc (log.Lshortfile asks
+// for the caller of an inlined Logger.output). It cost 10% of a release
+// cmd/marmot binary.
 const pclnV3 = true
 
 // pclnArgs are the table builder's arguments before the inputs.
@@ -39,7 +41,7 @@ func (b *build) pclnArgs(tbl string) []string {
 
 func (b *build) pclnVersionArgs() []string {
 	v := os.Getenv("MARMOT_PCLN_VERSION")
-	if v == "" && b.fullTrace() {
+	if v == "" && pclnV3 {
 		v = "3"
 	}
 	if v != "" {
@@ -48,8 +50,9 @@ func (b *build) pclnVersionArgs() []string {
 	return nil
 }
 
-// fullTrace: the pc table has inlined frames and every call site keeps its
-// own frames (dev builds and -release -trace=full).
+// fullTrace: every call site keeps its own inlined frames (LLVM does not
+// merge calls with different locations): dev builds and -release
+// -trace=full.
 func (b *build) fullTrace() bool { return pclnV3 && (!b.cfg.Release || b.cfg.Trace == "full") }
 
 // pclnFrags: the backend writes a pc table fragment next to each object and

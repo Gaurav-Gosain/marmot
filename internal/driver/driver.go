@@ -46,7 +46,7 @@ type Config struct {
 	PGOGen   bool   // instrument for profile generation
 	PGO      string // indexed profile to optimize with
 	Strip    bool   // -s: no pc table
-	Trace    string // -trace=full: inlined frames in the pc table of release builds
+	Trace    string // -trace=full: release builds keep the inlined frames of each call site apart
 	Tags     []string
 	Patterns []string
 	Stderr   io.Writer

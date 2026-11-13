@@ -50,7 +50,7 @@ func newBuildFlags(name string) (*flag.FlagSet, *buildFlags) {
 	b := &buildFlags{}
 	b.out = fs.String("o", "", "output file")
 	b.opt = fs.String("O", "", "optimization level: 0, 1, 2, 3, s, z (default 2, 3 with -release)")
-	b.trace = fs.String("trace", "", "traceback detail of -release builds: full adds inlined frames (dev builds always have them)")
+	b.trace = fs.String("trace", "", "traceback detail of -release builds: full keeps the inlined frames of each call site apart (as dev builds do)")
 	b.strip = fs.Bool("s", false, "omit the pc table (tracebacks without file:line)")
 	b.pgoGen = fs.Bool("pgo-gen", false, "build an instrumented binary that writes marmot-<id>.profraw next to itself")
 	b.pgo = fs.String("pgo", "", "profile guided optimization with this indexed profile (llvm-profdata merge -o FILE *.profraw)")
