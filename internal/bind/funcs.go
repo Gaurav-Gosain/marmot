@@ -242,7 +242,11 @@ func (g *gen) emitFunc(fn *Func) string {
 			params = append(params, name+" []byte")
 			g.used["unsafe"] = true
 			cast := ptrCast(t)
-			pre = append(pre, fmt.Sprintf("%sp := %s(unsafe.Pointer(unsafe.SliceData(%s)))", name, cast, name))
+			if cast == "unsafe.Pointer" {
+				pre = append(pre, fmt.Sprintf("%sp := unsafe.Pointer(unsafe.SliceData(%s))", name, name))
+			} else {
+				pre = append(pre, fmt.Sprintf("%sp := %s(unsafe.Pointer(unsafe.SliceData(%s)))", name, cast, name))
+			}
 			args = append(args, name+"p", fmt.Sprintf("C.%s(len(%s))", cSpell(lt), name))
 			used[goIdent(ps[i+1].Name)] = true
 			g.note("%s: %s and %s are taken as one []byte (pointer and length)", fn.Name, p.Name, ps[i+1].Name)

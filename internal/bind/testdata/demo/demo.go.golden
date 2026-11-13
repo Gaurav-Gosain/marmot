@@ -126,7 +126,7 @@ func (h *DB) Close() error {
 func (h *DB) Put(key string, data []byte) error {
 	ckey := C.CString(key)
 	defer C.free(unsafe.Pointer(ckey))
-	datap := unsafe.Pointer(unsafe.Pointer(unsafe.SliceData(data)))
+	datap := unsafe.Pointer(unsafe.SliceData(data))
 	r := C.demo_put(h.c(), ckey, datap, C.size_t(len(data)))
 	if err := statusError(int(r), "demo_put"); err != nil {
 		return err
