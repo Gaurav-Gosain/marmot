@@ -240,6 +240,27 @@ public:
   // Functions declared returns_twice (rt_setjmp): their callers get no
   // register allocation.
   llvm::DenseSet<StringAttr> returnsTwice;
+  // Functions by name, for the parameter attributes of a direct callee.
+  llvm::DenseMap<StringAttr, LL::LLVMFuncOp> funcs;
+  // Whether argument i of call (or the result of fn) is llvm.signext: the
+  // caller (callee) extends the narrow integer to 64 bits by its sign.
+  // Tier0 keeps narrow integers zero extended, which covers llvm.zeroext.
+  bool signExtArg(LL::CallOp call, unsigned i) const {
+    auto has = [](DictionaryAttr d) { return d && d.get("llvm.signext"); };
+    if (auto aa = call.getArgAttrsAttr(); aa && i < aa.size() && has(dyn_cast<DictionaryAttr>(aa[i])))
+      return true;
+    if (auto callee = call.getCalleeAttr())
+      if (auto it = funcs.find(callee.getAttr()); it != funcs.end()) {
+        LL::LLVMFuncOp f = it->second;
+        return i < f.getNumArguments() && has(f.getArgAttrDict(i));
+      }
+    return false;
+  }
+  static bool signExtResult(LL::LLVMFuncOp fn) {
+    auto ra = fn.getResAttrsAttr();
+    auto d = ra && ra.size() == 1 ? dyn_cast<DictionaryAttr>(ra[0]) : DictionaryAttr();
+    return d && d.get("llvm.signext");
+  }
   bool isDefinedData(StringRef name) const;
 
   // Line rows of the functions emitted, for the pc table fragment.
@@ -898,6 +919,8 @@ void FuncGen::emitCall(LL::CallOp call) {
     if (isAggregate(v.getType())) {
       addrOf(R2, of(v) + l.off);
       memLoad(r, R2, sizeOf(l.t));
+    } else if (mg.signExtArg(call, l.arg)) {
+      getSigned(r, v);
     } else {
       get(r, v);
     }
@@ -982,6 +1005,8 @@ void FuncGen::emitReturn(LL::ReturnOp ret) {
       if (isAggregate(v.getType())) {
         addrOf(R2, of(v) + off);
         memLoad(R1, R2, sizeOf(t));
+      } else if (ModuleGen::signExtResult(fn)) {
+        getSigned(R1, v);
       } else {
         get(R1, v);
       }
@@ -2048,6 +2073,7 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
         for (Attribute a : *pt)
           if (auto sa = dyn_cast<StringAttr>(a); sa && sa.getValue() == "returns_twice") twice = true;
       if (twice) returnsTwice.insert(f.getSymNameAttr());
+      funcs[f.getSymNameAttr()] = f;
     } else if (auto g = dyn_cast<LL::GlobalOp>(op)) {
       if (g.getValueOrNull() || !g.getInitializerRegion().empty()) definedData[g.getSymNameAttr()] = true;
     }

@@ -341,6 +341,8 @@ void FuncGenX64::emitCall(LL::CallOp call) {
     Value v = args[l.arg];
     if (isAggregate(v.getType()))
       a.load(r, X::RSP, d32(of(v) + l.off), unsigned(sizeOf(l.t)));
+    else if (mg.signExtArg(call, l.arg))
+      getSigned(r, v);
     else
       get(r, v);
   };
@@ -433,6 +435,8 @@ void FuncGenX64::emitReturn(LL::ReturnOp ret) {
       if (isFloat(t)) continue;
       if (isAggregate(v.getType()))
         a.load(retGpr[ngp++], X::RSP, d32(of(v) + off), unsigned(sizeOf(t)));
+      else if (ModuleGen::signExtResult(fn))
+        getSigned(retGpr[ngp++], v);
       else
         get(retGpr[ngp++], v);
     }

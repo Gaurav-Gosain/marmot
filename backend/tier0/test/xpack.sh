@@ -7,7 +7,7 @@ set -e
 T=$(cd "$(dirname "$1")" && pwd)/$(basename "$1"); L=$2; O=$3; SEEDS=${4:-"1 2 3 4 5"}
 src=$(cd "$(dirname "$0")" && pwd)
 rm -rf "$O" && mkdir -p "$O"
-for t in intrinsics wide; do "$T" -x64 "$src/$t.mlir" "$O/$t.o" > /dev/null; cp "$src/${t}_main.c" "$O/"; done
+for t in intrinsics wide ext; do "$T" -x64 "$src/$t.mlir" "$O/$t.o" > /dev/null; cp "$src/${t}_main.c" "$O/"; done
 sed "s/SECTION/marmot_tlinks/" "$src/tlinks.mlir" > "$O/tlinks.mlir"
 "$T" -x64 "$O/tlinks.mlir" "$O/tlinks.o" > /dev/null && rm "$O/tlinks.mlir"; cp "$src/tlinks_main.c" "$O/"
 for s in $SEEDS; do
@@ -22,9 +22,9 @@ for s in $SEEDS; do
 done
 cat > "$O/run.sh" <<'EOS'
 cd "$(dirname "$0")"
-for t in intrinsics wide; do cc -O1 -w ${t}_main.c $t.o -lm -o $t && ./$t > /dev/null && echo "$t: ok" || echo "$t: FAIL"; done
-cc -O1 -w tlinks_main.c tlinks.o -Wl,--gc-sections -o tlinks && ./tlinks && echo "tlinks: ok" || echo "tlinks: FAIL"
-if command -v ld.lld > /dev/null; then cc -O1 -w -fuse-ld=lld tlinks_main.c tlinks.o -Wl,--gc-sections -o tlinks && ./tlinks && echo "tlinks lld: ok" || echo "tlinks lld: FAIL"; fi
+for t in intrinsics wide ext; do cc -O1 -w ${t}_main.c $t.o -lm -o $t && ./$t > /dev/null && echo "$t: ok" || echo "$t: FAIL"; done
+cc -O1 -w tlinks_main.c tlinks.o -Wl,--gc-sections -Wl,-z,start-stop-gc -o tlinks && ./tlinks && echo "tlinks: ok" || echo "tlinks: FAIL"
+if command -v ld.lld > /dev/null; then cc -O1 -w -fuse-ld=lld tlinks_main.c tlinks.o -Wl,--gc-sections -Wl,-z,start-stop-gc -o tlinks && ./tlinks && echo "tlinks lld: ok" || echo "tlinks lld: FAIL"; fi
 for d in abi*; do
   (cd $d && cc -O1 -w main.c a.llvm.o b.llvm.o -o ref && cc -O1 -w main.c a.t0.o b.llvm.o -o t0 && ./ref > ref.txt && ./t0 > t0.txt && cmp -s ref.txt t0.txt && echo "$d: ok" || { echo "$d: differs"; diff ref.txt t0.txt | head -5; })
 done

@@ -6,11 +6,11 @@ set -e
 T0=$(cd "$(dirname "$1")" && pwd)/$(basename "$1"); L=$2; SEEDS=${3:-"1 2 3 4 5"}
 src=$(cd "$(dirname "$0")" && pwd)
 w=$(mktemp -d); trap 'rm -rf "$w"' EXIT; cd "$w"
-for t in intrinsics wide; do
+for t in intrinsics wide ext; do
   "$T0" "$src/$t.mlir" $t.o > /dev/null
   "$L/clang" -O1 -w "$src/${t}_main.c" $t.o -o $t && ./$t > /dev/null && echo "$t: ok"
 done
-if [ "$(uname)" = Darwin ]; then sec=__DATA,__marmot_tlinks,regular,live_support; gc=-dead_strip; else sec=marmot_tlinks; gc=--gc-sections; fi
+if [ "$(uname)" = Darwin ]; then sec=__DATA,__marmot_tlinks,regular,live_support; gc=-dead_strip; else sec=marmot_tlinks; gc=--gc-sections,-z,start-stop-gc; fi
 sed "s/SECTION/$sec/" "$src/tlinks.mlir" > tlinks.mlir
 "$T0" tlinks.mlir tlinks.o > /dev/null
 "$L/clang" -O1 -w "$src/tlinks_main.c" tlinks.o -Wl,$gc -o tlinks && ./tlinks && echo "tlinks: ok"
