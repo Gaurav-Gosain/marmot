@@ -880,7 +880,13 @@ dir="$(cd "$(dirname "$0")" && pwd)"
 out="${1:-$dir/%s}"
 case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
 cd "$dir"
-${CC:-clang} -o "$out" %s librtcore.a -lpthread -Wl,--gc-sections -Wl,-z,start-stop-gc -s%s
+# -z start-stop-gc needs lld or GNU ld (gold, the default of some clangs,
+# rejects it).
+ld=
+if command -v ld.lld >/dev/null 2>&1; then ld=-fuse-ld=lld
+elif command -v ld.bfd >/dev/null 2>&1; then ld=-fuse-ld=bfd
+fi
+${CC:-clang} $ld -o "$out" %s librtcore.a -lpthread -Wl,--gc-sections -Wl,-z,start-stop-gc -s%s
 `, b.goos, b.goarch, exe, exe, strings.Join(names, " "), shellArgs(b.cgoLDFLAGS))
 	return os.WriteFile(filepath.Join(out, "link.sh"), []byte(script), 0o755)
 }
