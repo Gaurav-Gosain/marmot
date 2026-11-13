@@ -348,9 +348,9 @@ static void share(gcw *w) {
 INLINE void cpu_relax(void) {
 #if RT_ARCH_ARM64
   __asm__ volatile("yield");
-#else
+#elif RT_ARCH_AMD64
   __asm__ volatile("pause");
-#endif
+#endif  // wasm: one thread, nothing to wait for
 }
 
 // Drain until global termination. Single-worker phases just drain.

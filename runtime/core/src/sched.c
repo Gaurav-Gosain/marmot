@@ -799,9 +799,9 @@ static void goexit_final(rt_g *g) {
 INLINE void cpu_relax_sched(void) {
 #if RT_ARCH_ARM64
   __asm__ volatile("yield");
-#else
+#elif RT_ARCH_AMD64
   __asm__ volatile("pause");
-#endif
+#endif  // wasm: one thread, nothing to wait for
 }
 
 _Atomic int64_t pfor_last;  // monotonic time of the last rt_parallel_for

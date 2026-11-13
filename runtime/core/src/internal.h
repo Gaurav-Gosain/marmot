@@ -38,6 +38,8 @@ void __tsan_switch_to_fiber(void *fiber, unsigned flags);
 #define RT_ARCH_ARM64 1
 #elif defined(__x86_64__)
 #define RT_ARCH_AMD64 1
+#elif defined(__wasm32__)
+#define RT_ARCH_WASM32 1
 #else
 #error "unsupported architecture"
 #endif
@@ -46,6 +48,8 @@ void __tsan_switch_to_fiber(void *fiber, unsigned flags);
 #define RT_OS_DARWIN 1
 #elif defined(__linux__)
 #define RT_OS_LINUX 1
+#elif defined(__wasi__)
+#define RT_OS_WASI 1  // one thread, WASI preview 1 imports, no libc (os_wasi.c)
 #else
 #error "unsupported OS"
 #endif

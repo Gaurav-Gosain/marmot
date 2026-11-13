@@ -8,9 +8,9 @@ enum { UNLOCKED = 0, LOCKED = 1, CONTENDED = 2 };
 INLINE void cpu_relax(void) {
 #if RT_ARCH_ARM64
   __asm__ volatile("yield");
-#else
+#elif RT_ARCH_AMD64
   __asm__ volatile("pause");
-#endif
+#endif  // wasm: one thread, nothing to wait for
 }
 
 static void lock_slow(_Atomic uint32_t *v) {
