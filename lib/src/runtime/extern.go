@@ -317,7 +317,8 @@ func (ci *Frames) Next() (frame Frame, more bool) {
 		var fr [maxInlineDepth]pcInfo
 		n := pcFrames(pc-1, fr[:])
 		if n == 0 {
-			ci.pending = append(ci.pending, Frame{PC: pc})
+			// Outside the pc table: C library code has a symbol name.
+			ci.pending = append(ci.pending, Frame{PC: pc, Function: cSymbol(pc - 1)})
 		}
 		for i, info := range fr[:n] {
 			f := Frame{

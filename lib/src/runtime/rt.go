@@ -213,6 +213,28 @@ func libc_memset(p unsafe.Pointer, c int32, n uintptr) unsafe.Pointer
 //go:linkname libc_memcmp memcmp
 func libc_memcmp(a, b unsafe.Pointer, n uintptr) int32
 
+// dlInfo is the C library's Dl_info.
+type dlInfo struct {
+	fname unsafe.Pointer // file of the image
+	fbase uintptr
+	sname unsafe.Pointer // nearest symbol, or nil
+	saddr uintptr
+}
+
+//go:linkname libc_dladdr dladdr
+func libc_dladdr(addr uintptr, info *dlInfo) int32
+
+// cSymbol names a code address outside the pc table (a C library
+// function such as memmove) from the dynamic linker's symbol tables, or
+// returns "".
+func cSymbol(pc uintptr) string {
+	var info dlInfo
+	if libc_dladdr(pc, &info) == 0 || info.sname == nil {
+		return ""
+	}
+	return cstring(info.sname)
+}
+
 // funcPC returns the code address of the func value stored at fv: the first
 // word of the closure object. Use it only on top-level functions whose
 // signature is C compatible (pointer and integer parameters), so that a C
