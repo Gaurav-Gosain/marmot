@@ -117,9 +117,6 @@ func applyCgo(cfg Config, goroot string, roots []*packages.Package,
 	relist func(extra []string) ([]*packages.Package, error)) ([]*packages.Package, []*packages.Package, map[string]*cgo.Package, error) {
 	var all []*packages.Package
 	packages.Visit(roots, nil, func(p *packages.Package) { all = append(all, p) })
-	if cfg.Tests {
-		return nil, nil, nil, fmt.Errorf("marmot test does not support cgo packages yet")
-	}
 	realRoot, err := goEnv("GOROOT")
 	if err != nil {
 		return nil, nil, nil, err
@@ -142,9 +139,24 @@ func applyCgo(cfg Config, goroot string, roots []*packages.Package,
 		if isStdPkg(p, goroot) {
 			continue
 		}
+		// With tests: the generated test main and the external test
+		// package (in the same directory) have no cgo files of their own.
+		if strings.HasSuffix(p.ID, ".test") || strings.HasSuffix(p.Name, "_test") {
+			continue
+		}
 		dir := pkgDir(p)
 		if dir == "" {
 			continue
+		}
+		// The test variant of the package (ID "p [p.test]") also has the
+		// package's _test.go files.
+		var testFiles []string
+		if strings.Contains(p.ID, " [") {
+			for _, f := range p.GoFiles {
+				if strings.HasSuffix(f, "_test.go") {
+					testFiles = append(testFiles, f)
+				}
+			}
 		}
 		// go build file.go: the package is the named files, plus the
 		// overlay that imports the runtime.
@@ -175,10 +187,11 @@ func applyCgo(cfg Config, goroot string, roots []*packages.Package,
 				files = append(files, filepath.Join(dir, f))
 			}
 			imports = bp.Imports
-			if sameFiles(append(append([]string{}, files...), overlay...), p.GoFiles) {
+			if sameFiles(append(append(append([]string{}, files...), overlay...), testFiles...), p.GoFiles) {
 				continue
 			}
 		}
+		files = append(files, testFiles...)
 		if len(overlay) > 0 {
 			files = append(files, overlay...)
 			imports = append(imports, "runtime")
@@ -209,9 +222,13 @@ func applyCgo(cfg Config, goroot string, roots []*packages.Package,
 				keep = append(keep, r)
 			}
 		}
-		packages.Visit(nroots, nil, func(p *packages.Package) { byPath[p.PkgPath] = p })
+		byID := map[string]*packages.Package{}
+		packages.Visit(nroots, nil, func(p *packages.Package) {
+			byPath[p.PkgPath] = p
+			byID[p.ID] = p
+		})
 		for i := range changes {
-			changes[i].p = byPath[changes[i].p.PkgPath]
+			changes[i].p = byID[changes[i].p.ID]
 		}
 		roots = keep
 	}
@@ -221,14 +238,23 @@ func applyCgo(cfg Config, goroot string, roots []*packages.Package,
 		p.GoFiles = c.files
 		p.CompiledGoFiles = c.files
 		p.IgnoredFiles = nil
-		p.Imports = map[string]*packages.Package{}
+		// Keep go list's imports (they name the right test variants) and
+		// add those of the new files.
+		imps := map[string]*packages.Package{}
+		for k, v := range p.Imports {
+			imps[k] = v
+		}
 		for _, i := range c.imports {
+			if imps[i] != nil || i == "C" {
+				continue
+			}
 			if d := byPath[i]; d != nil {
-				p.Imports[i] = d
-			} else if i != "C" {
+				imps[i] = d
+			} else {
 				return nil, nil, nil, fmt.Errorf("%s: import %q not found", p.PkgPath, i)
 			}
 		}
+		p.Imports = imps
 		// go list's view without cgo ("build constraints exclude all Go
 		// files") no longer holds.
 		p.Errors = nil
