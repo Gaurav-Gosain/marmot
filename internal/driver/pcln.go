@@ -278,9 +278,12 @@ func (b *build) linkWithFrags(objs []string, link func(extra []string, out strin
 				}
 			}
 			b.logf("pcln table added (fragments, %d link(s))", attempt+1)
-			// The link kept the local symbols for marmot-pcln; drop them now
-			// (as -x does on a normal link). The table stays in __TEXT.
-			if os.Getenv("MARMOT_KEEP_SYMBOLS") == "" {
+			// The link kept the local symbols for marmot-pcln. Release builds
+			// drop them now (as -x does on a normal link; the table stays in
+			// __TEXT). Dev builds keep them, as go build does: the strip cost
+			// 40 ms of a 0.8 s leaf edit of cmd/marmot, for 10 MB of symbols
+			// that debuggers and profilers use.
+			if b.cfg.Release && os.Getenv("MARMOT_KEEP_SYMBOLS") == "" {
 				if err := b.run("xcrun", "strip", "-x", tmp); err != nil {
 					return err
 				}
