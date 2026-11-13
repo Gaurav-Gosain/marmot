@@ -31,3 +31,9 @@ func Reverse(s string) string {
 func Scaled(v int) int { return int(C.clib_scaled(C.long(v))) }
 
 func AsmAdd(a, b int) int { return int(C.clib_asm_add(C.long(a), C.long(b))) }
+
+//export goTwice
+func goTwice(v C.long) C.long { return 2 * v }
+
+// TwicePlusOne goes Go -> C (clib.c) -> Go (goTwice) -> C.
+func TwicePlusOne(v int) int { return int(C.clib_twice_plus_one(C.long(v))) }

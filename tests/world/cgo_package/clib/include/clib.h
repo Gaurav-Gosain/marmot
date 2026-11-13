@@ -13,6 +13,9 @@ double stats_mean(const stats *s);
 size_t clib_reverse(char *s);
 long clib_scaled(long v);
 
+/* Calls the exported Go function goTwice. */
+long clib_twice_plus_one(long v);
+
 /* Defined in asm.S. */
 long clib_asm_add(long a, long b);
 #endif

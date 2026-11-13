@@ -1,5 +1,6 @@
 #include <string.h>
 #include "clib.h"
+#include "_cgo_export.h"
 
 void stats_add(stats *s, double v) {
 	s->sum += v;
@@ -20,3 +21,5 @@ size_t clib_reverse(char *s) {
 
 /* SCALE comes from #cgo CFLAGS in clib.go. */
 long clib_scaled(long v) { return v * SCALE; }
+
+long clib_twice_plus_one(long v) { return goTwice(v) + 1; }

@@ -14,5 +14,5 @@ func main() {
 	}
 	fmt.Println(s.Count(), s.Mean())
 	fmt.Println(clib.Reverse("marmot"), clib.Reverse(""), clib.Reverse("ab"))
-	fmt.Println(clib.Scaled(14), clib.AsmAdd(40, 2))
+	fmt.Println(clib.Scaled(14), clib.AsmAdd(40, 2), clib.TwicePlusOne(20))
 }
