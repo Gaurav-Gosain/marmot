@@ -25,14 +25,14 @@ Details and method in [docs/benchmarks.md](docs/benchmarks.md).
 | Binaries | marmot | go |
 | --- | --- | --- |
 | hello world with `println`, `-release` | 148 KB | 1.68 MB |
-| hello world with `fmt.Println`, `-release` | 1.1 MB | 2.4 MB |
+| hello world with `fmt.Println`, `-release` | 665 KB | 2.4 MB |
 | run time, average over 43 programs (`-release`) | 1.6x faster | 1.0x |
 
-| Build time, the compiler itself (182 packages) | marmot | go |
+| Build time, the compiler itself (238 packages) | marmot | go |
 | --- | --- | --- |
-| first build, empty caches | 3.1 s | 3.9 s |
-| rebuild, nothing changed | 0.04 s | 0.12 s |
-| rebuild after a one line edit | 0.33 to 0.62 s | 0.32 to 0.75 s |
+| first build, empty caches | 5.1 to 5.4 s | 5.2 to 6.3 s |
+| rebuild, nothing changed | 0.05 to 0.07 s | 0.14 to 0.15 s |
+| rebuild after a one line edit | 0.68 to 0.96 s | 0.50 to 0.93 s |
 
 Dev builds use a fast code generator by default (`MARMOT_TIER0=0` turns it off). After a dev build returns, the packages it
 compiled are compiled again with LLVM at low priority, and later builds link the optimized

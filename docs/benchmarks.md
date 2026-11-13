@@ -75,19 +75,21 @@ These use every core, so they are faster in wall-clock time, not in total CPU wo
 
 ## Build time
 
-Building the compiler itself (`./cmd/marmot`, 182 packages including the standard library) on an
-Apple M3 Pro with 11 cores. The first build starts with empty caches on both sides. The edits add
-one line to a package: "leaf" is the main package, "deep" is a package that most of the compiler
-uses.
+Building the compiler itself (`./cmd/marmot`, 238 packages including the standard library) on an
+Apple M3 Pro with 11 cores, measured on 2026-11-13 with default settings, two runs of each
+compiler, alternating. The first build starts with empty caches on both sides. The edits add one
+line to a function body: "leaf" is the main package, "deep" is a package that most of the
+compiler uses.
 
-| Case | marmot | marmot, `MARMOT_INCREMENTAL=1` | go |
-| --- | --- | --- | --- |
-| First build, empty caches | 3.2 s | 3.1 s | 3.9 s |
-| Rebuild, nothing changed | 0.13 s | 0.04 s | 0.12 s |
-| One line edit, leaf package | 0.75 s | 0.33 s | 0.32 s |
-| One line edit, deep package | 1.0 s | 0.62 s | 0.67 to 0.75 s |
+| Case | marmot | go |
+| --- | --- | --- |
+| First build, empty caches | 5.13 to 5.43 s | 5.23 to 6.34 s |
+| Rebuild, nothing changed | 0.05 to 0.07 s | 0.14 to 0.15 s |
+| One line edit, leaf package | 0.68 to 0.70 s | 0.50 to 0.51 s |
+| One line edit, deep package | 0.94 to 0.96 s | 0.90 to 0.93 s |
 
-Best of two runs for the first build, the rest agree within 0.05 s.
+The machine was not fully idle during this run. A leaf edit is still slower than go; most of the
+difference is linking.
 
 Dev builds use a fast code generator that writes machine code directly, without LLVM
 (`MARMOT_TIER0=0` turns it off; then the first build takes 11.6 s). It is never used with
