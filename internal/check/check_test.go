@@ -360,3 +360,21 @@ func TestDeadcodeReusedAcrossLineShifts(t *testing.T) {
 		t.Errorf("deadcode after a new call: cached %v, %+v", c.Cached, c.Findings)
 	}
 }
+
+func TestExhaustiveOptIn(t *testing.T) {
+	if selected("exhaustive", nil, nil) {
+		t.Error("exhaustive runs by default")
+	}
+	if !selected("vet", nil, nil) || !selected("exhaustive", map[string]bool{"exhaustive": true}, nil) {
+		t.Error("vet by default, or exhaustive with -only")
+	}
+	lc := &lintConfig{}
+	lc.Linters.Enable = []string{"exhaustive"}
+	if !selected("exhaustive", nil, lc) {
+		t.Error("exhaustive enabled in the lint configuration does not run")
+	}
+	lc.Linters.Enable, lc.Linters.Default, lc.Linters.Disable = nil, "all", []string{"exhaustive"}
+	if selected("exhaustive", nil, lc) {
+		t.Error("exhaustive disabled in the lint configuration runs")
+	}
+}

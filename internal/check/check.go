@@ -30,6 +30,24 @@ var Names = checkflags.Names
 
 // reportOnly checks print their findings but never fail the run, as the
 // modernizers and dead code are in most CI gates.
+// selected reports whether check n runs: the checks -only names, else the
+// default set and the opt-in checks the lint configuration enables.
+func selected(n string, want map[string]bool, lc *lintConfig) bool {
+	if len(want) > 0 {
+		return want[n]
+	}
+	if optIn[n] {
+		return lc != nil && lc.enables(n)
+	}
+	return true
+}
+
+// optIn checks are not in the default set: they run when -only names
+// them or when the lint configuration enables the linter of that name.
+// exhaustive reports every partial switch, which in most code is
+// intended.
+var optIn = map[string]bool{"exhaustive": true}
+
 var reportOnly = map[string]bool{"modernize": true, "deadcode": true, "exhaustive": true, "nil": true}
 
 // Codes of check findings, one per check.
@@ -159,7 +177,8 @@ func Run(opts Options) (*Result, error) {
 		}
 		want[n] = true
 	}
-	on := func(n string) bool { return len(want) == 0 || want[n] }
+	lc, lcErr := findLintConfig(dir)
+	on := func(n string) bool { return selected(n, want, lc) }
 	res := &Result{Dir: dir}
 	results := map[string]*CheckResult{}
 	for _, n := range Names {
@@ -168,7 +187,6 @@ func Run(opts Options) (*Result, error) {
 		}
 	}
 	st := openStore(opts.CacheDir)
-	lc, lcErr := findLintConfig(dir)
 
 	var wg sync.WaitGroup
 	run := func(name string, f func(*CheckResult)) {

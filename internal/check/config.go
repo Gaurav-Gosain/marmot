@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -193,6 +194,15 @@ var exclusionPresets = map[string][]excludeRule{
 // file (relative to the configuration directory, slash separated) is
 // excluded by a rule. src is the source line, for rules with a source
 // pattern.
+// enables reports whether the configuration turns the linter on: listed in
+// linters.enable, or every linter with default: all, and not disabled.
+func (c *lintConfig) enables(linter string) bool {
+	if slices.Contains(c.Linters.Disable, linter) {
+		return false
+	}
+	return c.Linters.Default == "all" || slices.Contains(c.Linters.Enable, linter)
+}
+
 func (c *lintConfig) excluded(linter, rel, text, src string) bool {
 	if c == nil {
 		return false

@@ -258,7 +258,7 @@ package graph. With no packages it checks every module of the `go.work`, or the 
 | `tidy` | a `go.mod` or `go.sum` that `go mod tidy` would change | yes |
 | `cross` | type errors on other targets: `-targets`, `scripts/platforms.txt` or `platforms.txt`, else linux, darwin and windows on amd64 and arm64 | yes |
 | `modernize` | what the `go fix` modernizers would change | no |
-| `exhaustive` | switches that miss values of an enum or types of a sealed interface (a switch with a `default` is left alone) | no |
+| `exhaustive` | switches that miss values of an enum or types of a sealed interface (a switch with a `default` is left alone); runs only when `-only` names it or `.golangci.yml` enables `exhaustive` | no |
 | `nil` | dereferences of pointers and writes to maps that can be nil | no |
 | `deadcode` | functions no program or test reaches | no |
 
