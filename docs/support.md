@@ -61,3 +61,4 @@ yet match what the standard Go compiler does.
 | NaN values | The exact bit pattern of a NaN result can differ. It is still a NaN. |
 | Floating point | `math.Log` can differ in the last bit for some inputs on arm64. |
 | Stack traces | Panic messages match Go. The stack trace that follows has a different layout. |
+| String data | In `-release` builds, equal strings built at compile time may share their bytes. Only visible through `unsafe`. |

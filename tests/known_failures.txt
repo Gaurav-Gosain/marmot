@@ -6,3 +6,4 @@ run/opt/panic_in_loop@Oz  # recovered panic then nil deref panic is not recovera
 run/mem/regionstore@lifetime  # MARMOT_LIFETIME=all: region store use-after-free, expected until fixed
 run/audit/evalorder_gaps  # map index evaluation order differs from gc
 run/audit/math_exp_log_bits  # math.Exp(-745.13) returns 0x1, gc 0x0 (value difference, not a NaN payload)
+goroot/cmp@release  # equal strings built at compile time share their bytes (allowed by the spec; gc keeps them apart)
