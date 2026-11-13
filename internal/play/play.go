@@ -139,11 +139,71 @@ type Request struct {
 // Stage is one stage's output: its text, and for each text line the line
 // of the source it comes from (0: none) in File.
 type Stage struct {
-	Text  string `json:"text"`
+	Text string `json:"text"`
+	// Lines holds, per line of Text, the line of File (main.go) it comes
+	// from, 0 for none.
 	Lines []int  `json:"lines"`
 	File  string `json:"file,omitempty"`
-	Note  string `json:"note,omitempty"`
-	Error string `json:"error,omitempty"`
+	// Map is the other direction, for every file of the request: each
+	// source line and the lines of Text it became, in file and line
+	// order.
+	Map   []SourceLines `json:"map"`
+	Note  string        `json:"note,omitempty"`
+	Error string        `json:"error,omitempty"`
+}
+
+// SourceLines is what one source line became in a stage's text.
+type SourceLines struct {
+	File string `json:"file"`
+	Line int    `json:"line"`
+	// Ranges are runs of lines of the stage text, 1-based and inclusive:
+	// [[3, 5], [9, 9]] is lines 3 to 5 and line 9.
+	Ranges [][2]int `json:"ranges"`
+}
+
+// finish fills st from the stage text and its per-line source lines:
+// the text cut at limit bytes, Lines for main.go, and Map.
+func finish(st *Stage, text string, locs []srcLoc, limit int) {
+	if len(text) > limit {
+		cut := strings.LastIndexByte(text[:limit], '\n')
+		if cut < 0 {
+			cut = limit
+		}
+		k := min(strings.Count(text[:cut], "\n")+1, len(locs))
+		text = text[:cut] + "\n[output cut at " + strconv.Itoa(limit>>10) + " KB]"
+		locs = append(locs[:k:k], srcLoc{})
+	}
+	st.Text = text
+	st.Lines = make([]int, len(locs))
+	idx := map[srcLoc]int{}
+	st.Map = []SourceLines{}
+	for i, l := range locs {
+		if l.File == "" || l.Line <= 0 {
+			continue
+		}
+		if l.File == "main.go" {
+			st.Lines[i] = l.Line
+		}
+		j, ok := idx[l]
+		if !ok {
+			j = len(st.Map)
+			idx[l] = j
+			st.Map = append(st.Map, SourceLines{File: l.File, Line: l.Line})
+		}
+		m := &st.Map[j]
+		n := i + 1
+		if k := len(m.Ranges); k > 0 && m.Ranges[k-1][1] == n-1 {
+			m.Ranges[k-1][1] = n
+		} else {
+			m.Ranges = append(m.Ranges, [2]int{n, n})
+		}
+	}
+	sort.Slice(st.Map, func(a, b int) bool {
+		if st.Map[a].File != st.Map[b].File {
+			return st.Map[a].File < st.Map[b].File
+		}
+		return st.Map[a].Line < st.Map[b].Line
+	})
 }
 
 // Response is the body of the answer to POST /compile.
@@ -386,9 +446,6 @@ func (s *Server) Compile(ctx context.Context, q *Request) (*Response, error) {
 		}
 		wg.Go(func() {
 			r := s.stage(ctx, dir, q.Mode, st)
-			if len(r.Text) > s.opt.Limits.MaxOutput {
-				r.Text, r.Lines = capText(r.Text, r.Lines, s.opt.Limits.MaxOutput)
-			}
 			mu.Lock()
 			res.Stages[st] = r
 			mu.Unlock()
@@ -413,18 +470,6 @@ func cacheKey(files map[string][]byte, q *Request) string {
 	}
 	fmt.Fprintf(h, "%s %s %q", q.Mode, q.Target, q.Stages)
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-func capText(text string, lines []int, n int) (string, []int) {
-	cut := strings.LastIndexByte(text[:n], '\n')
-	if cut < 0 {
-		cut = n
-	}
-	k := strings.Count(text[:cut], "\n") + 1
-	if k > len(lines) {
-		k = len(lines)
-	}
-	return text[:cut] + "\n[output cut at " + strconv.Itoa(n>>10) + " KB]", append(lines[:k:k], 0)
 }
 
 func contains(xs []string, x string) bool {
@@ -557,7 +602,8 @@ func humanText(out []byte, dir string) string {
 
 // stage builds one stage in dir (where the program already builds).
 func (s *Server) stage(ctx context.Context, dir, mode, stage string) Stage {
-	main := filepath.Join(dir, "main.go")
+	files := requestFiles(dir)
+	limit := s.opt.Limits.MaxOutput
 	emit := func(flags ...string) string {
 		if _, other, ok := s.build(ctx, dir, mode, flags...); !ok {
 			return firstNonEmpty(other, "the stage did not build")
@@ -571,30 +617,34 @@ func (s *Server) stage(ctx context.Context, dir, mode, stage string) Stage {
 		if err != nil {
 			return Stage{Error: err.Error()}
 		}
-		st = Stage{Text: text, Lines: lines, Note: "x/tools SSA of package main, as marmot's frontend builds it"}
+		st = Stage{Note: "x/tools SSA of package main, as marmot's frontend builds it"}
+		finish(&st, text, lines, limit)
 	case "mlir":
 		if e := emit("-dialect", "go", "-emit", "mlir", "-o", "out.mlir"); e != "" {
 			return Stage{Error: e}
 		}
 		data, _ := os.ReadFile(filepath.Join(dir, "out.mlir"))
-		text, lines := mlirLines(string(data), main)
-		st = Stage{Text: text, Lines: lines, Note: "package main in MLIR with the go dialect (go.* operations among the LLVM dialect's), as the frontend emits it"}
+		text, lines := mlirLines(string(data), files)
+		st = Stage{Note: "package main in MLIR with the go dialect (go.* operations among the LLVM dialect's), as the frontend emits it"}
+		finish(&st, text, lines, limit)
 	case "llvm":
 		if e := emit("-emit", "llvm", "-o", "out.ll"); e != "" {
 			return Stage{Error: e}
 		}
 		data, _ := os.ReadFile(filepath.Join(dir, "out.ll"))
-		text, lines := llvmLines(string(data), main)
-		st = Stage{Text: text, Lines: lines, Note: "package main in LLVM IR after the backend's pipeline for the mode"}
+		text, lines := llvmLines(string(data), files)
+		st = Stage{Note: "package main in LLVM IR after the backend's pipeline for the mode"}
+		finish(&st, text, lines, limit)
 	case "asm":
 		if e := emit("-emit", "obj", "-o", "out.o"); e != "" {
 			return Stage{Error: e}
 		}
-		text, lines, err := asmLines(filepath.Join(dir, "out.o"), main)
+		text, lines, err := asmLines(filepath.Join(dir, "out.o"), files)
 		if err != nil {
 			return Stage{Error: err.Error()}
 		}
-		st = Stage{Text: text, Lines: lines, Note: "package main's " + runtime.GOARCH + " machine code"}
+		st = Stage{Note: "package main's " + runtime.GOARCH + " machine code"}
+		finish(&st, text, lines, limit)
 		if mode == "dev" {
 			st.Note += "; dev builds (tier0) carry no line table in their objects, so lines are not linked: use -O 2 or -release"
 		}

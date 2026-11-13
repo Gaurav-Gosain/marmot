@@ -1,6 +1,7 @@
 package play
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -22,15 +23,24 @@ func TestFilesAndImports(t *testing.T) {
 
 func TestMLIRLines(t *testing.T) {
 	text := "module {\n  %0 = go.index %a[%b] loc(#loc1)\n  %1 = llvm.add %x, %y loc(#loc3)\n  llvm.return loc(\"/w/main.go\":9:2)\n}\n#loc0 = loc(\"/w/main.go\":7:3)\n#loc1 = loc(\"/w/main.go\":8:5)\n#loc2 = loc(\"/lib/fmt/print.go\":1:1)\n#loc3 = loc(callsite(#loc2 at #loc0))\n"
-	out, lines := mlirLines(text, "/w/main.go")
+	out, lines := mlirLines(text, requestFiles("/w"))
 	if strings.Contains(out, "loc(") || strings.Contains(out, "#loc") {
 		t.Errorf("locations left:\n%s", out)
 	}
 	want := []int{0, 8, 7, 9, 0}
 	for i, w := range want {
-		if lines[i] != w {
-			t.Errorf("line %d: %d, want %d (%v)", i, lines[i], w, lines)
+		if lines[i].Line != w || (w > 0) != (lines[i].File == "main.go") {
+			t.Errorf("line %d: %v, want main.go:%d (%v)", i, lines[i], w, lines)
 		}
+	}
+}
+
+func TestMLIRFuncLine(t *testing.T) {
+	// A function's location follows its body's closing brace.
+	text := "  llvm.func @main.F() {\n    llvm.return loc(\"/w/util.go\":5:2)\n  } loc(\"/w/util.go\":4:1)\n"
+	_, lines := mlirLines(text, requestFiles("/w"))
+	if got, want := fmt.Sprint(lines), "[{util.go 4} {util.go 5} {util.go 4}]"; got != want {
+		t.Errorf("lines %s, want %s", got, want)
 	}
 }
 
@@ -48,14 +58,33 @@ func TestLLVMLines(t *testing.T) {
 !11 = !DILocation(line: 11, column: 2, scope: !5)
 !12 = !DILocation(line: 4, column: 1, scope: !6, inlinedAt: !10)
 `
-	out, lines := llvmLines(text, "/w/main.go")
+	out, lines := llvmLines(text, requestFiles("/w"))
 	if strings.Contains(out, "!dbg") || strings.Contains(out, "DILocation") {
 		t.Errorf("metadata left:\n%s", out)
 	}
 	want := []int{6, 9, 9, 11, 0}
 	for i, w := range want {
-		if lines[i] != w {
-			t.Errorf("line %d: %d, want %d (%v)", i, lines[i], w, lines)
+		if lines[i].Line != w || (w > 0) != (lines[i].File == "main.go") {
+			t.Errorf("line %d: %v, want main.go:%d (%v)", i, lines[i], w, lines)
 		}
+	}
+}
+
+func TestFinishMap(t *testing.T) {
+	m := func(l int) srcLoc { return srcLoc{"main.go", l} }
+	u := func(l int) srcLoc { return srcLoc{"util.go", l} }
+	locs := []srcLoc{{}, m(7), m(7), m(8), u(3), m(7), {}, u(3)}
+	var st Stage
+	finish(&st, "a\nb\nc\nd\ne\nf\ng\nh", locs, 1<<20)
+	if got, want := fmt.Sprint(st.Lines), "[0 7 7 8 0 7 0 0]"; got != want {
+		t.Errorf("Lines %s, want %s", got, want)
+	}
+	if got, want := fmt.Sprint(st.Map), "[{main.go 7 [[2 3] [6 6]]} {main.go 8 [[4 4]]} {util.go 3 [[5 5] [8 8]]}]"; got != want {
+		t.Errorf("Map %s, want %s", got, want)
+	}
+	// Cut: the map keeps only the lines left, plus the cut marker's.
+	finish(&st, "a\nb\nc\nd\ne\nf\ng\nh", locs, 8)
+	if got, want := fmt.Sprint(st.Map), "[{main.go 7 [[2 3]]} {main.go 8 [[4 4]]}]"; got != want || len(st.Lines) != 5 {
+		t.Errorf("cut Map %s (%d lines), want %s", got, len(st.Lines), want)
 	}
 }

@@ -20,13 +20,34 @@ import (
 )
 
 // Each stage turns marmot's output into display text and, per text line,
-// the line of main.go it comes from: SSA from the instructions'
-// positions, MLIR from loc() attributes, LLVM IR from !dbg locations (an
-// inlined call's location is the call site in main.go), machine code from
-// the object's line table.
+// the source line it comes from (a file of the request and a line): SSA
+// from the instructions' positions, MLIR from loc() attributes, LLVM IR
+// from !dbg locations (an inlined call's location is its call site in the
+// request's files), machine code from the object's line table.
+
+// srcLoc is a line of one of the request's files ("" when the text line
+// comes from none of them).
+type srcLoc struct {
+	File string
+	Line int
+}
+
+// fileNamer maps a path in the debug information to the name of the
+// request's file it is, or "".
+type fileNamer func(path string) string
+
+// requestFiles names the .go files directly in dir.
+func requestFiles(dir string) fileNamer {
+	return func(p string) string {
+		if filepath.Dir(p) == dir && strings.HasSuffix(p, ".go") {
+			return filepath.Base(p)
+		}
+		return ""
+	}
+}
 
 // ssaText is package main's SSA, function by function in source order.
-func ssaText(root, dir string) (string, []int, error) {
+func ssaText(root, dir string) (string, []srcLoc, error) {
 	lp, err := loader.Load(loader.Config{Dir: dir, Root: root, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Patterns: []string{"."},
 		CC: driver.LLVMTool("clang")})
 	if err != nil {
@@ -75,31 +96,31 @@ func ssaText(root, dir string) (string, []int, error) {
 		}
 	}
 	sort.SliceStable(uniq, func(i, j int) bool { return uniq[i].Pos() < uniq[j].Pos() })
-	main := filepath.Join(dir, "main.go")
-	lineOf := func(p token.Pos) int {
+	files := requestFiles(dir)
+	lineOf := func(p token.Pos) srcLoc {
 		if !p.IsValid() {
-			return 0
+			return srcLoc{}
 		}
 		pos := fset.Position(p)
-		if pos.Filename != main {
-			return 0
+		if f := files(pos.Filename); f != "" {
+			return srcLoc{f, pos.Line}
 		}
-		return pos.Line
+		return srcLoc{}
 	}
 	var b strings.Builder
-	var lines []int
-	emit := func(s string, l int) {
+	var lines []srcLoc
+	emit := func(s string, l srcLoc) {
 		b.WriteString(s)
 		b.WriteByte('\n')
 		lines = append(lines, l)
 	}
 	for i, f := range uniq {
 		if i > 0 {
-			emit("", 0)
+			emit("", srcLoc{})
 		}
 		emit(fmt.Sprintf("func %s%s", f.RelString(pkg.Pkg), strings.TrimPrefix(f.Signature.String(), "func")), lineOf(f.Pos()))
 		for _, bl := range f.Blocks {
-			emit(fmt.Sprintf("%d:  %s", bl.Index, bl.Comment), 0)
+			emit(fmt.Sprintf("%d:  %s", bl.Index, bl.Comment), srcLoc{})
 			for _, in := range bl.Instrs {
 				s := in.String()
 				if v, ok := in.(ssa.Value); ok && v.Name() != "" {
@@ -128,53 +149,69 @@ var (
 )
 
 // mlirLines drops the loc() attributes and #loc definitions from the
-// MLIR text and maps each operation to its line of main.go.
-func mlirLines(text, main string) (string, []int) {
+// MLIR text and maps each operation to its source line.
+func mlirLines(text string, files fileNamer) (string, []srcLoc) {
 	defs := map[string]string{}
 	for _, l := range strings.Split(text, "\n") {
 		if m := reLocDef.FindStringSubmatch(l); m != nil {
 			defs["#"+m[1]] = m[2]
 		}
 	}
-	var resolve func(s string, depth int) int
-	resolve = func(s string, depth int) int {
+	var resolve func(s string, depth int) srcLoc
+	resolve = func(s string, depth int) srcLoc {
 		if depth > 20 {
-			return 0
+			return srcLoc{}
 		}
 		if m := reLocFile.FindStringSubmatch(s); m != nil {
-			if m[1] == main {
+			if f := files(m[1]); f != "" {
 				n, _ := strconv.Atoi(m[2])
-				return n
+				return srcLoc{f, n}
 			}
-			return 0
+			return srcLoc{}
 		}
 		if strings.HasPrefix(s, "#loc") {
 			return resolve(defs[s], depth+1)
 		}
 		// callsite(#callee at #caller), fused[...]: the first part in
-		// main.go, the caller last (an inlined callee's line is not
-		// main.go's).
+		// the request's files, the caller last (an inlined callee from
+		// std has no line of the request).
 		for _, r := range reLocRef.FindAllString(s, -1) {
-			if n := resolve(r, depth+1); n > 0 {
+			if n := resolve(r, depth+1); n.Line > 0 {
 				return n
 			}
 		}
 		if m := reLocFile.FindStringSubmatch(strings.TrimLeft(s, "callsitefused[(")); m != nil {
 			return resolve(m[0], depth+1)
 		}
-		return 0
+		return srcLoc{}
 	}
 	var out []string
-	var lines []int
+	var lines []srcLoc
+	var open []int // the lines that opened the regions not yet closed
 	for _, l := range strings.Split(text, "\n") {
 		if strings.HasPrefix(l, "#loc") {
 			continue
 		}
-		n := 0
+		var n srcLoc
 		if m := reLocUse.FindAllStringSubmatch(l, -1); m != nil {
 			n = resolve(m[len(m)-1][1], 0)
 		}
-		out = append(out, reLocUse.ReplaceAllString(l, ""))
+		l = reLocUse.ReplaceAllString(l, "")
+		// A region's location is printed after its closing brace (a
+		// function's after the "}" of its body): give it to the line that
+		// opens the region too.
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "}") && len(open) > 0 {
+			o := open[len(open)-1]
+			open = open[:len(open)-1]
+			if lines[o].Line == 0 {
+				lines[o] = n
+			}
+		}
+		if strings.HasSuffix(t, "{") {
+			open = append(open, len(out))
+		}
+		out = append(out, l)
 		lines = append(lines, n)
 	}
 	return trimTrailing(out, lines)
@@ -188,8 +225,8 @@ var (
 )
 
 // llvmLines drops the debug metadata from the LLVM IR and maps each
-// instruction with a location to its line of main.go.
-func llvmLines(text, main string) (string, []int) {
+// instruction with a location to its source line.
+func llvmLines(text string, files fileNamer) (string, []srcLoc) {
 	type node struct {
 		kind   string
 		fields map[string]string
@@ -205,11 +242,11 @@ func llvmLines(text, main string) (string, []int) {
 		}
 	}
 	unq := func(s string) string { v, _ := strconv.Unquote(s); return v }
-	isMain := func(scope string) bool {
+	fileOf := func(scope string) string {
 		for range 50 {
 			n, ok := meta[scope]
 			if !ok {
-				return false
+				return ""
 			}
 			if f, ok := n.fields["file"]; ok {
 				fn := meta[f]
@@ -217,40 +254,43 @@ func llvmLines(text, main string) (string, []int) {
 				if !filepath.IsAbs(name) {
 					name = filepath.Join(unq(fn.fields["directory"]), name)
 				}
-				return name == main
+				return files(name)
 			}
 			scope = n.fields["scope"]
 		}
-		return false
+		return ""
 	}
-	var lineOf func(id string, depth int) int
-	lineOf = func(id string, depth int) int {
+	var lineOf func(id string, depth int) srcLoc
+	lineOf = func(id string, depth int) srcLoc {
 		n, ok := meta[id]
 		if !ok || n.kind != "DILocation" || depth > 50 {
-			return 0
+			return srcLoc{}
 		}
-		if isMain(n.fields["scope"]) {
+		if f := fileOf(n.fields["scope"]); f != "" {
 			v, _ := strconv.Atoi(n.fields["line"])
-			return v
+			return srcLoc{f, v}
 		}
 		if at, ok := n.fields["inlinedAt"]; ok {
 			return lineOf(at, depth+1)
 		}
-		return 0
+		return srcLoc{}
 	}
 	var out []string
-	var lines []int
+	var lines []srcLoc
 	for _, l := range strings.Split(text, "\n") {
 		if strings.HasPrefix(l, "!") || strings.HasPrefix(l, "attributes #") || strings.HasPrefix(l, "source_filename") || strings.HasPrefix(l, "; ModuleID") {
 			continue
 		}
-		n := 0
+		var n srcLoc
 		if m := reDbgUse.FindStringSubmatch(l); m != nil {
 			n = lineOf(m[1], 0)
 		} else if strings.HasPrefix(l, "define ") {
 			if m := regexp.MustCompile(`!dbg (!\d+)`).FindStringSubmatch(l); m != nil {
-				if sp, ok := meta[m[1]]; ok && isMain(m[1]) {
-					n, _ = strconv.Atoi(sp.fields["line"])
+				if sp, ok := meta[m[1]]; ok {
+					if f := fileOf(m[1]); f != "" {
+						n.File = f
+						n.Line, _ = strconv.Atoi(sp.fields["line"])
+					}
 				}
 			}
 		}
@@ -266,32 +306,33 @@ func llvmLines(text, main string) (string, []int) {
 var reObjLine = regexp.MustCompile(`^; (.+):(\d+)$`)
 
 // asmLines disassembles the object with its line table.
-func asmLines(obj, main string) (string, []int, error) {
+func asmLines(obj string, files fileNamer) (string, []srcLoc, error) {
 	out, err := exec.Command(driver.LLVMTool("llvm-objdump"), "-d", "--line-numbers", "--no-show-raw-insn", "--no-leading-addr", obj).Output()
 	if err != nil {
 		return "", nil, fmt.Errorf("llvm-objdump: %v", err)
 	}
 	var text []string
-	var lines []int
-	cur := 0
+	var lines []srcLoc
+	var cur srcLoc
 	started := false
 	for _, l := range strings.Split(string(out), "\n") {
 		if strings.HasSuffix(l, ">:") {
 			started = true
-			cur = 0
+			cur = srcLoc{}
 			if len(text) > 0 {
-				text, lines = append(text, ""), append(lines, 0)
+				text, lines = append(text, ""), append(lines, srcLoc{})
 			}
-			text, lines = append(text, strings.TrimSuffix(strings.TrimPrefix(strings.TrimLeft(l, "0123456789abcdef "), "<"), ">:")+":"), append(lines, 0)
+			text, lines = append(text, strings.TrimSuffix(strings.TrimPrefix(strings.TrimLeft(l, "0123456789abcdef "), "<"), ">:")+":"), append(lines, srcLoc{})
 			continue
 		}
 		if !started || strings.TrimSpace(l) == "" || strings.HasPrefix(l, "Disassembly of section") {
 			continue
 		}
 		if m := reObjLine.FindStringSubmatch(l); m != nil {
-			cur = 0
-			if m[1] == main {
-				cur, _ = strconv.Atoi(m[2])
+			cur = srcLoc{}
+			if f := files(m[1]); f != "" {
+				cur.File = f
+				cur.Line, _ = strconv.Atoi(m[2])
 			}
 			continue
 		}
@@ -305,7 +346,7 @@ func asmLines(obj, main string) (string, []int, error) {
 	return t, n, nil
 }
 
-func trimTrailing(text []string, lines []int) (string, []int) {
+func trimTrailing(text []string, lines []srcLoc) (string, []srcLoc) {
 	for len(text) > 0 && strings.TrimSpace(text[len(text)-1]) == "" {
 		text, lines = text[:len(text)-1], lines[:len(lines)-1]
 	}
