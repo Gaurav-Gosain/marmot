@@ -65,6 +65,9 @@ func showAllocs(rep *diag.Reporter, path string, all bool) {
 		seen[k] = true
 		recs = append(recs, r)
 	}
+	if sc.Err() != nil {
+		return // unreadable, as when it cannot be opened
+	}
 	sort.SliceStable(recs, func(i, j int) bool { return recs[i].Pos < recs[j].Pos })
 	counts := map[string]int{}
 	loops := 0

@@ -41,6 +41,10 @@ func targets(sc *scope, opts Options) ([]string, string) {
 					}
 				}
 				f.Close()
+				if sc.Err() != nil {
+					list = nil // unreadable, as when it cannot be opened
+					continue
+				}
 				from = n
 				break
 			}

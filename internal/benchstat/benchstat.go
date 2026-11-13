@@ -20,6 +20,7 @@ type Results struct {
 	Names []string                        // benchmark names, first seen first
 	Units []string                        // units, first seen first
 	Vals  map[string]map[string][]float64 // name -> unit -> samples
+	Err   error                           // reading the input failed
 }
 
 // Parse reads benchmark lines ("BenchmarkX-8  1000  123 ns/op  0 B/op").
@@ -54,6 +55,7 @@ func Parse(r io.Reader) *Results {
 			}
 		}
 	}
+	res.Err = sc.Err()
 	return res
 }
 

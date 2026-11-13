@@ -213,6 +213,10 @@ func serveMCP(in io.Reader, out io.Writer, self string, timeout time.Duration) i
 			reply(m.ID, nil, &rpcError{-32601, "method not found: " + m.Method})
 		}
 	}
+	if err := sc.Err(); err != nil {
+		fmt.Fprintln(os.Stderr, "marmot mcp:", err)
+		return 1
+	}
 	return 0
 }
 

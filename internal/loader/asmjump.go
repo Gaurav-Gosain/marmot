@@ -49,6 +49,7 @@ func asmJumps(p *packages.Package) map[string]asmJump {
 			continue
 		}
 		sc := bufio.NewScanner(f)
+		found := map[string]asmJump{}
 		text := ""
 		for sc.Scan() {
 			line := strings.TrimSpace(sc.Text())
@@ -90,12 +91,18 @@ func asmJumps(p *packages.Package) map[string]asmJump {
 			if _, ok := p.Imports[pkg]; pkg != "" && !ok {
 				continue // the package graph is go list's: no new imports
 			}
+			found[fn] = asmJump{pkg, name}
+		}
+		f.Close()
+		if sc.Err() != nil {
+			continue // unreadable, as when it cannot be opened
+		}
+		for fn, j := range found {
 			if out == nil {
 				out = map[string]asmJump{}
 			}
-			out[fn] = asmJump{pkg, name}
+			out[fn] = j
 		}
-		f.Close()
 	}
 	if p.PkgPath == "golang.org/x/sys/unix" && strings.Contains(strings.Join(p.OtherFiles, " "), "asm_linux_") {
 		for stub, target := range rawStubs {

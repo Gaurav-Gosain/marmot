@@ -160,6 +160,11 @@ func cmdBench(args []string) int {
 		}
 		oldRes, oldName = benchstat.Parse(bytes.NewReader(data)), filepath.Base(*bf.compare)
 	}
+	for _, r := range []*benchstat.Results{newRes, oldRes} {
+		if r != nil && r.Err != nil {
+			return rep.Usage("marmot bench: reading benchmark output: " + r.Err.Error())
+		}
+	}
 	if len(newRes.Names) == 0 {
 		return rep.Usage("marmot bench: no benchmarks matched " + *bf.bench)
 	}

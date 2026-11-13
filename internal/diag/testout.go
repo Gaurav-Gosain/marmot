@@ -111,6 +111,11 @@ func ParseTestOutput(r io.Reader, pkg, dir string, echo func(string)) []TestResu
 			}
 		}
 	}
+	if err := sc.Err(); err != nil && cur != "" {
+		t := get(cur)
+		t.Status = "fail"
+		t.Output = append(t.Output, "marmot: reading the test output: "+err.Error())
+	}
 	for _, n := range order {
 		t := byName[n]
 		if t.Status == "" {

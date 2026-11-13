@@ -72,7 +72,10 @@ func cmdGenerate(args []string) int {
 	byDir := map[string][]genDirective{}
 	var dirs []string
 	for _, f := range files {
-		ds := scanDirectives(f)
+		ds, err := scanDirectives(f)
+		if err != nil {
+			return rep.Usage("marmot generate: " + err.Error())
+		}
 		if len(ds) > 0 && byDir[filepath.Dir(f)] == nil {
 			dirs = append(dirs, filepath.Dir(f))
 		}
@@ -163,10 +166,10 @@ func cmdGenerate(args []string) int {
 }
 
 // scanDirectives finds //go:generate lines of a file.
-func scanDirectives(path string) []genDirective {
+func scanDirectives(path string) ([]genDirective, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	defer f.Close()
 	var out []genDirective
@@ -179,7 +182,10 @@ func scanDirectives(path string) []genDirective {
 			out = append(out, genDirective{file: path, line: n, args: strings.TrimSpace(rest)})
 		}
 	}
-	return out
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("%s: %v", path, err)
+	}
+	return out, nil
 }
 
 // runDirective runs one directive in its package directory with the
