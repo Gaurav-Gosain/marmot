@@ -90,9 +90,17 @@ func growslice(et *_type, oldPtr unsafe.Pointer, oldLen, oldCap, newLen int) sli
 		panic(errorString("growslice: len out of range"))
 	}
 
-	p := mallocgc(capmem, et)
+	var p unsafe.Pointer
+	if noscan {
+		// Only the part past the new length needs clearing: the old
+		// elements are copied over and the caller writes [oldLen:newLen]
+		// (as gc).
+		p = mallocNoZero(capmem)
+		memclrNoHeapPointers(unsafe.Add(p, newlenmem), capmem-newlenmem)
+	} else {
+		p = mallocgc(capmem, et)
+	}
 	memmove(p, oldPtr, lenmem)
-	_ = newlenmem
 	return slice{p, newLen, newcap}
 }
 
