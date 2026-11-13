@@ -48,7 +48,8 @@ COPY --from=build /marmot/lib /marmot/lib
 COPY --from=build /marmot/deploy/play/warm.sh /marmot/warm.sh
 ENV MARMOT_ROOT=/marmot HOME=/home/play GOCACHE=/home/play/.cache/go GOPROXY=off GOFLAGS=-mod=mod \
 	MARMOT_CACHE_MAX_MB=4096
-RUN mkdir -p /marmot/build/cache && chown -R play /marmot/build/cache
+# marmot writes its merged GOROOT and cache under build/.
+RUN mkdir -p /marmot/build/cache && chown play /marmot/build && chown -R play /marmot/build/cache
 USER play
 # The standard library compiled once for every mode and stage, so requests start warm.
 RUN sh /marmot/warm.sh
