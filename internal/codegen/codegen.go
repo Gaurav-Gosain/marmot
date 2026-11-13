@@ -25,6 +25,10 @@ import (
 type Options struct {
 	GOOS, GOARCH string
 	Sizes        types.Sizes
+	// FilePkgs maps each source file of the program (as positions name it)
+	// to its package path; separate compilation keeps positions by it
+	// (locs.go), whether the package was loaded from source or not.
+	FilePkgs map[string]string
 	// GoDialect emits the go dialect instead of the
 	// equivalent llvm dialect sequences (Phase B, -dialect=go).
 	GoDialect bool
@@ -101,9 +105,8 @@ type Program struct {
 	syms sync.Map // *ssa.Function -> symbol (symbol)
 	// Separate compilation: the package of each parsed file, and the
 	// packages whose API exposes generic code (genapi, locs.go).
-	hasReflect bool // reflect is part of the program (type links)
-	locPkgs    map[*token.File]*types.Package
-	genericPkg map[*types.Package]bool
+	hasReflect bool            // reflect is part of the program (type links)
+	genericPkg map[string]bool // by package path
 
 	escMu     sync.Mutex
 	recWrap   map[*ssa.Function]bool
@@ -196,17 +199,9 @@ func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package
 	}
 	p.collectFMABlocks()
 	if p.opts.Separate {
-		p.locPkgs = map[*token.File]*types.Package{}
-		for pkg, fs := range files {
-			for _, f := range fs {
-				if tf := p.fset.File(f.Pos()); tf != nil {
-					p.locPkgs[tf] = pkg
-				}
-			}
-		}
-		p.genericPkg = map[*types.Package]bool{}
+		p.genericPkg = map[string]bool{}
 		for _, pkg := range p.pkgs {
-			p.genericPkg[pkg.Pkg] = genapi.Exposed(pkg.Pkg)
+			p.genericPkg[pkg.Pkg.Path()] = genapi.Exposed(pkg.Pkg)
 		}
 	}
 	return p, nil

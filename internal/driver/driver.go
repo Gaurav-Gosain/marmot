@@ -308,7 +308,13 @@ func (b *build) run1() (string, error) {
 			ssaPkgs = append(ssaPkgs, sp)
 		}
 	}
-	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, GoDialect: cfg.Dialect == "go", Release: cfg.Release, MergedGOROOT: lp.GOROOT, XDefs: b.xdefs(),
+	filePkgs := map[string]string{}
+	for _, p := range lp.All {
+		for _, f := range append(append([]string(nil), p.GoFiles...), p.CompiledGoFiles...) {
+			filePkgs[f] = p.PkgPath
+		}
+	}
+	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, FilePkgs: filePkgs, GoDialect: cfg.Dialect == "go", Release: cfg.Release, MergedGOROOT: lp.GOROOT, XDefs: b.xdefs(),
 		Separate: b.incr, Facts: incrementalFacts(lp), KeepExported: keepExported, ReflectCall: reflectCall,
 		AllocReport: b.allocReport()})
 	if err != nil {

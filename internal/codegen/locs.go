@@ -36,12 +36,22 @@ func (m *moduleGen) loc(pos token.Pos) string {
 		}
 		m.locTF = tf
 	}
-	if m.p.opts.Separate && !m.locAllowed(tf) {
-		return ""
+	own := true
+	if m.p.opts.Separate {
+		ok, o := m.locAllowed(tf)
+		if !ok {
+			return ""
+		}
+		own = o
 	}
 	p := tf.Position(pos)
 	if p.Filename == "" {
 		return ""
+	}
+	if !own {
+		// Another package's position: loaded from export data it has
+		// lines only, so use the line alone whatever the load.
+		p.Column = 1
 	}
 	if p.Filename != m.locName {
 		q, ok := m.locFiles[p.Filename]
@@ -85,12 +95,13 @@ func (m *moduleGen) loc(pos token.Pos) string {
 // exposes generic code, whose source is in the module's key (instances of
 // it are compiled here). A position elsewhere (a wrapper of another package's
 // method) would go stale when that package's lines move but not its API.
-func (m *moduleGen) locAllowed(tf *token.File) bool {
-	pkg := m.p.locPkgs[tf]
-	if pkg == nil {
-		return false
+func (m *moduleGen) locAllowed(tf *token.File) (ok, own bool) {
+	path := m.p.opts.FilePkgs[tf.Name()]
+	if path == "" {
+		return false, false
 	}
-	return (m.pkg != nil && pkg == m.pkg.Pkg) || m.p.genericPkg[pkg]
+	own = m.pkg != nil && path == m.pkg.Pkg.Path()
+	return own || m.p.genericPkg[path], own
 }
 
 // locKey is a location: quoted file name, line and column.

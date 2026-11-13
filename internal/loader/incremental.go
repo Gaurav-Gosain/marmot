@@ -613,10 +613,17 @@ func loadIncremental(cfg Config, pcfg *packages.Config, patterns []string, confS
 		cfg.Listed(all)
 	}
 	force := map[string]bool{}
+	// The go list file lists: a source load adds //go:embed helpers, whose
+	// text lives in that attempt's overlay.
+	listed := map[*packages.Package][]string{}
+	for _, p := range all {
+		listed[p] = p.CompiledGoFiles
+	}
 	for attempt := 0; ; attempt++ {
 		for _, p := range all {
-			// Fresh type information for every attempt.
+			// Fresh type information and file lists for every attempt.
 			p.Types, p.TypesInfo, p.Syntax = nil, nil, nil
+			p.CompiledGoFiles = listed[p]
 		}
 		st := &incrState{
 			cfg:      cfg,
