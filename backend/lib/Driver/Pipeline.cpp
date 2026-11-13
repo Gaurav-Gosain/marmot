@@ -773,7 +773,7 @@ ParsedModulePtr parseFile(const std::string &input, const CompileOptions &opts,
   bool check = parseCheck();
   if (opts.tier0 && (fastParse() || check)) {
     std::string why;
-    pm->module = tier0::readModule(pm->ctx.get(), text, input, why);
+    pm->module = tier0::readModule(pm->ctx.get(), text, input, why, opts.parseThreads);
     if (check && pm->module) {
       mlir::OwningOpRef<mlir::ModuleOp> ref = mlir::parseSourceFile<mlir::ModuleOp>(
           pm->sm, mlir::ParserConfig(pm->ctx.get(), /*verifyAfterParse=*/false));

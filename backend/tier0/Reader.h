@@ -18,8 +18,10 @@ namespace tier0 {
 // operations without one, as the parser does), or null with the reason in
 // why when the text is outside what the reader knows. The context must have
 // the LLVM dialect loaded.
+// threads > 1 reads function bodies on that many threads (the module is
+// the same).
 mlir::OwningOpRef<mlir::ModuleOp> readModule(mlir::MLIRContext *ctx, llvm::StringRef text,
-                                             llvm::StringRef name, std::string &why);
+                                             llvm::StringRef name, std::string &why, unsigned threads = 1);
 
 } // namespace tier0
 } // namespace marmot

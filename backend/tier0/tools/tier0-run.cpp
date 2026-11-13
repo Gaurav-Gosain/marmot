@@ -61,7 +61,8 @@ static int readCheck(int argc, char **argv) {
     auto a = mlir::parseSourceFile<mlir::ModuleOp>(sm, mlir::ParserConfig(&c1, false));
     auto t1 = std::chrono::steady_clock::now();
     std::string why;
-    auto r = marmot::tier0::readModule(&c2, (*buf)->getBuffer(), argv[i], why);
+    unsigned rt = getenv("READER_THREADS") ? unsigned(atoi(getenv("READER_THREADS"))) : 1;
+    auto r = marmot::tier0::readModule(&c2, (*buf)->getBuffer(), argv[i], why, rt);
     auto t2 = std::chrono::steady_clock::now();
     tp += ms(t0, t1);
     tr += ms(t1, t2);

@@ -17,6 +17,8 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 
+#include <thread>
+
 using namespace mlir;
 namespace LL = mlir::LLVM;
 
@@ -35,6 +37,23 @@ public:
         lineStart(text.begin()), file(StringAttr::get(ctx, name)) {}
 
   OwningOpRef<ModuleOp> run();
+  // Function bodies to read on several threads (threads > 1).
+  unsigned threads = 1;
+  // A body reader shares its parent's alias tables.
+  const Reader *parent = nullptr;
+  struct Body {
+    LL::LLVMFuncOp fn;
+    const char *b, *e;  // after '{', at the matching '}'
+    unsigned line;
+    const char *lineStart;
+    SmallVector<std::pair<StringRef, Type>> args;
+    SmallVector<Location> argLocs;
+  };
+  std::vector<Body> bodies;
+  void readBodies();
+  // From '{' (consumed) to the matching '}' (consumed), skipping strings
+  // and comments; the body is recorded, not read.
+  void skipBody(Body &bd);
 
 private:
   MLIRContext *ctx;
@@ -256,8 +275,9 @@ private:
     if (consumeWord("f32")) return Float32Type::get(ctx);
     if (p + 3 < end && StringRef(p, 3) == "!mt") {
       StringRef n = sigilName('!');
-      auto it = typeAliases.find(n);
-      if (it == typeAliases.end()) fail("unknown type alias");
+      const auto &ta = parent ? parent->typeAliases : typeAliases;
+      auto it = ta.find(n);
+      if (it == ta.end()) fail("unknown type alias");
       return it->second;
     }
     bool llvmPrefix = consumeWord("!llvm.struct") || (p = s, consumeWord("struct"));
@@ -363,8 +383,9 @@ private:
     skipSpace();
     if (peek('#')) {
       StringRef n = sigilName('#');
-      auto it = locAliases.find(n);
-      if (it == locAliases.end()) fail("unknown location alias");
+      const auto &la = parent ? parent->locAliases : locAliases;
+      auto it = la.find(n);
+      if (it == la.end()) fail("unknown location alias");
       return it->second;
     }
     if (peek('"')) {
@@ -445,6 +466,7 @@ OwningOpRef<ModuleOp> Reader::run() {
   expect('{');
   b.setInsertionPointToEnd(m->getBody());
   while (!consume('}')) topLevel(*m);
+  if (!bodies.empty()) readBodies();
   Location ml = trailingLoc(m->getLoc());
   m->getOperation()->setLoc(ml);
   skipSpace();
@@ -535,7 +557,15 @@ void Reader::func(ModuleOp m, Location at) {
   if (peek('{')) {
     if (!named && !args.empty()) fail("unnamed arguments with a body");
     ++p;
-    region(fn.getBody(), args, argLocs);
+    if (threads > 1) {
+      Body bd{fn, nullptr, nullptr, 0, nullptr, {}, {}};
+      bd.args.assign(args.begin(), args.end());
+      bd.argLocs.assign(argLocs.begin(), argLocs.end());
+      skipBody(bd);
+      bodies.push_back(std::move(bd));
+    } else {
+      region(fn.getBody(), args, argLocs);
+    }
   } else if (named) {
     fail("named arguments without a body");
   }
@@ -1181,9 +1211,91 @@ Operation *Reader::genericOp(SmallVectorImpl<StringRef> &results, const char *at
 
 } // namespace
 
-OwningOpRef<ModuleOp> readModule(MLIRContext *ctx, StringRef text, StringRef name, std::string &why) {
+void Reader::skipBody(Body &bd) {
+  bd.b = p;
+  bd.line = line;
+  bd.lineStart = lineStart;
+  int depth = 1;
+  while (p < end) {
+    char c = *p;
+    if (c == '\n') {
+      ++line;
+      lineStart = ++p;
+      continue;
+    }
+    if (c == '"') {
+      rawString();
+      continue;
+    }
+    if (c == '/' && p + 1 < end && p[1] == '/') {
+      while (p < end && *p != '\n') ++p;
+      continue;
+    }
+    if (c == '{') ++depth;
+    if (c == '}' && --depth == 0) {
+      bd.e = p;
+      ++p;
+      return;
+    }
+    ++p;
+  }
+  fail("unterminated function body");
+}
+
+// Each thread reads a contiguous run of bodies (balanced by text size) with
+// its own reader: values, blocks, builder and caches of its own, the alias
+// tables of this one. The context is multithreaded meanwhile (types and
+// attributes are uniqued from several threads).
+void Reader::readBodies() {
+  size_t total = 0;
+  for (Body &bd : bodies) total += size_t(bd.e - bd.b);
+  unsigned n = std::min<unsigned>(threads, unsigned(bodies.size()));
+  std::vector<std::pair<size_t, size_t>> ranges;
+  size_t at = 0, acc = 0;
+  for (unsigned k = 0; k < n; k++) {
+    size_t lo = at, goal = total * (k + 1) / n;
+    while (at < bodies.size() && (acc < goal || k == n - 1)) {
+      acc += size_t(bodies[at].e - bodies[at].b);
+      ++at;
+    }
+    ranges.push_back({lo, at});
+  }
+  bool threaded = ctx->isMultithreadingEnabled();
+  if (!threaded) ctx->enableMultithreading();
+  std::vector<std::string> errs(ranges.size());
+  {
+    std::vector<std::thread> ts;
+    for (size_t k = 0; k < ranges.size(); k++)
+      ts.emplace_back([&, k] {
+        Reader sub(ctx, StringRef(start, size_t(end - start)), file.getValue());
+        sub.parent = this;
+        try {
+          for (size_t i = ranges[k].first; i < ranges[k].second; i++) {
+            Body &bd = bodies[i];
+            sub.p = bd.b;
+            sub.end = bd.e + 1;  // the region reader stops at the '}'
+            sub.line = bd.line;
+            sub.lineStart = bd.lineStart;
+            sub.region(bd.fn.getBody(), bd.args, bd.argLocs);
+          }
+        } catch (const Fail &f) {
+          errs[k] = f.why;
+        }
+      });
+    for (std::thread &t : ts) t.join();
+  }
+  if (!threaded) ctx->disableMultithreading();
+  for (const std::string &e : errs)
+    if (!e.empty()) throw Fail{e};
+}
+
+OwningOpRef<ModuleOp> readModule(MLIRContext *ctx, StringRef text, StringRef name, std::string &why,
+                                 unsigned threads) {
   ctx->getOrLoadDialect<LL::LLVMDialect>();
   Reader r(ctx, text, name);
+  r.threads = threads ? threads : 1;
+  // Small modules are not worth the threads.
+  if (text.size() < (1u << 20)) r.threads = 1;
   try {
     return r.run();
   } catch (const Fail &f) {
