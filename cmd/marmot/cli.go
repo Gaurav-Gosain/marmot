@@ -191,7 +191,7 @@ marmot explain M0002`,
 			Use:   "version",
 			Short: "Print the marmot version",
 			Args:  cobra.NoArgs,
-			Run:   func(*cobra.Command, []string) { fmt.Println(version) },
+			Run:   func(*cobra.Command, []string) { cmdVersion() },
 		},
 		manCommand(root0(&root)),
 	)
