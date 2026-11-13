@@ -717,7 +717,7 @@ void start_the_world(void) {
   atomic_store(&sched.gcwaiting, 0);
   atomic_fetch_add(&sched.worldgen, 1);
   os_futex_wake(&sched.worldgen, true);
-  bool work = sched.runqsize > 0;
+  bool work = sched.runqsize > 0 || atomic_load(&timer_next_when) <= os_nanotime();
   for (int32_t i = 0; i < n && !work; i++)
     if (atomic_load(&sched.allp[i]->status) != P_DEAD && sched.allp[i] != m->p &&
         !runqempty(sched.allp[i]))
@@ -976,10 +976,21 @@ stop:
         atomic_compare_exchange_strong(&netpoll_blocked, &zero, 1)) {
       int64_t next = atomic_load(&timer_next_when);
       int64_t now = os_nanotime();
-      int64_t timeout = next == INT64_MAX ? -1 : (next > now ? next - now : 0);
+      // A due timer runs on an M with a P (findrunnable's top), where stop
+      // the world waits for it; here the poller only waits for I/O.
+      int64_t timeout = next == INT64_MAX || next <= now ? -1 : next - now;
+      if (next <= now) {
+        spin_lock(&sched.lock);
+        rt_p *p = atomic_load(&sched.gcwaiting) ? NULL : pidleget();
+        spin_unlock(&sched.lock);
+        if (p) {
+          atomic_store(&netpoll_blocked, 0);
+          acquirep(m, p);
+          goto top;
+        }
+      }
       if (atomic_load(&netpoll_waiters) > 0 && !atomic_load(&sched.gcwaiting)) netpoll_h(timeout);
       atomic_store(&netpoll_blocked, 0);
-      if (atomic_load(&timer_next_when) <= os_nanotime()) timers_check_h(os_nanotime());
       spin_lock(&sched.lock);
       rt_p *p = NULL;
       if (!atomic_load(&sched.gcwaiting)) p = pidleget();
@@ -993,9 +1004,20 @@ stop:
     spin_lock(&sched.lock);
     int64_t timeout = -1;
     int64_t next = atomic_load(&timer_next_when);
-    if (next != INT64_MAX && sched.timer_m == NULL) {
-      int64_t now = os_nanotime();
-      timeout = next > now ? next - now : 0;
+    if (next != INT64_MAX && next <= os_nanotime() && !atomic_load(&sched.gcwaiting)) {
+      // Due now: run it with a P (an M without one must not touch the
+      // timers: a collection could be scanning them, and a fired timer it
+      // holds is on no root). With no idle P, the Ps check timers when
+      // they next schedule.
+      rt_p *p = pidleget();
+      if (p) {
+        spin_unlock(&sched.lock);
+        acquirep(m, p);
+        goto top;
+      }
+    } else if (next != INT64_MAX && sched.timer_m == NULL) {
+      timeout = next - os_nanotime();
+      if (timeout < 0) timeout = 0;
       sched.timer_m = m;
       sched.timer_until = next;
     }
@@ -1017,8 +1039,7 @@ stop:
       acquirep(m, p);
       goto top;
     }
-    // Woken for timers, without a P.
-    if (atomic_load(&timer_next_when) <= os_nanotime()) timers_check_h(os_nanotime());
+    // Woken for timers, without a P: take one and check them at the top.
     spin_lock(&sched.lock);
     rt_p *p = NULL;
     if (!atomic_load(&sched.gcwaiting)) p = pidleget();
