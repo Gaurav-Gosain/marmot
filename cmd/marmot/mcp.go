@@ -44,6 +44,9 @@ type mcpTool struct {
 func strProp(desc string) map[string]any {
 	return map[string]any{"type": "string", "description": desc}
 }
+func boolProp(desc string) map[string]any {
+	return map[string]any{"type": "boolean", "description": desc}
+}
 func listProp(desc string) map[string]any {
 	return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": desc}
 }
@@ -99,16 +102,49 @@ func mcpTools() []mcpTool {
 				}
 				return append(a, strs(m, "packages")...), nil
 			}},
-		{Name: "fix", Description: "Apply the machine applicable fixes of the build errors (imports, unused names, := to =, ...) and build again; reports each applied fix and the errors left.",
+		{Name: "check", Description: "Run the code checks in one pass: fmt, vet, lint (golangci-lint standard set, reads .golangci.yml), modernize, gopls, nil, vuln, tidy, cross, deadcode (exhaustive on request). Returns one JSON diagnostic per finding (check, analyzer, span, message, fixes), one {kind:check, check, status, findings} line per check and a result line. Repeated calls are fast: results are cached per package.",
+			InputSchema: schema(map[string]any{"dir": dirProp, "packages": listProp("package patterns (default: every module of the workspace)"),
+				"only":    listProp("only these checks, e.g. [\"vet\", \"lint\"]"),
+				"changed": strProp("check only what changed against this git ref (\"default\": origin/main, else main)"),
+				"staged":  boolProp("check what git has staged instead of the working tree"),
+				"offline": boolProp("no network: skip the vulnerability check")}),
+			args: func(m map[string]any) ([]string, error) {
+				a := []string{"check"}
+				if o := strs(m, "only"); len(o) > 0 {
+					a = append(a, "-only", strings.Join(o, ","))
+				}
+				switch c := str(m, "changed"); c {
+				case "":
+				case "default":
+					a = append(a, "-changed")
+				default:
+					a = append(a, "-changed="+c)
+				}
+				for _, f := range []string{"staged", "offline"} {
+					if v, _ := m[f].(bool); v {
+						a = append(a, "-"+f)
+					}
+				}
+				return append(a, strs(m, "packages")...), nil
+			}},
+		{Name: "fix", Description: "Apply the machine applicable fixes of the build errors (imports, unused names, := to =, ...) and build again; then, once the build is clean, the fixes of check findings (fmt, modernize; vet and lint suggestions with all), keeping a fix only if the packages still type check. Reports each applied fix and the errors left.",
 			InputSchema: schema(map[string]any{"dir": dirProp, "packages": listProp("packages (default .)"),
-				"codes": listProp("only these error codes, e.g. [\"M0005\"]"), "all": map[string]any{"type": "boolean", "description": "also apply fixes that may be incorrect (typo corrections)"}}),
+				"codes": listProp("only these error codes, e.g. [\"M0005\"]"), "all": boolProp("also apply fixes that may be incorrect (typo corrections, vet and lint suggestions)"),
+				"only": listProp("only the fixes of these checks, e.g. [\"modernize\"]"),
+				"diff": boolProp("print the check fixes as patches and change nothing"),
+				"test": boolProp("keep a check fix only if the tests of its package pass")}),
 			args: func(m map[string]any) ([]string, error) {
 				a := []string{"fix"}
 				if c := strs(m, "codes"); len(c) > 0 {
 					a = append(a, "-code", strings.Join(c, ","))
 				}
-				if all, _ := m["all"].(bool); all {
-					a = append(a, "-all")
+				if o := strs(m, "only"); len(o) > 0 {
+					a = append(a, "-only", strings.Join(o, ","))
+				}
+				for _, f := range []string{"all", "diff", "test"} {
+					if v, _ := m[f].(bool); v {
+						a = append(a, "-"+f)
+					}
 				}
 				return append(a, strs(m, "packages")...), nil
 			}},

@@ -323,8 +323,8 @@ patches and changes nothing:
 ## Coding agents
 
 `marmot mcp` is a Model Context Protocol server on stdin and stdout. Its tools `build`, `run`,
-`test`, `fix` and `explain` take a directory and return the JSON output described below. To
-register it with Claude Code: `claude mcp add marmot -- marmot mcp`.
+`test`, `check`, `fix` and `explain` take a directory and return the JSON output described
+below. To register it with Claude Code: `claude mcp add marmot -- marmot mcp`.
 
 ## Error messages
 
