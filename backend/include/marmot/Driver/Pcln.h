@@ -57,6 +57,8 @@ void readDwarf(const llvm::object::ObjectFile &obj, unsigned version, Table &t);
 // a function with a name and no lines (C and assembly code), so the range of
 // the function before it ends there.
 void addTextSymbols(const llvm::object::ObjectFile &obj, Table &t);
+// The same from text symbols already read: address -> name, section end.
+void addTextSymbols(std::map<uint64_t, std::pair<std::string, uint64_t>> &syms, Table &t);
 
 // A fragment: the functions of one relocatable object with pcs relative to
 // their own start, keyed by symbol name. The
@@ -68,6 +70,23 @@ bool makeFragment(llvm::MemoryBufferRef object, unsigned version, std::string &o
 // dead stripped). addr returns 0 for an unknown name.
 bool addFragment(llvm::StringRef fragment, const std::function<uint64_t(llvm::StringRef)> &addr,
                  Table &t, std::string &err);
+
+// A fragment read but not placed: pcs are offsets in their function, files
+// are indices into files. parseFragment needs no addresses (it can run
+// before the link ends, on many threads); addParsed then places it as
+// addFragment does.
+struct Fragment {
+  struct Fn {
+    std::string name;
+    uint64_t size = 0;
+    std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> rows;
+    std::vector<Inline> inl;
+  };
+  std::vector<std::string> files;
+  std::vector<Fn> funcs;
+};
+bool parseFragment(llvm::StringRef fragment, Fragment &out, std::string &err);
+void addParsed(Fragment &f, const std::function<uint64_t(llvm::StringRef)> &addr, Table &t);
 
 // Encodes t (version 2 or 3). base: image base; quantum: 4 on arm64, 1 on
 // x86-64. rename maps function names (main package), may be empty.

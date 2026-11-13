@@ -24,7 +24,11 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
+#include <atomic>
 #include <cstring>
+#include <map>
+#include <thread>
 
 using namespace llvm;
 using namespace llvm::object;
@@ -93,26 +97,39 @@ uint32_t quantumOf(const ObjectFile &obj) { return obj.getArch() == Triple::aarc
 
 // Text symbol name -> address; names defined twice (local symbols of two
 // objects) map to 0, their functions get no entry.
-void symbolAddresses(const ObjectFile &obj, StringMap<uint64_t> &out) {
+// Reads the function symbols of a linked binary once: their addresses by
+// name (0 for a name with two addresses) and the text symbols for
+// addTextSymbols (two passes over 45000 long names cost 14 ms more).
+void scanSymbols(const ObjectFile &obj, StringMap<uint64_t> &out,
+                 std::map<uint64_t, std::pair<std::string, uint64_t>> &text) {
   bool macho = isa<MachOObjectFile>(&obj);
   for (const SymbolRef &sym : obj.symbols()) {
     auto type = sym.getType();
-    auto addr = sym.getAddress();
-    auto name = sym.getName();
-    if (!type || !addr || !name) {
+    if (!type) {
       consumeError(type.takeError());
-      consumeError(addr.takeError());
-      consumeError(name.takeError());
       continue;
     }
     if (*type != SymbolRef::ST_Function)
       continue;
+    auto addr = sym.getAddress();
+    auto name = sym.getName();
+    auto sec = sym.getSection();
+    if (!addr || !name || !sec) {
+      consumeError(addr.takeError());
+      consumeError(name.takeError());
+      consumeError(sec.takeError());
+      continue;
+    }
     StringRef n = *name;
     if (macho && n.starts_with("_"))
       n = n.drop_front();
     auto [it, fresh] = out.try_emplace(n, *addr);
     if (!fresh && it->second != *addr)
       it->second = 0;
+    if (*sec == obj.section_end() || !(*sec)->isText() || n.empty() || n.starts_with("ltmp") ||
+        n.starts_with("l_") || n.starts_with(".L"))
+      continue;
+    text.try_emplace(*addr, n.str(), (*sec)->getAddress() + (*sec)->getSize());
   }
 }
 
@@ -200,20 +217,40 @@ int fromFragments() {
   if (!binOr)
     return fail(binPath + ": " + toString(binOr.takeError()));
   const ObjectFile &bin = *binOr->getBinary();
+  // The fragments are read on worker threads while this one reads the
+  // symbols, then placed in list order (the first of two at one address
+  // wins, as before).
+  std::vector<pcln::Fragment> parsed(frags.size());
+  std::vector<std::string> fragErr(frags.size());
+  std::atomic<size_t> next{0};
+  auto work = [&] {
+    for (size_t i; (i = next++) < frags.size();) {
+      auto buf = MemoryBuffer::getFile(frags[i]);
+      if (!buf)
+        fragErr[i] = "cannot read";
+      else if (std::string e; !pcln::parseFragment((*buf)->getBuffer(), parsed[i], e))
+        fragErr[i] = e;
+    }
+  };
+  unsigned nt = std::clamp(std::thread::hardware_concurrency(), 1u, 8u);
+  std::vector<std::thread> pool;
+  for (unsigned k = 0; k < nt; ++k)
+    pool.emplace_back(work);
   StringMap<uint64_t> addrs;
-  symbolAddresses(bin, addrs);
+  std::map<uint64_t, std::pair<std::string, uint64_t>> text;
+  scanSymbols(bin, addrs, text);
+  for (std::thread &th : pool)
+    th.join();
   auto lookup = [&](StringRef n) {
     auto it = addrs.find(n);
     return it == addrs.end() ? uint64_t(0) : it->second;
   };
-  for (const std::string &f : frags) {
-    auto buf = MemoryBuffer::getFile(f);
-    if (!buf)
-      return fail(f + ": cannot read");
-    if (!pcln::addFragment((*buf)->getBuffer(), lookup, t, err))
-      return fail(f + ": " + err);
+  for (size_t i = 0; i < frags.size(); ++i) {
+    if (!fragErr[i].empty())
+      return fail(frags[i] + ": " + fragErr[i]);
+    pcln::addParsed(parsed[i], lookup, t);
   }
-  pcln::addTextSymbols(bin, t);
+  pcln::addTextSymbols(text, t);
   std::string table = pcln::encode(t, pcln::imageBase(bin), quantumOf(bin), version, renameMain);
   if (!patch.empty()) {
     if (!pcln::patchMachO(patch, table, err)) {

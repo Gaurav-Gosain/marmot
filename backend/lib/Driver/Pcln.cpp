@@ -205,6 +205,10 @@ void addTextSymbols(const ObjectFile &obj, Table &t) {
       continue;
     syms.try_emplace(*addr, n.str(), (*sec)->getAddress() + (*sec)->getSize());
   }
+  addTextSymbols(syms, t);
+}
+
+void addTextSymbols(std::map<uint64_t, std::pair<std::string, uint64_t>> &syms, Table &t) {
   std::vector<uint64_t> add;
   for (auto &[addr, sym] : syms) {
     auto it = t.funcs.upper_bound(addr);
@@ -281,11 +285,8 @@ bool makeFragment(MemoryBufferRef object, unsigned version, std::string &out,
   return true;
 }
 
-bool addFragment(StringRef fragment, const std::function<uint64_t(StringRef)> &addr, Table &t,
-                 std::string &err) {
-  std::vector<uint32_t> fileMap;
-  Func *cur = nullptr;
-  uint64_t base = 0;
+bool parseFragment(StringRef fragment, Fragment &out, std::string &err) {
+  Fragment::Fn *cur = nullptr;
   auto num = [&](StringRef s) {
     uint64_t v = 0;
     s.getAsInteger(10, v);
@@ -301,43 +302,41 @@ bool addFragment(StringRef fragment, const std::function<uint64_t(StringRef)> &a
     SmallVector<StringRef, 5> f;
     switch (tag) {
     case 'P':
-      fileMap.push_back(t.fileId(body.str()));
+      out.files.push_back(body.str());
       break;
     case 'F': {
       auto [size, name] = body.split('\t');
-      cur = nullptr;
-      uint64_t a = addr(name);
-      if (!a || t.funcs.count(a))
-        break; // dead stripped (or folded into another function)
-      base = a;
-      cur = &t.funcs[a];
-      cur->lo = a;
-      cur->hi = a + num(size);
+      cur = &out.funcs.emplace_back();
       cur->name = name.str();
+      cur->size = num(size);
       break;
     }
     case 'R':
       if (!cur)
         break;
       body.split(f, '\t');
-      if (f.size() != 3 || num(f[2]) >= fileMap.size()) {
+      if (f.size() != 3 || num(f[2]) >= out.files.size()) {
         err = "bad fragment row";
         return false;
       }
-      cur->rows.push_back({base + num(f[0]), uint32_t(num(f[1])), fileMap[num(f[2])]});
+      cur->rows.push_back({num(f[0]), uint32_t(num(f[1])), uint32_t(num(f[2]))});
       break;
     case 'N': {
       if (!cur)
         break;
       body.split(f, '\t', 3);
-      if (f.size() != 4 || num(f[1]) >= std::max<size_t>(fileMap.size(), 1)) {
+      if (f.size() != 4 || num(f[1]) >= std::max<size_t>(out.files.size(), 1)) {
         err = "bad fragment inline record";
         return false;
       }
       Inline in;
       in.parent = int(num(f[0])) - 1;
+      if (in.parent >= int(cur->inl.size())) {
+        err = "bad fragment inline record";
+        return false;
+      }
       in.depth = in.parent < 0 ? 1 : cur->inl[in.parent].depth + 1;
-      in.callFile = fileMap.empty() ? 0 : fileMap[num(f[1])];
+      in.callFile = uint32_t(num(f[1]));
       in.callLine = num(f[2]);
       in.name = f[3].str();
       cur->inl.push_back(std::move(in));
@@ -351,13 +350,47 @@ bool addFragment(StringRef fragment, const std::function<uint64_t(StringRef)> &a
         err = "bad fragment range";
         return false;
       }
-      cur->inl.back().ranges.push_back({base + num(f[0]), base + num(f[1])});
+      cur->inl.back().ranges.push_back({num(f[0]), num(f[1])});
       break;
     default:
       err = "bad fragment record";
       return false;
     }
   }
+  return true;
+}
+
+void addParsed(Fragment &frag, const std::function<uint64_t(StringRef)> &addr, Table &t) {
+  std::vector<uint32_t> fileMap;
+  fileMap.reserve(frag.files.size());
+  for (const std::string &f : frag.files)
+    fileMap.push_back(t.fileId(f));
+  for (Fragment::Fn &fn : frag.funcs) {
+    uint64_t a = addr(fn.name);
+    if (!a || t.funcs.count(a))
+      continue; // dead stripped (or folded into another function)
+    Func &cur = t.funcs[a];
+    cur.lo = a;
+    cur.hi = a + fn.size;
+    cur.name = std::move(fn.name);
+    cur.rows.reserve(fn.rows.size());
+    for (auto &[off, line, file] : fn.rows)
+      cur.rows.push_back({a + off, line, fileMap[file]});
+    for (Inline &in : fn.inl) {
+      in.callFile = fileMap.empty() ? 0 : fileMap[in.callFile];
+      for (auto &[lo, hi] : in.ranges)
+        lo += a, hi += a;
+    }
+    cur.inl = std::move(fn.inl);
+  }
+}
+
+bool addFragment(StringRef fragment, const std::function<uint64_t(StringRef)> &addr, Table &t,
+                 std::string &err) {
+  Fragment f;
+  if (!parseFragment(fragment, f, err))
+    return false;
+  addParsed(f, addr, t);
   return true;
 }
 
