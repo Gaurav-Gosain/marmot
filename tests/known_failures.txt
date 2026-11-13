@@ -7,3 +7,4 @@ run/mem/regionstore@lifetime  # MARMOT_LIFETIME=all: region store use-after-free
 run/audit/evalorder_gaps  # map index evaluation order differs from gc
 run/audit/math_exp_log_bits  # math.Exp(-745.13) returns 0x1, gc 0x0 (value difference, not a NaN payload)
 goroot/cmp@release  # equal strings built at compile time share their bytes (allowed by the spec; gc keeps them apart)
+run/opt/fma_cases@release  # amd64: one NaN result has other bits than gc (LLVM folds it, gc computes it); NaN bits are not specified
