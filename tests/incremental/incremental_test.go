@@ -6,7 +6,8 @@
 // module that depends on something its key does not cover (another
 // package's body, positions, generic code) shows up here.
 //
-// go test ./tests/incremental uses the marmot in build/bin (or $MARMOT_BIN).
+// go test ./tests/incremental uses the marmot in build/bin (or $MARMOT_BIN),
+// with the module keys MARMOT_API_KEYS selects.
 package incremental
 
 import (
@@ -109,7 +110,7 @@ type builder struct {
 func (b builder) buildRun() string {
 	b.t.Helper()
 	exe := filepath.Join(b.dir, "prog")
-	env := []string{"MARMOT_ROOT=" + b.root, "MARMOT_DAEMON=0", "MARMOT_TIER1=0", "MARMOT_OUTPUT=plain", "MARMOT_CACHE_MAX_MB=4096", "MARMOT_INCREMENTAL="}
+	env := []string{"MARMOT_ROOT=" + b.root, "MARMOT_DAEMON=0", "MARMOT_TIER1=0", "MARMOT_OUTPUT=plain", "MARMOT_CACHE_MAX_MB=4096", "MARMOT_INCREMENTAL=", "MARMOT_API_KEYS=" + os.Getenv("MARMOT_API_KEYS")}
 	if out, err := run(b.dir, env, b.bin, "build", "-o", exe, "."); err != nil {
 		b.t.Fatalf("build: %v\n%s", err, out)
 	}

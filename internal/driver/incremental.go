@@ -94,7 +94,11 @@ func (b *build) moduleCached(p *packages.Package, base string) bool {
 	if p.PkgPath == "command-line-arguments" || base == "" {
 		return false
 	}
-	return fileExists(filepath.Join(b.cfg.Root, "build", "cache", "mlir", b.moduleKey(base)+".mlir"))
+	k := b.moduleKeyFromSource(p)
+	if apiKeys {
+		k = b.moduleKey(base)
+	}
+	return fileExists(filepath.Join(b.cfg.Root, "build", "cache", "mlir", k+".mlir"))
 }
 
 // typesCache is the export data and go list cache of incremental loads.

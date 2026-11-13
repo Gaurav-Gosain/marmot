@@ -137,7 +137,7 @@ func (b *build) packageKeys(lp *loader.Program, cg *codegen.Program, pkgs []*ssa
 			continue // file arguments: the overlay import file is not on disk
 		}
 		if b.incr {
-			if ip := lp.Incremental[p.PkgPath]; ip != nil && ip.ModBase != "" {
+			if ip := lp.Incremental[p.PkgPath]; apiKeys && ip != nil && ip.ModBase != "" {
 				out[i] = b.moduleKey(ip.ModBase)
 			} else {
 				out[i] = b.moduleKeyFromSource(p)
@@ -150,6 +150,11 @@ func (b *build) packageKeys(lp *loader.Program, cg *codegen.Program, pkgs []*ssa
 	}
 	return out
 }
+
+// apiKeys selects the module keys of incremental builds (rule 11 switch,
+// default off until gated): with MARMOT_API_KEYS=1 a module is keyed by its
+// dependencies' API (moduleKey), else by their source (moduleKeyFromSource).
+var apiKeys = os.Getenv("MARMOT_API_KEYS") == "1"
 
 // moduleKey is the key of a package's module in an incremental build,
 // where no whole-program facts enter a module: the flags and the marmot
