@@ -7,6 +7,10 @@ package zlib
 #cgo LDFLAGS: -lz
 #include <stdlib.h>
 #include <zlib.h>
+static int _bind_gzread(gzFile p0, void * p1, unsigned int p2) { return gzread(p0, p1, p2); }
+static z_size_t _bind_gzfread(void * p0, z_size_t p1, z_size_t p2, gzFile p3) { return gzfread(p0, p1, p2, p3); }
+static int _bind_gzwrite(gzFile p0, const void * p1, unsigned int p2) { return gzwrite(p0, p1, p2); }
+static z_size_t _bind_gzfwrite(const void * p0, z_size_t p1, z_size_t p2, gzFile p3) { return gzfwrite(p0, p1, p2, p3); }
 */
 import "C"
 
@@ -75,8 +79,27 @@ func wrapFile(p C.gzFile) *File {
 	return &File{p}
 }
 
-// Header is the C struct gz_header (fields keep their C types).
-type Header = C.gz_header
+// Header is the C struct gz_header.
+type Header struct {
+	Text      int32          // text
+	Time      uint64         // time
+	Xflags    int32          // xflags
+	Os        int32          // os
+	Extra     unsafe.Pointer // extra
+	Extra_len uint32         // extra_len
+	Extra_max uint32         // extra_max
+	Name      unsafe.Pointer // name
+	Name_max  uint32         // name_max
+	Comment   unsafe.Pointer // comment
+	Comm_max  uint32         // comm_max
+	Hcrc      int32          // hcrc
+	Done      int32          // done
+}
+
+// The Go structs have the size of the C structs (a mismatch fails to compile).
+var (
+	_ = [1]struct{}{}[unsafe.Sizeof(Header{})-unsafe.Sizeof(C.gz_header{})]
+)
 
 // Stream is the C struct z_stream (fields keep their C types).
 type Stream = C.z_stream
@@ -186,7 +209,7 @@ func DeflatePrime(strm *Stream, bits int, value int) error {
 
 // DeflateSetHeader calls deflateSetHeader.
 func DeflateSetHeader(strm *Stream, head *Header) error {
-	r := C.deflateSetHeader(strm, head)
+	r := C.deflateSetHeader(strm, (*C.gz_header)(unsafe.Pointer(head)))
 	if err := statusError(int(r), "deflateSetHeader"); err != nil {
 		return err
 	}
@@ -256,7 +279,7 @@ func InflateMark(strm *Stream) int {
 
 // InflateGetHeader calls inflateGetHeader.
 func InflateGetHeader(strm *Stream, head *Header) error {
-	r := C.inflateGetHeader(strm, head)
+	r := C.inflateGetHeader(strm, (*C.gz_header)(unsafe.Pointer(head)))
 	if err := statusError(int(r), "inflateGetHeader"); err != nil {
 		return err
 	}
@@ -309,29 +332,29 @@ func (h *File) Setparams(level int, strategy int) error {
 
 // Read calls gzread.
 func (h *File) Read(buf []byte) int {
-	bufp := C.voidp(unsafe.Pointer(unsafe.SliceData(buf)))
-	r := C.gzread(h.c(), bufp, C.uint(len(buf)))
+	bufp := unsafe.Pointer(unsafe.SliceData(buf))
+	r := C._bind_gzread(h.c(), bufp, C.uint(len(buf)))
 	return int(r)
 }
 
 // Fread calls gzfread.
 func Fread(buf []byte, nitems uint, file *File) uint {
-	bufp := C.voidp(unsafe.Pointer(unsafe.SliceData(buf)))
-	r := C.gzfread(bufp, C.z_size_t(len(buf)), C.z_size_t(nitems), file.c())
+	bufp := unsafe.Pointer(unsafe.SliceData(buf))
+	r := C._bind_gzfread(bufp, C.z_size_t(len(buf)), C.z_size_t(nitems), file.c())
 	return uint(r)
 }
 
 // Write calls gzwrite.
 func (h *File) Write(buf []byte) int {
-	bufp := C.voidpc(unsafe.Pointer(unsafe.SliceData(buf)))
-	r := C.gzwrite(h.c(), bufp, C.uint(len(buf)))
+	bufp := unsafe.Pointer(unsafe.SliceData(buf))
+	r := C._bind_gzwrite(h.c(), bufp, C.uint(len(buf)))
 	return int(r)
 }
 
 // Fwrite calls gzfwrite.
 func Fwrite(buf []byte, nitems uint, file *File) uint {
-	bufp := C.voidpc(unsafe.Pointer(unsafe.SliceData(buf)))
-	r := C.gzfwrite(bufp, C.z_size_t(len(buf)), C.z_size_t(nitems), file.c())
+	bufp := unsafe.Pointer(unsafe.SliceData(buf))
+	r := C._bind_gzfwrite(bufp, C.z_size_t(len(buf)), C.z_size_t(nitems), file.c())
 	return uint(r)
 }
 

@@ -47,7 +47,13 @@ func Generate(cfg *Config, h *Header, include string) (src []byte, report []stri
 	if len(cfg.LDFlags) > 0 {
 		fmt.Fprintf(&out, "#cgo LDFLAGS: %s\n", strings.Join(cfg.LDFlags, " "))
 	}
-	fmt.Fprintf(&out, "#include <stdlib.h>\n#include <%s>\n*/\nimport \"C\"\n\n", include)
+	fmt.Fprintf(&out, "#include <stdlib.h>\n#include <%s>\n", include)
+	if len(g.cWrappers) > 0 {
+		// Functions with void * typedef parameters are called through these
+		// (cgo types such typedefs differently across systems).
+		out.WriteString(strings.Join(g.cWrappers, "\n") + "\n")
+	}
+	out.WriteString("*/\nimport \"C\"\n\n")
 	var imps []string
 	for _, i := range []string{"fmt", "unsafe"} {
 		if g.used[i] {
@@ -83,6 +89,7 @@ type gen struct {
 	usedType    map[string]bool      // Go types the bound functions use
 	structs     map[string]*goStruct // C record or typedef name -> Go struct
 	structAlias map[string]string    // Go alias name -> Go struct name (Texture2D = Texture)
+	cWrappers   []string             // static C wrappers for the preamble
 }
 
 type handle struct {

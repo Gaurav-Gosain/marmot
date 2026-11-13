@@ -84,6 +84,12 @@ func parseType(t Type, typedefs map[string]Type) ctype {
 // a parameter: its typedef (C.voidp) when it is spelled with one, else
 // *C.T, or none for void *.
 func ptrCast(t ctype) string {
+	if t.base == "void" {
+		// A typedef of void * (zlib's voidp) is spelled differently by cgo
+		// on different systems: the call goes through a C wrapper taking
+		// void * (voidTypedef).
+		return "unsafe.Pointer"
+	}
 	if !strings.Contains(t.orig, "*") && t.orig != t.base {
 		return "C." + t.orig // a pointer typedef (voidp, Bytef *... spelled as a name)
 	}
@@ -91,6 +97,11 @@ func ptrCast(t ctype) string {
 		return "unsafe.Pointer"
 	}
 	return "(*C." + cSpell(ctype{q: t.q}) + ")"
+}
+
+// voidTypedef reports whether t is a typedef name of void * (voidp).
+func voidTypedef(t ctype) bool {
+	return t.base == "void" && t.ptrs == 1 && !strings.Contains(t.orig, "*") && t.orig != "void"
 }
 
 // conv is how one parameter or result crosses.
@@ -318,7 +329,11 @@ func (g *gen) emitFunc(fn *Func) string {
 	}
 	// The result.
 	rt := parseType(fn.Ret, g.h.Typedef)
-	call := fmt.Sprintf("C.%s(%s)", fn.Name, strings.Join(args, ", "))
+	callee := fn.Name
+	if w := g.voidWrapper(fn, ps); w != "" {
+		callee = w
+	}
+	call := fmt.Sprintf("C.%s(%s)", callee, strings.Join(args, ", "))
 	var body []string
 	body = append(body, pre...)
 	rhd := g.handleOf(rt)
@@ -449,6 +464,42 @@ func (g *gen) emitFunc(fn *Func) string {
 		g.hasStatus = true
 	}
 	return ""
+}
+
+// voidWrapper writes, for a function with a void * typedef parameter, a
+// static C wrapper that takes void * instead, and returns its name ("" when
+// none is needed).
+func (g *gen) voidWrapper(fn *Func, ps []Param) string {
+	need := false
+	for _, p := range ps {
+		if voidTypedef(parseType(p.Type, g.h.Typedef)) {
+			need = true
+		}
+	}
+	if !need {
+		return ""
+	}
+	name := "_bind_" + fn.Name
+	var decl, call []string
+	for i, p := range ps {
+		t := parseType(p.Type, g.h.Typedef)
+		ct := strings.TrimSpace(p.Type.Q)
+		if voidTypedef(t) {
+			ct = "void *"
+			if t.isCost || strings.HasSuffix(t.orig, "c") && g.h.Typedef[t.orig].Q != "" && strings.Contains(g.h.Typedef[t.orig].Q, "const") {
+				ct = "const void *"
+			}
+		}
+		decl = append(decl, fmt.Sprintf("%s p%d", ct, i))
+		call = append(call, fmt.Sprintf("p%d", i))
+	}
+	ret := strings.TrimSpace(fn.Ret.Q)
+	body := fmt.Sprintf("%s(%s);", fn.Name, strings.Join(call, ", "))
+	if ret != "void" {
+		body = "return " + body
+	}
+	g.cWrappers = append(g.cWrappers, fmt.Sprintf("static %s %s(%s) { %s }", ret, name, strings.Join(decl, ", "), body))
+	return name
 }
 
 // freeArg is v converted for the free function fn: unsafe.Pointer for a
