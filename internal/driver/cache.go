@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Gaurav-Gosain/marmot/internal/loader"
 	"github.com/Gaurav-Gosain/marmot/internal/rootdir"
 )
 
@@ -41,11 +42,16 @@ func CacheSize(root string) (int64, int) { return rootdir.CacheSize(root) }
 
 const workPrefix = "marmot-"
 
-func markWorkDir(dir string, keep bool) {
-	os.WriteFile(filepath.Join(dir, ".pid"), []byte(strconv.Itoa(os.Getpid())), 0o644)
-	if keep {
-		os.WriteFile(filepath.Join(dir, ".keep"), nil, 0o644)
+// markWorkDir writes the pid file (whole or not at all, as the sweep reads
+// it) and, for -work, the keep file that protects the dir from the sweep.
+func markWorkDir(dir string, keep bool) error {
+	if err := loader.WriteAtomic(filepath.Join(dir, ".pid"), []byte(strconv.Itoa(os.Getpid()))); err != nil {
+		return err
 	}
+	if keep {
+		return os.WriteFile(filepath.Join(dir, ".keep"), nil, 0o644)
+	}
+	return nil
 }
 
 // sweepWorkDirs removes work dirs of dead marmot processes.
@@ -55,7 +61,7 @@ func sweepWorkDirs(logf func(string, ...any)) {
 	if info, err := os.Stat(stamp); err == nil && time.Since(info.ModTime()) < trimInterval {
 		return
 	}
-	os.WriteFile(stamp, nil, 0o644)
+	_ = os.WriteFile(stamp, nil, 0o644) // a rate limit: without it the next build sweeps again
 	ents, err := os.ReadDir(tmp)
 	if err != nil {
 		return

@@ -277,8 +277,12 @@ func writeListCache(path, sig string, roots []*packages.Package, dir string, use
 	if err != nil {
 		return
 	}
-	os.MkdirAll(filepath.Dir(path), 0o755)
-	writeAtomic(path, data)
+	// A cache, written whole or not at all: a failed write is a miss on
+	// the next run.
+	if os.MkdirAll(filepath.Dir(path), 0o755) != nil {
+		return
+	}
+	_ = writeAtomic(path, data)
 }
 
 // lightConfig is pcfg for the package graph only (no syntax or types).

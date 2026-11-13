@@ -85,7 +85,7 @@ func cmdWatch(args []string) int {
 	enc := json.NewEncoder(os.Stderr)
 	event := func(kind string, files []string) {
 		if rep.Mode == diag.ModeJSON {
-			enc.Encode(map[string]any{"schema": diag.Schema, "kind": "watch", "event": kind, "files": files})
+			_ = enc.Encode(map[string]any{"schema": diag.Schema, "kind": "watch", "event": kind, "files": files})
 		}
 	}
 	sigs := make(chan os.Signal, 1)
@@ -98,11 +98,11 @@ func cmdWatch(args []string) int {
 		if child == nil {
 			return
 		}
-		syscall.Kill(-child.Process.Pid, syscall.SIGTERM)
+		_ = syscall.Kill(-child.Process.Pid, syscall.SIGTERM) // fails only when the group has exited
 		select {
 		case <-childDone:
 		case <-time.After(2 * time.Second):
-			syscall.Kill(-child.Process.Pid, syscall.SIGKILL)
+			_ = syscall.Kill(-child.Process.Pid, syscall.SIGKILL) // as above
 			<-childDone
 		}
 		child = nil
@@ -123,7 +123,7 @@ func cmdWatch(args []string) int {
 			g := exec.Command(self, "generate", "./...")
 			g.Env, g.Stdout, g.Stderr = env, os.Stdout, os.Stderr
 			g.Dir = root
-			g.Run()
+			_ = g.Run() // generate reports its own failures on stderr; the build runs anyway
 		}
 		child = exec.Command(self, append([]string{action}, rest...)...)
 		child.Env = env
@@ -139,7 +139,7 @@ func cmdWatch(args []string) int {
 		c := child
 		began := time.Now()
 		go func() {
-			c.Wait()
+			_ = c.Wait() // the exit status is read from c.ProcessState below
 			if rep.Mode == diag.ModeHuman {
 				status := "ok"
 				if c.ProcessState != nil && !c.ProcessState.Success() {
@@ -187,7 +187,8 @@ type fileStamp struct {
 // version control, vendor, testdata, build output and hidden directories.
 func scanTree(root string) map[string]fileStamp {
 	m := map[string]fileStamp{}
-	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	// The callback skips what it cannot read, so the walk cannot fail.
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

@@ -200,7 +200,9 @@ func (st *incrState) writeCache(key string, tpkg *types.Package, m *pkgMeta) err
 	data := buf.Bytes()
 	h := sha256.Sum256(data)
 	m.ExportHash = hex.EncodeToString(h[:16])
-	os.MkdirAll(st.cacheDir, 0o755)
+	if err := os.MkdirAll(st.cacheDir, 0o755); err != nil {
+		return err
+	}
 	if err := writeAtomic(st.exportPath(key), data); err != nil {
 		return err
 	}
@@ -229,7 +231,7 @@ func writeAtomic(path string, data []byte) error {
 		err = os.Rename(f.Name(), path)
 	}
 	if err != nil {
-		os.Remove(f.Name())
+		_ = os.Remove(f.Name()) // best effort: the temp file of a failed write
 	}
 	return err
 }
@@ -240,7 +242,7 @@ func (st *incrState) importFromCache(p *packages.Package, key string) (*types.Pa
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read only
 	return gcexportdata.Read(f, st.fset, st.imports, p.PkgPath)
 }
 
@@ -561,15 +563,21 @@ func (st *incrState) lastGenericDeps(path string) (all, g []string) {
 		return nil, nil
 	}
 	var f genericDepsFile
-	json.Unmarshal(data, &f)
+	if json.Unmarshal(data, &f) != nil {
+		return nil, nil // a damaged entry: a miss
+	}
 	return f.All, f.G
 }
 
 func (st *incrState) saveGenericDeps(path string, all, g []string) {
 	p := st.genDepsPath(path)
-	os.MkdirAll(filepath.Dir(p), 0o755)
+	// A cache, written whole or not at all: a failed write is a miss on
+	// the next run.
+	if os.MkdirAll(filepath.Dir(p), 0o755) != nil {
+		return
+	}
 	data, _ := json.Marshal(genericDepsFile{all, g})
-	writeAtomic(p, data)
+	_ = writeAtomic(p, data)
 }
 
 // run loads every package from source or export data. Packages are

@@ -66,7 +66,7 @@ func (b *build) startTier1() {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if f, err := os.Create(filepath.Join(b.tier1Spool(), "tier1.log")); err == nil {
 		cmd.Stdout, cmd.Stderr = f, f
-		defer f.Close()
+		defer func() { _ = f.Close() }() // the child has its own copy of the log file
 	}
 	if err := cmd.Start(); err != nil {
 		b.logf("tier1: %v", err)
@@ -81,5 +81,5 @@ func (b *build) startTier1() {
 	}
 	b.logf("tier1: started")
 	// Reaped when it exits (a long-lived process would keep a zombie).
-	go cmd.Wait()
+	go func() { _ = cmd.Wait() }() // tier 1 reports through its log
 }

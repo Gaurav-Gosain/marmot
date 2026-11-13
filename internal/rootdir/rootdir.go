@@ -66,7 +66,7 @@ func CacheDir(root string) string { return filepath.Join(root, "build", "cache")
 // Touch marks a cache entry as used now.
 func Touch(p string) {
 	now := time.Now()
-	os.Chtimes(p, now, now)
+	_ = os.Chtimes(p, now, now) // a missed mark only lets the entry age out sooner
 }
 
 type cacheEntry struct {
@@ -79,7 +79,8 @@ type cacheEntry struct {
 func cacheEntries(dir string) ([]cacheEntry, int64) {
 	var out []cacheEntry
 	var total int64
-	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+	// The callback skips what it cannot read, so the walk cannot fail.
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
@@ -119,7 +120,7 @@ func TrimCache(root string, force bool) (before, after int64, err error) {
 	if err != nil {
 		return 0, 0, err
 	}
-	defer lf.Close()
+	defer func() { _ = lf.Close() }() // the lock file holds nothing
 	how := syscall.LOCK_EX
 	if !force {
 		how |= syscall.LOCK_NB
@@ -127,7 +128,7 @@ func TrimCache(root string, force bool) (before, after int64, err error) {
 	if syscall.Flock(int(lf.Fd()), how) != nil {
 		return 0, 0, nil
 	}
-	defer syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
+	defer func() { _ = syscall.Flock(int(lf.Fd()), syscall.LOCK_UN) }() // closing the file releases it anyway
 	Touch(lockPath)
 	entries, total := cacheEntries(dir)
 	before, after = total, total

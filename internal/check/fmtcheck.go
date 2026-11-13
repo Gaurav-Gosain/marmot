@@ -158,7 +158,8 @@ func goFiles(sc *scope) []string {
 			}
 		}
 	} else {
-		filepath.WalkDir(sc.dir, func(p string, d os.DirEntry, err error) error {
+		// The callback skips what it cannot read, so the walk cannot fail.
+		_ = filepath.WalkDir(sc.dir, func(p string, d os.DirEntry, err error) error {
 			if err != nil {
 				return nil
 			}

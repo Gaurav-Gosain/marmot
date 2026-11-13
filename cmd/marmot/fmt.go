@@ -93,7 +93,7 @@ func cmdFmt(args []string) int {
 		for _, f := range changedFiles {
 			fmt.Fprintf(os.Stderr, "{\"schema\":%d,\"kind\":\"format\",\"file\":%q,\"written\":%v}\n", diag.Schema, f, write)
 		}
-		diag.WriteResult(os.Stderr, diag.Result{Command: "fmt", OK: status == 0 && !(*ff.check && len(changedFiles) > 0), Errors: len(ds)})
+		diag.WriteResult(os.Stderr, diag.Result{Command: "fmt", OK: status == 0 && (!*ff.check || len(changedFiles) == 0), Errors: len(ds)})
 	}
 	if *ff.check && len(changedFiles) > 0 {
 		return 1
@@ -136,7 +136,8 @@ func goFiles(targets []string) ([]string, error) {
 			add(t)
 			continue
 		}
-		filepath.WalkDir(t, func(p string, d fs.DirEntry, err error) error {
+		// The callback skips what it cannot read, so the walk cannot fail.
+		_ = filepath.WalkDir(t, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return nil
 			}
@@ -164,10 +165,11 @@ func unifiedDiff(name string, a, b []byte) string {
 	if err != nil {
 		return ""
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }() // best effort: a temp dir
 	pa, pb := filepath.Join(dir, "a"), filepath.Join(dir, "b")
-	os.WriteFile(pa, a, 0o644)
-	os.WriteFile(pb, b, 0o644)
+	if os.WriteFile(pa, a, 0o644) != nil || os.WriteFile(pb, b, 0o644) != nil {
+		return ""
+	}
 	out, _ := exec.Command("diff", "-u", "--label", name+".orig", "--label", name, pa, pb).Output()
 	return string(out)
 }

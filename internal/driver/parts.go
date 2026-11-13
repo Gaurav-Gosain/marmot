@@ -96,7 +96,7 @@ func (b *build) cachedParts(k string) ([]string, bool) {
 	nparts := 1
 	if f, err := os.Open(path); err == nil {
 		line, _ := bufio.NewReader(f).ReadString('\n')
-		f.Close()
+		_ = f.Close() // read only
 		if rest, ok := strings.CutPrefix(line, partsHeader); ok {
 			nparts, _ = strconv.Atoi(strings.TrimSpace(rest))
 		}

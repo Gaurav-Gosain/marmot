@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"runtime/pprof"
 )
@@ -14,7 +15,9 @@ func startProfile() (stop func()) {
 	mem := os.Getenv("MARMOT_MEMPROFILE")
 	if cpu != "" {
 		if f, err := os.Create(cpu); err == nil {
-			pprof.StartCPUProfile(f)
+			if pprof.StartCPUProfile(f) != nil {
+				cpu = ""
+			}
 		} else {
 			cpu = ""
 		}
@@ -25,8 +28,13 @@ func startProfile() (stop func()) {
 		}
 		if mem != "" {
 			if f, err := os.Create(mem); err == nil {
-				pprof.Lookup("allocs").WriteTo(f, 0)
-				f.Close()
+				err := pprof.Lookup("allocs").WriteTo(f, 0)
+				if cerr := f.Close(); err == nil {
+					err = cerr
+				}
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "marmot: MARMOT_MEMPROFILE:", err)
+				}
 			}
 		}
 	}

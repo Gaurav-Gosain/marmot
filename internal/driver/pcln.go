@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/Gaurav-Gosain/marmot/internal/loader"
 )
 
 // The pc table: after the link, build the table from the
@@ -210,12 +212,12 @@ func sameText(a, b string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer fa.Close()
+	defer func() { _ = fa.Close() }() // read only
 	fb, err := macho.Open(b)
 	if err != nil {
 		return false, err
 	}
-	defer fb.Close()
+	defer func() { _ = fb.Close() }() // read only
 	sa, sb := fa.Section("__text"), fb.Section("__text")
 	if sa == nil || sb == nil {
 		return false, fmt.Errorf("no __text")
@@ -265,8 +267,12 @@ func (b *build) linkWithFrags(objs []string, link func(extra []string, out strin
 		err = b.run(b.pclnTool(), args...)
 		if err == nil {
 			if m := regexp.MustCompile(`(\d+) bytes`).FindStringSubmatch(b.lastOutput); m != nil {
-				os.MkdirAll(filepath.Dir(sizeFile), 0o755)
-				os.WriteFile(sizeFile, []byte(m[1]+"\n"), 0o644)
+				// Whole or not at all: a cut size would read as a valid one.
+				if err := os.MkdirAll(filepath.Dir(sizeFile), 0o755); err != nil {
+					b.logf("pcln size cache: %v", err)
+				} else if err := loader.WriteAtomic(sizeFile, []byte(m[1]+"\n")); err != nil {
+					b.logf("pcln size cache: %v", err)
+				}
 			}
 			b.logf("pcln table added (fragments, %d link(s))", attempt+1)
 			// The link kept the local symbols for marmot-pcln; drop them now

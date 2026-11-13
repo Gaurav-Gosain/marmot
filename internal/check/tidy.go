@@ -83,7 +83,8 @@ func tidyKey(sc *scope, m *module) string {
 		data, _ := os.ReadFile(filepath.Join(m.Dir, n))
 		h.bytes(data)
 	}
-	filepath.WalkDir(m.Dir, func(p string, d os.DirEntry, err error) error {
+	// The callback skips what it cannot read, so the walk cannot fail.
+	_ = filepath.WalkDir(m.Dir, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

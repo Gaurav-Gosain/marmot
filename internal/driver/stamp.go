@@ -93,10 +93,16 @@ func (b *build) saveStamp(stamp, out string) {
 	if stamp == "" || b.cfg.NoCache || b.cfg.Emit != "exe" || b.cross() {
 		return
 	}
+	// A temporary name of this process's own: two builds copying to one
+	// name could rename a half written executable into the cache.
 	cached := stampExe(b.cfg.Root, stamp)
-	tmp := cached + ".tmp"
-	if copyExe(out, tmp) == nil {
-		os.Rename(tmp, cached)
+	tmp := fmt.Sprintf("%s.%d.tmp", cached, os.Getpid())
+	if err := copyExe(out, tmp); err != nil {
+		b.logf("executable cache: %v", err)
+		_ = os.Remove(tmp) // best effort: the temp file of a failed copy
+	} else if err := os.Rename(tmp, cached); err != nil {
+		b.logf("executable cache: %v", err)
+		_ = os.Remove(tmp) // as above
 	}
 }
 
@@ -212,7 +218,9 @@ func (b *build) cachedModule(k string) (string, bool) {
 // its path.
 func (b *build) saveModule(k, text string) string {
 	dir := filepath.Join(b.cfg.Root, "build", "cache", "mlir")
-	os.MkdirAll(dir, 0o755)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "" // as a failed write: the caller compiles without the cache
+	}
 	p := filepath.Join(dir, k+".mlir")
 	var head []byte
 	if strings.HasPrefix(text, partsHeader) {

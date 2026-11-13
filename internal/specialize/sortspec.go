@@ -196,7 +196,8 @@ func renameDecl(d ast.Decl, ren map[string]string, tparams []string, newName str
 		gd.Doc = nil
 	}
 	var b bytes.Buffer
-	printer.Fprint(&b, token.NewFileSet(), d)
+	// Into a bytes.Buffer, of nodes the parser made: printing cannot fail.
+	_ = printer.Fprint(&b, token.NewFileSet(), d)
 	return b.String() + "\n"
 }
 

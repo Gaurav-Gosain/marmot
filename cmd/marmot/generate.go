@@ -106,7 +106,7 @@ func cmdGenerate(args []string) int {
 				if e, ok := readGenEntry(entryPath); ok && e.restore(dir) {
 					restored++
 					if rep.Mode == diag.ModeJSON {
-						enc.Encode(map[string]any{"schema": diag.Schema, "kind": "generate", "file": d.file, "line": d.line, "command": d.args, "cached": true})
+						_ = enc.Encode(map[string]any{"schema": diag.Schema, "kind": "generate", "file": d.file, "line": d.line, "command": d.args, "cached": true})
 					} else if *gf.verbose {
 						fmt.Fprintf(os.Stderr, "%s:%d: %s (cached)\n", rel, d.line, d.args)
 					}
@@ -152,7 +152,7 @@ func cmdGenerate(args []string) int {
 					outs = append(outs, p)
 				}
 				sort.Strings(outs)
-				enc.Encode(map[string]any{"schema": diag.Schema, "kind": "generate", "file": d.file, "line": d.line, "command": d.args,
+				_ = enc.Encode(map[string]any{"schema": diag.Schema, "kind": "generate", "file": d.file, "line": d.line, "command": d.args,
 					"cached": false, "outputs": outs, "durationMs": time.Since(start).Milliseconds()})
 			}
 		}
@@ -171,7 +171,7 @@ func scanDirectives(path string) ([]genDirective, error) {
 	if err != nil {
 		return nil, nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read only
 	var out []genDirective
 	sc := bufio.NewScanner(f)
 	n := 0
@@ -289,7 +289,9 @@ func knownOutputs(d genDirective, dir string) map[string][]byte {
 	p := filepath.Join(generateCacheDir(), "outputs-"+shortHash(d.file+":"+d.args)+".json")
 	var names []string
 	if data, err := os.ReadFile(p); err == nil {
-		json.Unmarshal(data, &names)
+		if json.Unmarshal(data, &names) != nil {
+			names = nil // a damaged entry: no known outputs
+		}
 	}
 	m := map[string][]byte{}
 	for _, n := range names {
@@ -355,14 +357,14 @@ func directiveKeyExcluding(d genDirective, dir string, outputs map[string][]byte
 		}
 		sort.Strings(outs)
 		data, _ := json.Marshal(outs)
-		os.MkdirAll(generateCacheDir(), 0o755)
-		os.WriteFile(filepath.Join(generateCacheDir(), "outputs-"+shortHash(d.file+":"+d.args)+".json"), data, 0o644)
+		writeCacheFile(filepath.Join(generateCacheDir(), "outputs-"+shortHash(d.file+":"+d.args)+".json"), data)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }
 
 func hashTree(h io.Writer, root string) {
-	filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	// The callback skips what it cannot read, so the walk cannot fail.
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
@@ -400,11 +402,27 @@ func readGenEntry(p string) (*genEntry, bool) {
 }
 
 func writeGenEntry(p string, e genEntry) {
-	os.MkdirAll(filepath.Dir(p), 0o755)
 	data, _ := json.Marshal(e)
-	tmp := p + ".tmp"
-	if os.WriteFile(tmp, data, 0o644) == nil {
-		os.Rename(tmp, p)
+	writeCacheFile(p, data)
+}
+
+// writeCacheFile writes a cache entry through a temporary file and a
+// rename, so a reader sees the whole entry or none. A failed write only
+// means a miss next time.
+func writeCacheFile(p string, data []byte) {
+	if os.MkdirAll(filepath.Dir(p), 0o755) != nil {
+		return
+	}
+	f, err := os.CreateTemp(filepath.Dir(p), filepath.Base(p)+".tmp*")
+	if err != nil {
+		return
+	}
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil || os.Rename(f.Name(), p) != nil {
+		_ = os.Remove(f.Name()) // best effort: the temp file of a failed write
 	}
 }
 

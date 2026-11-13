@@ -231,7 +231,7 @@ func run(pass *analysis.Pass) (any, error) {
 	}
 
 	if Debug != nil {
-		Debug.Write([]byte(sg.Dot()))
+		_, _ = Debug.Write([]byte(sg.Dot())) // debugging output only
 	}
 
 	return sg.Results(), nil

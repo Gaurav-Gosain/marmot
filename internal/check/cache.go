@@ -3,6 +3,7 @@ package check
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"hash"
 	"io"
 	"os"
 	"path/filepath"
@@ -41,7 +42,7 @@ func (s *store) get(key string) []byte {
 		return nil
 	}
 	now := time.Now()
-	os.Chtimes(p, now, now)
+	_ = os.Chtimes(p, now, now) // marks the entry used for the trim; a miss of the mark only ages it
 	return data
 }
 
@@ -62,26 +63,25 @@ func (s *store) put(key string, data []byte) {
 	_, werr := f.Write(data)
 	cerr := f.Close()
 	if werr != nil || cerr != nil || os.Rename(f.Name(), p) != nil {
-		os.Remove(f.Name())
+		_ = os.Remove(f.Name()) // best effort: the temp file of a failed write
 	}
 }
 
 // hasher builds cache keys from labeled parts.
 type hasher struct {
-	h io.Writer
-	s interface{ Sum([]byte) []byte }
+	h hash.Hash
 }
 
 func newHasher(kind string) *hasher {
 	h := sha256.New()
-	hs := &hasher{h: h, s: h}
+	hs := &hasher{h: h}
 	hs.str(kind)
 	return hs
 }
 
 func (h *hasher) str(parts ...string) {
 	for _, p := range parts {
-		io.WriteString(h.h, p)
+		h.h.Write([]byte(p))
 		h.h.Write([]byte{0})
 	}
 }
@@ -92,7 +92,7 @@ func (h *hasher) bytes(b []byte) {
 }
 
 func (h *hasher) sum() string {
-	return hex.EncodeToString(h.s.Sum(nil))
+	return hex.EncodeToString(h.h.Sum(nil))
 }
 
 // fileHash returns the sha256 of a file's contents, or "" when it cannot
@@ -102,7 +102,7 @@ func fileHash(path string) string {
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read only
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return ""

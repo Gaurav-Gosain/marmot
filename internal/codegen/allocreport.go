@@ -79,7 +79,9 @@ func (f *funcGen) reportAlloc(v ssa.Value, kind string, t types.Type, where stri
 	}
 	data, _ := json.Marshal(rec)
 	f.m.p.allocMu.Lock()
-	w.Write(append(data, '\n'))
+	// The writer the build was handed: marmot build -allocs checks its
+	// errors after the build, and the report is advice, not output.
+	_, _ = w.Write(append(data, '\n'))
 	f.m.p.allocMu.Unlock()
 }
 

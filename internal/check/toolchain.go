@@ -30,7 +30,8 @@ func toolchainAnalyzers(dir string) map[string]bool {
 		}
 		passes := filepath.Join(strings.TrimSpace(root), "src", "cmd", "vendor", "golang.org", "x", "tools", "go", "analysis", "passes")
 		names := map[string]bool{}
-		filepath.WalkDir(passes, func(p string, d os.DirEntry, err error) error {
+		// The callback skips what it cannot read, so the walk cannot fail.
+		_ = filepath.WalkDir(passes, func(p string, d os.DirEntry, err error) error {
 			if err != nil || d.IsDir() || !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
 				return nil
 			}

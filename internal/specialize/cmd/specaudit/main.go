@@ -40,7 +40,7 @@ func main() {
 	}
 	goroot := strings.TrimSpace(string(gr))
 	ov := map[string][]byte{}
-	filepath.WalkDir(*lib, func(path string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(*lib, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
 			return err
 		}
@@ -51,6 +51,10 @@ func main() {
 		}
 		return nil
 	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	cfg := &packages.Config{Overlay: ov, Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
 		packages.NeedImports | packages.NeedDeps | packages.NeedSyntax | packages.NeedTypes |
 		packages.NeedTypesInfo | packages.NeedTypesSizes | packages.NeedModule}

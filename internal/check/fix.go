@@ -393,7 +393,9 @@ func (res *FixResult) writeFiles(fs []*fileState, forward bool) {
 		if st, err := os.Stat(f.path); err == nil {
 			mode = st.Mode().Perm()
 		}
-		os.WriteFile(f.path, data, mode)
+		if err := os.WriteFile(f.path, data, mode); err != nil {
+			res.Notes = append(res.Notes, "could not write "+f.path+": "+err.Error())
+		}
 	}
 }
 
@@ -462,11 +464,12 @@ func diffFiles(fs []*fileState, dir string) string {
 	if err != nil {
 		return ""
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }() // best effort: a temp dir
 	for i, f := range fs {
 		a, c := filepath.Join(tmp, fmt.Sprintf("%d.old", i)), filepath.Join(tmp, fmt.Sprintf("%d.new", i))
-		os.WriteFile(a, f.old, 0o600)
-		os.WriteFile(c, f.new, 0o600)
+		if os.WriteFile(a, f.old, 0o600) != nil || os.WriteFile(c, f.new, 0o600) != nil {
+			return ""
+		}
 		rel := strings.TrimPrefix(diag.RelPath(dir, f.path), "./")
 		out, _ := exec.Command("diff", "-u", "--label", "a/"+rel, "--label", "b/"+rel, a, c).Output()
 		b.Write(out)

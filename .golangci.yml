@@ -1,0 +1,51 @@
+# golangci-lint v2 configuration, read by `marmot check` and by
+# `golangci-lint run ./...`. The standard set (errcheck, govet,
+# ineffassign, staticcheck, unused). Every exclusion below says why it is
+# there; a finding that is wrong for one line gets a //nolint with its
+# reason on that line, not a new rule here.
+version: "2"
+
+linters:
+  default: standard
+
+  settings:
+    errcheck:
+      # Printing to the terminal or to a writer the CLI was handed. A failed
+      # write there has nowhere to be reported, which is why errcheck already
+      # leaves fmt.Printf alone.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Print
+        - fmt.Printf
+        - fmt.Println
+        - charm.land/lipgloss/v2.Fprint
+        - charm.land/lipgloss/v2.Fprintf
+        - charm.land/lipgloss/v2.Fprintln
+        - charm.land/lipgloss/v2.Print
+        - charm.land/lipgloss/v2.Printf
+        - charm.land/lipgloss/v2.Println
+        # The JSON diagnostics and result line go to the writer the command
+        # reports on (the terminal or an agent's pipe), as fmt.Fprint does.
+        - github.com/Gaurav-Gosain/marmot/internal/diag.WriteJSON
+        - github.com/Gaurav-Gosain/marmot/internal/diag.WriteResult
+        # Writers that never fail: the code generator's text buffer (like
+        # strings.Builder, which errcheck leaves alone) and hash.Hash, whose
+        # Write is documented never to return an error.
+        - (*github.com/Gaurav-Gosain/marmot/internal/codegen.textBuf).Write
+        - (*github.com/Gaurav-Gosain/marmot/internal/codegen.textBuf).WriteString
+        - (*github.com/Gaurav-Gosain/marmot/internal/codegen.textBuf).WriteByte
+        - (hash.Hash).Write
+
+  exclusions:
+    rules:
+      # A test that ignores an error from a write or a Close fails on the
+      # assertion that follows it, which says more than a second check would.
+      - path: _test\.go
+        linters:
+          - errcheck
+
+formatters:
+  enable:
+    - gofmt

@@ -70,7 +70,7 @@ func startGroup(cmd *exec.Cmd) {
 
 func killGroup(pid int) {
 	if pid > 0 {
-		syscall.Kill(-pid, syscall.SIGKILL)
+		_ = syscall.Kill(-pid, syscall.SIGKILL) // fails only when the group has exited
 	}
 }
 
@@ -125,7 +125,7 @@ func (s *dirSet) remove(d string) {
 func (s *dirSet) removeAll() {
 	s.mu.Lock()
 	for d := range s.m {
-		os.RemoveAll(d)
+		_ = os.RemoveAll(d) // best effort on the way out; the sweep removes what is left
 	}
 	s.mu.Unlock()
 }

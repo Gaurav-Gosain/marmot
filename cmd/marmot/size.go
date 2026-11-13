@@ -51,7 +51,7 @@ func cmdSize(args []string) int {
 			return rep.Usage(fmt.Sprintf("marmot size: no function %q in %s", *sf.why, fs.Arg(0)))
 		}
 		if rep.Mode == diag.ModeJSON {
-			json.NewEncoder(os.Stdout).Encode(map[string]any{"schema": diag.Schema, "kind": "why", "function": *sf.why, "chain": chain})
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"schema": diag.Schema, "kind": "why", "function": *sf.why, "chain": chain})
 			return 0
 		}
 		if len(chain) == 0 {
@@ -86,7 +86,7 @@ func cmdSize(args []string) int {
 		out := map[string]any{"schema": diag.Schema, "kind": "size", "binary": b, "text": b.TextSize(), "packages": pkgs, "functions": funcs}
 		e := json.NewEncoder(os.Stdout)
 		e.SetEscapeHTML(false)
-		e.Encode(out)
+		_ = e.Encode(out)
 		return 0
 	}
 	st := diag.Plain

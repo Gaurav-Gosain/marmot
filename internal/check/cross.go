@@ -40,7 +40,7 @@ func targets(sc *scope, opts Options) ([]string, string) {
 						list = append(list, l)
 					}
 				}
-				f.Close()
+				_ = f.Close() // read only
 				if sc.Err() != nil {
 					list = nil // unreadable, as when it cannot be opened
 					continue

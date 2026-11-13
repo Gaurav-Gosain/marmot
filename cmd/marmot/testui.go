@@ -35,7 +35,7 @@ func runTestHuman(rep *diag.Reporter, cmd *exec.Cmd, pkg string, start time.Time
 	done := make(chan []diag.TestResult)
 	go func() { done <- diag.ParseTestOutput(pr, pkg, cmd.Dir, nil) }()
 	err := cmd.Wait()
-	pw.Close()
+	_ = pw.Close() // io.PipeWriter.Close always returns nil
 	results := <-done
 	elapsed := time.Since(start)
 	st := diag.Plain

@@ -148,7 +148,7 @@ func serveMCP(in io.Reader, out io.Writer, self string, timeout time.Duration) i
 	enc := json.NewEncoder(out)
 	enc.SetEscapeHTML(false)
 	reply := func(id json.RawMessage, result any, e *rpcError) {
-		enc.Encode(rpcMsg{JSONRPC: "2.0", ID: id, Result: result, Error: e})
+		_ = enc.Encode(rpcMsg{JSONRPC: "2.0", ID: id, Result: result, Error: e})
 	}
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
@@ -170,7 +170,7 @@ func serveMCP(in io.Reader, out io.Writer, self string, timeout time.Duration) i
 			var p struct {
 				ProtocolVersion string `json:"protocolVersion"`
 			}
-			json.Unmarshal(m.Params, &p)
+			_ = json.Unmarshal(m.Params, &p) // optional: without it the default version answers
 			v := p.ProtocolVersion
 			if v == "" {
 				v = "2025-06-18"

@@ -65,7 +65,7 @@ func cmdExplain(args []string) int {
 		if rep.Mode == diag.ModeJSON {
 			enc := json.NewEncoder(os.Stdout)
 			for _, c := range diag.AllCodes() {
-				enc.Encode(c)
+				_ = enc.Encode(c)
 			}
 			return 0
 		}
@@ -81,7 +81,7 @@ func cmdExplain(args []string) int {
 	if rep.Mode == diag.ModeJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetEscapeHTML(false)
-		enc.Encode(c)
+		_ = enc.Encode(c)
 		return 0
 	}
 	st := diag.Plain
@@ -199,7 +199,7 @@ func cmdFix(args []string) int {
 	if err != nil {
 		return rep.Usage("marmot: " + err.Error())
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }() // best effort: a temp dir
 	var done []diag.Applied
 	var last []diag.Diagnostic
 	for range 4 {
@@ -230,7 +230,7 @@ func cmdFix(args []string) int {
 		enc := json.NewEncoder(os.Stderr)
 		enc.SetEscapeHTML(false)
 		for _, a := range done {
-			enc.Encode(struct {
+			_ = enc.Encode(struct {
 				Kind string `json:"kind"`
 				diag.Applied
 			}{"fix", a})
@@ -289,13 +289,13 @@ func runTestJSON(rep *diag.Reporter, cmd *exec.Cmd, pkg string, start time.Time)
 	done := make(chan []diag.TestResult)
 	go func() { done <- diag.ParseTestOutput(pr, pkg, cmd.Dir, nil) }()
 	err := cmd.Wait()
-	pw.Close()
+	_ = pw.Close() // io.PipeWriter.Close always returns nil
 	results := <-done
 	enc := json.NewEncoder(rep.W)
 	enc.SetEscapeHTML(false)
 	failed := 0
 	for _, t := range results {
-		enc.Encode(t)
+		_ = enc.Encode(t)
 		if t.Status == "fail" {
 			failed++
 		}

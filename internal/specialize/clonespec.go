@@ -222,11 +222,10 @@ func (g *gen) cloneOf(fn *types.Func, idx int) (string, bool) {
 	var tparams []string
 	var tnames []string
 	if decl.Type.TypeParams != nil {
-		var b bytes.Buffer
-		printer.Fprint(&b, token.NewFileSet(), &ast.IndexListExpr{X: ast.NewIdent(""), Indices: nil})
 		for _, fl := range decl.Type.TypeParams.List {
 			var tb bytes.Buffer
-			printer.Fprint(&tb, token.NewFileSet(), fl.Type)
+			// Into a bytes.Buffer, of nodes the parser made: printing cannot fail.
+			_ = printer.Fprint(&tb, token.NewFileSet(), fl.Type)
 			var ns []string
 			for _, n := range fl.Names {
 				ns = append(ns, n.Name)
@@ -263,7 +262,8 @@ func (g *gen) cloneOf(fn *types.Func, idx int) (string, bool) {
 		return "", false
 	}
 	var ftb bytes.Buffer
-	printer.Fprint(&ftb, token.NewFileSet(), field.Type)
+	// Into a bytes.Buffer, of nodes the parser made: printing cannot fail.
+	_ = printer.Fprint(&ftb, token.NewFileSet(), field.Type)
 	callSig := strings.TrimPrefix(ftb.String(), "func")
 	ptypeExpr, field.Type = field.Type, ast.NewIdent("Fn")
 	decl.Name.Name = name + "[" + strings.Join(tparams, ", ") + "]"

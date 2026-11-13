@@ -44,7 +44,8 @@ func (s *Sources) stdIdx() *stdIndex {
 		return ix
 	}
 	ix.root = filepath.Join(root, "src")
-	filepath.WalkDir(ix.root, func(p string, d os.DirEntry, err error) error {
+	// The callback skips what it cannot read, so the walk cannot fail.
+	_ = filepath.WalkDir(ix.root, func(p string, d os.DirEntry, err error) error {
 		if err != nil || !d.IsDir() {
 			return nil
 		}

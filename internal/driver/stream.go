@@ -80,8 +80,11 @@ func (s *backendStream) send(i int, path, key string) {
 
 // finish ends the batch and waits for the backend.
 func (s *backendStream) finish(b *build) ([]string, error) {
-	s.in.Close()
+	cerr := s.in.Close() // ends the batch: a failure here means the backend never saw all of it
 	err := s.cmd.Wait()
+	if err == nil {
+		err = cerr
+	}
 	children.remove(s.cmd.Process.Pid)
 	killGroup(s.cmd.Process.Pid)
 	s.cancel()
@@ -102,9 +105,9 @@ func (s *backendStream) finish(b *build) ([]string, error) {
 
 // abort stops the backend after a front end error.
 func (s *backendStream) abort() {
-	s.in.Close()
+	_ = s.in.Close() // the batch is abandoned
 	killGroup(s.cmd.Process.Pid)
-	s.cmd.Wait()
+	_ = s.cmd.Wait() // reaps it; its status does not matter after a front end error
 	children.remove(s.cmd.Process.Pid)
 	s.cancel()
 }

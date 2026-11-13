@@ -168,7 +168,7 @@ func cmdDoctor(args []string) int {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetEscapeHTML(false)
 		for _, c := range checks {
-			enc.Encode(c)
+			_ = enc.Encode(c)
 			if c.Status == "fail" {
 				failed++
 			}
@@ -213,10 +213,12 @@ func firstRunDelay(clang string) time.Duration {
 	if err != nil {
 		return 0
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }() // best effort: a temp dir
 	src := filepath.Join(dir, "t.c")
 	// A unique constant makes a new code signature, so nothing is cached.
-	os.WriteFile(src, []byte(fmt.Sprintf("int main(void){return %d %% 1;}\n", time.Now().UnixNano()%1000003)), 0o644)
+	if err := os.WriteFile(src, []byte(fmt.Sprintf("int main(void){return %d %% 1;}\n", time.Now().UnixNano()%1000003)), 0o644); err != nil {
+		return 0
+	}
 	exe := filepath.Join(dir, "t")
 	if err := exec.Command(clang, "-o", exe, src).Run(); err != nil {
 		return 0

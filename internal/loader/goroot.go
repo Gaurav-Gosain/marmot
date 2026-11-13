@@ -28,7 +28,9 @@ func MergedGOROOT(realRoot, libSrc, cacheDir string) (string, error) {
 		return dst, nil
 	}
 	tmp := dst + fmt.Sprintf(".tmp%d", os.Getpid())
-	os.RemoveAll(tmp)
+	if err := os.RemoveAll(tmp); err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(tmp, 0o755); err != nil {
 		return "", err
 	}
@@ -51,7 +53,7 @@ func MergedGOROOT(realRoot, libSrc, cacheDir string) (string, error) {
 		return "", err
 	}
 	if err := os.Rename(tmp, dst); err != nil {
-		os.RemoveAll(tmp)
+		_ = os.RemoveAll(tmp) // best effort: the rename's error decides
 		if _, err2 := os.Stat(filepath.Join(dst, ".complete")); err2 == nil {
 			return dst, nil
 		}

@@ -44,7 +44,7 @@ func (b *build) prepareCgo(pkgs map[string]*cgo.Package) error {
 	if !fileExists(out) {
 		tmp := out + fmt.Sprintf(".%d.tmp", os.Getpid())
 		if err := b.run(llvmTool("llvm-link"), append([]string{rt, "-o", tmp}, bcs...)...); err != nil {
-			os.Remove(tmp)
+			_ = os.Remove(tmp) // best effort: the temp file of a failed step
 			return err
 		}
 		if err := os.Rename(tmp, out); err != nil {
@@ -123,7 +123,7 @@ func (b *build) cgoObjects(pkgs map[string]*cgo.Package, bitcode bool) ([]string
 			}
 			if err := b.run(cc, args...); err != nil {
 				errs[i] = fmt.Errorf("%s: %v", j.src, err)
-				os.Remove(tmp)
+				_ = os.Remove(tmp) // best effort: the temp file of a failed step
 				return
 			}
 			errs[i] = os.Rename(tmp, j.obj)

@@ -116,7 +116,8 @@ var listedExt = map[string]bool{".go": true, ".s": true, ".c": true, ".h": true,
 // walkModule visits the files of a module go list reads, skipping the
 // directories go skips (hidden, _ prefixed, testdata) and nested modules.
 func walkModule(root string, visit func(string, os.FileInfo)) {
-	filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+	// The callback skips what it cannot read, so the walk cannot fail.
+	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

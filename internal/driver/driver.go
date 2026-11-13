@@ -157,7 +157,7 @@ func buildToDevice(cfg Config, dev string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }() // best effort: a temp dir
 	cfg.Output = filepath.Join(dir, filepath.Base(dev))
 	b, err := build1(cfg)
 	if err != nil {
@@ -167,13 +167,13 @@ func buildToDevice(cfg Config, dev string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }() // read only
 	dst, err := os.OpenFile(dev, os.O_WRONLY|os.O_TRUNC, 0)
 	if err != nil {
 		return "", err
 	}
 	if _, err := io.Copy(dst, src); err != nil {
-		dst.Close()
+		_ = dst.Close() // the copy's error is the one to report
 		return "", err
 	}
 	return dev, dst.Close()
@@ -200,7 +200,9 @@ func build1(cfg Config) (*build, error) {
 func (b *build) run1() (string, error) {
 	defer func() {
 		for _, c := range b.closers {
-			c()
+			if err := c(); err != nil {
+				fmt.Fprintln(b.cfg.Stderr, "marmot:", err)
+			}
 		}
 		b.closers = nil
 	}()
@@ -215,7 +217,9 @@ func (b *build) run1() (string, error) {
 		return "", err
 	}
 	b.work = work
-	markWorkDir(work, cfg.Work)
+	if err := markWorkDir(work, cfg.Work); err != nil {
+		return "", err
+	}
 	sweepWorkDirs(b.logf)
 	defer func() {
 		if before, after, err := TrimCache(cfg.Root, false); err == nil && before != after {
@@ -225,7 +229,7 @@ func (b *build) run1() (string, error) {
 	if cfg.Work {
 		fmt.Fprintf(cfg.Stderr, "WORK=%s\n", work)
 	} else {
-		defer os.RemoveAll(work)
+		defer func() { _ = os.RemoveAll(work) }() // best effort: the sweep removes what is left
 		cleanupDirs.add(work)
 		defer cleanupDirs.remove(work)
 	}
@@ -577,7 +581,9 @@ func (b *build) compile(mods []codegen.Module, emit string) ([]string, error) {
 			}
 		}
 		listFile := filepath.Join(b.work, "jobs.txt")
-		os.WriteFile(listFile, []byte(list.String()), 0o644)
+		if err := os.WriteFile(listFile, []byte(list.String()), 0o644); err != nil {
+			return nil, err
+		}
 		emitKind := "obj"
 		if emit == "llvm" {
 			emitKind = "llvm"
@@ -847,7 +853,9 @@ func (b *build) rtLib(name string) string {
 // linkBundle writes, for a cross build, a directory at out holding the
 // objects, the runtime core library and link.sh, to link on the target.
 func (b *build) linkBundle(objs []string, rt, out string) error {
-	os.RemoveAll(out)
+	if err := os.RemoveAll(out); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		return err
 	}

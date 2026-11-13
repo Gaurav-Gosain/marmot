@@ -15,6 +15,7 @@ package repl
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -98,7 +99,9 @@ func (p *Prompt) Close() error {
 		b.WriteString(strings.ReplaceAll(l, "\n", "\\n"))
 		b.WriteByte('\n')
 	}
-	os.MkdirAll(filepath.Dir(p.opt.HistoryPath), 0o755)
+	if err := os.MkdirAll(filepath.Dir(p.opt.HistoryPath), 0o755); err != nil {
+		return err
+	}
 	return os.WriteFile(p.opt.HistoryPath, []byte(b.String()), 0o600)
 }
 
@@ -122,7 +125,7 @@ func (p *Prompt) ReadLine() (string, error) {
 	if err != nil {
 		return p.readPlain()
 	}
-	defer term.Restore(p.opt.In.Fd(), old)
+	defer func() { _ = term.Restore(p.opt.In.Fd(), old) }() // on the way out: nothing more to do if it fails
 	var lines []string
 	for {
 		prompt := p.opt.Prompt
@@ -189,7 +192,7 @@ func (p *Prompt) edit(prompt string, before []string) (string, error) {
 		if back > 0 {
 			b.WriteString("\x1b[" + itoa(back) + "D")
 		}
-		io.WriteString(w, b.String())
+		fmt.Fprint(w, b.String())
 	}
 	draw()
 	in := p.reader
@@ -201,14 +204,14 @@ func (p *Prompt) edit(prompt string, before []string) (string, error) {
 		switch r {
 		case '\r', '\n':
 			ghost = ""
-			io.WriteString(w, "\r\n")
+			fmt.Fprint(w, "\r\n")
 			return string(buf), nil
 		case 3: // ctrl-c
-			io.WriteString(w, "^C\r\n")
+			fmt.Fprint(w, "^C\r\n")
 			return "", ErrCanceled
 		case 4: // ctrl-d
 			if len(buf) == 0 && len(before) == 0 {
-				io.WriteString(w, "\r\n")
+				fmt.Fprint(w, "\r\n")
 				return "", ErrEOF
 			}
 			if pos < len(buf) {
@@ -248,7 +251,7 @@ func (p *Prompt) edit(prompt string, before []string) (string, error) {
 			}
 			buf, pos = append(buf[:i], buf[pos:]...), i
 		case 12: // ctrl-l
-			io.WriteString(w, "\x1b[H\x1b[2J")
+			fmt.Fprint(w, "\x1b[H\x1b[2J")
 		case 27: // escape sequences
 			seq := readEscape(in)
 			switch seq {

@@ -54,12 +54,12 @@ func (r *Reporter) Fail(err error) int {
 		h.Render(ds)
 	case ModeJSON:
 		ds := r.Diagnose(err)
-		WriteJSON(r.W, ds)
+		_ = WriteJSON(r.W, ds)
 		e, w := Counts(ds)
 		if e == 0 {
 			e = 1
 		}
-		WriteResult(r.W, Result{Command: r.Command, OK: false, Errors: e, Warnings: w, DurationMs: r.ms(), ExitCode: 1})
+		_ = WriteResult(r.W, Result{Command: r.Command, OK: false, Errors: e, Warnings: w, DurationMs: r.ms(), ExitCode: 1})
 	}
 	return 1
 }
@@ -70,17 +70,20 @@ func (r *Reporter) OK(output string) {
 		if output != "" && !filepath.IsAbs(output) {
 			output = filepath.Join(r.Dir, output)
 		}
-		WriteResult(r.W, Result{Command: r.Command, OK: true, Output: output, DurationMs: r.ms()})
+		_ = WriteResult(r.W, Result{Command: r.Command, OK: true, Output: output, DurationMs: r.ms()})
 	}
 }
 
 // Usage reports a command line error (exit code 2).
+// The reporter writes to r.W, the terminal or an agent's pipe: as with
+// fmt.Fprint, a failed write there has nowhere to be reported.
+
 func (r *Reporter) Usage(msg string) int {
 	switch r.Mode {
 	case ModeJSON:
 		d := Diagnostic{Kind: "diagnostic", Severity: Error, Code: CodeUsage, Message: msg}
-		WriteJSON(r.W, []Diagnostic{d})
-		WriteResult(r.W, Result{Command: r.Command, OK: false, Errors: 1, DurationMs: r.ms(), ExitCode: 2})
+		_ = WriteJSON(r.W, []Diagnostic{d})
+		_ = WriteResult(r.W, Result{Command: r.Command, OK: false, Errors: 1, DurationMs: r.ms(), ExitCode: 2})
 	case ModeHuman:
 		st := Plain
 		if r.Color {
@@ -182,7 +185,9 @@ func (r *Reporter) writeBundle(full string) (string, error) {
 	}
 	// The source of the package being built, small files only.
 	if ents, err := os.ReadDir(r.Dir); err == nil {
-		os.Mkdir(filepath.Join(dir, "src"), 0o755)
+		if err := os.Mkdir(filepath.Join(dir, "src"), 0o755); err != nil {
+			return "", err
+		}
 		total := 0
 		for _, e := range ents {
 			n := e.Name()
@@ -194,7 +199,9 @@ func (r *Reporter) writeBundle(full string) (string, error) {
 				continue
 			}
 			total += len(data)
-			os.WriteFile(filepath.Join(dir, "src", n), data, 0o644)
+			if err := os.WriteFile(filepath.Join(dir, "src", n), data, 0o644); err != nil {
+				return "", err
+			}
 		}
 	}
 	return dir, nil

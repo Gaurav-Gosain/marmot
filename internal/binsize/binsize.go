@@ -50,11 +50,11 @@ func Open(path string) (*Binary, error) {
 	}
 	b := &Binary{Path: path, FileSize: st.Size()}
 	if f, err := macho.Open(path); err == nil {
-		defer f.Close()
+		defer func() { _ = f.Close() }() // read only
 		return b, b.readMacho(f)
 	}
 	if f, err := elf.Open(path); err == nil {
-		defer f.Close()
+		defer func() { _ = f.Close() }() // read only
 		return b, b.readELF(f)
 	}
 	return nil, fmt.Errorf("%s: not a Mach-O or ELF executable", path)

@@ -22,7 +22,7 @@ func (m *moduleGen) newAdapterGen() *funcGen {
 }
 
 func (f *funcGen) finishAdapter(head string) string {
-	var out strings.Builder
+	var out textBuf
 	out.WriteString(head)
 	f.flushBufs(&out)
 	out.WriteString("  }\n")

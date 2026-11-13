@@ -68,8 +68,11 @@ func cmdRepl(args []string) int {
 		fmt.Fprintln(os.Stderr, "marmot:", err)
 		return 1
 	}
-	defer os.RemoveAll(dir)
-	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module repl\n\ngo 1.27\n"), 0o644)
+	defer func() { _ = os.RemoveAll(dir) }() // best effort: a temp dir
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module repl\n\ngo 1.27\n"), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "marmot:", err)
+		return 1
+	}
 	s := &replSession{imports: map[string]string{}, dir: dir, root: root, timing: *timing, src: diag.NewSources(),
 		colors: diag.IsTerminal(os.Stdout) && os.Getenv("NO_COLOR") == ""}
 	home, _ := os.UserHomeDir()
@@ -81,7 +84,7 @@ func cmdRepl(args []string) int {
 		Highlight:   s.highlight,
 		Complete:    complete,
 	})
-	defer p.Close()
+	defer func() { _ = p.Close() }() // restores the terminal; nothing to report on the way out
 	if p.Interactive() {
 		fmt.Println(s.color("\x1b[2m", "marmot repl: Go declarations, statements and expressions. :help for commands, ctrl-d to quit."))
 	}
@@ -182,7 +185,9 @@ func (s *replSession) meta(line string) (quit bool) {
 	case ":doc", ":d":
 		c := exec.Command("go", "doc", arg)
 		c.Stdout, c.Stderr = os.Stdout, os.Stderr
-		c.Run()
+		if err := c.Run(); err != nil {
+			fmt.Fprintln(os.Stderr, "go doc:", err)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %s (:help lists them)\n", cmd)
 	}
@@ -397,7 +402,10 @@ func (s *replSession) program(entry, decl string) string {
 // worked. Build errors are printed unless quiet.
 func (s *replSession) run(entry, decl string, quiet bool) bool {
 	src := s.program(entry, decl)
-	os.WriteFile(filepath.Join(s.dir, "main.go"), []byte(src), 0o644)
+	if err := os.WriteFile(filepath.Join(s.dir, "main.go"), []byte(src), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "marmot:", err)
+		return false
+	}
 	start := time.Now()
 	exe := filepath.Join(s.dir, "prog")
 	cfg := driver.Config{Root: s.root, Dir: s.dir, Output: exe, OptLevel: "2", Emit: "exe", GC: "precise",
@@ -459,7 +467,9 @@ func (m *markWriter) Write(p []byte) (int, error) {
 		if len(rest) > 0 {
 			m.last = rest[len(rest)-1]
 		}
-		m.w.Write(rest)
+		if _, err := m.w.Write(rest); err != nil {
+			return 0, err
+		}
 	}
 	return len(p), nil
 }

@@ -77,8 +77,11 @@ func (b *build) checkProgFlags(lp *loader.Program) (keepExported, reflectCall bo
 	s, ke, rc := progFlags(lp)
 	if s != b.progFlags {
 		b.logf("program flags %s (assumed %s)", s, b.progFlags)
-		os.MkdirAll(b.typesCache(), 0o755)
-		loader.WriteAtomic(b.progFlagsPath(), []byte(s))
+		if err := os.MkdirAll(b.typesCache(), 0o755); err != nil {
+			b.logf("program flags: %v", err)
+		} else if err := loader.WriteAtomic(b.progFlagsPath(), []byte(s)); err != nil {
+			b.logf("program flags: %v", err)
+		}
 		b.progFlags = s
 	}
 	return ke, rc

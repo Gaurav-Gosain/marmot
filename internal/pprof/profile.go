@@ -77,7 +77,7 @@ func Parse(data []byte) (*Profile, error) {
 		switch num {
 		case 1: // sample_type
 			var x vt
-			fields(b, func(n, w int, v uint64, _ []byte) error {
+			if err := fields(b, func(n, w int, v uint64, _ []byte) error {
 				switch n {
 				case 1:
 					x.t = int64(v)
@@ -85,11 +85,13 @@ func Parse(data []byte) (*Profile, error) {
 					x.u = int64(v)
 				}
 				return nil
-			})
+			}); err != nil {
+				return err
+			}
 			sampleTypes = append(sampleTypes, x)
 		case 2: // sample
 			var s Sample
-			fields(b, func(n, w int, v uint64, bb []byte) error {
+			if err := fields(b, func(n, w int, v uint64, bb []byte) error {
 				switch n {
 				case 1:
 					if w == 2 {
@@ -107,11 +109,13 @@ func Parse(data []byte) (*Profile, error) {
 					}
 				}
 				return nil
-			})
+			}); err != nil {
+				return err
+			}
 			p.Samples = append(p.Samples, s)
 		case 4: // location
 			l := &Location{}
-			fields(b, func(n, w int, v uint64, bb []byte) error {
+			if err := fields(b, func(n, w int, v uint64, bb []byte) error {
 				switch n {
 				case 1:
 					l.ID = v
@@ -119,7 +123,7 @@ func Parse(data []byte) (*Profile, error) {
 					l.Address = v
 				case 4:
 					var ln Line
-					fields(bb, func(n, w int, v uint64, _ []byte) error {
+					if err := fields(bb, func(n, w int, v uint64, _ []byte) error {
 						switch n {
 						case 1:
 							ln.Function = v
@@ -127,15 +131,19 @@ func Parse(data []byte) (*Profile, error) {
 							ln.Line = int64(v)
 						}
 						return nil
-					})
+					}); err != nil {
+						return err
+					}
 					l.Lines = append(l.Lines, ln)
 				}
 				return nil
-			})
+			}); err != nil {
+				return err
+			}
 			p.Locations[l.ID] = l
 		case 5: // function
 			var f rawFn
-			fields(b, func(n, w int, v uint64, _ []byte) error {
+			if err := fields(b, func(n, w int, v uint64, _ []byte) error {
 				switch n {
 				case 1:
 					f.id = v
@@ -147,14 +155,16 @@ func Parse(data []byte) (*Profile, error) {
 					f.start = int64(v)
 				}
 				return nil
-			})
+			}); err != nil {
+				return err
+			}
 			fns = append(fns, f)
 		case 6:
 			strs = append(strs, string(b))
 		case 10:
 			p.DurationNs = int64(v)
 		case 11:
-			fields(b, func(n, w int, v uint64, _ []byte) error {
+			if err := fields(b, func(n, w int, v uint64, _ []byte) error {
 				switch n {
 				case 1:
 					period.t = int64(v)
@@ -162,7 +172,9 @@ func Parse(data []byte) (*Profile, error) {
 					period.u = int64(v)
 				}
 				return nil
-			})
+			}); err != nil {
+				return err
+			}
 		case 12:
 			p.Period = int64(v)
 		case 14:

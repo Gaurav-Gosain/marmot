@@ -89,7 +89,7 @@ func cmdBench(args []string) int {
 	if err != nil {
 		return rep.Usage("marmot bench: " + err.Error())
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }() // best effort: a temp dir
 	self, _ := os.Executable()
 	mbin := filepath.Join(tmp, "marmot.test")
 	build := exec.Command(self, append(append([]string{"test", "-o", mbin}, buildArgs...), pkg)...)
@@ -145,7 +145,9 @@ func cmdBench(args []string) int {
 		fmt.Printf("marmot build flags: %s\n\n", strings.Join(buildArgs, " "))
 	}
 	if *bf.save != "" {
-		os.WriteFile(*bf.save, mout.Bytes(), 0o644)
+		if err := os.WriteFile(*bf.save, mout.Bytes(), 0o644); err != nil {
+			return rep.Usage("marmot bench: " + err.Error())
+		}
 	}
 	newRes := benchstat.Parse(&mout)
 	var oldRes *benchstat.Results
@@ -172,14 +174,14 @@ func cmdBench(args []string) int {
 		enc := json.NewEncoder(os.Stdout)
 		if oldRes != nil {
 			for _, r := range benchstat.Compare(oldRes, newRes) {
-				enc.Encode(map[string]any{"schema": diag.Schema, "kind": "bench", "name": r.Name, "unit": r.Unit,
+				_ = enc.Encode(map[string]any{"schema": diag.Schema, "kind": "bench", "name": r.Name, "unit": r.Unit,
 					oldName: r.Old, newName: r.New, "delta": nanNil(r.Delta), "p": r.P, "significant": r.Significant(0.05)})
 			}
 		} else {
 			for _, n := range newRes.Names {
 				for _, u := range newRes.Units {
 					if v := newRes.Vals[n][u]; len(v) > 0 {
-						enc.Encode(map[string]any{"schema": diag.Schema, "kind": "bench", "name": n, "unit": u, newName: benchstat.Summarize(v)})
+						_ = enc.Encode(map[string]any{"schema": diag.Schema, "kind": "bench", "name": n, "unit": u, newName: benchstat.Summarize(v)})
 					}
 				}
 			}

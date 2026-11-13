@@ -55,7 +55,9 @@ func acquireSlot(logf func(string, ...any)) error {
 	if err := os.MkdirAll(dir, 0o777); err != nil {
 		return fmt.Errorf("slots: %v", err)
 	}
-	os.Chmod(dir, 0o777)
+	if err := os.Chmod(dir, 0o777); err != nil {
+		logf("slots: %v (other users cannot share them)", err)
+	}
 	start := time.Now()
 	noted := false
 	for {
@@ -73,7 +75,7 @@ func acquireSlot(logf func(string, ...any)) error {
 				runtime.GOMAXPROCS(maxJobs())
 				return nil
 			}
-			f.Close()
+			_ = f.Close() // a slot another build holds: nothing was written
 		}
 		if !noted {
 			logf("waiting for a build slot (%d slots in %s busy)", n, dir)
@@ -85,7 +87,7 @@ func acquireSlot(logf func(string, ...any)) error {
 
 func releaseSlot() {
 	if heldSlot != nil {
-		heldSlot.Close()
+		_ = heldSlot.Close() // releases the lock; the file holds nothing
 		heldSlot = nil
 	}
 }

@@ -33,7 +33,8 @@ func allocReportFile() (*os.File, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return f, func() { f.Close(); os.Remove(f.Name()) }, nil
+	// Best effort: the report has been read when this runs.
+	return f, func() { _ = f.Close(); _ = os.Remove(f.Name()) }, nil
 }
 
 // showAllocs prints the allocation sites of the main module (or of every
@@ -44,7 +45,7 @@ func showAllocs(rep *diag.Reporter, path string, all bool) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read only
 	root, _ := findModuleRoot(rep.Dir)
 	seen := map[string]bool{}
 	var recs []allocRec
@@ -120,7 +121,7 @@ func showAllocs(rep *diag.Reporter, path string, all bool) {
 	case diag.ModeJSON:
 		diag.WriteJSON(rep.W, ds)
 		enc := json.NewEncoder(rep.W)
-		enc.Encode(map[string]any{"schema": diag.Schema, "kind": "allocs", "sites": len(recs), "heap": counts["heap"], "heapInLoops": loops,
+		_ = enc.Encode(map[string]any{"schema": diag.Schema, "kind": "allocs", "sites": len(recs), "heap": counts["heap"], "heapInLoops": loops,
 			"stack": counts["stack"], "region": counts["region"], "static": counts["static"]})
 	default:
 		st := diag.Plain

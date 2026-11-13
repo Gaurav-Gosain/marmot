@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/Gaurav-Gosain/marmot/internal/loader"
 )
 
 // Linking through the clang driver costs ~80 ms of process start and SDK
@@ -64,7 +66,9 @@ func (b *build) ldCommand(args, objs []string, out string) ([]string, bool) {
 		return expandLd(tmpl, sentinel, objs, out, b.work), true
 	}
 	if !fileExists(sentinel) {
-		os.MkdirAll(dir, 0o755)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, false
+		}
 		if err := os.WriteFile(sentinel, nil, 0o644); err != nil {
 			return nil, false
 		}
@@ -87,8 +91,9 @@ func (b *build) ldCommand(args, objs []string, out string) ([]string, bool) {
 		return nil, false
 	}
 	if data, err := json.Marshal(tmpl); err == nil {
-		os.WriteFile(cacheFile+".tmp", data, 0o644)
-		os.Rename(cacheFile+".tmp", cacheFile)
+		if err := loader.WriteAtomic(cacheFile, data); err != nil {
+			b.logf("link template cache: %v", err)
+		}
 	}
 	return expandLd(tmpl, sentinel, objs, out, b.work), true
 }
@@ -147,6 +152,8 @@ func parseQuoted(line string) []string {
 func (b *build) dropLdCache() {
 	matches, _ := filepath.Glob(filepath.Join(b.cfg.Root, "build", "cache", "ld-*.json"))
 	for _, m := range matches {
-		os.Remove(m)
+		if err := os.Remove(m); err != nil {
+			b.logf("link template cache: %v", err)
+		}
 	}
 }

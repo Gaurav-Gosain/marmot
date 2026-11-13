@@ -77,7 +77,7 @@ func cmdProf(args []string) int {
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetEscapeHTML(false)
-		enc.Encode(out)
+		_ = enc.Encode(out)
 		return 0
 	}
 	st := diag.Plain

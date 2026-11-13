@@ -2,6 +2,7 @@ package diag
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -164,7 +165,7 @@ func WritePlain(w io.Writer, ds []Diagnostic, dir string) {
 			b.WriteString(n)
 			b.WriteString("\n")
 		}
-		io.WriteString(w, b.String())
+		fmt.Fprint(w, b.String())
 	}
 }
 

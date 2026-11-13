@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -154,10 +155,11 @@ func cmdBuild(args []string, run bool) int {
 			fmt.Fprintln(os.Stderr, "marmot:", err)
 			return 1
 		}
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }() // best effort: a temp dir
 		cfg.Output = filepath.Join(tmpDir, "prog")
 	}
 	var allocPath string
+	var aw *errWriter
 	if *b.allocs || *b.allocsAll {
 		af, done, err := allocReportFile()
 		if err != nil {
@@ -166,7 +168,8 @@ func cmdBuild(args []string, run bool) int {
 		}
 		defer done()
 		allocPath = af.Name()
-		cfg.AllocReport = af
+		aw = &errWriter{w: af}
+		cfg.AllocReport = aw
 		cfg.NoCache = true // cached objects would skip the code generator's report
 	}
 	exe, err := driver.Build(cfg)
@@ -174,6 +177,9 @@ func cmdBuild(args []string, run bool) int {
 		return rep.Fail(err)
 	}
 	if allocPath != "" {
+		if aw.err != nil {
+			fmt.Fprintln(os.Stderr, "marmot: the allocation report is incomplete:", aw.err)
+		}
 		showAllocs(rep, allocPath, *b.allocsAll)
 	}
 	if !run {
@@ -195,7 +201,7 @@ func cmdBuild(args []string, run bool) int {
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
 		for s := range sigs {
-			cmd.Process.Signal(s)
+			_ = cmd.Process.Signal(s) // fails only when the child has exited
 		}
 	}()
 	err = cmd.Wait()
@@ -332,7 +338,7 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 			fmt.Fprintln(os.Stderr, "marmot:", err)
 			return 1
 		}
-		defer os.RemoveAll(tmp)
+		defer func() { _ = os.RemoveAll(tmp) }() // best effort: a temp dir
 		exe = filepath.Join(tmp, "pkg.test")
 	}
 	cfg := driver.Config{
@@ -415,4 +421,23 @@ func capMB() int64 {
 		return v
 	}
 	return driver.DefaultCacheMB
+}
+
+// errWriter keeps the first error of its writer.
+type errWriter struct {
+	mu  sync.Mutex
+	w   io.Writer
+	err error
+}
+
+func (e *errWriter) Write(p []byte) (int, error) {
+	n, err := e.w.Write(p)
+	if err != nil {
+		e.mu.Lock()
+		if e.err == nil {
+			e.err = err
+		}
+		e.mu.Unlock()
+	}
+	return n, err
 }

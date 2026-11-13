@@ -464,7 +464,7 @@ func (e *engine) analyze(p *listPkg, root bool) (*factsEntry, *report, error) {
 	// forms dominate the memory of a run, and two of them at once can
 	// double the peak.
 	w := min(1+int64(len(p.files()))/100, e.jobs)
-	e.sem.Acquire(context.Background(), w)
+	_ = e.sem.Acquire(context.Background(), w) // fails only when the context is done; Background never is
 	defer e.sem.Release(w)
 	e.count(&e.analyzed)
 	t0 := time.Now()

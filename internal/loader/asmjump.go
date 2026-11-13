@@ -93,7 +93,7 @@ func asmJumps(p *packages.Package) map[string]asmJump {
 			}
 			found[fn] = asmJump{pkg, name}
 		}
-		f.Close()
+		_ = f.Close() // read only
 		if sc.Err() != nil {
 			continue // unreadable, as when it cannot be opened
 		}

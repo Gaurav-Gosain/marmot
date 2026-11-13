@@ -2,7 +2,6 @@ package codegen
 
 import (
 	"bytes"
-	"io"
 	"strings"
 )
 
@@ -85,7 +84,7 @@ func (m *moduleGen) initBufs(f *funcGen) {
 
 // flushBufs writes f's prologue, body and cold code to w and keeps their
 // storage for the next function of the module.
-func (f *funcGen) flushBufs(w io.Writer) {
+func (f *funcGen) flushBufs(w *textBuf) {
 	for _, b := range []*bytes.Buffer{&f.pro, &f.body, &f.cold} {
 		w.Write(b.Bytes())
 		b.Reset()

@@ -87,8 +87,7 @@ func Main(args []string, version string) int {
 		opts.Progress = os.Stderr
 	}
 	if p := os.Getenv("MARMOT_CHECK_CPUPROFILE"); p != "" {
-		if f, err := os.Create(p); err == nil {
-			pprof.StartCPUProfile(f)
+		if f, err := os.Create(p); err == nil && pprof.StartCPUProfile(f) == nil {
 			defer pprof.StopCPUProfile()
 		}
 	}
@@ -96,8 +95,13 @@ func Main(args []string, version string) int {
 	res, err := Run(opts)
 	if p := os.Getenv("MARMOT_CHECK_MEMPROFILE"); p != "" {
 		if f, err := os.Create(p); err == nil {
-			pprof.Lookup("allocs").WriteTo(f, 0)
-			f.Close()
+			err := pprof.Lookup("allocs").WriteTo(f, 0)
+			if cerr := f.Close(); err == nil {
+				err = cerr
+			}
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "marmot check: MARMOT_CHECK_MEMPROFILE:", err)
+			}
 		}
 	}
 	if err != nil {
@@ -105,7 +109,9 @@ func Main(args []string, version string) int {
 	}
 	if opts.CacheDir != "" {
 		if root, err := rootdir.Find(); err == nil {
-			rootdir.TrimCache(root, false)
+			// Trimming is housekeeping: the next run that is over the cap
+			// trims again.
+			_, _, _ = rootdir.TrimCache(root, false)
 		}
 	}
 	code := 0
@@ -145,7 +151,7 @@ func writeCheckJSON(rep *diag.Reporter, res *Result, start time.Time, code int) 
 	enc := json.NewEncoder(rep.W)
 	enc.SetEscapeHTML(false)
 	for _, c := range res.Checks {
-		enc.Encode(struct {
+		_ = enc.Encode(struct {
 			Kind   string `json:"kind"`
 			Schema int    `json:"schema"`
 			*CheckResult
@@ -262,19 +268,19 @@ func FixMain(args []string, version string) int {
 		enc := json.NewEncoder(rep.W)
 		enc.SetEscapeHTML(false)
 		for _, a := range res.Applied {
-			enc.Encode(struct {
+			_ = enc.Encode(struct {
 				Kind string `json:"kind"`
 				Applied
 			}{"fix", a})
 		}
 		for _, a := range res.RolledBack {
-			enc.Encode(struct {
+			_ = enc.Encode(struct {
 				Kind string `json:"kind"`
 				Applied
 			}{"rolledBack", a})
 		}
 		if res.Diff != "" {
-			enc.Encode(map[string]string{"kind": "diff", "diff": res.Diff})
+			_ = enc.Encode(map[string]string{"kind": "diff", "diff": res.Diff})
 		}
 		diag.WriteResult(rep.W, diag.Result{Command: "fix", OK: code == 0, Errors: len(res.RolledBack), DurationMs: time.Since(start).Milliseconds(), ExitCode: code})
 		return code
