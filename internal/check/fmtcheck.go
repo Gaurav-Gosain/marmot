@@ -138,7 +138,7 @@ func goFiles(sc *scope) []string {
 	seen := map[string]bool{}
 	var out []string
 	add := func(p string) {
-		if !seen[p] && diag.IsGoFile(p) {
+		if !seen[p] && diag.IsGoFile(p) && sc.fmtFile(p) {
 			seen[p] = true
 			out = append(out, p)
 		}
@@ -174,6 +174,39 @@ func goFiles(sc *scope) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// fmtFile reports whether `go fmt` with the scope's patterns formats the
+// file: it is in a directory a pattern names, and not under testdata or a
+// directory whose name starts with "." or "_", which the go command skips.
+func (sc *scope) fmtFile(p string) bool {
+	rel, err := filepath.Rel(sc.dir, filepath.Dir(p))
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return false
+	}
+	rel = filepath.ToSlash(rel)
+	if rel != "." {
+		for _, part := range strings.Split(rel, "/") {
+			if part == "testdata" || strings.HasPrefix(part, ".") || strings.HasPrefix(part, "_") {
+				return false
+			}
+		}
+	}
+	for _, pat := range sc.patterns {
+		if pat != "." && !strings.HasPrefix(pat, "./") {
+			return true // an import path: not narrowed by directory
+		}
+		pat = strings.TrimPrefix(strings.TrimPrefix(pat, "."), "/")
+		if base, ok := strings.CutSuffix(pat, "..."); ok {
+			base = strings.TrimSuffix(base, "/")
+			if base == "" || rel == base || strings.HasPrefix(rel, base+"/") {
+				return true
+			}
+		} else if rel == pat || pat == "" && rel == "." {
+			return true
+		}
+	}
+	return false
 }
 
 // gofmtOnly returns the source formatted by gofmt alone, or nil when it

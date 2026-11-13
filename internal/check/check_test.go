@@ -378,3 +378,25 @@ func TestExhaustiveOptIn(t *testing.T) {
 		t.Error("exhaustive disabled in the lint configuration runs")
 	}
 }
+
+func TestFmtFiles(t *testing.T) {
+	sc := &scope{dir: "/m", patterns: []string{"./cmd/...", "./internal/x"}}
+	for p, want := range map[string]bool{
+		"/m/cmd/a.go":          true,
+		"/m/cmd/sub/b.go":      true,
+		"/m/internal/x/c.go":   true,
+		"/m/internal/x/y/d.go": false,
+		"/m/backend/e.go":      false,
+		"/m/cmd/testdata/f.go": false,
+		"/m/cmd/_skip/g.go":    false,
+		"/m/cmd/.hidden/h.go":  false,
+	} {
+		if got := sc.fmtFile(p); got != want {
+			t.Errorf("fmtFile(%s) = %v, want %v", p, got, want)
+		}
+	}
+	all := &scope{dir: "/m", patterns: []string{"./..."}}
+	if !all.fmtFile("/m/a.go") || !all.fmtFile("/m/x/b.go") || all.fmtFile("/m/x/testdata/c.go") {
+		t.Error("./... selects the module minus testdata")
+	}
+}
