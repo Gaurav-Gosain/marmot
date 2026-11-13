@@ -21,7 +21,12 @@
 
 #include "internal.h"
 
+#if RT_OS_WASI
+#define THREAD_SELF() ((void *)0)  // one thread
+#else
 #include <pthread.h>
+#define THREAD_SELF() ((void *)pthread_self())
+#endif
 
 
 schedt sched;
@@ -504,7 +509,7 @@ static void mstart(void *arg) {
 #ifdef RT_TSAN
   m->g0.tsan_fiber = __tsan_get_current_fiber();
 #endif
-  m->thread = (void *)pthread_self();
+  m->thread = THREAD_SELF();
   signal_init_thread(m);
   rt_p *p = m->nextp;
   m->nextp = NULL;
@@ -1561,7 +1566,9 @@ static void unlock_from_m(rt_m *m, rt_g *g) {
 }
 
 static void thread_stack(uintptr_t *lo, uintptr_t *hi) {
-#if RT_OS_DARWIN
+#if RT_OS_WASI
+  rt_throw("cgo callback on wasm");
+#elif RT_OS_DARWIN
   pthread_t t = pthread_self();
   *hi = (uintptr_t)pthread_get_stackaddr_np(t);
   *lo = *hi - pthread_get_stacksize_np(t);
@@ -1607,7 +1614,7 @@ static void cgo_needm(rt_m *m) {
     m->foreign = true;
     m->fastrand = rt_fastrand() | 1;
     setm(m);
-    m->thread = (void *)pthread_self();
+    m->thread = THREAD_SELF();
     signal_init_thread(m);
     void *st = os_map(G0_STACK);
     if (!st) rt_throw("cgo callback: cannot allocate a scheduler stack");
@@ -1954,7 +1961,7 @@ void sched_init(void) {
 #ifdef RT_TSAN
   m->g0.tsan_fiber = __tsan_get_current_fiber();
 #endif
-  m->thread = (void *)pthread_self();
+  m->thread = THREAD_SELF();
   m->fastrand = rt_fastrand() | 1;
   sched.mcount = 1;
   sched.allm = m;

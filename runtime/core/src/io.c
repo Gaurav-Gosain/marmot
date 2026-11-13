@@ -4,6 +4,8 @@
 
 #include "internal.h"
 
+#if !RT_OS_WASI  // WASI: I/O through WASI imports (os_wasi.c)
+
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -63,3 +65,5 @@ RT_API intptr_t rt_syscall(uintptr_t num, uintptr_t a1, uintptr_t a2, uintptr_t 
 RT_API int64_t rt_nanotime(void) { return os_nanotime(); }
 
 RT_API void rt_walltime(int64_t *sec, int32_t *nsec) { os_walltime(sec, nsec); }
+
+#endif  // !RT_OS_WASI

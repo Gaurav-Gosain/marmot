@@ -2,7 +2,9 @@
 
 #include "internal.h"
 
-#include <stdlib.h>
+#if RT_OS_DARWIN
+#include <stdlib.h>  // exit
+#endif
 
 static int32_t g_argc;
 static char **g_argv;

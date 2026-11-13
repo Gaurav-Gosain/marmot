@@ -10,6 +10,8 @@
 
 #include "internal.h"
 
+#if !RT_OS_WASI  // WASI: no sockets or poll on WASI preview 1 here (stubs in os_wasi.c)
+
 #include <errno.h>
 #include <unistd.h>
 #if RT_OS_DARWIN
@@ -330,3 +332,5 @@ RT_API int32_t rt_poll_wait(void *h, int32_t mode, int64_t deadline) {
     return 0;
   }
 }
+
+#endif  // !RT_OS_WASI

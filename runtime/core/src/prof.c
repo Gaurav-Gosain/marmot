@@ -18,6 +18,8 @@
 
 #include "internal.h"
 
+#if !RT_OS_WASI  // WASI: no signals, no profiling timers (stubs in os_wasi.c)
+
 #include <signal.h>
 #include <sys/time.h>
 #if RT_OS_LINUX
@@ -232,3 +234,5 @@ RT_API intptr_t rt_prof_read(uint64_t *buf, intptr_t n) {
   if (k == 0 && !atomic_load(&prof_on) && r == atomic_load(&prof_wpos)) return -1;
   return k;
 }
+
+#endif  // !RT_OS_WASI

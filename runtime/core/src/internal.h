@@ -310,6 +310,9 @@ INLINE rt_m *getm(void) {
   uintptr_t tp;
   __asm__ volatile("movq %%fs:0, %0" : "=r"(tp));
   return *(rt_m **)(tp + rt_m_tlsoff);
+#elif RT_OS_WASI
+  extern rt_m *rt_wasi_m;  // one thread (os_wasi.c)
+  return *(rt_m *volatile *)&rt_wasi_m;
 #endif
 }
 // Set the current thread's M. tls_init must run first (os_init does it).

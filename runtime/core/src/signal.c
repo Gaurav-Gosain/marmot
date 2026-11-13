@@ -7,6 +7,8 @@
 // ignored; rt_write raises it for fds 1 and 2 like the gc runtime.
 
 #include "internal.h"
+
+#if !RT_OS_WASI  // WASI: no signals (stubs in os_wasi.c)
 #include "malloc.h"
 
 #include <errno.h>
@@ -355,3 +357,5 @@ void signal_raise_sigpipe(void) {
   pthread_sigmask(SIG_UNBLOCK, &set, NULL);
   raise(SIGPIPE);
 }
+
+#endif  // !RT_OS_WASI

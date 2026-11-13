@@ -7,6 +7,8 @@
 
 #include "internal.h"
 
+#if !RT_OS_WASI  // WASI: no C libraries to call (os_wasi.c)
+
 #include <errno.h>
 
 typedef uintptr_t W;
@@ -118,3 +120,5 @@ RT_API intptr_t rt_libcall_f64(void *fn, const uintptr_t *args, double f0, int32
   if (err) *err = e;
   return r;
 }
+
+#endif  // !RT_OS_WASI
