@@ -447,8 +447,14 @@ void ModuleGen::emitGlobal(LL::GlobalOp g) {
     return;
   }
   // Read-only data without pointers can live in __TEXT,__const; anything
-  // with relocations goes to __DATA.
+  // with relocations goes to __DATA. The only named section is the type
+  // link table.
   Sect s = g.getConstant() && cv.rels.empty() ? Sect::Const : Sect::Data;
+  if (auto sec = g.getSection()) {
+    StringRef n = *sec;
+    if (n != "marmot_tlinks" && !n.starts_with("__DATA,__marmot_tlinks")) unsupported("section " + n.str());
+    s = Sect::TLinks;
+  }
   w.align(s, unsigned(align));
   uint64_t at = w.size(s);
   w.define(name, s, at, !local, weak, isHidden(g));
@@ -2050,9 +2056,11 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
     if (auto g = dyn_cast<LL::GlobalOp>(op)) {
       if (!definedData.count(g.getSymNameAttr())) continue;  // a declaration
       if (isUsedList(g)) {
-        // Not data: the symbols it lists survive dead stripping. The list
-        // stays in the module for a fallback object.
-        g.getInitializerRegion().walk([&](LL::AddressOfOp a) { w.retain(symName(a.getGlobalName())); });
+        // Not data. llvm.used: the symbols it lists survive dead stripping;
+        // llvm.compiler.used only keeps them in this object (they are all
+        // emitted anyway). The list stays in the module for a fallback object.
+        if (g.getSymName() == "llvm.used")
+          g.getInitializerRegion().walk([&](LL::AddressOfOp a) { w.retain(symName(a.getGlobalName())); });
         continue;
       }
       try {

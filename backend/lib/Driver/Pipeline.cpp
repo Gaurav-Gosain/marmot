@@ -807,6 +807,21 @@ bool lowerModule(ParsedModule &pm, const std::string &input, const CompileOption
   return true;
 }
 
+// Each type link entry (a pointer in an ELF marmot_tlinks section) is
+// associated with the descriptor it points to: SHF_LINK_ORDER, so the
+// linker keeps the entry only while that descriptor is live. Mach-O gets the
+// same from its live_support section.
+static void associateTypeLinks(llvm::Module &m) {
+  if (!llvm::Triple(m.getTargetTriple()).isOSBinFormatELF()) return;
+  for (llvm::GlobalVariable &g : m.globals()) {
+    if (g.getSection() != "marmot_tlinks" || !g.hasInitializer()) continue;
+    auto *t = llvm::dyn_cast<llvm::GlobalObject>(g.getInitializer()->stripPointerCasts());
+    if (!t || t->isDeclaration()) continue;
+    g.setMetadata(llvm::LLVMContext::MD_associated,
+                  llvm::MDNode::get(m.getContext(), llvm::ValueAsMetadata::get(t)));
+  }
+}
+
 std::unique_ptr<llvm::Module> translateLowered(ParsedModule &pm, const std::string &input,
                                                llvm::TargetMachine &tm, llvm::LLVMContext &lctx,
                                                PhaseTimes &times, llvm::raw_ostream &errs) {
@@ -820,6 +835,7 @@ std::unique_ptr<llvm::Module> translateLowered(ParsedModule &pm, const std::stri
   }
   lmod->setTargetTriple(tm.getTargetTriple());
   lmod->setDataLayout(tm.createDataLayout());
+  associateTypeLinks(*lmod);
   pm.module = nullptr; // free MLIR memory before the LLVM pipeline
   times.translate += timer.lap();
   return lmod;

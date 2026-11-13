@@ -13,7 +13,7 @@ namespace {
 
 constexpr uint16_t ET_REL = 1, EM_X86_64 = 62;
 constexpr uint32_t SHT_PROGBITS = 1, SHT_SYMTAB = 2, SHT_STRTAB = 3, SHT_RELA = 4, SHT_NOBITS = 8;
-constexpr uint64_t SHF_WRITE = 1, SHF_ALLOC = 2, SHF_EXECINSTR = 4, SHF_INFO_LINK = 0x40,
+constexpr uint64_t SHF_WRITE = 1, SHF_ALLOC = 2, SHF_EXECINSTR = 4, SHF_INFO_LINK = 0x40, SHF_LINK_ORDER = 0x80,
                    SHF_GNU_RETAIN = 0x200000;
 constexpr uint8_t STB_LOCAL = 0, STB_GLOBAL = 1, STB_WEAK = 2;
 constexpr uint8_t STT_NOTYPE = 0, STT_OBJECT = 1, STT_FUNC = 2;
@@ -54,7 +54,7 @@ struct Strtab {
 };
 
 const char *elfSectName(unsigned i) {
-  static const char *n[] = {".text", ".data", ".rodata", ".bss"};
+  static const char *n[] = {".text", ".data", ".rodata", "marmot_tlinks", ".bss"};
   return n[i];
 }
 
@@ -76,16 +76,18 @@ std::string MachOWriter::serializeELF() const {
   // One ELF section per defined symbol (as -ffunction-sections and
   // -fdata-sections), so --gc-sections drops dead code and the undefined
   // symbols only dead code refers to.
-  static const uint64_t flags[4] = {SHF_ALLOC | SHF_EXECINSTR, SHF_ALLOC | SHF_WRITE, SHF_ALLOC,
-                                    SHF_ALLOC | SHF_WRITE};
+  const unsigned B = unsigned(Sect::Bss), TL = unsigned(Sect::TLinks);
+  static const uint64_t flags[kNumSect] = {SHF_ALLOC | SHF_EXECINSTR, SHF_ALLOC | SHF_WRITE, SHF_ALLOC,
+                                           SHF_ALLOC | SHF_WRITE, SHF_ALLOC | SHF_WRITE};
   struct Chunk {
     uint64_t lo, hi;
     unsigned shndx;
   };
-  std::vector<Chunk> chunks[4];
-  for (unsigned i = 0; i < 4; i++) {
+  std::vector<Chunk> chunks[kNumSect];
+  for (unsigned i = 0; i < kNumSect; i++) {
     const Section &x = sec_[i];
-    uint64_t total = i == 3 ? x.bssSize : x.data.size();
+    uint64_t total = i == B ? x.bssSize : x.data.size();
+    if (i == TL && total == 0) continue;
     std::vector<uint64_t> starts, kept;
     for (const Sym &y : syms_)
       if (y.defined && unsigned(y.sect) == i) {
@@ -98,10 +100,10 @@ std::string MachOWriter::serializeELF() const {
     for (size_t k = 0; k < starts.size(); k++) {
       uint64_t lo = starts[k], hi = k + 1 < starts.size() ? starts[k + 1] : total;
       if (hi <= lo && !(k == 0 && starts.size() == 1)) continue;
-      Shdr h{shstr.add(elfSectName(i), true), i == 3 ? SHT_NOBITS : SHT_PROGBITS, flags[i]};
+      Shdr h{shstr.add(elfSectName(i), true), i == B ? SHT_NOBITS : SHT_PROGBITS, flags[i]};
       h.align = uint64_t(1) << x.align;
       if (std::find(kept.begin(), kept.end(), lo) != kept.end()) h.flags |= SHF_GNU_RETAIN;
-      if (i == 3)
+      if (i == B)
         h.size = hi - lo;
       else
         h.data.assign(x.data.begin() + lo, x.data.begin() + hi);
@@ -123,6 +125,30 @@ std::string MachOWriter::serializeELF() const {
     }
     return c[lo];
   };
+
+  // A type link entry (one pointer in its own chunk) is linked to the
+  // section of the descriptor it points to, so --gc-sections keeps it only
+  // while that descriptor is live. Anything else in the table is retained.
+  {
+    std::vector<int> target(chunks[TL].size(), -1);  // -1: none yet, -2: not one defined target
+    for (const Rel &x : sec_[TL].rels) {
+      size_t k = size_t(&chunkOf(TL, x.offset) - chunks[TL].data());
+      const Sym &y = syms_[x.sym];
+      int t = y.defined && !y.commonSize && unsigned(y.sect) != TL
+                  ? int(chunkOf(unsigned(y.sect), y.offset).shndx)
+                  : -2;
+      target[k] = target[k] == -1 ? t : -2;
+    }
+    for (size_t k = 0; k < target.size(); k++) {
+      Shdr &h = sh[chunks[TL][k].shndx];
+      if (target[k] >= 0 && chunks[TL][k].hi - chunks[TL][k].lo == 8) {
+        h.flags = (h.flags | SHF_LINK_ORDER) & ~SHF_GNU_RETAIN;
+        h.link = uint32_t(target[k]);
+      } else {
+        h.flags |= SHF_GNU_RETAIN;
+      }
+    }
+  }
 
   // Symbols: the null symbol, locals, then globals (sh_info = first global).
   std::vector<unsigned> order;
@@ -163,7 +189,8 @@ std::string MachOWriter::serializeELF() const {
   // the 4-byte field.
   unsigned symtabIndex = 0;
   std::vector<Shdr> relas;
-  for (unsigned i = 0; i < 3; i++) {
+  for (unsigned i = 0; i < kNumSect; i++) {
+    if (i == B) continue;
     std::vector<Buf> per(chunks[i].size());
     for (const Rel &x : sec_[i].rels) {
       uint32_t type = R_X86_64_64;

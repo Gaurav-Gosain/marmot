@@ -15,7 +15,7 @@ constexpr uint32_t MH_MAGIC_64 = 0xfeedfacf, CPU_TYPE_ARM64 = 0x0100000c, MH_OBJ
                    MH_SUBSECTIONS_VIA_SYMBOLS = 0x2000;
 constexpr uint32_t LC_SEGMENT_64 = 0x19, LC_SYMTAB = 0x2, LC_DYSYMTAB = 0xb, LC_BUILD_VERSION = 0x32;
 constexpr uint32_t S_REGULAR = 0, S_ZEROFILL = 1, S_ATTR_PURE_INSTRUCTIONS = 0x80000000,
-                   S_ATTR_SOME_INSTRUCTIONS = 0x400;
+                   S_ATTR_SOME_INSTRUCTIONS = 0x400, S_ATTR_LIVE_SUPPORT = 0x08000000;
 constexpr uint8_t N_UNDF = 0, N_EXT = 1, N_SECT = 0xe;
 enum : uint32_t {
   ARM64_RELOC_UNSIGNED = 0,
@@ -44,10 +44,11 @@ struct Out {
 };
 
 const char *sectName(unsigned i) {
-  static const char *n[] = {"__text", "__data", "__const", "__bss"};
+  static const char *n[] = {"__text", "__data", "__const", "__marmot_tlinks", "__bss"};
   return n[i];
 }
 const char *segName(unsigned i) { return i == 0 || i == 2 ? "__TEXT" : "__DATA"; }
+constexpr unsigned kBss = unsigned(Sect::Bss);
 
 } // namespace
 
@@ -127,7 +128,7 @@ void MachOWriter::reloc(Sect s, uint64_t offset, Reloc kind, unsigned sym, int64
 }
 
 std::string MachOWriter::serialize() const {
-  const unsigned nsect = 4;
+  const unsigned nsect = kNumSect;
   const uint32_t segCmdSize = 72 + 80 * nsect, buildSize = 24, symtabSize = 24, dysymSize = 80;
   const uint32_t sizeofcmds = segCmdSize + buildSize + symtabSize + dysymSize;
   const uint64_t headerEnd = 32 + sizeofcmds;
@@ -138,8 +139,8 @@ std::string MachOWriter::serialize() const {
     uint64_t a = uint64_t(1) << sec_[i].align;
     vmsize = (vmsize + a - 1) & ~(a - 1);
     addr[i] = vmsize;
-    vmsize += i == 3 ? sec_[i].bssSize : sec_[i].data.size();
-    if (i != 3) {
+    vmsize += i == kBss ? sec_[i].bssSize : sec_[i].data.size();
+    if (i != kBss) {
       filePos = (filePos + a - 1) & ~(a - 1);
       fileoff[i] = filePos;
       filePos += sec_[i].data.size();
@@ -222,13 +223,14 @@ std::string MachOWriter::serialize() const {
     o.name16(sectName(i));
     o.name16(segName(i));
     o.u64(addr[i]);
-    o.u64(i == 3 ? sec_[i].bssSize : sec_[i].data.size());
+    o.u64(i == kBss ? sec_[i].bssSize : sec_[i].data.size());
     o.u32(uint32_t(fileoff[i]));
     o.u32(sec_[i].align);
     o.u32(uint32_t(reloff[i]));
     o.u32(nreloc[i]);
     uint32_t flags = i == 0 ? S_REGULAR | S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
-                     : i == 3 ? S_ZEROFILL
+                     : i == kBss ? S_ZEROFILL
+                     : i == unsigned(Sect::TLinks) ? S_REGULAR | S_ATTR_LIVE_SUPPORT
                               : S_REGULAR;
     o.u32(flags);
     o.u32(0);
@@ -261,7 +263,8 @@ std::string MachOWriter::serialize() const {
   for (int i = 0; i < 12; i++) o.u32(0);
 
   // Section data.
-  for (unsigned i = 0; i < 3; i++) {
+  for (unsigned i = 0; i < nsect; i++) {
+    if (i == kBss) continue;
     o.pad(fileoff[i]);
     std::vector<uint8_t> d = sec_[i].data;
     // Abs64 addends live in the data.

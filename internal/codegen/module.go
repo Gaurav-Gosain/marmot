@@ -551,38 +551,28 @@ func (m *moduleGen) emitTypelinks() {
 	if len(m.tlinks) == 0 || m.p.prog.ImportedPackage("reflect") == nil {
 		return
 	}
-	if m.p.opts.GOOS == "darwin" {
-		// One entry per global in a live_support section: ld keeps an entry
-		// only when the descriptor it points to is live for another reason,
-		// so the table does not keep every descriptor (and the method code
-		// it names) alive. A descriptor nothing else uses has no values and
-		// needs no identity with one reflect builds. llvm.compiler.used
-		// keeps the entries in LLVM without marking them no_dead_strip.
-		var b strings.Builder
-		for i, s := range m.tlinks {
-			name := fmt.Sprintf("marmot.tlink.%d", i)
-			fmt.Fprintf(&b, "  llvm.mlir.global internal constant @%s() {addr_space = 0 : i32, alignment = 8 : i64, section = \"__DATA,__marmot_tlinks,regular,live_support\"} : !llvm.ptr {\n", name)
-			n := 0
-			v := writeCV(&b, &n, cAddr(s))
-			fmt.Fprintf(&b, "    llvm.return %s : !llvm.ptr\n  }\n", v)
-			m.compilerUsed = append(m.compilerUsed, cAddr(name))
-		}
-		m.defs.WriteString(b.String())
-		return
-	}
+	// One entry per global, kept in LLVM by llvm.compiler.used (which does
+	// not mark it no_dead_strip). On darwin the section is live_support: ld
+	// keeps an entry only when the descriptor it points to is live for
+	// another reason, so the table does not keep every descriptor (and the
+	// method code it names) alive. A descriptor nothing else uses has no
+	// values and needs no identity with one reflect builds. On linux the
+	// backend links each entry's section to its descriptor's
+	// (SHF_LINK_ORDER), for the same effect with lld.
 	sec := "marmot_tlinks"
-	es := make([]cv, len(m.tlinks))
-	for i, s := range m.tlinks {
-		es[i] = cAddr(s)
+	if m.p.opts.GOOS == "darwin" {
+		sec = "__DATA,__marmot_tlinks,regular,live_support"
 	}
-	t := mlir.Array(int64(len(es)), mlir.Ptr)
 	var b strings.Builder
-	fmt.Fprintf(&b, "  llvm.mlir.global internal constant @marmot.tlinks() {addr_space = 0 : i32, alignment = 8 : i64, section = %q} : %s {\n", sec, t)
-	n := 0
-	v := writeCV(&b, &n, cAgg(t, es...))
-	fmt.Fprintf(&b, "    llvm.return %s : %s\n  }\n", v, t)
+	for i, s := range m.tlinks {
+		name := fmt.Sprintf("marmot.tlink.%d", i)
+		fmt.Fprintf(&b, "  llvm.mlir.global internal constant @%s() {addr_space = 0 : i32, alignment = 8 : i64, section = %q} : !llvm.ptr {\n", name, sec)
+		n := 0
+		v := writeCV(&b, &n, cAddr(s))
+		fmt.Fprintf(&b, "    llvm.return %s : !llvm.ptr\n  }\n", v)
+		m.compilerUsed = append(m.compilerUsed, cAddr(name))
+	}
 	m.defs.WriteString(b.String())
-	m.used = append(m.used, cAddr("marmot.tlinks"))
 }
 
 // storedAtRunTime reports whether package init still stores into g.

@@ -10,6 +10,10 @@ for t in intrinsics wide; do
   "$T0" "$src/$t.mlir" $t.o > /dev/null
   "$L/clang" -O1 -w "$src/${t}_main.c" $t.o -o $t && ./$t > /dev/null && echo "$t: ok"
 done
+if [ "$(uname)" = Darwin ]; then sec=__DATA,__marmot_tlinks,regular,live_support; gc=-dead_strip; else sec=marmot_tlinks; gc=--gc-sections; fi
+sed "s/SECTION/$sec/" "$src/tlinks.mlir" > tlinks.mlir
+"$T0" tlinks.mlir tlinks.o > /dev/null
+"$L/clang" -O1 -w "$src/tlinks_main.c" tlinks.o -Wl,$gc -o tlinks && ./tlinks && echo "tlinks: ok"
 for s in $SEEDS; do
   python3 "$src/abi_gen.py" $s 80
   for m in a b; do

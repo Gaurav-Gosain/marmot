@@ -13,7 +13,11 @@
 namespace marmot {
 namespace tier0 {
 
-enum class Sect : uint8_t { Text, Data, Const, Bss };
+// TLinks: the type link table (pointers to type descriptors). Each entry is
+// kept only while the descriptor it points to is live: a live_support
+// section in Mach-O, one SHF_LINK_ORDER section per entry in ELF.
+enum class Sect : uint8_t { Text, Data, Const, TLinks, Bss };
+constexpr unsigned kNumSect = 5;
 
 enum class Reloc : uint8_t {
   Branch26,       // BL/B to a symbol
@@ -110,7 +114,7 @@ private:
   };
   std::vector<Sym> syms_;
   std::unordered_map<std::string, unsigned> index_;
-  Section sec_[4];
+  Section sec_[kNumSect];
   bool elf_ = false;
 };
 

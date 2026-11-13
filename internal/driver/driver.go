@@ -655,7 +655,10 @@ func (b *build) link1(objs []string, rt, out string, extra []string) error {
 			}
 		}
 	} else {
-		args = append(args, "-Wl,--gc-sections")
+		// start-stop-gc: __start_marmot_tlinks does not keep the type link
+		// entries alive, so an entry goes with its dead descriptor (each is
+		// SHF_LINK_ORDER on that descriptor's section).
+		args = append(args, "-Wl,--gc-sections", "-Wl,-z,start-stop-gc")
 		if !b.wantPcln() {
 			args = append(args, "-s")
 		}
@@ -861,7 +864,7 @@ dir="$(cd "$(dirname "$0")" && pwd)"
 out="${1:-$dir/%s}"
 case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
 cd "$dir"
-${CC:-clang} -o "$out" %s librtcore.a -lpthread -Wl,--gc-sections -s
+${CC:-clang} -o "$out" %s librtcore.a -lpthread -Wl,--gc-sections -Wl,-z,start-stop-gc -s
 `, b.goos, b.goarch, exe, exe, strings.Join(names, " "))
 	return os.WriteFile(filepath.Join(out, "link.sh"), []byte(script), 0o755)
 }

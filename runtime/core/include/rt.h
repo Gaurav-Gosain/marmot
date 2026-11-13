@@ -379,9 +379,10 @@ int32_t rt_pcln(const uint8_t **table, intptr_t *len, uintptr_t *base);
 // type descriptor pointers in the binary and, in *n, its length; NULL with
 // *n = 0 when the binary has none. Entries may repeat. Mach-O: section
 // __DATA,__marmot_tlinks; ELF: section marmot_tlinks (bounded by
-// __start_marmot_tlinks/__stop_marmot_tlinks; the producer must mark it
-// retained, since lld's -z start-stop-gc does not keep it for these
-// references). No allocation.
+// __start_marmot_tlinks/__stop_marmot_tlinks, linked with -z start-stop-gc
+// so these references keep nothing; each entry is SHF_LINK_ORDER on its
+// descriptor's section and stays only while that descriptor is live). No
+// allocation.
 void **rt_typelinks(intptr_t *n);
 
 // x86-64 psABI level of the running CPU, for multiversioned loops: 1

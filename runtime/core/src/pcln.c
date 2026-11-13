@@ -114,9 +114,8 @@ RT_API void **rt_typelinks(intptr_t *n) {
   return (void **)p;
 }
 #elif RT_OS_LINUX
-// The linker defines these for a section named like a C identifier. With
-// lld's default -z start-stop-gc the section must itself be retained (used
-// attribute / SHF_GNU_RETAIN); these references do not keep it.
+// The linker defines these for a section named like a C identifier. The
+// link uses -z start-stop-gc, so these references keep no entry alive.
 extern void *__start_marmot_tlinks[] __attribute__((weak, visibility("hidden")));
 extern void *__stop_marmot_tlinks[] __attribute__((weak, visibility("hidden")));
 RT_API void **rt_typelinks(intptr_t *n) {
