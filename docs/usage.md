@@ -237,8 +237,10 @@ Go pointers passed to C are checked as with gc (`GODEBUG=cgocheck=0` turns the c
 Go memory passed to C may not hold Go pointers unless they are pinned with `runtime.Pinner`.
 
 Programs without `import "C"` are built exactly as before, and the standard library is always
-built without cgo (`net` and `os/user` behave as with `CGO_ENABLED=0`). Cross compiling cgo
-packages is not supported yet.
+built without cgo (`net` and `os/user` behave as with `CGO_ENABLED=0`). Cross compiling a cgo
+package needs the target's C headers and libraries: set `MARMOT_SYSROOT` to a copy of the
+target's root (`usr/include` and `usr/lib` are enough), for example
+`MARMOT_SYSROOT=$HOME/sysroots/linux-amd64 marmot build -target linux/amd64 .`.
 
 ## Cached code generation
 

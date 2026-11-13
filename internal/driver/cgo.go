@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -61,8 +62,9 @@ func (b *build) cgoObjects(pkgs map[string]*cgo.Package, bitcode bool) ([]string
 	if len(pkgs) == 0 {
 		return nil, nil, nil, nil
 	}
-	if b.cross() {
-		return nil, nil, nil, fmt.Errorf("cgo packages cannot be cross compiled yet")
+	target, err := b.cgoTargetFlags()
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	var paths []string
 	for p := range pkgs {
@@ -87,7 +89,7 @@ func (b *build) cgoObjects(pkgs map[string]*cgo.Package, bitcode bool) ([]string
 	for _, path := range paths {
 		p := pkgs[path]
 		headers := headerSig(p.Dir) + headerSig(p.OutDir)
-		flags := append([]string{opt, "-fno-omit-frame-pointer", "-fno-stack-protector", "-w"}, p.CFLAGS...)
+		flags := append(append(append([]string{}, target...), opt, "-fno-omit-frame-pointer", "-fno-stack-protector", "-w"), p.CFLAGS...)
 		for _, src := range append(append([]string{}, p.CFiles...), p.SFiles...) {
 			data, err := os.ReadFile(src)
 			if err != nil {
@@ -144,6 +146,36 @@ func (b *build) cgoObjects(pkgs map[string]*cgo.Package, bitcode bool) ([]string
 	return objs, bcs, ldflags, nil
 }
 
+// cgoTriples are the clang targets of cross builds (as runtime/core's
+// Makefile).
+var cgoTriples = map[string]string{
+	"linux/amd64":  "x86_64-linux-gnu",
+	"linux/arm64":  "aarch64-linux-gnu",
+	"darwin/amd64": "x86_64-apple-macosx11.0",
+	"darwin/arm64": "arm64-apple-macosx11.0",
+}
+
+// cgoTargetFlags are the clang flags of the target for C code: none for a
+// native build; --target and --sysroot for a cross build. A Linux target
+// needs its C headers and libraries: MARMOT_SYSROOT names that tree (a copy
+// of the target's /usr/include and /usr/lib is enough).
+func (b *build) cgoTargetFlags() ([]string, error) {
+	if !b.cross() {
+		return nil, nil
+	}
+	triple, ok := cgoTriples[b.goos+"/"+b.goarch]
+	if !ok {
+		return nil, fmt.Errorf("cgo: no C target for %s/%s", b.goos, b.goarch)
+	}
+	flags := []string{"--target=" + triple}
+	if sr := os.Getenv("MARMOT_SYSROOT"); sr != "" {
+		flags = append(flags, "--sysroot="+sr)
+	} else if b.goos != runtime.GOOS {
+		return nil, fmt.Errorf("cgo: cross compiling C for %s/%s needs its headers: set MARMOT_SYSROOT to a copy of the target's root (usr/include, usr/lib)", b.goos, b.goarch)
+	}
+	return flags, nil
+}
+
 // headerSig is a signature of the .h files in dir.
 func headerSig(dir string) string {
 	if dir == "" {
@@ -165,4 +197,21 @@ func statSig(path string) string {
 		return path + " missing"
 	}
 	return fmt.Sprintf("%s %d %d", path, st.Size(), st.ModTime().UnixNano())
+}
+
+// cgoLoaderFlags are the target flags for cgo's own use of clang (its
+// type probes): those of cgoTargetFlags, or none when they are not
+// available (the build then fails at the C compile with the reason).
+func (b *build) cgoLoaderFlags() []string {
+	f, _ := b.cgoTargetFlags()
+	return f
+}
+
+// shellArgs quotes args for a sh command line, each after a space.
+func shellArgs(args []string) string {
+	var s strings.Builder
+	for _, a := range args {
+		s.WriteString(" '" + strings.ReplaceAll(a, "'", `'\''`) + "'")
+	}
+	return s.String()
 }

@@ -256,7 +256,7 @@ func (b *build) run1() (string, error) {
 	defer releaseSlot()
 	lcfg := loader.Config{
 		Dir: cfg.Dir, Root: cfg.Root, Tags: cfg.Tags, GOOS: goos, GOARCH: goarch, Patterns: cfg.Patterns,
-		Log: b.logf, Tests: cfg.Test, AllErrors: cfg.AllErrors, CC: llvmTool("clang"),
+		Log: b.logf, Tests: cfg.Test, AllErrors: cfg.AllErrors, CC: llvmTool("clang"), CCFlags: b.cgoLoaderFlags(),
 		BeforeSSA: func(all []*packages.Package) error {
 			return specialize.BeforeSSA(&specialize.Input{Packages: all, Release: cfg.Release, GOOS: goos, GOARCH: goarch, Log: b.logf})
 		},
@@ -880,8 +880,8 @@ dir="$(cd "$(dirname "$0")" && pwd)"
 out="${1:-$dir/%s}"
 case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
 cd "$dir"
-${CC:-clang} -o "$out" %s librtcore.a -lpthread -Wl,--gc-sections -Wl,-z,start-stop-gc -s
-`, b.goos, b.goarch, exe, exe, strings.Join(names, " "))
+${CC:-clang} -o "$out" %s librtcore.a -lpthread -Wl,--gc-sections -Wl,-z,start-stop-gc -s%s
+`, b.goos, b.goarch, exe, exe, strings.Join(names, " "), shellArgs(b.cgoLDFLAGS))
 	return os.WriteFile(filepath.Join(out, "link.sh"), []byte(script), 0o755)
 }
 

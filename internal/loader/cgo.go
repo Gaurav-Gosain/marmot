@@ -125,7 +125,7 @@ func applyCgo(cfg Config, goroot string, roots []*packages.Package,
 	if cc == "" {
 		cc = "clang"
 	}
-	ccfg := cgo.Config{CC: cc, GOOS: cfg.GOOS, GOARCH: cfg.GOARCH,
+	ccfg := cgo.Config{CC: cc, CCFlags: cfg.CCFlags, GOOS: cfg.GOOS, GOARCH: cfg.GOARCH,
 		Tags:       append([]string{"marmot", "purego", "math_big_pure_go"}, cfg.Tags...),
 		RealGOROOT: realRoot, CacheDir: filepath.Join(cfg.Root, "build", "cache", "cgo")}
 	type change struct {

@@ -57,7 +57,7 @@ Other build modes in the same run:
 | unsafe | works | 5 of 5 |
 | Compiler optimizations preserve semantics | partial | 21 of 22 Loop, specialization and float tests; run at -O0, -O2, -Oz and -release. |
 | Real programs (parsers, interpreters, simulations) | works | 12 of 12 |
-| cgo: C calls and //export, structs, errno, callbacks from C threads, pointer check | works | 15 of 15 Cross builds of cgo packages are not supported yet; the standard library is built without cgo. |
+| cgo: C calls and //export, structs, errno, callbacks from C threads, pointer check | works | 15 of 15 Cross builds need the target's C headers (MARMOT_SYSROOT); the standard library is built without cgo. |
 | Race detector (-race) | missing | non-goal for v1 |
 | plugin package | missing | non-goal for v1 |
 | DWARF debug info | missing | non-goal for v1 |
@@ -275,7 +275,7 @@ Stress modes used by the conformance runner: `gcstress` (`MARMOT_GCSTRESS=1`), `
 - Slice growth capacities and map iteration order are not guaranteed to equal gc's.
 - Evaluation order: variables are read after the calls of the same expression; open cases are tracked in `tests/run/audit/evalorder_gaps`.
 - Unexported methods of embedded types from different packages with the same name: see `world/audit_unexported` under open failures.
-- The race detector, plugins, DWARF and Windows are not supported. cgo packages build natively but cannot be cross compiled yet.
+- The race detector, plugins, DWARF and Windows are not supported.
 - `reflect`: see the open failures below for the current gaps.
 
 ## Open failures

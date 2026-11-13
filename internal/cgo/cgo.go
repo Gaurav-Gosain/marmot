@@ -49,7 +49,8 @@ const version = "marmot-cgo-4"
 
 // Config describes the build a package is prepared for.
 type Config struct {
-	CC         string // the C compiler (clang)
+	CC         string   // the C compiler (clang)
+	CCFlags    []string // flags for every C compile (cross builds: --target, --sysroot)
 	GOOS       string
 	GOARCH     string
 	Tags       []string // build tags
@@ -150,7 +151,7 @@ func Prepare(cfg Config, dir, importPath string, files []string) (*Package, erro
 	// The key covers the inputs cgo reads.
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\n%s\n%s/%s\n%q\n%q\n", version, importPath, cfg.GOOS, cfg.GOARCH, flags, cfg.Tags)
-	fmt.Fprintf(h, "%s\n", fileSig(cfg.CC))
+	fmt.Fprintf(h, "%s\n%q\n", fileSig(cfg.CC), cfg.CCFlags)
 	fmt.Fprintf(h, "%s\n", fileSig(cgoTool(cfg.RealGOROOT)))
 	// The rewrite is part of marmot: a new marmot generates again.
 	if exe, err := os.Executable(); err == nil {
@@ -286,7 +287,11 @@ func generate(cfg Config, bp *build.Package, dir, importPath string, flags []str
 	args = append(args, bp.CgoFiles...)
 	cmd := exec.Command(cgoTool(cfg.RealGOROOT), args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "CC="+cfg.CC, "GCCGO="+stub, "GOOS="+cfg.GOOS, "GOARCH="+cfg.GOARCH,
+	cc := cfg.CC
+	for _, f := range cfg.CCFlags {
+		cc += " " + f // cmd/cgo splits $CC into words
+	}
+	cmd.Env = append(os.Environ(), "CC="+cc, "GCCGO="+stub, "GOOS="+cfg.GOOS, "GOARCH="+cfg.GOARCH,
 		"CGO_ENABLED=1", "GOROOT="+cfg.RealGOROOT)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -301,7 +306,7 @@ func generate(cfg Config, bp *build.Package, dir, importPath string, flags []str
 	if err := rewrite(tmp, bp, marks); err != nil {
 		return fmt.Errorf("cgo output of %s: %v", importPath, err)
 	}
-	fastLeaves(tmp, cfg.CC, append(append([]string{}, flags...), "-I", dir))
+	fastLeaves(tmp, cfg.CC, append(append(append([]string{}, cfg.CCFlags...), flags...), "-I", dir))
 	// Keep only what marmot compiles.
 	for _, f := range []string{"_cgo_defun.c", "_cgo_main.c", "_cgo_flags", "gccgo-stub"} {
 		_ = os.Remove(filepath.Join(tmp, f)) // unused cgo output; a leftover only costs disk

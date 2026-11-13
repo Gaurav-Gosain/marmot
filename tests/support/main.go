@@ -88,7 +88,7 @@ var features = []feature{
 	{"unsafe", []string{`unsafe_`}, ""},
 	{"Compiler optimizations preserve semantics", []string{`^run/opt/`}, "Loop, specialization and float tests; run at -O0, -O2, -Oz and -release."},
 	{"Real programs (parsers, interpreters, simulations)", []string{`^run/apps/`}, ""},
-	{"cgo: C calls and //export, structs, errno, callbacks from C threads, pointer check", []string{`^run/cgo/`, `^world/(cgo_package|sqlite)$`}, "Cross builds of cgo packages are not supported yet; the standard library is built without cgo."},
+	{"cgo: C calls and //export, structs, errno, callbacks from C threads, pointer check", []string{`^run/cgo/`, `^world/(cgo_package|sqlite)$`}, "Cross builds need the target's C headers (MARMOT_SYSROOT); the standard library is built without cgo."},
 }
 
 var staticFeatures = [][3]string{
@@ -425,7 +425,7 @@ func main() {
 	w("- Slice growth capacities and map iteration order are not guaranteed to equal gc's.\n")
 	w("- Evaluation order: variables are read after the calls of the same expression; open cases are tracked in `tests/run/audit/evalorder_gaps`.\n")
 	w("- Unexported methods of embedded types from different packages with the same name: see `world/audit_unexported` under open failures.\n")
-	w("- The race detector, plugins, DWARF and Windows are not supported. cgo packages build natively but cannot be cross compiled yet.\n")
+	w("- The race detector, plugins, DWARF and Windows are not supported.\n")
 	w("- `reflect`: see the open failures below for the current gaps.\n\n")
 
 	if kb, err := os.ReadFile(*flKnown); err == nil {

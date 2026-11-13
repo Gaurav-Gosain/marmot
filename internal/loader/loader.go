@@ -35,8 +35,10 @@ type Config struct {
 	// Tests loads the test variant of the (single) package pattern; the
 	// root becomes the generated "pkg.test" main package (go list -test).
 	Tests bool
-	// CC is the C compiler for cgo packages (default clang).
-	CC string
+	// CC is the C compiler for cgo packages (default clang), CCFlags flags
+	// it needs for the target (cross builds).
+	CC      string
+	CCFlags []string
 	// AllErrors reports every load and type error: no caps per package or
 	// overall, and no "could not import" follow-ons of a package that
 	// already has errors.
