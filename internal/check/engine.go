@@ -28,7 +28,7 @@ import (
 
 // engineVersion changes whenever the cached form or the meaning of a
 // cached result changes.
-const engineVersion = "check-engine-1"
+const engineVersion = "check-engine-2"
 
 // finding is one analyzer diagnostic in a position independent form, as it
 // is cached.
@@ -180,8 +180,12 @@ type unit struct {
 	fullReport *report
 	fullErr    error
 
+	own       string // hash of the package's own inputs
+	keyOnce   sync.Once
 	factsKey  string
 	reportKey string
+	outOnce   sync.Once
+	out       string // hash of the facts entry (types and facts)
 }
 
 func newEngine(g *graph, st *store, s *suite, env, goarch string, jobs int) *engine {
@@ -198,8 +202,8 @@ func newEngine(g *graph, st *store, s *suite, env, goarch string, jobs int) *eng
 	return e
 }
 
-// computeKeys sets the facts and report keys of every package. go list
-// prints dependencies before their importers, so one pass in order works.
+// computeKeys hashes the own inputs of every package: its files, its
+// build configuration and how its imports resolve.
 func (e *engine) computeKeys() {
 	// Hash the files of mutable packages in parallel first.
 	hashes := map[string]string{}
@@ -226,7 +230,7 @@ func (e *engine) computeKeys() {
 	wg.Wait()
 	for _, p := range e.g.pkgs {
 		u := e.units[p]
-		h := newHasher("facts")
+		h := newHasher("own")
 		h.str(engineVersion, runtime.Version(), e.env, e.suite.factsConfig, p.ImportPath, p.Name, p.goVersion())
 		if p.Module != nil {
 			h.str("module", p.Module.Path, p.Module.Version)
@@ -246,22 +250,113 @@ func (e *engine) computeKeys() {
 		}
 		sort.Strings(ids)
 		h.str(ids...)
+		u.own = h.sum()
+	}
+}
+
+// keys sets the facts and report keys of a package. A package's facts
+// key covers its own inputs and, for each dependency, the hash of that
+// dependency's facts entry (its export data and facts), not of the
+// dependency's inputs: an edit that leaves a package's export data and
+// facts as they were (a comment, a line changed in place, a function
+// body whose declarations keep their positions) stops there, and the
+// packages that import it are answered from the cache.
+func (e *engine) keys(p *listPkg) *unit {
+	u := e.units[p]
+	u.keyOnce.Do(func() {
 		deps := slices.Clone(p.deps)
 		sort.Slice(deps, func(i, j int) bool { return deps[i].ImportPath < deps[j].ImportPath })
-		for _, d := range deps {
-			h.str(d.ImportPath, e.units[d].factsKey)
+		outs := make([]string, len(deps))
+		var wg sync.WaitGroup
+		for i, d := range deps {
+			if d.ImportPath == "unsafe" {
+				continue
+			}
+			wg.Add(1)
+			go func(i int, d *listPkg) {
+				defer wg.Done()
+				outs[i] = e.outOf(d)
+			}(i, d)
+		}
+		wg.Wait()
+		h := newHasher("facts")
+		h.str(u.own)
+		for i, d := range deps {
+			h.str(d.ImportPath, outs[i])
 		}
 		u.factsKey = h.sum()
 		r := newHasher("report")
 		r.str(u.factsKey, e.suite.reportConfig)
 		u.reportKey = r.sum()
+	})
+	return u
+}
+
+// outOf returns the hash of a package's facts entry, from a small cache
+// entry beside it when there is one.
+func (e *engine) outOf(p *listPkg) string {
+	u := e.keys(p)
+	u.outOnce.Do(func() {
+		ok := newHasher("out")
+		ok.str(u.factsKey)
+		k := ok.sum()
+		if data := e.st.get(k); len(data) > 0 {
+			u.out = string(data)
+			return
+		}
+		fe, err := e.factsOf(p)
+		if err != nil || fe == nil {
+			u.out = "error"
+			return
+		}
+		u.out = e.outHash(p, fe)
+		e.st.put(k, []byte(u.out))
+	})
+	return u.out
+}
+
+// outHash hashes a facts entry for the keys of its importers: the export
+// data, the package's own facts as a set (each encoded on its own, since
+// gob numbers types in the order it meets them), and the hashes of its
+// dependencies, which cover the facts it passes on from them.
+func (e *engine) outHash(p *listPkg, fe *factsEntry) string {
+	h := newHasher("entry")
+	h.bytes(fe.Types)
+	var gfs []gobFact
+	if len(fe.Facts) > 0 && gob.NewDecoder(bytes.NewReader(fe.Facts)).Decode(&gfs) != nil {
+		h.bytes(fe.Facts)
+		return h.sum()
 	}
+	var parts []string
+	for _, f := range gfs {
+		if f.PkgPath != p.path {
+			continue
+		}
+		var b bytes.Buffer
+		if err := gob.NewEncoder(&b).Encode(&f); err != nil {
+			h.bytes(fe.Facts)
+			return h.sum()
+		}
+		parts = append(parts, b.String())
+	}
+	sort.Strings(parts)
+	for _, x := range parts {
+		h.bytes([]byte(x))
+	}
+	deps := slices.Clone(p.deps)
+	sort.Slice(deps, func(i, j int) bool { return deps[i].ImportPath < deps[j].ImportPath })
+	for _, d := range deps {
+		if d.ImportPath != "unsafe" {
+			h.str(d.ImportPath, e.outOf(d))
+		}
+	}
+	return h.sum()
 }
 
 // report returns the analysis of a root package, from the cache or by
 // running every analyzer.
 func (e *engine) report(p *listPkg) (*report, error) {
-	u := e.units[p]
+	u := e.keys(p)
 	if data := e.st.get(u.reportKey); data != nil {
 		var r report
 		if gob.NewDecoder(bytes.NewReader(data)).Decode(&r) == nil {
@@ -278,7 +373,7 @@ func (e *engine) report(p *listPkg) (*report, error) {
 // results: the report, and the facts entry its importers (an external
 // test package imports the test variant) need.
 func (e *engine) full(p *listPkg) (*factsEntry, *report, error) {
-	u := e.units[p]
+	u := e.keys(p)
 	u.fullOnce.Do(func() {
 		u.fullFacts, u.fullReport, u.fullErr = e.analyze(p, true)
 		if u.fullErr == nil {
@@ -291,7 +386,7 @@ func (e *engine) full(p *listPkg) (*factsEntry, *report, error) {
 
 // factsOf returns the facts entry of a dependency.
 func (e *engine) factsOf(p *listPkg) (*factsEntry, error) {
-	u := e.units[p]
+	u := e.keys(p)
 	u.factsOnce.Do(func() {
 		if data := e.st.get(u.factsKey); data != nil {
 			var fe factsEntry
