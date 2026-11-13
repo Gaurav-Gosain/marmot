@@ -304,3 +304,39 @@ func TestRunChanged(t *testing.T) {
 		t.Errorf("changed findings %v, want %v", got, want)
 	}
 }
+
+func TestDeadcodeReusedAcrossLineShifts(t *testing.T) {
+	if testing.Short() {
+		t.Skip("loads the standard library")
+	}
+	t.Setenv("GOWORK", "off")
+	dir := copyTree(t, "testdata/dead")
+	cache := t.TempDir()
+	opts := Options{Dir: dir, Only: []string{"deadcode"}, CacheDir: cache}
+	r1, err := Run(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := filepath.Join(dir, "main.go")
+	src, _ := os.ReadFile(main)
+	// Two lines more above Dead: positions move, references do not.
+	os.WriteFile(main, bytes.Replace(src, []byte("func used() {}"), []byte("func used() {\n\t_ = 1\n}"), 1), 0o644)
+	r2, err := Run(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := r1.Checks[0], r2.Checks[0]
+	if !b.Cached || len(b.Findings) != 1 || b.Findings[0].Span.Line != a.Findings[0].Span.Line+2 {
+		t.Errorf("deadcode after the edit: cached %v, %+v (before: line %d)", b.Cached, b.Findings, a.Findings[0].Span.Line)
+	}
+	// A new reference changes the shape: Dead is used now.
+	src, _ = os.ReadFile(main)
+	os.WriteFile(main, bytes.Replace(src, []byte("_ = 1"), []byte("Dead()"), 1), 0o644)
+	r3, err := Run(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := r3.Checks[0]; c.Cached || len(c.Findings) != 0 {
+		t.Errorf("deadcode after a new call: cached %v, %+v", c.Cached, c.Findings)
+	}
+}
