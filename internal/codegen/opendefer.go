@@ -1,10 +1,10 @@
 package codegen
 
 import (
-	"slices"
 	"fmt"
 	"go/token"
 	"go/types"
+	"slices"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
 	"golang.org/x/tools/go/ssa"
@@ -212,7 +212,7 @@ func (f *funcGen) openRunDefers() {
 	fmt.Fprintf(f.b, "  %s:\n", run)
 	mt := od.slotMT
 	for k, d := range slices.Backward(od.defers) {
-		
+
 		b := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> i8", od.slots)
 		bit := f.constInt(int64(1)<<k, mlir.I8)
 		cleared := f.op("llvm.and %s, %s : i8", b, f.constInt(^(int64(1)<<k)&0xff, mlir.I8))
@@ -294,7 +294,7 @@ func (m *moduleGen) openDeferRunner(parent *funcGen, od *openDefers) string {
 	off, haveOff := m.p.gDeferOffset()
 	getg := m.p.runtimeFunc("getg")
 	for k, d := range slices.Backward(od.defers) {
-		
+
 		bits := t.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> i8", slots)
 		bit := t.constInt(int64(1)<<k, mlir.I8)
 		set := t.op("llvm.and %s, %s : i8", bits, bit)

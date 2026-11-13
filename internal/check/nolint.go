@@ -1,9 +1,9 @@
 package check
 
 import (
-	"slices"
 	"go/ast"
 	"go/token"
+	"slices"
 	"strings"
 )
 
@@ -101,8 +101,8 @@ func suppressed(rs []nolintRange, file string, line int, names ...string) bool {
 		}
 		for _, l := range r.Linters {
 			if slices.Contains(names, l) {
-					return true
-				}
+				return true
+			}
 		}
 	}
 	return false

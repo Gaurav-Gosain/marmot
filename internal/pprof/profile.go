@@ -4,12 +4,12 @@
 package pprof
 
 import (
-	"slices"
 	"bytes"
 	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 )
 

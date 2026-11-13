@@ -21,12 +21,12 @@ package check
 // instantiation count as converted to interfaces.
 
 import (
-	"maps"
 	"crypto/sha256"
 	"encoding/hex"
 	"go/ast"
 	"go/token"
 	"go/types"
+	"maps"
 	"sort"
 	"strings"
 

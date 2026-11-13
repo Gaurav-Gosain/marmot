@@ -1,10 +1,10 @@
 package codegen
 
 import (
-	"slices"
 	"go/ast"
 	"go/token"
 	"os"
+	"slices"
 
 	"golang.org/x/tools/go/ssa"
 )

@@ -1,10 +1,10 @@
 package codegen
 
 import (
-	"strings"
 	"fmt"
 	"go/token"
 	"go/types"
+	"strings"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
 	"golang.org/x/tools/go/ssa"

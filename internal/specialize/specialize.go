@@ -7,7 +7,6 @@
 package specialize
 
 import (
-	"slices"
 	"bytes"
 	"fmt"
 	"go/ast"
@@ -18,6 +17,7 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 

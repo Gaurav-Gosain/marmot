@@ -249,7 +249,7 @@ func (m *moduleGen) emitTypeDesc(sym string, t types.Type) {
 		last := words[len(words)-1]
 		ptrdata = (last + 1) * 8
 		// The bitmap covers all size/8 words (rt_alloc precise mode).
-		nwords := max(size / 8, last + 1)
+		nwords := max(size/8, last+1)
 		if nwords <= maxBitmapWords {
 			bm := make([]byte, (nwords+7)/8)
 			for _, w := range words {

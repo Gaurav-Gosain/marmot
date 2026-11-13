@@ -1,11 +1,11 @@
 package loader
 
 import (
-	"slices"
 	"fmt"
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -94,7 +94,7 @@ func cgoPackages(cfg Config, pcfg *packages.Config, roots []*packages.Package,
 	relist func(extra []string) ([]*packages.Package, error)) ([]*packages.Package, map[string]*cgo.Package, error) {
 	goroot := ""
 	for _, e := range pcfg.Env {
-		if after, ok :=strings.CutPrefix(e, "GOROOT="); ok  {
+		if after, ok := strings.CutPrefix(e, "GOROOT="); ok {
 			goroot = after
 		}
 	}

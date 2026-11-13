@@ -1,7 +1,6 @@
 package diag
 
 import (
-	"slices"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"

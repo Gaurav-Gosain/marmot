@@ -1,11 +1,11 @@
 package check
 
 import (
-	"slices"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -237,8 +237,8 @@ func lintFiltered(lc *lintConfig, sc *scope, rep *report, fd finding, linter str
 	file := fd.Span.File
 	if lc == nil || lc.Linters.Exclusions.Generated != "disable" {
 		if slices.Contains(rep.Generated, file) {
-				return true
-			}
+			return true
+		}
 	}
 	if lc != nil && lc.Run.Tests != nil && !*lc.Run.Tests && strings.HasSuffix(file, "_test.go") {
 		return true

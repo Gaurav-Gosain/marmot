@@ -185,6 +185,7 @@ struct rt_g {
   struct rt_group *group; // rt_group_join: counted in this group, NULL if none
   _Atomic bool durable;   // parked with rt_park_durable (not counted as running)
   int32_t cgo_errno;      // errno after the last C call (cgo.c)
+  rt_m *lockedm;          // runs only on this M (a cgo callback is in progress), or NULL
 };
 
 // Request from a goroutine to its M's scheduler after switching to g0.
@@ -262,6 +263,17 @@ struct rt_m {
   int32_t tid;               // kernel thread id (linux), for per-thread profile timers
   void *prof_timer;          // linux: this thread's CPU profile timer (timer_t), or NULL
   volatile int32_t incgo;    // C calls of cgo packages this M is in (cgo.c)
+  // cgo callbacks (C calling Go, sched.c): while lockedg is set the M runs
+  // only that goroutine. lockedn counts nested callbacks; locked_ready: the
+  // M holds a P and lockedg is runnable on it. A foreign M was created for a
+  // C thread unknown to the runtime; foreign_g is its goroutine and
+  // g0stack the top of its scheduler stack.
+  rt_g *lockedg;
+  int32_t lockedn;
+  bool locked_ready;
+  bool foreign;
+  rt_g *foreign_g;
+  uintptr_t g0stack;
   // MARMOT_DEADLOCK_DEBUG: SIGURG deliveries, stops, and why the last one
   // did not stop (sigurg's checks, in order: 1 no gcwaiting, 2 locks, 3 no
   // curg, 4 no P, 5 P not running, 6 P owned by another M, 7 not on the

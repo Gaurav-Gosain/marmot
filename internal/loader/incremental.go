@@ -1,7 +1,6 @@
 package loader
 
 import (
-	"maps"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +11,7 @@ import (
 	"go/scanner"
 	"go/token"
 	"go/types"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"

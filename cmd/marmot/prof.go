@@ -1,13 +1,13 @@
 package main
 
 import (
-	"slices"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 

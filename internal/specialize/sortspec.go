@@ -1,7 +1,6 @@
 package specialize
 
 import (
-	"maps"
 	"bytes"
 	"fmt"
 	"go/ast"
@@ -10,6 +9,7 @@ import (
 	"go/token"
 	"go/types"
 	"go/version"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"

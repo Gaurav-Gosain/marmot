@@ -93,13 +93,13 @@ func (f *srcFile) offset(line, col int) int {
 	if col < 1 {
 		col = 1
 	}
-	o := min(f.lines[line-1] + col - 1, len(f.data))
+	o := min(f.lines[line-1]+col-1, len(f.data))
 	return o
 }
 
 // pos converts a byte offset to a line and column.
 func (f *srcFile) pos(off int) (line, col int) {
-	i := max(sort.Search(len(f.lines), func(i int) bool { return f.lines[i] > off }) - 1, 0)
+	i := max(sort.Search(len(f.lines), func(i int) bool { return f.lines[i] > off })-1, 0)
 	return i + 1, off - f.lines[i] + 1
 }
 

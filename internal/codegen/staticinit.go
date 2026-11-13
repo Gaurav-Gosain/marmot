@@ -1,11 +1,11 @@
 package codegen
 
 import (
-	"slices"
 	"fmt"
 	"go/constant"
 	"go/token"
 	"go/types"
+	"slices"
 	"sort"
 	"strings"
 
@@ -268,7 +268,7 @@ func (m *moduleGen) analyzeStaticInit(pkg *ssa.Package) *staticInit {
 	// Address computations used only by skipped stores are skipped too.
 	for _, b := range blocks {
 		for _, instr := range slices.Backward(b.Instrs) {
-			
+
 			switch x := instr.(type) {
 			case *ssa.IndexAddr, *ssa.FieldAddr:
 				// Never one that can panic (index out of range, nil base):

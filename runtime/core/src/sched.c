@@ -1046,13 +1046,32 @@ static void group_leave_running(rt_group *grp) {
   if (atomic_fetch_sub(&grp->running, 1) == 1 && grp->on_idle) grp->on_idle(grp->arg);
 }
 
+static void startlockedm(rt_m *m, rt_g *g);
+static rt_g *lockedm_wait(rt_m *m);
+static void sched_req(rt_m *m, rt_g *g);
+
 static void schedule_loop(rt_m *m) {
   for (;;) {
-    rt_g *g = findrunnable(m);
+    rt_g *g;
+    if (m->lockedg) {
+      g = lockedm_wait(m);
+    } else {
+      g = findrunnable(m);
+      if (g->lockedm && g->lockedm != m) {
+        startlockedm(m, g);
+        continue;
+      }
+    }
     execute(m, g);
     // Back on g0: handle the goroutine's request.
     m->curg = NULL;
     g->m = NULL;
+    sched_req(m, g);
+  }
+}
+
+static void sched_req(rt_m *m, rt_g *g) {
+  {
     switch (m->req) {
       case REQ_GOSCHED:
         atomic_store(&g->status, G_RUNNABLE);
@@ -1078,6 +1097,7 @@ static void schedule_loop(rt_m *m) {
         break;
       }
       case REQ_EXIT:
+        if (g->lockedm) rt_throw("goroutine exited during a cgo callback");
         if (g->group) {
           rt_group *grp = g->group;
           g->group = NULL;
@@ -1119,7 +1139,10 @@ static void schedule_loop(rt_m *m) {
         spin_unlock(&sched.lock);
         if (p) {
           acquirep(m, p);
-          runqput(p, g, true);
+          if (m->lockedg == g)
+            m->locked_ready = true;  // runs next, here
+          else
+            runqput(p, g, true);
         }
         break;
       }
@@ -1446,6 +1469,190 @@ RT_API void rt_exitsyscall(void) {
     return;
   }
   mcall(REQ_EXITSYSCALL);
+}
+
+// ---- cgo callbacks (C calling exported Go functions) ----
+//
+// While a goroutine runs a Go function called from C it is locked to its M
+// (g->lockedm, m->lockedg): the C frames below it and the C thread state
+// (errno, thread locals, locks C holds) belong to this thread, so the
+// goroutine resumes only here and the M runs nothing else. When it blocks,
+// the M hands its P off and sleeps; whichever M later picks the goroutine
+// from a run queue hands its P to the locked M instead (startlockedm), as
+// in gc.
+
+// m found g, which is locked to another M: give that M this P and g.
+static void startlockedm(rt_m *m, rt_g *g) {
+  rt_m *lm = g->lockedm;
+  rt_p *p = releasep(m);
+  lm->nextp = p;
+  notewakeup(&lm->park);
+}
+
+// The next run of m->lockedg: at once if it is runnable on the P m holds,
+// else after another M hands over its P with the goroutine.
+static rt_g *lockedm_wait(rt_m *m) {
+  rt_g *g = m->lockedg;
+  if (m->locked_ready) {
+    m->locked_ready = false;
+    return g;
+  }
+  if (m->p) {
+    if (m->handoff_g) {  // rt_handoff target: this M cannot run it
+      runqput(m->p, m->handoff_g, true);
+      m->handoff_g = NULL;
+    }
+    handoffp(releasep(m));
+  }
+  while (!__atomic_load_n(&m->nextp, __ATOMIC_ACQUIRE)) {
+    notesleep(&m->park);
+    noteclear(&m->park);
+  }
+  rt_p *p = m->nextp;
+  m->nextp = NULL;
+  acquirep(m, p);
+  return g;
+}
+
+static void lock_to_m(rt_m *m, rt_g *g) {
+  if (m->lockedn++ == 0) {
+    noteclear(&m->park);
+    m->lockedg = g;
+    g->lockedm = m;
+  }
+}
+
+static void unlock_from_m(rt_m *m, rt_g *g) {
+  if (--m->lockedn == 0) {
+    m->lockedg = NULL;
+    g->lockedm = NULL;
+  }
+}
+
+static void thread_stack(uintptr_t *lo, uintptr_t *hi) {
+#if RT_OS_DARWIN
+  pthread_t t = pthread_self();
+  *hi = (uintptr_t)pthread_get_stackaddr_np(t);
+  *lo = *hi - pthread_get_stacksize_np(t);
+#else
+  pthread_attr_t a;
+  void *addr = NULL;
+  size_t size = 0;
+  if (pthread_getattr_np(pthread_self(), &a) != 0) rt_throw("cgo callback: no thread stack bounds");
+  pthread_attr_getstack(&a, &addr, &size);
+  pthread_attr_destroy(&a);
+  *lo = (uintptr_t)addr;
+  *hi = *lo + size;
+#endif
+}
+
+// First switch to a foreign M's scheduler stack: finish the request of the
+// goroutine (as execute would on return), then schedule (only that
+// goroutine, as it is locked).
+static void foreign_g0(void *arg) {
+  rt_m *m = arg;
+  rt_g *g = m->curg;
+  m->locks--;  // as after execute's switch
+  m->curg = NULL;
+  g->m = NULL;
+  sched_req(m, g);
+  schedule_loop(m);
+}
+
+#define G0_STACK ((uintptr_t)256 << 10)
+
+// A C thread unknown to the runtime calls Go: attach an M (kept for the
+// thread's later callbacks) and a goroutine that runs on the thread stack,
+// then take a P like a goroutine leaving a system call.
+static void cgo_needm(rt_m *m) {
+  if (!rt_main_g) rt_throw("cgo callback before the Go runtime started");
+  if (!m) {
+    spin_lock(&sched.lock);
+    m = fixalloc_alloc(&m_alloc);
+    m->id = sched.mcount + 1000000;  // apart from runtime Ms
+    m->alllink = sched.allm;
+    sched.allm = m;
+    spin_unlock(&sched.lock);
+    m->foreign = true;
+    m->fastrand = rt_fastrand() | 1;
+    setm(m);
+    m->thread = (void *)pthread_self();
+    signal_init_thread(m);
+    void *st = os_map(G0_STACK);
+    if (!st) rt_throw("cgo callback: cannot allocate a scheduler stack");
+    m->g0stack = (uintptr_t)st + G0_STACK;
+    m->foreign_g = galloc(0);
+  }
+  rt_g *g = m->foreign_g;
+  uintptr_t lo, hi;
+  thread_stack(&lo, &hi);
+  g->stack_lo = g->map_base = lo;
+  g->stack_hi = hi;
+  g->system = true;
+  g->id = atomic_fetch_add(&sched.goidgen, 1) + 1;
+  g->sp = NULL;
+  spin_lock(&sched.lock);
+  sched.mcount++;
+  spin_unlock(&sched.lock);
+  m->g0.sp = rt_ctx_init((void *)m->g0stack, foreign_g0, m);
+  m->curg = g;
+  g->m = m;
+  lock_to_m(m, g);
+  m->p = NULL;
+  g->syscallsp = rt_spill_regs(g->syscallregs);
+  atomic_store(&g->status, G_SYSCALL);
+  glive_set(g, true);
+  rt_exitsyscall();
+}
+
+// The foreign thread's callback returned: give up the P and the goroutine.
+static void cgo_dropm(rt_m *m) {
+  rt_g *g = m->curg;
+  m->locks++;
+  // With the P still held the world cannot be stopped, so no collection
+  // sees the goroutine half gone.
+  atomic_store(&g->status, G_DEAD);
+  glive_set(g, false);
+  unlock_from_m(m, g);
+  m->curg = NULL;
+  g->m = NULL;
+  handoffp(releasep(m));
+  spin_lock(&sched.lock);
+  sched.mcount--;
+  spin_unlock(&sched.lock);
+  m->locks--;
+}
+
+// The generated C wrapper of an exported Go function brackets the call:
+// tok = rt_cgo_callback_enter(); f(args); rt_cgo_callback_exit(tok).
+// tok 0: a foreign thread (attached here, detached at exit); 1: a goroutine
+// in a quick C call; 2: a goroutine in a bracketed C call (in a system
+// call: it takes a P back, and gives it up again at exit).
+RT_API int32_t rt_cgo_callback_enter(void) {
+  rt_m *m = getm();
+  if (!m || (m->foreign && !m->curg)) {
+    cgo_needm(m);
+    return 0;
+  }
+  rt_g *g = m->curg;
+  if (m->incgo <= 0 || !g) rt_throw("cgo callback on a thread that is not in a C call");
+  m->incgo--;
+  lock_to_m(m, g);
+  if (atomic_load(&g->status) != G_SYSCALL) return 1;
+  rt_exitsyscall();
+  return 2;
+}
+
+RT_API void rt_cgo_callback_exit(int32_t tok) {
+  rt_m *m = getm();
+  if (tok == 0) {
+    cgo_dropm(m);
+    return;
+  }
+  rt_g *g = m->curg;
+  if (tok == 2) rt_entersyscall();
+  unlock_from_m(m, g);
+  m->incgo++;
 }
 
 // ---- sysmon ----

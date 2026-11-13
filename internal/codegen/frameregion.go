@@ -1,9 +1,9 @@
 package codegen
 
 import (
-	"maps"
 	"go/token"
 	"go/types"
+	"maps"
 	"os"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
