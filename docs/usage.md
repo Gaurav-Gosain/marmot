@@ -21,6 +21,7 @@ marmot follows the `go` command where it can. Run it inside a Go module.
 | `marmot bench [package]` | Run benchmarks several times; `-vs go` compares with `go test`, `-compare FILE` with a saved run. |
 | `marmot prof PROFILE` | Read a pprof profile: top functions, call tree (`-tree`), annotated source (`-list`). |
 | `marmot sysroot add linux/arm64` | Fetch the C headers of a target, to cross compile cgo packages. |
+| `marmot cgo show main.go` | List a file's C functions with their prototypes and call paths, its C types and exports. |
 | `marmot bind HEADER` | Generate Go bindings (a plain cgo file) from a C header; see [Bindings from C headers](#bindings-from-c-headers). |
 | `marmot doctor` | Check the installation and the environment and say what to fix. |
 | `marmot completion SHELL` | Print shell completion for bash, zsh, fish or powershell. |
@@ -277,6 +278,23 @@ string.
 
 Programs without `import "C"` are built exactly as before, and the standard library is always
 built without cgo (`net` and `os/user` behave as with `CGO_ENABLED=0`).
+
+`marmot cgo show FILE.go` shows what cgo makes of a file: each C function it calls with its C
+prototype and how the call is made, the C types and variables it uses as Go defines them, its
+`//export` functions as C sees them, and the package's `#cgo` flags:
+
+```
+main.go (package example.com/app): 3 C functions, 1 C types, 0 C variables, 1 exports
+
+C functions
+  int add(int p0, int p1)   fast: calls nothing, no scheduler hand-off
+  int nap(int p0)           bracketed: releases its P while C runs (it may block or call Go)
+  int fail(void)            bracketed: releases its P while C runs (it may block or call Go); keeps errno (r, err := C.fail(...))
+```
+
+A fast call is a direct call (2 ns on Linux): the C function calls nothing, so it cannot block or
+call back into Go. `-go` prints the file's Go code as marmot compiles it, with the declarations
+of its C calls; `-c` prints its C wrappers; `-json` the report.
 
 Cross compiling a cgo package needs the target's C headers. `marmot sysroot add linux/arm64`
 (or `linux/amd64`) fetches them once: the glibc and kernel headers of Debian stable, checked
