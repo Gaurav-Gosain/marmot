@@ -15,7 +15,7 @@ import (
 
 	"github.com/Gaurav-Gosain/marmot/internal/checkflags"
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
-	"github.com/Gaurav-Gosain/marmot/internal/driver"
+	"github.com/Gaurav-Gosain/marmot/internal/rootdir"
 )
 
 // reporter resolves the output mode as every marmot command does.
@@ -104,8 +104,8 @@ func Main(args []string, version string) int {
 		return rep.Usage("marmot check: " + err.Error())
 	}
 	if opts.CacheDir != "" {
-		if root, err := driver.FindRoot(); err == nil {
-			driver.TrimCache(root, false)
+		if root, err := rootdir.Find(); err == nil {
+			rootdir.TrimCache(root, false)
 		}
 	}
 	code := 0
@@ -124,7 +124,7 @@ func Main(args []string, version string) int {
 // checkCacheDir is build/cache/check, under the cache size cap, or the
 // user cache directory when marmot runs outside its repository.
 func checkCacheDir() string {
-	if root, err := driver.FindRoot(); err == nil {
+	if root, err := rootdir.Find(); err == nil {
 		d := filepath.Join(root, "build", "cache", "check")
 		if os.MkdirAll(d, 0o755) == nil {
 			return d

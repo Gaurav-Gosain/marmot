@@ -2,141 +2,37 @@ package driver
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/Gaurav-Gosain/marmot/internal/rootdir"
 )
 
-// Cache size cap. Everything under build/cache (the MLIR
-// cache, cached executables, link templates and the backend's object
-// cache) shares one cap, MARMOT_CACHE_MAX_MB (default DefaultCacheMB; 0 means
-// no cap). Hits touch their entry; after a build, when the cache is over the
-// cap, the least recently used files are deleted until it is under 80% of
-// the cap. Files used in the last minEntryAge are never deleted, so an entry
-// another marmot process has just looked up stays until it is read. One
-// process trims at a time (flock on build/cache/.trim.lock), at most once
-// per trimInterval unless forced.
+// The cache cap and trimming live in internal/rootdir.
 
 // DefaultCacheMB is the cache cap when MARMOT_CACHE_MAX_MB is unset.
-const DefaultCacheMB = 4096
+const DefaultCacheMB = rootdir.DefaultCacheMB
 
-const (
-	minEntryAge  = 10 * time.Minute
-	trimInterval = 30 * time.Second
-)
+const trimInterval = 30 * time.Second
 
-func cacheCapBytes() int64 {
-	if v, err := strconv.ParseInt(os.Getenv("MARMOT_CACHE_MAX_MB"), 10, 64); err == nil && v >= 0 {
-		return v << 20
-	}
-	return DefaultCacheMB << 20
-}
+func cacheDir(root string) string { return rootdir.CacheDir(root) }
 
-func cacheDir(root string) string { return filepath.Join(root, "build", "cache") }
+func touch(p string) { rootdir.Touch(p) }
 
-// touch marks a cache entry as used now.
-func touch(p string) {
-	now := time.Now()
-	os.Chtimes(p, now, now)
-}
-
-type cacheEntry struct {
-	path string
-	size int64
-	mod  time.Time
-}
-
-// cacheEntries lists the files under the cache directory.
-func cacheEntries(dir string) ([]cacheEntry, int64) {
-	var out []cacheEntry
-	var total int64
-	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		if strings.HasPrefix(d.Name(), ".trim") {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		out = append(out, cacheEntry{p, info.Size(), info.ModTime()})
-		total += info.Size()
-		return nil
-	})
-	return out, total
-}
-
-// TrimCache trims the cache of the repository at root to its cap. Without
-// force it returns at once if another process is trimming or a trim ran in
-// the last trimInterval. It returns the cache size before and after.
+// TrimCache trims the cache of the repository at root to its cap.
 func TrimCache(root string, force bool) (before, after int64, err error) {
-	dir := cacheDir(root)
-	limit := cacheCapBytes()
-	if limit == 0 && !force {
-		return 0, 0, nil
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return 0, 0, err
-	}
-	lockPath := filepath.Join(dir, ".trim.lock")
-	if !force {
-		if info, err := os.Stat(lockPath); err == nil && time.Since(info.ModTime()) < trimInterval {
-			return 0, 0, nil
-		}
-	}
-	lf, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0o666)
-	if err != nil {
-		return 0, 0, err
-	}
-	defer lf.Close()
-	how := syscall.LOCK_EX
-	if !force {
-		how |= syscall.LOCK_NB
-	}
-	if syscall.Flock(int(lf.Fd()), how) != nil {
-		return 0, 0, nil
-	}
-	defer syscall.Flock(int(lf.Fd()), syscall.LOCK_UN)
-	touch(lockPath)
-	entries, total := cacheEntries(dir)
-	before, after = total, total
-	if limit == 0 || total <= limit {
-		return before, after, nil
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].mod.Before(entries[j].mod) })
-	goal := limit / 10 * 8
-	now := time.Now()
-	for _, e := range entries {
-		if after <= goal {
-			break
-		}
-		if now.Sub(e.mod) < minEntryAge {
-			break // sorted: everything after is newer
-		}
-		if os.Remove(e.path) == nil {
-			after -= e.size
-		}
-	}
-	return before, after, nil
+	return rootdir.TrimCache(root, force)
 }
 
 // CleanCache removes the whole cache.
-func CleanCache(root string) error {
-	return os.RemoveAll(cacheDir(root))
-}
+func CleanCache(root string) error { return rootdir.CleanCache(root) }
 
 // CacheSize reports the size and file count of the cache.
-func CacheSize(root string) (int64, int) {
-	e, total := cacheEntries(cacheDir(root))
-	return total, len(e)
-}
+func CacheSize(root string) (int64, int) { return rootdir.CacheSize(root) }
 
 // Work directories. Each build's temp dir holds a pid file; a dir is
 // removed when the build ends (also on SIGINT/TERM/HUP), and builds sweep
