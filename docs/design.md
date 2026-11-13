@@ -20,6 +20,53 @@ that generate code.
    this happens inside one backend process.
 5. **Link.** Objects are linked with the runtime by the system linker. Unused code is removed.
 
+## What lowering looks like
+
+One function, captured at each level with `marmot build -emit mlir`, `-emit llvm` and `-emit obj`
+(debug locations left out):
+
+```go
+func Sum(xs []int32) int32 {
+	var s int32
+	for _, x := range xs {
+		s += x
+	}
+	return s
+}
+```
+
+In MLIR the loop still says what Go means. `go.index` is an index into a slice, with its bounds
+check:
+
+```mlir
+%v9 = llvm.extractvalue %a0[0] : !llvm.struct<(ptr, i64, i64)>
+%v10 = llvm.extractvalue %a0[1] : !llvm.struct<(ptr, i64, i64)>
+%v11 = go.index %v9[%v7] len %v10, i32 : i64
+%v12 = llvm.load %v11 {alignment = 4 : i64, go.unsafe} : !llvm.ptr -> i32
+%v13 = llvm.add %v1, %v12 : i32
+```
+
+In LLVM IR at `-O 2` the check is gone and the loop works on four `int32` values at a time:
+
+```llvm
+%wide.load = load <4 x i32>, ptr %5, align 4
+%wide.load12 = load <4 x i32>, ptr %6, align 4
+%wide.load13 = load <4 x i32>, ptr %7, align 4
+%wide.load14 = load <4 x i32>, ptr %8, align 4
+%9 = add <4 x i32> %wide.load, %vec.phi
+```
+
+On arm64 that is two 128 bit loads and four vector adds each time round:
+
+```text
+ldp q4, q5, [x8, #-0x20]
+ldp q6, q7, [x8], #0x40
+add.4s v0, v4, v0
+add.4s v1, v5, v1
+add.4s v2, v6, v2
+add.4s v3, v7, v3
+```
+
 ## Why a Go dialect
 
 LLVM sees memory, branches and calls. It does not know that a branch is a bounds check, or that

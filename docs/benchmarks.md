@@ -69,7 +69,8 @@ These use every core, so they are faster in wall-clock time, not in total CPU wo
 
 | Program | marmot | go |
 | --- | --- | --- |
-| hello world | 148 KB | 1.68 MB |
+| hello world with `println` | 148 KB | 1.68 MB |
+| hello world with `fmt.Println` | 665 KB | 2.4 MB |
 | hello world, smallest settings (`-O z`) | 100 KB | 1.17 MB (stripped) |
 | small program using `fmt`, `sort`, `strings`, a map | 500 KB | 1.62 MB (stripped) |
 
@@ -92,11 +93,22 @@ The machine was not fully idle during this run. A leaf edit is still slower than
 difference is linking.
 
 Dev builds use a fast code generator that writes machine code directly, without LLVM
-(`MARMOT_TIER0=0` turns it off; then the first build takes 11.6 s). It is never used with
+(`MARMOT_TIER0=0` turns it off). It is never used with
 `-release`. Its code is not optimized; for fast binaries use `-release`.
 
 The incremental front end (the default; `MARMOT_INCREMENTAL=0` turns it off) type checks and
 compiles only the changed packages and the packages that import them.
+
+## cgo calls
+
+The cost of one call to an empty C function, Linux on x86-64, `-release`:
+
+| | marmot | go |
+| --- | --- | --- |
+| call to an empty C function | 2.3 ns | 33 to 57 ns |
+
+A marmot C call is a direct native call on the goroutine's own stack; see
+[cgo](usage.md#cgo).
 
 ## Memory
 

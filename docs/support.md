@@ -32,8 +32,8 @@ test suite include:
 `sort`, `strconv`, `strings`, `sync`, `sync/atomic`, `testing`, `text/template`, `time`,
 `unicode/utf8`.
 
-Known gaps: `reflect.MakeFunc`, `runtime/pprof` profiling, and parts of `runtime` that expose
-Go's own scheduler internals.
+Known gaps: `reflect.MakeFunc`, and parts of `runtime` that expose Go's own scheduler
+internals. CPU profiles from `runtime/pprof` work (see [marmot prof](usage.md#tests-benchmarks-and-profiles)).
 
 ## Test results
 

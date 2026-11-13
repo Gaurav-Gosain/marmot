@@ -9,7 +9,7 @@ marmot follows the `go` command where it can. Run it inside a Go module.
 | `marmot build [packages]` | Compile packages and their dependencies into an executable. |
 | `marmot run file.go` | Compile and run a program. |
 | `marmot test [packages]` | Compile and run package tests, like `go test`. |
-| `marmot fix [packages]` | Apply the machine applicable fixes of build errors, then of check findings (formatting, modernizers). `-code M0004,M0005` limits it to those build error codes; `-all` adds fixes that may be incorrect, such as typo corrections and vet or lint suggestions. `-only fmt,modernize` applies only those check fixes, `-diff` prints them as patches, `-test` keeps a fix only if its package tests pass, `-upgrade go1.N` raises the go version first. |
+| `marmot fix [packages]` | Apply the suggested fixes of build errors, then of check findings (see [Fixes](#fixes)). |
 | `marmot explain CODE` | Describe an error code. With no code, list all of them. |
 | `marmot check [packages]` | Run vet, lint, format and the other code checks in one pass (see [Checks](#checks)). |
 | `marmot watch [build\|run\|test]` | Build, run or test again after every change to a `.go` file, `go.mod` or `go.sum`. |
@@ -34,6 +34,16 @@ There are two modes, because fast rebuilds and deep optimization pull in opposit
 | --- | --- | --- |
 | dev (default) | `marmot build` | Day to day work. Each package is compiled on its own and cached. |
 | release | `marmot build -release` | Shipping. The whole program is optimized together. Builds take longer. |
+
+Three things keep dev builds fast. Each is on by default and has a switch:
+
+| Part | What it does | Off with |
+| --- | --- | --- |
+| Fast code generator (tier 0) | Writes machine code directly, without LLVM. The code is not optimized. | `MARMOT_TIER0=0` |
+| Background optimization (tier 1) | After a dev build returns, the packages it compiled are compiled again with LLVM at `-O2` on idle cores; later builds link those objects. | `MARMOT_TIER1=0` |
+| Incremental front end | Type checks and compiles only the changed packages and the packages that import them. | `MARMOT_INCREMENTAL=0` |
+
+Release builds never use tier 0.
 
 ## Common flags
 
@@ -140,6 +150,11 @@ On a terminal `marmot test` shows each failure first, at the line of its `t.Erro
 with the source, then every test and subtest with its status and time, then a summary. Off a
 terminal the output is the same as `go test`. `marmot test -watch` runs the tests again after
 every change.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/shot-test-dark.png">
+  <img alt="marmot test: a failing test shown at the line of its t.Errorf, then every test with its status and time, then the summary" src="img/shot-test-light.png" width="720">
+</picture>
 
 `marmot bench -vs go ./pkg` builds the package's benchmarks with marmot and with `go test`,
 runs them alternately (`-count`, default 6), and prints the median and spread of each, the
@@ -379,6 +394,15 @@ patches and changes nothing:
 
     marmot fix -diff -only modernize
 
+| Flag | Effect |
+| --- | --- |
+| `-code M0004,M0005` | Only the fixes of these build error codes. |
+| `-all` | Also fixes that may be incorrect, such as typo corrections and vet or lint suggestions. |
+| `-only fmt,modernize` | Only these check fixes. |
+| `-diff` | Print the fixes as patches; change nothing. |
+| `-test` | Keep a fix only if its package's tests still pass. |
+| `-upgrade go1.N` | Raise the module's go version first. |
+
 ## Coding agents
 
 `marmot mcp` is a Model Context Protocol server on stdin and stdout. Its tools `build`, `run`,
@@ -395,6 +419,13 @@ modes:
 | human | stderr is a terminal | `error[CODE]: message`, then `--> file:line:col`, the source with carets under the exact span and a label saying what is wrong there, labels on related spans, `= note:` and `= help:` lines, and fixes as `help:` with a diff. At most 10 errors, sorted by file and line, then a summary. |
 | plain | stderr is not a terminal | `file:line:col: message` lines, as the go tool prints them. Tools and tests parse this form; it does not change. |
 | json | `--json`, `MARMOT_OUTPUT=json`, or a coding agent environment | JSON Lines on stderr, described below. |
+
+A human mode error that involves several places:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="img/shot-error-interface-dark.png">
+  <img alt="marmot build: error M0014, Square does not implement Shape, with labels on the interface and on the method with a pointer receiver, a note, and the fix that adds & as a diff" src="img/shot-error-interface-light.png" width="720">
+</picture>
 
 `MARMOT_OUTPUT=human`, `plain` or `json` overrides the choice. `--color=auto|always|never` sets
 color in human mode; `auto` respects `NO_COLOR` and `TERM=dumb`.
