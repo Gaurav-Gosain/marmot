@@ -636,6 +636,17 @@ func (s *Server) stage(ctx context.Context, dir, mode, stage string) Stage {
 		st = Stage{Note: "package main in LLVM IR after the backend's pipeline for the mode"}
 		finish(&st, text, lines, limit)
 	case "asm":
+		st = Stage{Note: "package main's " + runtime.GOARCH + " machine code"}
+		// Dev objects (tier0) carry no line table: disassemble the
+		// executable the build already linked, with the lines of
+		// marmot's pc table, as tracebacks read them.
+		if mode == "dev" {
+			if text, lines, err := asmFromExe(filepath.Join(dir, "prog"), files); err == nil {
+				st.Note += ", from the linked executable with the lines of marmot's pc table"
+				finish(&st, text, lines, limit)
+				break
+			}
+		}
 		if e := emit("-emit", "obj", "-o", "out.o"); e != "" {
 			return Stage{Error: e}
 		}
@@ -643,11 +654,7 @@ func (s *Server) stage(ctx context.Context, dir, mode, stage string) Stage {
 		if err != nil {
 			return Stage{Error: err.Error()}
 		}
-		st = Stage{Note: "package main's " + runtime.GOARCH + " machine code"}
 		finish(&st, text, lines, limit)
-		if mode == "dev" {
-			st.Note += "; dev builds (tier0) carry no line table in their objects, so lines are not linked: use -O 2 or -release"
-		}
 	}
 	st.File = "main.go"
 	// No server paths in what goes out.

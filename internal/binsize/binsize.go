@@ -21,6 +21,7 @@ type Func struct {
 	Pkg   string `json:"package"`
 	Start uint64 `json:"-"` // offset from the image base
 	Size  uint64 `json:"size"`
+	lines uint32 // pc table: the offset of its line program; 0 without
 }
 
 // Section is one section of the file.
@@ -43,6 +44,8 @@ type Binary struct {
 	COrigins bool `json:"cOrigins,omitempty"`
 	text     []byte
 	textAddr uint64 // offset of the text section from the image base
+	base     uint64 // the image base address
+	pcln     []byte // the pc table
 }
 
 // Open reads the binary at path.
@@ -72,6 +75,7 @@ func (b *Binary) readMacho(f *macho.File) error {
 			base = s.Addr
 		}
 	}
+	b.base = base
 	var pcln []byte
 	for _, s := range f.Sections {
 		b.Sections = append(b.Sections, Section{Name: s.Seg + "," + s.Name, Size: s.Size})
@@ -109,6 +113,7 @@ func (b *Binary) readELF(f *elf.File) error {
 			base = p.Vaddr
 		}
 	}
+	b.base = base
 	var pcln, origins []byte
 	for _, s := range f.Sections {
 		if s.Name == "" {
@@ -218,10 +223,110 @@ func (b *Binary) readPcln(t []byte) error {
 		}
 		name := record(u32(funcOff + 12*k + 4))
 		if end > start {
-			b.Funcs = append(b.Funcs, Func{Name: name, Pkg: PackageOf(name), Start: uint64(start), Size: uint64(end - start)})
+			b.Funcs = append(b.Funcs, Func{Name: name, Pkg: PackageOf(name), Start: uint64(start), Size: uint64(end - start), lines: u32(funcOff+12*k+8) + 1})
 		}
 	}
+	b.pcln = t
 	return nil
+}
+
+// Base is the image base address: a function's address is Base + Start.
+func (b *Binary) Base() uint64 { return b.base }
+
+// LineRow says that from pc offset Off (from the image base) on, the code
+// is File:Line, up to the next row or the function's end.
+type LineRow struct {
+	Off  uint64
+	File string
+	Line int
+}
+
+// Lines decodes the line program of f from the pc table (docs/pcln.md):
+// nil for a binary without one, or a function without lines (C and
+// assembly). A row with line 0 (code with no line) has no File.
+func (b *Binary) Lines(f Func) []LineRow {
+	t := b.pcln
+	if f.lines == 0 || len(t) < 8+13*4 {
+		return nil
+	}
+	u32 := func(off uint32) uint32 {
+		if int(off)+4 > len(t) {
+			return 0
+		}
+		return binary.LittleEndian.Uint32(t[off:])
+	}
+	nfiles, quantum := u32(16), uint64(u32(28))
+	fileOff, dirOff, lineOff, strOff := u32(40), u32(44), u32(52), u32(56)
+	ndirs := u32(20)
+	cstr := func(off uint32) string {
+		i := int(strOff + off)
+		if i >= len(t) {
+			return ""
+		}
+		j := i
+		for j < len(t) && t[j] != 0 {
+			j++
+		}
+		return string(t[i:j])
+	}
+	file := func(k uint64) string {
+		if k >= uint64(nfiles) {
+			return ""
+		}
+		off := u32(fileOff + 4*uint32(k))
+		i := int(strOff + off)
+		if i >= len(t) {
+			return ""
+		}
+		d, n := binary.Uvarint(t[i:])
+		if n <= 0 {
+			return cstr(off)
+		}
+		rest := cstr(off + uint32(n))
+		if d == 0 || d > uint64(ndirs) {
+			return rest
+		}
+		return cstr(u32(dirOff+4*uint32(d-1))) + rest
+	}
+	i := int(lineOff + f.lines - 1)
+	next := func() uint64 {
+		if i >= len(t) {
+			return 0
+		}
+		v, n := binary.Uvarint(t[i:])
+		if n <= 0 {
+			i = len(t)
+			return 0
+		}
+		i += n
+		return v
+	}
+	n := next()
+	line, fi := int64(next()), next()
+	pc := f.Start
+	var rows []LineRow
+	add := func() {
+		r := LineRow{Off: pc}
+		if line > 0 {
+			r.File, r.Line = file(fi), int(line)
+		}
+		rows = append(rows, r)
+	}
+	add()
+	for range n {
+		if i >= len(t) {
+			break
+		}
+		pc += next() * quantum
+		z := next()
+		v := int64(z>>1) ^ -int64(z&1) // zigzag: 2*lineDelta + fileChanged
+		line += (v - v&1) / 2
+		if v&1 != 0 {
+			fi = next()
+		}
+		add()
+	}
+	return rows
 }
 
 // PackageOf returns the package of a function name: the path before the

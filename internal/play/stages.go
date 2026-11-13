@@ -346,6 +346,79 @@ func asmLines(obj string, files fileNamer) (string, []srcLoc, error) {
 	return t, n, nil
 }
 
+var (
+	reInsn   = regexp.MustCompile(`^\s*([0-9a-f]+):\s+(.*)$`)
+	reTarget = regexp.MustCompile(`\b0x([0-9a-f]+)\b`)
+)
+
+// asmFromExe disassembles package main's functions in a linked marmot
+// executable, each instruction tied to its line by marmot's pc table:
+// what tracebacks read, present in dev builds, whose objects carry no
+// line table. Branch and call targets that start a function are named.
+func asmFromExe(exe string, files fileNamer) (string, []srcLoc, error) {
+	b, err := binsize.Open(exe)
+	if err != nil {
+		return "", nil, err
+	}
+	if b.Source != "pcln" {
+		return "", nil, fmt.Errorf("%s has no pc table", filepath.Base(exe))
+	}
+	names := map[uint64]string{}
+	for _, f := range b.Funcs {
+		names[b.Base()+f.Start] = f.Name
+	}
+	var text []string
+	var lines []srcLoc
+	for _, f := range b.Funcs {
+		if f.Pkg != "main" {
+			continue
+		}
+		rows := b.Lines(f)
+		lo, hi := b.Base()+f.Start, b.Base()+f.Start+f.Size
+		out, err := exec.Command(driver.LLVMTool("llvm-objdump"), "-d", "--no-show-raw-insn",
+			fmt.Sprintf("--start-address=0x%x", lo), fmt.Sprintf("--stop-address=0x%x", hi), exe).Output()
+		if err != nil {
+			return "", nil, fmt.Errorf("llvm-objdump: %v", err)
+		}
+		if len(text) > 0 {
+			text, lines = append(text, ""), append(lines, srcLoc{})
+		}
+		text, lines = append(text, f.Name+":"), append(lines, srcLoc{})
+		for _, l := range strings.Split(string(out), "\n") {
+			m := reInsn.FindStringSubmatch(l)
+			if m == nil {
+				continue
+			}
+			addr, err := strconv.ParseUint(m[1], 16, 64)
+			if err != nil || addr < lo || addr >= hi {
+				continue
+			}
+			var loc srcLoc
+			off := addr - b.Base()
+			for _, r := range rows {
+				if r.Off > off {
+					break
+				}
+				loc = srcLoc{}
+				if name := files(r.File); name != "" {
+					loc = srcLoc{name, r.Line}
+				}
+			}
+			insn := strings.Join(strings.Fields(m[2]), " ")
+			// "bl 0x100003f20 <ltmp0+0x20>": the function it starts.
+			insn = regexp.MustCompile(` <[^>]*>$`).ReplaceAllString(insn, "")
+			if t := reTarget.FindStringSubmatch(insn); t != nil {
+				if v, err := strconv.ParseUint(t[1], 16, 64); err == nil && names[v] != "" {
+					insn += " <" + names[v] + ">"
+				}
+			}
+			text, lines = append(text, "  "+insn), append(lines, loc)
+		}
+	}
+	t, n := trimTrailing(text, lines)
+	return t, n, nil
+}
+
 func trimTrailing(text []string, lines []srcLoc) (string, []srcLoc) {
 	for len(text) > 0 && strings.TrimSpace(text[len(text)-1]) == "" {
 		text, lines = text[:len(text)-1], lines[:len(lines)-1]

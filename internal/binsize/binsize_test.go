@@ -2,6 +2,7 @@ package binsize
 
 import (
 	"encoding/binary"
+	"fmt"
 	"testing"
 )
 
@@ -104,5 +105,59 @@ func TestCOrigins(t *testing.T) {
 	b2.applyCOrigins([]byte("no table"))
 	if b2.Funcs[0].Pkg != "C" || b2.COrigins {
 		t.Error("a section without a table changed the functions")
+	}
+}
+
+// Lines decodes a function's line program: rows where the line or the
+// file changes, files named with their directory prefix.
+func TestLines(t *testing.T) {
+	const hdr = 8 + 13*4
+	strs := []byte{0}
+	dir := len(strs)
+	strs = append(strs, "/w/\x00"...)
+	fileA := len(strs)
+	strs = append(strs, 1)
+	strs = append(strs, "a.go\x00"...)
+	fileB := len(strs)
+	strs = append(strs, 1)
+	strs = append(strs, "b.go\x00"...)
+	name := len(strs)
+	strs = append(strs, 0)
+	strs = append(strs, "main.F\x00"...)
+	// n=2, entry line 10 in file 0; +8 bytes: line 13; +4: line 10 of file 1.
+	prog := []byte{2, 10, 0, 2, 12, 1, 9, 1}
+	funcOff := hdr
+	fileOff := funcOff + 12
+	dirOff := fileOff + 8
+	lineOff := dirOff + 4
+	strOff := lineOff + len(prog)
+	t32 := make([]byte, lineOff)
+	copy(t32, "MRMTPCLN")
+	put := func(off, v int) { binary.LittleEndian.PutUint32(t32[off:], uint32(v)) }
+	put(8, 2)      // version
+	put(12, 1)     // nfuncs
+	put(16, 2)     // nfiles
+	put(20, 1)     // ndirs
+	put(28, 4)     // quantum
+	put(32, 0x200) // textEnd
+	put(36, funcOff)
+	put(40, fileOff)
+	put(44, dirOff)
+	put(52, lineOff)
+	put(56, strOff)
+	put(funcOff, 0x100)
+	put(funcOff+4, name)
+	put(funcOff+8, 0)
+	put(fileOff, fileA)
+	put(fileOff+4, fileB)
+	put(dirOff, dir)
+	table := append(append(t32, prog...), strs...)
+	var b Binary
+	if err := b.readPcln(table); err != nil {
+		t.Fatal(err)
+	}
+	got := fmt.Sprint(b.Lines(b.Funcs[0]))
+	if want := "[{256 /w/a.go 10} {264 /w/a.go 13} {268 /w/b.go 10}]"; got != want {
+		t.Errorf("rows %s, want %s", got, want)
 	}
 }
