@@ -1,13 +1,13 @@
 package diag
 
 import (
-	"slices"
 	"fmt"
 	"go/ast"
 	"go/scanner"
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -847,7 +847,7 @@ func (s *Sources) noFieldMethod(d *Diagnostic, f *srcFile, pos token.Pos) {
 			set = append(set[:12], fmt.Sprintf("and %d more", len(set)-12))
 		}
 		d.Notes = append(d.Notes, fmt.Sprintf("methods of `%s`: %s", base, backtickList(set)))
-		if strings.HasPrefix(typ, "*") == false {
+		if !strings.HasPrefix(typ, "*") {
 			for _, x := range set {
 				if strings.HasSuffix(x, ") "+sel) && strings.HasPrefix(x, "(*") {
 					d.Help = append(d.Help, "`"+sel+"` has a pointer receiver: call it on a pointer or an addressable value")
@@ -1076,7 +1076,7 @@ func outerDecl(f *srcFile, pos token.Pos, name string) (Span, bool) {
 			return false
 		}
 		// Only declarations in blocks that enclose pos are visible there.
-		if b, isBlock := n.(*ast.BlockStmt); isBlock && !(b.Pos() <= pos && pos < b.End()) {
+		if b, isBlock := n.(*ast.BlockStmt); isBlock && (b.Pos() > pos || pos >= b.End()) {
 			return false
 		}
 		switch n := n.(type) {

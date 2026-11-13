@@ -258,7 +258,7 @@ func callTool(self string, t *mcpTool, args map[string]any, timeout time.Duratio
 		return err.Error(), true
 	}
 	if ctx.Err() != nil {
-		b.WriteString(fmt.Sprintf("marmot: timed out after %v\n", timeout))
+		fmt.Fprintf(&b, "marmot: timed out after %v\n", timeout)
 	}
 	if t.Name == "run" {
 		fmt.Fprintf(&b, "exit code: %d\n", code)

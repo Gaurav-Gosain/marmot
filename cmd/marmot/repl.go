@@ -1,7 +1,6 @@
 package main
 
 import (
-	"slices"
 	"bytes"
 	"context"
 	"flag"
@@ -16,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -134,7 +134,7 @@ func complete(in string) bool {
 		case token.RPAREN, token.RBRACE, token.RBRACK:
 			depth--
 		}
-		if !(tok == token.SEMICOLON && lit == "\n") {
+		if tok != token.SEMICOLON || lit != "\n" {
 			last = tok
 		}
 	}

@@ -486,10 +486,10 @@ func (f *funcGen) convert(x string, from, to types.Type) string {
 	case isFloat(from) && isInteger(to):
 		return f.floatToInt(x, ft, tt, isSigned(to))
 	case isFloat(from) && isFloat(to):
-		switch {
-		case ft == tt:
+		switch ft {
+		case tt:
 			return x
-		case ft == mlir.F32:
+		case mlir.F32:
 			return f.op("llvm.fpext %s : f32 to f64", x)
 		default:
 			return f.op("llvm.fptrunc %s : f64 to f32", x)

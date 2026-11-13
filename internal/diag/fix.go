@@ -37,7 +37,7 @@ func ApplyFixes(ds []Diagnostic, codes map[string]bool, maybe bool) ([]Applied, 
 			continue
 		}
 		fx := d.Fixes[0]
-		if fx.Applicability != MachineApplicable && !(maybe && fx.Applicability == MaybeIncorrect) {
+		if fx.Applicability != MachineApplicable && (!maybe || fx.Applicability != MaybeIncorrect) {
 			continue
 		}
 		// All edits of a fix go in, or none.

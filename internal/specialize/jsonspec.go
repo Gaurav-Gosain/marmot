@@ -74,7 +74,7 @@ func (g *gen) jsonFields(st *types.Struct) ([]jsonField, bool) {
 			name = f.Name()
 		}
 		for _, c := range name {
-			if !(c == '_' || c == '-' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9') {
+			if c != '_' && c != '-' && ('a' > c || c > 'z') && ('A' > c || c > 'Z') && ('0' > c || c > '9') {
 				return nil, false
 			}
 		}

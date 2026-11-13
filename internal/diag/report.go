@@ -186,7 +186,7 @@ func (r *Reporter) writeBundle(full string) (string, error) {
 		total := 0
 		for _, e := range ents {
 			n := e.Name()
-			if e.IsDir() || !(strings.HasSuffix(n, ".go") || n == "go.mod" || n == "go.sum") {
+			if e.IsDir() || (!strings.HasSuffix(n, ".go") && n != "go.mod" && n != "go.sum") {
 				continue
 			}
 			data, err := os.ReadFile(filepath.Join(r.Dir, n))

@@ -127,9 +127,7 @@ func deadcode(sc *scope, opts Options, st *store) deadResult {
 	}
 	var errs []string
 	for _, p := range g.pkgs {
-		for _, le := range p.listErrors() {
-			errs = append(errs, le)
-		}
+		errs = append(errs, p.listErrors()...)
 	}
 	if len(errs) > 0 {
 		sort.Strings(errs)

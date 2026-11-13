@@ -33,9 +33,10 @@ func appendAliasTypes(dst []byte, text string) []byte {
 	for i := 0; i < len(text); i++ {
 		c := text[i]
 		if inString {
-			if c == '\\' {
+			switch c {
+			case '\\':
 				i++
-			} else if c == '"' {
+			case '"':
 				inString = false
 			}
 			continue

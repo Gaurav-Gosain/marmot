@@ -20,10 +20,10 @@
 package nilcheck
 
 import (
-	"slices"
 	"fmt"
 	"go/token"
 	"go/types"
+	"slices"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -321,7 +321,7 @@ func guarded(v ssa.Value, b *ssa.BasicBlock) bool {
 		if !ok || (cmp.Op != token.EQL && cmp.Op != token.NEQ) {
 			continue
 		}
-		if !(cmp.X == v && isNilConst(cmp.Y) || cmp.Y == v && isNilConst(cmp.X)) {
+		if (cmp.X != v || !isNilConst(cmp.Y)) && (cmp.Y != v || !isNilConst(cmp.X)) {
 			continue
 		}
 		// Succs[0] is the true branch. For v != nil, the non-nil side is

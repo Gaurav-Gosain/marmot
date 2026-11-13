@@ -65,9 +65,7 @@ func (p *Program) computeUsedMethods() {
 		}
 	}
 	addIface := func(t types.Type) {
-		for _, x := range p.typeClosure(t, ifaceTypes) {
-			ifaceList = append(ifaceList, x)
-		}
+		ifaceList = append(ifaceList, p.typeClosure(t, ifaceTypes)...)
 	}
 	var ops []*ssa.Value
 	var converted []types.Type
