@@ -320,8 +320,21 @@ func generate(cfg Config, bp *build.Package, dir, importPath string, flags []str
 	if err := os.WriteFile(filepath.Join(tmp, "done"), nil, 0o644); err != nil {
 		return err
 	}
-	_ = os.RemoveAll(out) // a stale directory; if it stays, the Rename below fails and says so
-	return os.Rename(tmp, out)
+	// Builds running at the same time (several -O levels of one program)
+	// generate the same directory: the first complete one wins and is never
+	// removed, since another build may be reading it.
+	done := func() bool { _, err := os.Stat(filepath.Join(out, "done")); return err == nil }
+	if done() {
+		return nil
+	}
+	_ = os.RemoveAll(out) // an incomplete directory left by an interrupted run
+	if err := os.Rename(tmp, out); err != nil {
+		if done() {
+			return nil // another build finished it meanwhile
+		}
+		return err
+	}
+	return nil
 }
 
 // marks are the #cgo noescape and nocallback names of a package.
