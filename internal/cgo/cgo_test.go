@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -74,5 +75,51 @@ func TestBadFlags(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("#cgo %s: got %v, want %q", tc.directive, err, tc.want)
 		}
+	}
+}
+
+func TestExport(t *testing.T) {
+	cc, err := exec.LookPath("clang")
+	if err != nil {
+		t.Skip("no clang")
+	}
+	out, err := exec.Command("go", "env", "GOROOT").Output()
+	if err != nil {
+		t.Skip("no go")
+	}
+	cfg := Config{CC: cc, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH,
+		RealGOROOT: strings.TrimSpace(string(out)), CacheDir: t.TempDir()}
+	p, err := Prepare(cfg, "testdata/e", "example.com/e", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotypes, _ := os.ReadFile(filepath.Join(p.OutDir, "_cgo_gotypes.go"))
+	exp, _ := os.ReadFile(filepath.Join(p.OutDir, "_cgo_export.c"))
+	for _, want := range []string{
+		"_goAdd(p0 _Ctype_int, p1 _Ctype_int) _Ctype_int {", // C-level symbol, same types
+		"_goPt(p0 *_Ctype_pt, r *_Ctype_pt) {",              // struct by pointer
+		"_goNeg(p0 int32) int32 {",                          // small integers widened
+		"r.r0, r.r1 = goTwo()",                              // several results
+	} {
+		if !strings.Contains(string(gotypes), want) {
+			t.Errorf("_cgo_gotypes.go lacks %q", want)
+		}
+	}
+	for _, want := range []string{
+		"int32_t _cgo_tok = rt_cgo_callback_enter();",
+		"rt_cgo_callback_exit(_cgo_tok);",
+		"_goPt(&p0, &r);",
+	} {
+		if !strings.Contains(string(exp), want) {
+			t.Errorf("_cgo_export.c lacks %q", want)
+		}
+	}
+	for _, bad := range []string{"Cgoexp_", "__asm__", "runtime_iscgo"} {
+		if strings.Contains(string(exp), bad) || bad == "Cgoexp_" && strings.Contains(string(gotypes), bad) {
+			t.Errorf("gccgo leftover %q", bad)
+		}
+	}
+	if !slices.Contains(p.CFiles, filepath.Join(p.OutDir, "_cgo_export.c")) {
+		t.Errorf("_cgo_export.c is not compiled: %v", p.CFiles)
 	}
 }

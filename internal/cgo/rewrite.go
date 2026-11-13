@@ -378,7 +378,9 @@ func exportsGo(out *strings.Builder, exports []*ast.FuncDecl, hash string, types
 }
 
 var reExportDecl = regexp.MustCompile(`(?m)^extern .* Cgoexp_(\w+) \(.*\) __asm__\("[^"]*"\);\n`)
-var reExportFunc = regexp.MustCompile(`(?ms)^(.+?) (\w+) \((.*?)\) \{\n(.*?)\n\}\n`)
+var reExportFunc = regexp.MustCompile(`(?m)^CGO_NO_SANITIZE_THREAD\n(.+) (\w+) \((.*)\) \{\n((?s:.*?))\n\}\n`)
+
+var reGccgoInit = regexp.MustCompile(`(?s)extern _Bool runtime_iscgo .*?extern size_t _cgo_wait_runtime_init_done\(void\) __attribute__ \(\(weak\)\);\n`)
 
 // exportsC rewrites _cgo_export.c: each C function of an export calls its
 // Go function with the runtime's callback entry and exit around it.
@@ -388,15 +390,16 @@ func exportsC(file string, cside map[string]string) error {
 		return err
 	}
 	c := reExportDecl.ReplaceAllString(string(data), "")
+	// gccgo's runtime hooks: runtime_iscgo and _cgo_wait_runtime_init_done
+	// do not exist here (weak references Mach-O does not leave undefined).
+	c = reGccgoInit.ReplaceAllString(c, "")
+	c = strings.ReplaceAll(c, "\tif(_cgo_wait_runtime_init_done)\n\t\t_cgo_wait_runtime_init_done();\n", "")
 	var decls strings.Builder
 	decls.WriteString("#include <stdint.h>\nextern int32_t rt_cgo_callback_enter(void);\nextern void rt_cgo_callback_exit(int32_t);\n")
 	done := map[string]bool{}
 	c = reExportFunc.ReplaceAllStringFunc(c, func(fn string) string {
 		m := reExportFunc.FindStringSubmatch(fn)
 		cret, name, cparams := strings.TrimSpace(m[1]), m[2], m[3]
-		if i := strings.LastIndex(cret, "\n"); i >= 0 {
-			cret = strings.TrimSpace(cret[i+1:])
-		}
 		info, ok := cside[name]
 		if !ok {
 			return fn
@@ -450,7 +453,7 @@ func exportsC(file string, cside map[string]string) error {
 		body = strings.Replace(body, "_cgo_tsan_release();", "int32_t _cgo_tok = rt_cgo_callback_enter();", 1)
 		body = strings.Replace(body, "_cgo_tsan_acquire();", "rt_cgo_callback_exit(_cgo_tok);", 1)
 		body = reExportCall.ReplaceAllString(body, "\t"+stmt)
-		return m[1] + " " + name + " (" + cparams + ") {\n" + body + "\n}\n"
+		return "CGO_NO_SANITIZE_THREAD\n" + m[1] + " " + name + " (" + cparams + ") {\n" + body + "\n}\n"
 	})
 	for name := range cside {
 		if !done[name] {

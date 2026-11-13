@@ -152,6 +152,10 @@ func Prepare(cfg Config, dir, importPath string, files []string) (*Package, erro
 	fmt.Fprintf(h, "%s\n%s\n%s/%s\n%q\n%q\n", version, importPath, cfg.GOOS, cfg.GOARCH, flags, cfg.Tags)
 	fmt.Fprintf(h, "%s\n", fileSig(cfg.CC))
 	fmt.Fprintf(h, "%s\n", fileSig(cgoTool(cfg.RealGOROOT)))
+	// The rewrite is part of marmot: a new marmot generates again.
+	if exe, err := os.Executable(); err == nil {
+		fmt.Fprintf(h, "%s\n", fileSig(exe))
+	}
 	var inputs []string
 	for _, f := range bp.CgoFiles {
 		inputs = append(inputs, filepath.Join(dir, f))
