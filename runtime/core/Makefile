@@ -22,12 +22,25 @@ ROOT    := $(abspath ../..)
 # Cross builds: make GOOS=linux GOARCH=arm64 [SYSROOT_DIR=...] puts the
 # library in build/lib/linux-arm64. Without GOOS/GOARCH the host build goes
 # to build/lib (what the driver uses by default).
+#
+# LIBC=musl (with GOOS=linux) builds for musl instead of glibc, for static
+# binaries (marmot build -static): build/lib/linux-ARCH-musl, against the
+# sysroot that marmot sysroot add -libc musl linux/ARCH creates in
+# build/cache/sysroot/linux-ARCH-musl (or SYSROOT_DIR).
 GOOS    ?=
 GOARCH  ?=
+LIBC    ?=
+ifeq ($(LIBC),musl)
+ifneq ($(GOOS),linux)
+$(error LIBC=musl needs GOOS=linux)
+endif
+SYSROOT_DIR ?= $(ROOT)/build/cache/sysroot/linux-$(GOARCH)-musl
+endif
 ifneq ($(GOOS)$(GOARCH),)
-SUFFIX  := /$(GOOS)-$(GOARCH)
-TRIPLE_linux_amd64  := x86_64-linux-gnu
-TRIPLE_linux_arm64  := aarch64-linux-gnu
+SUFFIX  := /$(GOOS)-$(GOARCH)$(if $(filter musl,$(LIBC)),-musl,)
+LIBCTRIPLE := $(if $(filter musl,$(LIBC)),musl,gnu)
+TRIPLE_linux_amd64  := x86_64-linux-$(LIBCTRIPLE)
+TRIPLE_linux_arm64  := aarch64-linux-$(LIBCTRIPLE)
 TRIPLE_darwin_arm64 := arm64-apple-macosx11.0
 TRIPLE_darwin_amd64 := x86_64-apple-macosx11.0
 TRIPLE  := $(TRIPLE_$(GOOS)_$(GOARCH))
