@@ -24,6 +24,8 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 
+#include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Bitcode/BitcodeReader.h"
@@ -1692,17 +1694,87 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     return ok;
   }
 
-  // Phase 2: definitions by name, roots, reachability.
+  // Phase 2: definitions by name, roots, reachability. Names are interned
+  // to ids first, so the sets below are bit vectors and the maps vectors
+  // (string sets and maps took most of the 0.37 s plan of cmd/marmot).
   std::string prunableKey;
   auto t2 = std::chrono::steady_clock::now();
-  StringMap<std::vector<std::pair<unsigned, unsigned>>> defsByName;
-  for (unsigned i = 0; i < mods.size(); ++i)
-    for (unsigned j = 0; j < mods[i].defs.size(); ++j)
-      defsByName[mods[i].defs[j].qname].push_back({i, j});
-
-  StringSet<> roots;
-  roots.insert("main");
-  roots.insert("marmot_main");
+  StringMap<unsigned> nameId;
+  std::vector<StringRef> nameOf; // keys of nameId, which stay put
+  auto intern = [&](StringRef n) {
+    auto [it, inserted] = nameId.try_emplace(n, unsigned(nameOf.size()));
+    if (inserted)
+      nameOf.push_back(it->getKey());
+    return it->second;
+  };
+  struct DefIds {
+    unsigned name;
+    std::vector<unsigned> refs, typeUses;
+  };
+  std::vector<std::vector<DefIds>> ids(mods.size());
+  std::vector<std::vector<unsigned>> addrIds(mods.size());
+  std::vector<unsigned> rootIds;
+  {
+    // Each module interns its names on its own (in parallel), then its
+    // distinct names are interned once and its ids mapped.
+    struct Local {
+      StringMap<unsigned> id;
+      std::vector<StringRef> names;
+      std::vector<unsigned> global;
+    };
+    std::vector<Local> local(mods.size());
+    auto each = [&](auto fn) {
+      DefaultThreadPool pool(hardware_concurrency(threads));
+      for (unsigned i : order)
+        pool.async([&, i] { fn(i); });
+      pool.wait();
+    };
+    each([&](unsigned i) {
+      Local &l = local[i];
+      auto lid = [&](StringRef n) {
+        auto [it, inserted] = l.id.try_emplace(n, unsigned(l.names.size()));
+        if (inserted)
+          l.names.push_back(it->getKey());
+        return it->second;
+      };
+      ids[i].resize(mods[i].defs.size());
+      for (unsigned j = 0; j < mods[i].defs.size(); ++j) {
+        const Def &d = mods[i].defs[j];
+        DefIds &x = ids[i][j];
+        x.name = lid(d.qname);
+        x.refs.reserve(d.refs.size());
+        for (const std::string &r : d.refs)
+          x.refs.push_back(lid(r));
+        for (const std::string &u : d.typeUses)
+          x.typeUses.push_back(lid(u));
+      }
+      for (auto &[name, type] : mods[i].addrTaken)
+        addrIds[i].push_back(lid(name));
+    });
+    for (unsigned i = 0; i < mods.size(); ++i) {
+      Local &l = local[i];
+      l.global.reserve(l.names.size());
+      for (StringRef n : l.names)
+        l.global.push_back(intern(n));
+      for (const std::string &r : mods[i].extraRoots)
+        rootIds.push_back(intern(r));
+    }
+    each([&](unsigned i) {
+      const std::vector<unsigned> &g = local[i].global;
+      for (DefIds &x : ids[i]) {
+        x.name = g[x.name];
+        for (unsigned &r : x.refs)
+          r = g[r];
+        for (unsigned &u : x.typeUses)
+          u = g[u];
+      }
+      for (unsigned &n : addrIds[i])
+        n = g[n];
+      local[i] = Local();
+    });
+  }
+  rootIds.push_back(intern("main"));
+  rootIds.push_back(intern("marmot_main"));
   if (opts.rtBitcode) {
     std::string err;
     const RuntimeLib *rt = opts.rtBitcode->get(err);
@@ -1711,88 +1783,110 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       return false;
     }
     for (const auto &e : rt->referenced)
-      roots.insert(e.getKey());
+      rootIds.push_back(intern(e.getKey()));
   }
-  for (auto &e : defsByName)
-    if (isCName(e.getKey()))
-      roots.insert(e.getKey());
-  for (ModuleInfo &m : mods)
-    for (const std::string &r : m.extraRoots)
-      roots.insert(r);
+  const unsigned nnames = nameOf.size();
+  std::vector<SmallVector<std::pair<unsigned, unsigned>, 1>> defsOf(nnames);
+  for (unsigned i = 0; i < mods.size(); ++i)
+    for (unsigned j = 0; j < ids[i].size(); ++j)
+      defsOf[ids[i][j].name].push_back({i, j});
 
-  StringSet<> live;
-  SmallVector<StringRef, 256> work;
-  auto mark = [&](StringRef n) {
-    if (live.insert(n).second)
-      work.push_back(live.find(n)->getKey());
+  BitVector isRoot(nnames);
+  for (unsigned r : rootIds)
+    isRoot.set(r);
+  for (unsigned n = 0; n < nnames; ++n)
+    if (!defsOf[n].empty() && isCName(nameOf[n]))
+      isRoot.set(n);
+
+  BitVector live(nnames);
+  std::vector<unsigned> work;
+  auto mark = [&](unsigned n) {
+    if (!live.test(n)) {
+      live.set(n);
+      work.push_back(n);
+    }
   };
-  for (const auto &r : roots)
-    mark(r.getKey());
+  for (unsigned n : isRoot.set_bits())
+    mark(n);
   while (!work.empty()) {
-    StringRef n = work.pop_back_val();
-    auto it = defsByName.find(n);
-    if (it == defsByName.end())
-      continue;
-    for (auto [mi, di] : it->second)
-      for (const std::string &r : mods[mi].defs[di].refs)
+    unsigned n = work.back();
+    work.pop_back();
+    for (auto [mi, di] : defsOf[n])
+      for (unsigned r : ids[mi][di].refs)
         mark(r);
   }
+  // Phase 3 asks by name.
+  auto isLive = [&](StringRef n) {
+    auto it = nameId.find(n);
+    return it != nameId.end() && live.test(it->second);
+  };
 
   // Imports: a live function in module T calling an importable function
   // defined only in another module S.
   std::vector<std::map<unsigned, std::set<std::string>>> imports(mods.size());
-  // Modules whose (live or imported) code references a name.
-  StringMap<std::set<unsigned>> usedBy;
+  // The module whose (live or imported) code references a name: -1 none,
+  // -2 more than one.
+  std::vector<int> usedBy(nnames, -1);
+  auto use = [&](unsigned n, unsigned i) {
+    int &u = usedBy[n];
+    if (u == -1)
+      u = int(i);
+    else if (u != int(i))
+      u = -2;
+  };
   // The plan is transitive: an imported body's callees are candidates too
   // (so runtime.slicecopy imported into main brings runtime.memmove along),
   // up to kImportBudget imported functions per module.
   constexpr unsigned kImportBudget = 400;
   for (unsigned i = 0; i < mods.size(); ++i) {
-    SmallVector<const std::string *, 64> work;
-    for (const Def &d : mods[i].defs) {
-      if (!live.contains(d.qname))
+    SmallVector<unsigned, 64> work;
+    DenseSet<unsigned> taken;
+    for (unsigned j = 0; j < ids[i].size(); ++j) {
+      if (!live.test(ids[i][j].name))
         continue;
-      for (const std::string &r : d.refs) {
-        usedBy[r].insert(i);
-        if (d.isFunc)
-          work.push_back(&r);
+      bool isFunc = mods[i].defs[j].isFunc;
+      for (unsigned r : ids[i][j].refs) {
+        use(r, i);
+        if (isFunc)
+          work.push_back(r);
       }
     }
     unsigned count = 0;
     while (!work.empty() && opts.wpoImport && opts.optLevel != '0') {
-      const std::string &r = *work.pop_back_val();
-      auto it = defsByName.find(r);
-      if (it == defsByName.end() || it->second.size() != 1)
+      unsigned r = work.pop_back_val();
+      if (defsOf[r].size() != 1)
         continue;
-      auto [si, sj] = it->second.front();
+      auto [si, sj] = defsOf[r].front();
       const Def &callee = mods[si].defs[sj];
       if (si == i || !callee.isFunc || !callee.importable || count >= kImportBudget)
         continue;
-      if (!imports[i][si].insert(r).second)
+      if (!taken.insert(r).second)
         continue;
+      imports[i][si].insert(nameOf[r].str());
       ++count;
       ++stats.imported;
-      for (const std::string &rr : callee.refs) {
-        usedBy[rr].insert(i);
-        work.push_back(&rr);
+      for (unsigned rr : ids[si][sj].refs) {
+        use(rr, i);
+        work.push_back(rr);
       }
     }
   }
-  for (ModuleInfo &m : mods)
-    for (const Def &d : m.defs) {
-      stats.functions += d.isFunc;
-      stats.liveFunctions += d.isFunc && live.contains(d.qname);
+  for (unsigned i = 0; i < mods.size(); ++i)
+    for (unsigned j = 0; j < ids[i].size(); ++j) {
+      bool isFunc = mods[i].defs[j].isFunc;
+      stats.functions += isFunc;
+      stats.liveFunctions += isFunc && live.test(ids[i][j].name);
     }
   // A linkonce or weak definition (type descriptor, itab, generic instance,
   // wrapper) may be copied into any module, and LLVM may fold its constant
   // contents there (an itab slot becomes a direct call). What it references
   // is therefore used everywhere.
-  StringSet<> shared;
-  for (ModuleInfo &m : mods)
-    for (const Def &d : m.defs)
-      if (d.copyable && live.contains(d.qname))
-        for (const std::string &r : d.refs)
-          shared.insert(r);
+  BitVector shared(nnames);
+  for (unsigned i = 0; i < mods.size(); ++i)
+    for (unsigned j = 0; j < ids[i].size(); ++j)
+      if (mods[i].defs[j].copyable && live.test(ids[i][j].name))
+        for (unsigned r : ids[i][j].refs)
+          shared.set(r);
 
   // Reflection tables: with no reflect, reflectlite or
   // rtabi code live, a type whose descriptor is used only to allocate needs
@@ -1801,24 +1895,27 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   StringSet<> prunable;
   {
     bool reflectLive = false;
-    StringSet<> keep;
-    for (ModuleInfo &m : mods)
-      for (const Def &d : m.defs) {
-        if (!live.contains(d.qname))
+    BitVector keep(nnames);
+    for (unsigned i = 0; i < mods.size(); ++i)
+      for (unsigned j = 0; j < ids[i].size(); ++j) {
+        if (!live.test(ids[i][j].name))
           continue;
+        const Def &d = mods[i].defs[j];
         StringRef n = d.qname;
         if (d.isFunc && (n.starts_with("reflect.") || n.starts_with("internal/reflectlite.") ||
                          n.starts_with("internal/rtabi.")))
           reflectLive = true;
-        for (const std::string &u : d.typeUses)
-          keep.insert(u);
+        for (unsigned u : ids[i][j].typeUses)
+          keep.set(u);
       }
     if (!reflectLive && opts.wpoPruneTypes)
-      for (ModuleInfo &m : mods)
-        for (const Def &d : m.defs)
-          if (!d.isFunc && isDescriptor(d.qname) && live.contains(d.qname) &&
-              !keep.contains(d.qname))
+      for (unsigned i = 0; i < mods.size(); ++i)
+        for (unsigned j = 0; j < ids[i].size(); ++j) {
+          const Def &d = mods[i].defs[j];
+          unsigned n = ids[i][j].name;
+          if (!d.isFunc && live.test(n) && !keep.test(n) && isDescriptor(d.qname))
             prunable.insert(d.qname);
+        }
     std::vector<std::string> sorted;
     for (auto &e : prunable)
       sorted.push_back(e.getKey().str());
@@ -1837,13 +1934,14 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   // indirect elsewhere) but is promoted only where it is defined.
   std::map<std::string, std::set<std::string>> byType;
   StringSet<> copyableCand;
-  for (ModuleInfo &m : mods)
-    for (auto &[name, type] : m.addrTaken) {
-      auto d = defsByName.find(name);
-      if (d != defsByName.end()) {
-        if (!live.contains(name))
+  for (unsigned i = 0; i < mods.size(); ++i)
+    for (unsigned k = 0; k < addrIds[i].size(); ++k) {
+      auto &[name, type] = mods[i].addrTaken[k];
+      unsigned n = addrIds[i][k];
+      if (!defsOf[n].empty()) {
+        if (!live.test(n))
           continue;
-        for (auto [mi, di] : d->second)
+        for (auto [mi, di] : defsOf[n])
           if (mods[mi].defs[di].copyable)
             copyableCand.insert(name);
       }
@@ -1862,21 +1960,22 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   for (auto &[type, names] : byType)
     if (names.size() <= 2)
       for (const std::string &n : names)
-        shared.insert(n);
+        shared.set(nameId.find(n)->second);
 
   // Functions each module internalizes: live, external, defined only there,
   // used by no other module, not referenced by copyable definitions, not
   // roots.
   std::vector<std::vector<std::string>> internal(mods.size());
   for (unsigned i = 0; i < mods.size(); ++i) {
-    for (const Def &d : mods[i].defs) {
-      if (!d.isFunc || d.local || !live.contains(d.qname) || roots.contains(d.qname) ||
-          shared.contains(d.qname))
+    for (unsigned j = 0; j < ids[i].size(); ++j) {
+      const Def &d = mods[i].defs[j];
+      unsigned n = ids[i][j].name;
+      if (!d.isFunc || d.local || !live.test(n) || isRoot.test(n) || shared.test(n))
         continue;
-      if (defsByName.lookup(d.qname).size() != 1)
+      if (defsOf[n].size() != 1)
         continue;
-      auto u = usedBy.find(d.qname);
-      if (u != usedBy.end() && llvm::any_of(u->second, [&](unsigned x) { return x != i; }))
+      int u = usedBy[n];
+      if (u == -2 || (u >= 0 && u != int(i)))
         continue;
       internal[i].push_back(d.qname);
     }
@@ -1920,7 +2019,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       std::string k = info.keyB + "|wpo|" + byTypeKey + "|" + prunableKey + "|";
       std::vector<std::string> liveDefs;
       for (const Def &d : info.defs)
-        if (live.contains(d.qname))
+        if (isLive(d.qname))
           liveDefs.push_back(d.local ? "@:" + d.qname.substr(d.qname.find(':') + 1)
                                      : d.qname);
       llvm::sort(liveDefs);
@@ -1978,14 +2077,14 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     // Dead definitions become declarations, never parsed.
     SmallVector<GlobalValue *, 64> deadLocal;
     for (Function &f : *m)
-      if (!f.isDeclaration() && !live.contains(qualify(f, i))) {
+      if (!f.isDeclaration() && !isLive(qualify(f, i))) {
         f.deleteBody();
         f.setComdat(nullptr);
         if (f.hasLocalLinkage())
           deadLocal.push_back(&f);
       }
     for (GlobalVariable &v : m->globals())
-      if (!v.isDeclaration() && !v.hasAppendingLinkage() && !live.contains(qualify(v, i))) {
+      if (!v.isDeclaration() && !v.hasAppendingLinkage() && !isLive(qualify(v, i))) {
         v.setInitializer(nullptr);
         v.setComdat(nullptr);
         if (v.hasLocalLinkage())
