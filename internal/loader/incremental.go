@@ -109,9 +109,9 @@ func returnsReflect(fn *types.Func, name string) bool {
 
 type pkgMeta struct {
 	ExportHash string
-	// APIHash hashes the export data written without positions: what an
-	// importer's code can depend on, so it stays the same across body edits
-	// and edits that only move declarations.
+	// APIHash hashes the package's API (apiHash): what an importer's code
+	// can depend on, so it stays the same across body edits and edits that
+	// only move declarations.
 	APIHash string `json:",omitempty"`
 	// GenericAPI: the API exposes generic code (genapi.Exposed), so
 	// importers may compile instances of it.
@@ -164,6 +164,44 @@ type incrState struct {
 // package's main, so these load from export data like the rest.
 func allNames(path, name string) bool { return path == "runtime" || name == "main" }
 
+// apiHash hashes what other packages' code can depend on in pkg's own
+// declarations: every type (unexported ones too: they lay out exported
+// types and their methods fill method tables) with its methods, and the
+// exported functions, variables and constants (with their values). Other
+// packages' types appear by qualified name only; their API keys cover
+// them. Unlike export data, the text does not depend on whether pkg's
+// imports were loaded from source or from export data.
+func apiHash(pkg *types.Package) string {
+	h := sha256.New()
+	q := func(p *types.Package) string { return p.Path() }
+	scope := pkg.Scope()
+	fmt.Fprintf(h, "api v1 %s %s\n", pkg.Path(), pkg.Name())
+	for _, name := range scope.Names() {
+		obj := scope.Lookup(name)
+		tn, isType := obj.(*types.TypeName)
+		if !isType && !obj.Exported() {
+			continue
+		}
+		fmt.Fprintf(h, "%s\n", types.ObjectString(obj, q))
+		if c, ok := obj.(*types.Const); ok {
+			fmt.Fprintf(h, "= %s\n", c.Val().ExactString())
+		}
+		if isType && !tn.IsAlias() {
+			fmt.Fprintf(h, "  %s\n", types.TypeString(tn.Type().Underlying(), q))
+			if n, ok := tn.Type().(*types.Named); ok {
+				for i := 0; i < n.NumMethods(); i++ {
+					fmt.Fprintf(h, "  %s\n", types.ObjectString(n.Method(i), q))
+				}
+			}
+		}
+	}
+	return apiHashPrefix + hex.EncodeToString(h.Sum(nil))[:32]
+}
+
+// apiHashPrefix marks hashes made by apiHash (older cache entries hashed
+// export data, which depends on how imports were loaded).
+const apiHashPrefix = "v1:"
+
 // ownFiles are the files whose identity keys a package.
 func ownFiles(p *packages.Package) []string {
 	return append(append([]string(nil), p.CompiledGoFiles...), p.EmbedFiles...)
@@ -187,8 +225,8 @@ func (st *incrState) srcKeyOf(p *packages.Package, own string) string {
 func (st *incrState) apiKeyOf(p *packages.Package, m *pkgMeta) {
 	h := sha256.New()
 	api := m.APIHash
-	if api == "" {
-		api = "export " + m.ExportHash // a cache entry from before APIHash
+	if !strings.HasPrefix(api, apiHashPrefix) {
+		api = "export " + m.ExportHash // a cache entry from before apiHash
 	}
 	facts, _ := json.Marshal(m.Facts)
 	fmt.Fprintf(h, "api v1 %s\n%s\n%s\n", p.PkgPath, api, facts)
@@ -294,12 +332,7 @@ func (st *incrState) writeCache(key string, tpkg *types.Package, m *pkgMeta) err
 	data := buf.Bytes()
 	h := sha256.Sum256(data)
 	m.ExportHash = hex.EncodeToString(h[:16])
-	var api bytes.Buffer
-	if err := gcexportdata.Write(&api, token.NewFileSet(), tpkg); err != nil {
-		return err
-	}
-	ha := sha256.Sum256(api.Bytes())
-	m.APIHash = hex.EncodeToString(ha[:16])
+	m.APIHash = apiHash(tpkg)
 	if err := os.MkdirAll(st.cacheDir, 0o755); err != nil {
 		return err
 	}
@@ -841,7 +874,7 @@ func (st *incrState) loadOne(p *packages.Package, exportMu *sync.Mutex) error {
 		}
 	}
 	st.mu.Unlock()
-	if cached && m.APIHash != "" {
+	if cached && strings.HasPrefix(m.APIHash, apiHashPrefix) {
 		// Same key, same export data; writing it again could change its
 		// hash (export data is not byte-stable) and so every importer's key.
 		nm.ExportHash, nm.APIHash = m.ExportHash, m.APIHash
