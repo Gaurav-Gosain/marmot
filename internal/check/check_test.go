@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -270,5 +271,36 @@ func TestFixDiffChangesNothing(t *testing.T) {
 	after, _ := os.ReadFile(filepath.Join(dir, "a.go"))
 	if !bytes.Equal(before, after) || !strings.Contains(res.Diff, "+\tfor i := range n {") {
 		t.Errorf("diff mode changed the file or printed no patch:\n%s", res.Diff)
+	}
+}
+
+func TestRunChanged(t *testing.T) {
+	if testing.Short() {
+		t.Skip("loads the standard library")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	t.Setenv("GOWORK", "off")
+	dir := copyTree(t, "testdata/mod")
+	os.Remove(filepath.Join(dir, "sub", "w_windows.go"))
+	for _, args := range [][]string{{"init", "-q"}, {"add", "-A"}, {"-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	// Only a.go changes: sub/b.go (not formatted) is out of scope.
+	f, _ := os.OpenFile(filepath.Join(dir, "a.go"), os.O_APPEND|os.O_WRONLY, 0)
+	f.WriteString("\n// Edited.\nfunc Edited() {}\n")
+	f.Close()
+	r, err := Run(Options{Dir: dir, Changed: true, Base: "HEAD", Only: []string{"fmt", "vet"}, CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := findings(r)
+	if want := []string{"vet printf a.go:11"}; !slices.Equal(got, want) {
+		t.Errorf("changed findings %v, want %v", got, want)
 	}
 }
