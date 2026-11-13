@@ -320,7 +320,7 @@ func TestDeadcodeReusedAcrossLineShifts(t *testing.T) {
 	main := filepath.Join(dir, "main.go")
 	src, _ := os.ReadFile(main)
 	// Two lines more above Dead: positions move, references do not.
-	os.WriteFile(main, bytes.Replace(src, []byte("func used() {}"), []byte("func used() {\n\t_ = 1\n}"), 1), 0o644)
+	os.WriteFile(main, bytes.Replace(src, []byte("func used() {}"), []byte("func used() {\n\t// a note\n}"), 1), 0o644)
 	r2, err := Run(opts)
 	if err != nil {
 		t.Fatal(err)
@@ -331,7 +331,7 @@ func TestDeadcodeReusedAcrossLineShifts(t *testing.T) {
 	}
 	// A new reference changes the shape: Dead is used now.
 	src, _ = os.ReadFile(main)
-	os.WriteFile(main, bytes.Replace(src, []byte("_ = 1"), []byte("Dead()"), 1), 0o644)
+	os.WriteFile(main, bytes.Replace(src, []byte("// a note"), []byte("Dead()"), 1), 0o644)
 	r3, err := Run(opts)
 	if err != nil {
 		t.Fatal(err)
