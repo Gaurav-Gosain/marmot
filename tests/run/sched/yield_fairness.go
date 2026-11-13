@@ -1,22 +1,28 @@
 package main
 
-import "runtime"
+import (
+	"runtime"
+	"sync/atomic"
+)
 
+// The goroutine must get to run while main only yields. Another P can steal
+// it and its thread can be slow to run under load, so main yields until the
+// goroutine has counted a few rounds, with a bound far above what is needed.
 func main() {
-	stop := false
-	cnt := 0
+	var stop atomic.Bool
+	var cnt atomic.Int64
 	done := make(chan bool)
 	go func() {
-		for !stop {
+		for !stop.Load() {
 			runtime.Gosched()
-			cnt++
+			cnt.Add(1)
 		}
 		done <- true
 	}()
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 10000000 && cnt.Load() < 10; i++ {
 		runtime.Gosched()
 	}
-	stop = true
+	stop.Store(true)
 	<-done
-	println(cnt > 0)
+	println(cnt.Load() > 0)
 }
