@@ -1,0 +1,4 @@
+demo_put: data and len are taken as one []byte (pointer and length)
+demo_errmsg: returns const char *; copied into a Go string and not freed (const). Put it in owned to free it
+demo_log: not bound: variadic (cgo cannot call C functions with ...); write a C wrapper with fixed parameters
+demo_unowned: not bound: returns char *: who frees it? list it in owned (with the free function) or borrowed

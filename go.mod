@@ -5,6 +5,7 @@ go 1.27
 require (
 	charm.land/lipgloss/v2 v2.0.6
 	charm.land/tone v0.1.0
+	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/charmbracelet/x/term v0.2.2
@@ -21,7 +22,6 @@ require (
 )
 
 require (
-	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260811164956-006e29f97886 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect

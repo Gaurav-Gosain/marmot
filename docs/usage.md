@@ -20,6 +20,7 @@ marmot follows the `go` command where it can. Run it inside a Go module.
 | `marmot size BINARY` | Size by section, package and function; `-why FUNC` shows a chain of calls from `main` to a function. |
 | `marmot bench [package]` | Run benchmarks several times; `-vs go` compares with `go test`, `-compare FILE` with a saved run. |
 | `marmot prof PROFILE` | Read a pprof profile: top functions, call tree (`-tree`), annotated source (`-list`). |
+| `marmot bind HEADER` | Generate Go bindings (a plain cgo file) from a C header; see [Bindings from C headers](#bindings-from-c-headers). |
 | `marmot doctor` | Check the installation and the environment and say what to fix. |
 | `marmot completion SHELL` | Print shell completion for bash, zsh, fish or powershell. |
 | `marmot cache` | Show the build cache size. `cache trim` and `cache clean` shrink or remove it. |
@@ -241,6 +242,64 @@ built without cgo (`net` and `os/user` behave as with `CGO_ENABLED=0`). Cross co
 package needs the target's C headers and libraries: set `MARMOT_SYSROOT` to a copy of the
 target's root (`usr/include` and `usr/lib` are enough), for example
 `MARMOT_SYSROOT=$HOME/sysroots/linux-amd64 marmot build -target linux/amd64 .`.
+
+## Bindings from C headers
+
+`marmot bind` reads a C header through clang and writes a Go file of bindings: plain cgo that
+also builds with `go build`. The same header and config always give the same bytes, gofmt'd,
+with the header's comments as doc comments.
+
+```sh
+marmot bind -o zlib/zlib.go zlib.h          # reads zlib/bind.toml if it exists
+marmot bind -pkg-config libcurl -o curl/curl.go curl/curl.h
+```
+
+How C maps to Go:
+
+| C | Go |
+| --- | --- |
+| `const char *` parameter | `string` (copied, freed after the call) |
+| pointer and length (`const void *buf, size_t len`) | `[]byte` |
+| an opaque struct, or a typedef of a pointer to one | a handle type (`*DB`) whose functions become methods |
+| the handle's free function (`[close]`) | a `Close` method |
+| `int` status result (`[status]`) | `error`, with the library's message (`Error.Code` keeps the number) |
+| `T **out`, `int *out` (`[out]`), handle out parameters of status functions | extra results |
+| `const char *` result | `string` (copied) |
+| enum | typed constants with a `String` method |
+| `#define` with a literal or constant expression | `const` |
+| complete struct | an alias of the C struct |
+
+What bind cannot decide is not guessed: a `char *` or `void *` result whose owner is unknown, a
+pointer to a scalar that may be an out parameter or an array, callbacks, and variadic functions
+are left out and listed in the report on standard error (`-report FILE` writes it to a file).
+Settle them in `bind.toml`:
+
+```toml
+package = "sqlite3"
+header = "sqlite3.h"
+ldflags = ["-lsqlite3"]        # or pkg-config = "sqlite3"
+prefixes = ["sqlite3_", "SQLITE_"]
+include = ["sqlite3_open", "sqlite3_close", "sqlite3_prepare_v2", "sqlite3_step", "SQLITE_*"]
+
+[types]                        # Go names of C types
+sqlite3 = "DB"
+sqlite3_stmt = "Stmt"
+
+[close]                        # free functions: Close methods
+sqlite3 = "sqlite3_close"
+sqlite3_stmt = "sqlite3_finalize"
+
+[status]                       # int results that report errors
+functions = ["sqlite3_open", "sqlite3_close", "sqlite3_prepare_v2"]
+ok = ["SQLITE_OK"]
+message = "sqlite3_errstr"
+
+[out]                          # out parameters become results
+sqlite3_prepare_v2 = ["ppStmt", "pzTail"]
+
+[owned]                        # pointer results the caller frees, and with what
+sqlite3_expanded_sql = "sqlite3_free"
+```
 
 ## Cached code generation
 

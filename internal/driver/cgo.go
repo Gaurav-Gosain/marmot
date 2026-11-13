@@ -215,3 +215,6 @@ func shellArgs(args []string) string {
 	}
 	return s.String()
 }
+
+// LLVMTool is the path of an LLVM tool marmot uses (clang, llvm-link).
+func LLVMTool(name string) string { return llvmTool(name) }

@@ -1,0 +1,19 @@
+prefixes = ["demo_", "DEMO_"]
+
+[types]
+demo_db = "DB"
+demo_file = "File"
+
+[close]
+demo_db = "demo_close"
+demo_file = "demo_fclose"
+
+[status]
+functions = ["demo_open", "demo_close", "demo_fclose", "demo_put", "demo_size"]
+ok = ["DEMO_OK"]
+
+[owned]
+demo_name = "demo_free"
+
+[out]
+demo_size = ["size"]
