@@ -708,8 +708,12 @@ static bool envOn(const char *name) {
   const char *v = getenv(name);
   return v && *v && *v != '0';
 }
+// On unless MARMOT_FAST_PARSE=0.
 static bool fastParse() {
-  static const bool on = envOn("MARMOT_FAST_PARSE");
+  static const bool on = [] {
+    const char *v = getenv("MARMOT_FAST_PARSE");
+    return !v || !*v || *v != '0';
+  }();
   return on;
 }
 static bool parseCheck() {
@@ -763,8 +767,8 @@ ParsedModulePtr parseFile(const std::string &input, const CompileOptions &opts,
                                                                  *pm->diagStream);
   llvm::StringRef text = pm->sm.getMemoryBuffer(1)->getBuffer();
   // tier0 batches read the frontend's text with the tier0 reader
-  // (MARMOT_FAST_PARSE=1, until it is the default), which gives up on text it
-  // does not know; the MLIR parser reads that. MARMOT_PARSE_CHECK=1 reads
+  // (MARMOT_FAST_PARSE=0 turns it off), which gives up on text it does not
+  // know; the MLIR parser reads that. MARMOT_PARSE_CHECK=1 reads
   // every module both ways and fails when the modules differ.
   bool check = parseCheck();
   if (opts.tier0 && (fastParse() || check)) {
