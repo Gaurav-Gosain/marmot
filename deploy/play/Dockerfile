@@ -26,6 +26,9 @@ ARG JOBS=6
 RUN apt-get update && apt-get install -y --no-install-recommends \
 		llvm-${LLVM}-dev libmlir-${LLVM}-dev mlir-${LLVM}-tools cmake ninja-build git \
 	&& rm -rf /var/lib/apt/lists/*
+# LLVM's cmake package names these libraries in its link interfaces.
+RUN apt-get update && apt-get install -y --no-install-recommends zlib1g-dev libzstd-dev libcurl4-openssl-dev libedit-dev \
+	&& rm -rf /var/lib/apt/lists/*
 COPY . /marmot
 WORKDIR /marmot
 RUN go build -o build/bin/marmot ./cmd/marmot
