@@ -59,6 +59,16 @@ func main() {
 		fatal(err)
 	}
 	os.MkdirAll(work, 0o755)
+	if *flGoroot != "" {
+		// A copy made with cp -R of a read-only install stays read-only: the
+		// standard library edits would all be skipped without a word.
+		probe := filepath.Join(*flGoroot, "src", "fmt", "print.go")
+		w, err := os.OpenFile(probe, os.O_WRONLY|os.O_APPEND, 0)
+		if err != nil {
+			fatal(fmt.Errorf("-goroot must be a writable copy: %v", err))
+		}
+		w.Close()
+	}
 	if gb := freeGB(work); gb < float64(*flMinGB) {
 		fatal(fmt.Errorf("only %.1f GB free on the work directory's disk (-mingb %d)", gb, *flMinGB))
 	}
