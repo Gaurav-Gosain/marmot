@@ -202,6 +202,7 @@ static _Atomic int32_t wnidle;
 // is open, so a busy machine never makes the collector wait for them.
 static _Atomic int32_t wactive;
 static int32_t gc_nhelpers = -1;     // helper threads (not counting the collector)
+static uint64_t last_live;           // heap_live after the previous collection
 static _Atomic uint32_t helper_gen;  // bumped to start a phase
 static _Atomic int32_t phase_open;   // helpers may join
 static _Atomic int32_t phase_joined; // helpers inside the current phase
@@ -524,8 +525,10 @@ static void helpers_wait(void) {
 // Drain the heap graph from worker 0's stack with all helpers.
 static void mark_parallel(void) {
   int32_t nh = gc_nhelpers;
-  // Small heaps are not worth waking the helpers for.
-  if (atomic_load(&heap_live) < (2u << 20) || workers[0].len == 0) nh = 0;
+  // Small heaps are not worth waking the helpers for. Marking work follows
+  // the live data, so the size that survived the last collection decides,
+  // not heap_live (which counts the garbage of this cycle too).
+  if (last_live < (2u << 20) || workers[0].len == 0) nh = 0;
   atomic_store(&wactive, 1);
   atomic_store(&wnidle, 0);
   atomic_store(&wdone, 0);
@@ -535,9 +538,11 @@ static void mark_parallel(void) {
   // that joined after that must see marking as done, or they wait for work
   // forever while helpers_wait waits for them.
   atomic_store(&wdone, 1);
-  atomic_fetch_add(&wwork_gen, 1);
-  os_futex_wake(&wwork_gen, true);
-  if (nh > 0) helpers_wait();
+  if (nh > 0) {
+    atomic_fetch_add(&wwork_gen, 1);
+    os_futex_wake(&wwork_gen, true);
+    helpers_wait();
+  }
 }
 
 static bool is_marked(uintptr_t p) {
@@ -819,6 +824,7 @@ void gc_collect(bool forced) {
   regions_trim();
   int64_t t3 = os_nanotime();
   uint64_t live = atomic_load(&heap_live);
+  last_live = live;
   if (gc_percent >= 0) {
     uint64_t goal = live + live * (uint64_t)gc_percent / 100;
     next_gc = goal < (4 << 20) ? (4 << 20) : goal;
