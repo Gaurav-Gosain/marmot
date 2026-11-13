@@ -214,6 +214,32 @@ JSON object per line:
 `where` is `stack`, `heap`, `region` (in the caller's region, freed when the caller is done) or
 `static`. `final` is false when the back end may still change the decision.
 
+## cgo
+
+Packages that `import "C"` build unchanged: cmd/cgo itself reads the preamble and maps the C
+declarations (types, functions, variables, enums, `#define` constants, `C.CString` and the
+other helpers, errno results), and `#cgo CFLAGS`, `CPPFLAGS`, `LDFLAGS` and `pkg-config`
+lines are honored, with the same flag allowlist as `go build` (`CGO_CFLAGS_ALLOW` and friends
+extend it). The package's `.c`, `.s` and `.S` files are compiled with clang and cached, and
+`//export` lets C call Go, also from threads that C created.
+
+A call to C is a direct native call on the goroutine's own stack, with no argument copying
+and no stack switch. While a C function runs, its goroutine gives up its processor, so a C
+call that blocks does not hold up other goroutines. C functions that are known to return
+quickly skip that step: functions of the C library such as `strlen`, `memcpy` and the
+`math.h` functions, and functions marked with both `#cgo noescape` and `#cgo nocallback`
+(marmot reads these two together as "short and does not block"; do not mark a function that
+can sleep or wait). `marmot build -release` also compiles the C code to bitcode and
+optimizes it together with the Go code, so small C functions inline into their Go callers.
+
+Go pointers passed to C are checked as with gc (`GODEBUG=cgocheck=0` turns the check off):
+Go memory passed to C may not hold Go pointers unless they are pinned with `runtime.Pinner`.
+Arguments passed as `unsafe.Pointer` are not checked yet.
+
+Programs without `import "C"` are built exactly as before, and the standard library is always
+built without cgo (`net` and `os/user` behave as with `CGO_ENABLED=0`). Cross compiling cgo
+packages is not supported yet.
+
 ## Cached code generation
 
 `marmot generate ./...` runs `//go:generate` directives like `go generate`, and remembers what
