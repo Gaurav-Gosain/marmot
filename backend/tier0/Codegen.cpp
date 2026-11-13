@@ -237,6 +237,9 @@ public:
   // Symbols defined in this module (functions with bodies and globals with
   // initializers): reached directly; everything else through the GOT.
   llvm::DenseMap<StringAttr, bool> definedData;
+  // Functions declared returns_twice (rt_setjmp): their callers get no
+  // register allocation.
+  llvm::DenseSet<StringAttr> returnsTwice;
   bool isDefinedData(StringRef name) const;
 
   // Line rows of the functions emitted, for the pc table fragment.
@@ -1725,18 +1728,12 @@ std::optional<std::pair<StringRef, unsigned>> lineOf(Location l) {
 // the rest keep their frame slots. No splitting, no coalescing. Functions
 // that call a returns_twice function (rt_setjmp for defer) keep every value
 // in memory, as a longjmp restores the callee saved registers.
-static bool callsReturnsTwice(LL::LLVMFuncOp fn) {
-  bool twice = false;
+static bool callsReturnsTwice(LL::LLVMFuncOp fn, const llvm::DenseSet<StringAttr> &twice) {
+  bool found = false;
   fn.walk([&](LL::CallOp c) {
-    auto callee = c.getCallee();
-    if (!callee) return;
-    if (*callee == "rt_setjmp") twice = true;
-    if (auto f = SymbolTable::lookupNearestSymbolFrom<LL::LLVMFuncOp>(c, c.getCalleeAttr()))
-      if (auto pt = f.getPassthrough())
-        for (Attribute a : *pt)
-          if (auto sa = dyn_cast<StringAttr>(a); sa && sa.getValue() == "returns_twice") twice = true;
+    if (auto callee = c.getCalleeAttr(); callee && twice.count(callee.getAttr())) found = true;
   });
-  return twice;
+  return found;
 }
 
 static bool raOff() {
@@ -1748,95 +1745,105 @@ static bool raOff() {
 }
 
 // Values to registers (from regs, all below 32); values of the operations in
-// skip are never materialized.
+// skip are never materialized. A value used only in its own block gets the
+// interval from its definition to its last use; only values used in another
+// block go through the liveness dataflow.
 static llvm::DenseMap<Value, unsigned> linearScan(LL::LLVMFuncOp fn, llvm::ArrayRef<unsigned> regs,
-                                                  const llvm::DenseSet<Operation *> &skip) {
+                                                  const llvm::DenseSet<Operation *> &skip,
+                                                  const llvm::DenseSet<StringAttr> &twice) {
   llvm::DenseMap<Value, unsigned> res;
-  if (raOff() || callsReturnsTwice(fn)) return res;
+  if (raOff() || callsReturnsTwice(fn, twice)) return res;
   llvm::DenseMap<Value, unsigned> idx;
   std::vector<Value> vals;
-  auto cand = [&](Value v) {
+  std::vector<unsigned> defBlk;
+  std::vector<std::pair<unsigned, unsigned>> iv;  // first, last position
+  // Positions in emission order: a block's start, then each operation.
+  std::vector<Block *> blocks;
+  std::vector<std::pair<unsigned, unsigned>> span;
+  llvm::DenseMap<Block *, unsigned> bi;
+  auto cand = [&](Value v, unsigned blk, unsigned at) {
     Type t = v.getType();
     uint64_t bits;
     if (isa<LL::LLVMVoidType>(t) || isAggregate(t) || isWide(t) || sizeOf(t) > 8 || scalarConst(v, bits)) return;
     if (Operation *d = v.getDefiningOp(); d && skip.count(d)) return;
-    if (idx.try_emplace(v, unsigned(vals.size())).second) vals.push_back(v);
+    idx[v] = unsigned(vals.size());
+    vals.push_back(v);
+    defBlk.push_back(blk);
+    iv.push_back({at, at});
   };
-  // Positions in emission order: a block's start, then each operation.
-  llvm::DenseMap<Operation *, unsigned> pos;
-  llvm::DenseMap<Block *, std::pair<unsigned, unsigned>> span;
-  std::vector<Block *> blocks;
+  // Uses of values defined in another block: (value, block).
+  std::vector<std::pair<unsigned, unsigned>> far;
   unsigned p = 0;
   for (Block &b : fn.getBody()) {
+    unsigned i = unsigned(blocks.size());
+    bi[&b] = i;
     blocks.push_back(&b);
     unsigned start = p++;
-    for (BlockArgument a : b.getArguments()) cand(a);
+    for (BlockArgument a : b.getArguments()) cand(a, i, start);
     for (Operation &op : b) {
-      pos[&op] = p++;
-      for (Value r : op.getResults()) cand(r);
+      unsigned at = p++;
+      for (Value v : op.getOperands())
+        if (auto it = idx.find(v); it != idx.end()) {
+          unsigned k = it->second;
+          iv[k].first = std::min(iv[k].first, at);
+          iv[k].second = std::max(iv[k].second, at);
+          if (defBlk[k] != i) far.push_back({k, i});
+        }
+      for (Value r : op.getResults()) cand(r, i, at);
     }
-    span[&b] = {start, p - 1};
+    span.push_back({start, p - 1});
   }
   if (vals.empty()) return res;
-  unsigned n = unsigned(vals.size());
-  llvm::DenseMap<Block *, unsigned> bi;
-  for (unsigned i = 0; i < blocks.size(); i++) bi[blocks[i]] = i;
-  std::vector<llvm::BitVector> gen(blocks.size(), llvm::BitVector(n)), kill(gen), in(gen), out(gen);
-  for (unsigned i = 0; i < blocks.size(); i++) {
-    Block *b = blocks[i];
-    for (BlockArgument a : b->getArguments())
-      if (auto it = idx.find(a); it != idx.end()) kill[i].set(it->second);
-    for (Operation &op : *b) {
-      for (Value v : op.getOperands())
-        if (auto it = idx.find(v); it != idx.end() && !kill[i].test(it->second)) gen[i].set(it->second);
-      for (Value r : op.getResults())
-        if (auto it = idx.find(r); it != idx.end()) kill[i].set(it->second);
-    }
-  }
-  for (bool changed = true; changed;) {
-    changed = false;
-    for (unsigned i = unsigned(blocks.size()); i-- > 0;) {
-      llvm::BitVector o(n);
-      for (Block *s : blocks[i]->getSuccessors()) o |= in[bi[s]];
-      llvm::BitVector ni = o;
-      ni.reset(kill[i]);
-      ni |= gen[i];
-      if (ni != in[i] || o != out[i]) {
-        in[i] = std::move(ni);
-        out[i] = std::move(o);
-        changed = true;
-      }
-    }
-  }
-  std::vector<std::pair<unsigned, unsigned>> iv(n, {~0u, 0u});
   auto ext = [&](unsigned v, unsigned at) {
     iv[v].first = std::min(iv[v].first, at);
     iv[v].second = std::max(iv[v].second, at);
   };
-  for (unsigned i = 0; i < blocks.size(); i++) {
-    Block *b = blocks[i];
-    auto [bs, be] = span[b];
-    for (BlockArgument a : b->getArguments())
-      if (auto it = idx.find(a); it != idx.end()) {
-        ext(it->second, bs);
-        // Written by the edge moves at each predecessor's branch.
-        for (Block *pr : b->getPredecessors()) ext(it->second, span[pr].second);
+  // Block arguments are written by the edge moves at each predecessor's branch.
+  for (unsigned i = 0; i < blocks.size(); i++)
+    for (BlockArgument a : blocks[i]->getArguments())
+      if (auto it = idx.find(a); it != idx.end())
+        for (Block *pr : blocks[i]->getPredecessors()) ext(it->second, span[bi[pr]].second);
+  if (!far.empty()) {
+    std::vector<unsigned> gid(vals.size(), ~0u), gval;
+    for (auto [k, b] : far)
+      if (gid[k] == ~0u) {
+        gid[k] = unsigned(gval.size());
+        gval.push_back(k);
       }
-    for (Operation &op : *b) {
-      unsigned at = pos[&op];
-      for (Value v : op.getOperands())
-        if (auto it = idx.find(v); it != idx.end()) ext(it->second, at);
-      for (Value r : op.getResults())
-        if (auto it = idx.find(r); it != idx.end()) ext(it->second, at);
+    unsigned n = unsigned(gval.size());
+    std::vector<llvm::BitVector> gen(blocks.size(), llvm::BitVector(n)), in(gen), out(gen);
+    std::vector<std::vector<unsigned>> kill(blocks.size());
+    for (unsigned g = 0; g < n; g++) kill[defBlk[gval[g]]].push_back(g);
+    for (auto [k, b] : far) gen[b].set(gid[k]);
+    in = gen;  // out starts empty
+    std::vector<llvm::SmallVector<unsigned, 2>> succ(blocks.size());
+    for (unsigned i = 0; i < blocks.size(); i++)
+      for (Block *s : blocks[i]->getSuccessors()) succ[i].push_back(bi[s]);
+    llvm::BitVector o(n);
+    for (bool changed = true; changed;) {
+      changed = false;
+      for (unsigned i = unsigned(blocks.size()); i-- > 0;) {
+        o.reset();
+        for (unsigned s : succ[i]) o |= in[s];
+        if (o == out[i]) continue;
+        out[i] = o;
+        for (unsigned g : kill[i]) o.reset(g);
+        o |= gen[i];
+        in[i] = o;
+        changed = true;
+      }
     }
-    for (int v = in[i].find_first(); v >= 0; v = in[i].find_next(v)) ext(unsigned(v), bs);
-    for (int v = out[i].find_first(); v >= 0; v = out[i].find_next(v)) ext(unsigned(v), be);
+    for (unsigned i = 0; i < blocks.size(); i++) {
+      for (int g = in[i].find_first(); g >= 0; g = in[i].find_next(g)) ext(gval[g], span[i].first);
+      for (int g = out[i].find_first(); g >= 0; g = out[i].find_next(g)) ext(gval[g], span[i].second);
+    }
   }
+  unsigned n = unsigned(vals.size());
   std::vector<unsigned> order(n);
   for (unsigned i = 0; i < n; i++) order[i] = i;
-  std::sort(order.begin(), order.end(), [&](unsigned a, unsigned b) { return iv[a].first < iv[b].first; });
+  std::stable_sort(order.begin(), order.end(), [&](unsigned a, unsigned b) { return iv[a].first < iv[b].first; });
   std::vector<unsigned> active;  // value indices holding a register
-  llvm::DenseMap<unsigned, unsigned> reg;
+  std::vector<unsigned> reg(n, ~0u);
   uint32_t freeRegs = 0;
   for (unsigned r : regs) freeRegs |= 1u << r;
   for (unsigned v : order) {
@@ -1859,23 +1866,24 @@ static llvm::DenseMap<Value, unsigned> linearScan(LL::LLVMFuncOp fn, llvm::Array
       continue;
     }
     // Full: the interval that ends last stays in memory.
-    size_t far = 0;
+    size_t fk = 0;
     for (size_t k = 1; k < active.size(); k++)
-      if (iv[active[k]].second > iv[active[far]].second) far = k;
-    unsigned a = active[far];
+      if (iv[active[k]].second > iv[active[fk]].second) fk = k;
+    unsigned a = active[fk];
     if (iv[a].second > iv[v].second) {
       reg[v] = reg[a];
-      reg.erase(a);
-      active[far] = v;
+      reg[a] = ~0u;
+      active[fk] = v;
     }
   }
-  for (auto [v, r] : reg) res[vals[v]] = r;
+  for (unsigned v = 0; v < n; v++)
+    if (reg[v] != ~0u) res[vals[v]] = reg[v];
   return res;
 }
 
 void FuncGen::allocate() {
   static const unsigned regs[] = {19, 20, 21, 22, 23, 24, 25, 26, 27, 28};
-  home = linearScan(fn, regs, fusedCmp);
+  home = linearScan(fn, regs, fusedCmp, mg.returnsTwice);
   for (auto [v, r] : home) calleeUsed |= 1u << r;
 }
 
@@ -2029,6 +2037,11 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
   for (Operation &op : module.getBody()->getOperations()) {
     if (auto f = dyn_cast<LL::LLVMFuncOp>(op)) {
       if (!f.isExternal()) definedData[f.getSymNameAttr()] = true;
+      bool twice = f.getSymName() == "rt_setjmp";
+      if (auto pt = f.getPassthrough())
+        for (Attribute a : *pt)
+          if (auto sa = dyn_cast<StringAttr>(a); sa && sa.getValue() == "returns_twice") twice = true;
+      if (twice) returnsTwice.insert(f.getSymNameAttr());
     } else if (auto g = dyn_cast<LL::GlobalOp>(op)) {
       if (g.getValueOrNull() || !g.getInitializerRegion().empty()) definedData[g.getSymNameAttr()] = true;
     }

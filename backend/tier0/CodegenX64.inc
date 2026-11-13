@@ -1221,7 +1221,7 @@ void FuncGenX64::run() {
       fusedCmp.insert(ic.getOperation());
   });
   static const unsigned regs[] = {X::RBX, X::R12, X::R13, X::R14, X::R15};
-  home = linearScan(fn, regs, fusedCmp);
+  home = linearScan(fn, regs, fusedCmp, mg.returnsTwice);
   for (auto [v, r] : home) calleeUsed |= 1u << r;
   layout();
   uint64_t start = a.here();
