@@ -314,8 +314,8 @@ func trimTrailing(text []string, lines []int) (string, []int) {
 
 // SizeReport is the binary's size by section and package.
 type SizeReport struct {
-	File     int64            `json:"file"`
-	Text     uint64           `json:"text"`
+	File     int64             `json:"file"`
+	Text     uint64            `json:"text"`
 	Sections []binsize.Section `json:"sections"`
 	Packages []binsize.Section `json:"packages"`
 }
