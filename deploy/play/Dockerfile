@@ -10,13 +10,14 @@ FROM debian:${DEBIAN}-slim AS toolchain
 ARG DEBIAN
 ARG LLVM=22
 ARG GO_VERSION=1.27.4
+ARG TARGETARCH=amd64
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
 	&& curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /usr/share/keyrings/llvm.gpg \
 	&& echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/${DEBIAN}/ llvm-toolchain-${DEBIAN}-${LLVM} main" > /etc/apt/sources.list.d/llvm.list \
 	&& apt-get update && apt-get install -y --no-install-recommends \
 		clang-${LLVM} lld-${LLVM} llvm-${LLVM} libc6-dev libgcc-14-dev make \
 	&& rm -rf /var/lib/apt/lists/*
-RUN curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz | tar -C /usr/local -xz
+RUN curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz | tar -C /usr/local -xz
 ENV PATH=/usr/local/go/bin:/usr/lib/llvm-${LLVM}/bin:$PATH \
 	LLVM_PREFIX=/usr/lib/llvm-${LLVM} LLVM_BIN=/usr/lib/llvm-${LLVM}/bin GOTOOLCHAIN=local
 
