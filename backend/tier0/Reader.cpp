@@ -42,6 +42,7 @@ private:
   const char *p, *start, *end, *lineStart;
   unsigned line = 1;
   StringAttr file;
+  Location unknownLoc = UnknownLoc::get(ctx);
 
   llvm::StringMap<Type> typeAliases;      // !mtN
   llvm::StringMap<Location> locAliases;   // #locN
@@ -211,6 +212,37 @@ private:
 
   // ---- types ----
   Type type() {
+    skipSpace();
+    // Aggregate types repeat: cache them by their text.
+    if (p < end && (*p == '!' || *p == 's' || *p == 'a') && !(p + 3 < end && StringRef(p, 3) == "!mt") &&
+        !(p + 8 < end && StringRef(p, 9) == "!llvm.ptr")) {
+      const char *s0 = p;
+      const char *q = p;
+      while (q < end && *q != '<' && (isalnum(*q) || *q == '!' || *q == '.' || *q == '_')) ++q;
+      if (q < end && *q == '<') {
+        int depth = 0;
+        const char *e = q;
+        for (; e < end; ++e) {
+          if (*e == '<') ++depth;
+          else if (*e == '>' && e[-1] != '-' && --depth == 0) break;
+          else if (*e == '\n' || *e == '"') { e = end; break; }
+        }
+        if (e < end) {
+          StringRef key(s0, size_t(e + 1 - s0));
+          auto it = typeCache.find(key);
+          if (it != typeCache.end()) {
+            p = e + 1;
+            return it->second;
+          }
+          Type t = typeUncached();
+          if (p == e + 1) typeCache[key] = t;
+          return t;
+        }
+      }
+    }
+    return typeUncached();
+  }
+  Type typeUncached() {
     skipSpace();
     const char *s = p;
     if (consumeWord("ptr") || consumeWord("!llvm.ptr")) return LL::LLVMPointerType::get(ctx);
@@ -619,12 +651,16 @@ void Reader::operation() {
   }
   skipSpace();
   at = p;  // custom and generic operations get the location of their name
+  unsigned atLine = line, atCol = unsigned(at - lineStart) + 1;
+  Location loc0 = unknownLoc;
   Operation *op = nullptr;
   if (peek('"')) {
     op = genericOp(results, at);
   } else {
     StringRef name = bareWord();
-    Location loc = here(at);
+    // A placeholder: nearly every operation has a trailing loc(...), so the
+    // position location is made only when it has none (below).
+    Location loc = unknownLoc;
     auto bin = [&](auto tag) {
       using OpT = decltype(tag);
       Value l = use();
@@ -1087,7 +1123,11 @@ void Reader::operation() {
   if (!op) fail("operation");
   if (op->getNumResults() != results.size()) fail("result count");
   if (!results.empty()) def(results[0], op->getResult(0));
-  op->setLoc(trailingLoc(op->getLoc()));
+  {
+    skipSpace();
+    if (p + 3 < end && StringRef(p, 4) == "loc(") op->setLoc(trailingLoc(loc0));
+    else op->setLoc(FileLineColLoc::get(file, atLine, atCol));
+  }
 }
 
 // "name"(operands) <{properties}> {attributes} : (types) -> (types)
