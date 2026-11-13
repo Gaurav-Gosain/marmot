@@ -203,21 +203,31 @@ func Run(opts Options) (*Result, error) {
 	run("fmt", func(r *CheckResult) { runFmt(sc, st, r) })
 	run("tidy", func(r *CheckResult) { runTidy(sc, st, r) })
 	wg.Wait()
-	// Cross builds, dead code and vulnerabilities load whole programs; run
-	// them after the analysis so they do not compete for memory.
-	for _, n := range []string{"cross", "deadcode", "vuln"} {
-		run(n, func(r *CheckResult) {
-			switch n {
-			case "cross":
-				runCross(sc, opts, st, r)
-			case "deadcode":
-				runDeadcode(sc, opts, st, r)
-			case "vuln":
-				runVuln(sc, opts, st, r)
+	// Cross builds and dead code load whole programs; run them one after
+	// the other, after the analysis, so they do not compete for memory.
+	// The vulnerability scan waits mostly on the database and runs beside
+	// them.
+	run("vuln", func(r *CheckResult) { runVuln(sc, opts, st, r) })
+	var seq sync.WaitGroup
+	seq.Add(1)
+	go func() {
+		defer seq.Done()
+		for _, n := range []string{"cross", "deadcode"} {
+			r := results[n]
+			if r == nil {
+				continue
 			}
-		})
-		wg.Wait()
-	}
+			t0 := time.Now()
+			if n == "cross" {
+				runCross(sc, opts, st, r)
+			} else {
+				runDeadcode(sc, opts, st, r)
+			}
+			r.Duration = time.Since(t0)
+		}
+	}()
+	seq.Wait()
+	wg.Wait()
 	for _, n := range Names {
 		if r := results[n]; r != nil {
 			finish(r)

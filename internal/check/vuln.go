@@ -29,6 +29,10 @@ type vulnFinding struct {
 type vulnResult struct {
 	Findings []vulnFinding
 	Modules  int // vulnerable modules required but not called
+	// Imported counts vulnerable packages the code imports. When it is
+	// zero, no edit of a function body can reach a vulnerable symbol, so
+	// the result holds while go.mod, go.sum and the imports stay the same.
+	Imported int
 	Err      string
 }
 
@@ -115,8 +119,21 @@ func vulnModule(st *store, m module, tags []string) vulnResult {
 	sort.Strings(files)
 	h.str(files...)
 	key := h.sum()
+	// The imports key: go.mod, go.sum and every file's imports.
+	ih := newHasher("vuln-imports")
+	ih.str(toolID(), envKey(tags, hostGOOS(), hostGOARCH()), m.Dir, time.Now().UTC().Format("2006-01-02"))
+	var heads []string
+	walkModule(m.Dir, func(p string, info os.FileInfo) {
+		heads = append(heads, p+" "+headHash(p))
+	})
+	sort.Strings(heads)
+	ih.str(heads...)
+	ikey := ih.sum()
 	var res vulnResult
 	if c := st.get(key); c != nil && gob.NewDecoder(bytes.NewReader(c)).Decode(&res) == nil {
+		return res
+	}
+	if c := st.get(ikey); c != nil && gob.NewDecoder(bytes.NewReader(c)).Decode(&res) == nil && res.Imported == 0 {
 		return res
 	}
 	res = govulncheck(m.Dir, tags)
@@ -124,6 +141,7 @@ func vulnModule(st *store, m module, tags []string) vulnResult {
 		var buf bytes.Buffer
 		if gob.NewEncoder(&buf).Encode(res) == nil {
 			st.put(key, buf.Bytes())
+			st.put(ikey, buf.Bytes())
 		}
 	}
 	return res
@@ -163,6 +181,7 @@ func govulncheck(dir string, tags []string) vulnResult {
 	summaries := map[string]string{}
 	var res vulnResult
 	modOnly := map[string]bool{}
+	pkgLevel := map[string]bool{}
 	seen := map[string]bool{}
 	dec := json.NewDecoder(&out)
 	for {
@@ -184,6 +203,8 @@ func govulncheck(dir string, tags []string) vulnResult {
 		if top.Function == "" {
 			if top.Package == "" {
 				modOnly[f.OSV] = true
+			} else {
+				pkgLevel[f.OSV] = true
 			}
 			continue
 		}
@@ -206,7 +227,11 @@ func govulncheck(dir string, tags []string) vulnResult {
 		res.Findings[i].Summary = summaries[res.Findings[i].OSV]
 		delete(modOnly, res.Findings[i].OSV)
 	}
+	for o := range pkgLevel {
+		delete(modOnly, o)
+	}
 	res.Modules = len(modOnly)
+	res.Imported = len(pkgLevel) + len(res.Findings)
 	sort.Slice(res.Findings, func(i, j int) bool {
 		a, b := res.Findings[i], res.Findings[j]
 		if a.OSV != b.OSV {
