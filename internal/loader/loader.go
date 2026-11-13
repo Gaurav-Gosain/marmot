@@ -160,7 +160,7 @@ func Load(cfg Config) (*Program, error) {
 		}
 		var all []*packages.Package
 		packages.Visit(pkgs, nil, func(p *packages.Package) { all = append(all, p) })
-		if usesCgo(all, goroot) {
+		if usesCgo(all, pcfg.Env) {
 			// cgo packages need the incremental loader's file handling:
 			// load through it, every package from source.
 			// The driver did not ask for an incremental load: lp.Incremental

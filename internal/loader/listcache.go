@@ -101,7 +101,7 @@ func statSig(path string) string {
 func listSig(pcfg *packages.Config, patterns []string) string {
 	h := sha256.New()
 	// v2: graphs with errors are no longer cached (older ones may be).
-	fmt.Fprintf(h, "v4\n%s\n%q\n%v\n", pcfg.Dir, patterns, pcfg.Tests)
+	fmt.Fprintf(h, "v5\n%s\n%q\n%v\n", pcfg.Dir, patterns, pcfg.Tests)
 	env := append([]string(nil), pcfg.Env...)
 	sort.Strings(env)
 	for _, e := range env {
@@ -156,7 +156,7 @@ func loadList(light *packages.Config, patterns []string, cacheDir string) ([]*pa
 	}
 	var all []*packages.Package
 	packages.Visit(roots, nil, func(p *packages.Package) { all = append(all, p) })
-	usesC := usesCgo(all, envGOROOT(light.Env))
+	usesC := usesCgo(all, light.Env)
 	// A graph with errors is not cached: the cache keeps no errors, and the
 	// next load must report them again.
 	clean := true

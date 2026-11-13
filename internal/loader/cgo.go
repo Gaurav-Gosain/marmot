@@ -3,6 +3,7 @@ package loader
 import (
 	"bytes"
 	"fmt"
+	"go/build"
 	"go/parser"
 	"go/token"
 	"os"
@@ -24,14 +25,22 @@ import (
 // import "C" are loaded exactly as before.
 
 // usesCgo reports whether a module package of all has a file importing "C".
-func usesCgo(all []*packages.Package, goroot string) bool {
+// A file counts only if its build constraints hold with cgo on: x/sys has
+// files for other systems, and files with //go:build ignore, that import
+// "C" and are ignored for those reasons.
+func usesCgo(all []*packages.Package, env []string) bool {
+	goroot := envGOROOT(env)
+	ctxt := cgoMatchContext(env)
 	fset := token.NewFileSet()
 	for _, p := range all {
 		if isStdPkg(p, goroot) {
 			continue
 		}
 		for _, f := range p.IgnoredFiles {
-			if !strings.HasSuffix(f, ".go") {
+			if !strings.HasSuffix(f, ".go") || strings.HasSuffix(f, "_test.go") {
+				continue
+			}
+			if ok, err := ctxt.MatchFile(filepath.Dir(f), filepath.Base(f)); err != nil || !ok {
 				continue
 			}
 			src, err := os.ReadFile(f)
@@ -50,6 +59,29 @@ func usesCgo(all []*packages.Package, goroot string) bool {
 		}
 	}
 	return false
+}
+
+// cgoMatchContext is go/build's context for the GOOS, GOARCH and tags of a
+// go list environment, with cgo on.
+func cgoMatchContext(env []string) build.Context {
+	ctxt := build.Default
+	ctxt.CgoEnabled = true
+	for _, e := range env {
+		k, v, _ := strings.Cut(e, "=")
+		switch k {
+		case "GOOS":
+			ctxt.GOOS = v
+		case "GOARCH":
+			ctxt.GOARCH = v
+		case "GOFLAGS":
+			for _, f := range strings.Fields(v) {
+				if t, ok := strings.CutPrefix(f, "-tags="); ok {
+					ctxt.BuildTags = strings.Split(t, ",")
+				}
+			}
+		}
+	}
+	return ctxt
 }
 
 func pkgDir(p *packages.Package) string {
