@@ -142,6 +142,8 @@ change the cap.
 | `NO_COLOR` | Turn off color in human output. |
 | `MARMOT_ALLOC_REPORT=FILE` | Write the code generator's allocation decisions to FILE, one JSON object per line (see [Allocation report](#allocation-report)). |
 | `MARMOT_TIER0=0` | Dev builds use LLVM instead of the fast code generator (the default). Slower builds, faster code. |
+| `MARMOT_FAST_PARSE=0` | Dev builds read the compiler's intermediate text with the general MLIR parser instead of the fast reader (the default). Slower builds, same output. |
+| `MARMOT_VERIFY=1` | Verify every module before code generation, also in dev builds (they skip it by default). |
 | `MARMOT_TIER1=0` | Turn off background tier 1: after a dev build returns, the packages it compiled are compiled again with LLVM at -O2 on idle cores, and later builds link those objects. |
 
 ## Tests, benchmarks and profiles
@@ -251,6 +253,14 @@ optimizes it together with the Go code, so small C functions inline into their G
 
 Go pointers passed to C are checked as with gc (`GODEBUG=cgocheck=0` turns the check off):
 Go memory passed to C may not hold Go pointers unless they are pinned with `runtime.Pinner`.
+A failed check prints gc's message and, under it, which C call and argument it was, the type
+and offset of the Go pointer, and the fix.
+
+Errors in C code (the preamble or the package's `.c` files) are shown like Go errors, with
+clang's position and its fix when it has one (code M0030, `marmot fix` applies it). Type errors
+name C types as written (`C.int`, `C.add`), and a Go value passed where C wants another type
+gets the conversion: `C.int(x)` (applied by `marmot fix`), or `C.CString` and `C.free` for a
+string.
 
 Programs without `import "C"` are built exactly as before, and the standard library is always
 built without cgo (`net` and `os/user` behave as with `CGO_ENABLED=0`). Cross compiling a cgo
