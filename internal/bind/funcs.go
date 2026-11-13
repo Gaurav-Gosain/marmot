@@ -22,7 +22,7 @@ var scalars = map[string]string{
 
 var reBufName = regexp.MustCompile(`(?i)(buf|data|bytes|src|dst|dest|out|in)`)
 
-var reLenName = regexp.MustCompile(`(?i)^(n|len|length|size|nbyte|nbytes|bytes|count|.*len|.*size|.*length)$`)
+var reLenName = regexp.MustCompile(`(?i)^(n|len|length|size|nbyte|nbytes|bytes|count|.*len|.*size|.*length|.*count)$`)
 
 // ctype is a C type reduced for mapping.
 type ctype struct {
