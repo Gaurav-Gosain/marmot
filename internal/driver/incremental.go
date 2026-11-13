@@ -88,11 +88,13 @@ func (b *build) checkProgFlags(lp *loader.Program) (keepExported, reflectCall bo
 }
 
 // moduleCached reports whether the module of p is in the MLIR cache.
-func (b *build) moduleCached(p *packages.Package) bool {
-	if p.PkgPath == "command-line-arguments" {
+// moduleCached reports whether the module of p, whose loader ModBase is
+// base, is in the MLIR cache.
+func (b *build) moduleCached(p *packages.Package, base string) bool {
+	if p.PkgPath == "command-line-arguments" || base == "" {
 		return false
 	}
-	return fileExists(filepath.Join(b.cfg.Root, "build", "cache", "mlir", b.moduleKey(p)+".mlir"))
+	return fileExists(filepath.Join(b.cfg.Root, "build", "cache", "mlir", b.moduleKey(base)+".mlir"))
 }
 
 // typesCache is the export data and go list cache of incremental loads.
@@ -112,7 +114,9 @@ func (b *build) incrementalConfig(cfg *loader.Config) {
 	}
 	// Code generation looks up runtime functions and types by name,
 	// unexported ones included, which export data leaves out.
-	cfg.NeedSource = func(p *packages.Package, key string) bool { return p.PkgPath == "runtime" || !b.moduleCached(p) }
+	cfg.NeedSource = func(p *packages.Package, base string) bool {
+		return p.PkgPath == "runtime" || !b.moduleCached(p, base)
+	}
 }
 
 // incrementalFacts returns the facts of the packages loaded without syntax.

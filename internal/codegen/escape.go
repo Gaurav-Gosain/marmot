@@ -204,7 +204,7 @@ func (p *Program) escapesF(v ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool
 			}
 		case *ssa.MakeClosure:
 			fn, ok := x.Fn.(*ssa.Function)
-			if !ok {
+			if !ok || !p.sameUnit(x.Parent(), fn) {
 				return true
 			}
 			byv := p.byValueFreeVars(fn)
@@ -276,6 +276,13 @@ func (p *Program) callLeaksF(c *ssa.CallCommon, v ssa.Value, res ssa.Value, seen
 		}
 		return true
 	case *ssa.Function:
+		from := v.Parent()
+		if res != nil {
+			from = res.Parent()
+		}
+		if !p.sameUnit(from, fn) {
+			return true // another package's function: unknown in separate compilation
+		}
 		if !optEscapeExt && fn.Signature.Variadic() {
 			return true
 		}

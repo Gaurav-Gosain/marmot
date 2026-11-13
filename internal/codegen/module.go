@@ -300,7 +300,7 @@ func (m *moduleGen) declare(sym string, fn *ssa.Function) {
 	if ret != "" {
 		b.WriteString(" -> " + ret)
 	}
-	if a := m.funcAttrs(fn, sym); a != "" {
+	if a := m.funcAttrs(fn, sym, true); a != "" {
 		b.WriteString(" attributes {" + a + "}")
 	}
 	b.WriteString("\n")
@@ -377,9 +377,16 @@ func (m *moduleGen) sigTypes(sig *types.Signature, closure bool) ([]string, stri
 	return params, m.tm.valType(sig.Results())
 }
 
-func (m *moduleGen) funcAttrs(fn *ssa.Function, sym string) string {
+// funcAttrs returns the attributes of fn's definition, or with decl of a
+// declaration. In separate compilation a declaration carries only what the
+// name tells: another package's pragmas and body are unknown there.
+func (m *moduleGen) funcAttrs(fn *ssa.Function, sym string, decl bool) string {
 	var attrs []string
-	pr := m.p.pragmas[fn]
+	local := !decl || !m.p.opts.Separate
+	pr := pragma(0)
+	if local {
+		pr = m.p.pragmas[fn]
+	}
 	if pr&pragmaNoinline != 0 {
 		attrs = append(attrs, "no_inline")
 	}
@@ -390,7 +397,7 @@ func (m *moduleGen) funcAttrs(fn *ssa.Function, sym string) string {
 	if sym == "rt_setjmp" {
 		pass = append(pass, `"returns_twice"`)
 	}
-	if len(fn.Blocks) > 0 {
+	if local && len(fn.Blocks) > 0 {
 		if callsRecover(fn) || callsGetcallerfp(fn) || m.p.isRecoverWrapper(fn) {
 			// gorecover walks frame records: keep this frame and its record,
 			// and keep the machine outliner (on at -Os/-Oz) away from it.
@@ -547,7 +554,7 @@ func (m *moduleGen) emitUsedList(name string, es []cv) {
 // PtrTo of unnamed types) and stay pointer-identical with static types.
 // Only when reflect is part of the program.
 func (m *moduleGen) emitTypelinks() {
-	if len(m.tlinks) == 0 || m.p.prog.ImportedPackage("reflect") == nil {
+	if len(m.tlinks) == 0 || !m.p.hasReflect {
 		return
 	}
 	// One entry per global, kept in LLVM by llvm.compiler.used (which does

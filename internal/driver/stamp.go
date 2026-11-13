@@ -137,7 +137,11 @@ func (b *build) packageKeys(lp *loader.Program, cg *codegen.Program, pkgs []*ssa
 			continue // file arguments: the overlay import file is not on disk
 		}
 		if b.incr {
-			out[i] = b.moduleKey(p)
+			if ip := lp.Incremental[p.PkgPath]; ip != nil && ip.ModBase != "" {
+				out[i] = b.moduleKey(ip.ModBase)
+			} else {
+				out[i] = b.moduleKeyFromSource(p)
+			}
 			continue
 		}
 		h := sha256.New()
@@ -147,9 +151,24 @@ func (b *build) packageKeys(lp *loader.Program, cg *codegen.Program, pkgs []*ssa
 	return out
 }
 
-// moduleKey is the key of the module of p in an incremental build, where
-// no whole-program facts enter a module.
-func (b *build) moduleKey(p *packages.Package) string {
+// moduleKey is the key of a package's module in an incremental build,
+// where no whole-program facts enter a module: the flags and the marmot
+// binary, and the loader's ModBase of the package (its files, its imports'
+// API and facts, its generic dependencies' source). Separate compilation
+// makes a module depend on nothing else (codegen's sameUnit).
+func (b *build) moduleKey(base string) string {
+	b.keyMu.Lock()
+	b.initKeyBase()
+	kb := b.keyBase
+	b.keyMu.Unlock()
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\nseparate v2 %s\n%s\n", kb, b.progFlags, base)
+	return hex.EncodeToString(h.Sum(nil))[:32]
+}
+
+// moduleKeyFromSource keys p's module by the source of p and of all its
+// dependencies, for a package the loader gave no ModBase.
+func (b *build) moduleKeyFromSource(p *packages.Package) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\nseparate %s\n", b.srcKey(p), b.progFlags)
 	return hex.EncodeToString(h.Sum(nil))[:32]
@@ -160,6 +179,13 @@ func (b *build) moduleKey(p *packages.Package) string {
 func (b *build) srcKey(p *packages.Package) string {
 	b.keyMu.Lock()
 	defer b.keyMu.Unlock()
+	b.initKeyBase()
+	return b.srcKeyLocked(p)
+}
+
+// initKeyBase sets keyBase, the hash of the flags and the marmot binary
+// that every package key starts from. Called with keyMu held.
+func (b *build) initKeyBase() {
 	if b.keyMemo == nil {
 		b.keyMemo = map[string]string{}
 		exeSig := sha256.New()
@@ -174,7 +200,6 @@ func (b *build) srcKey(p *packages.Package) string {
 		b.writeXDefs(exeSig)
 		b.keyBase = hex.EncodeToString(exeSig.Sum(nil))
 	}
-	return b.srcKeyLocked(p)
 }
 
 func (b *build) srcKeyLocked(p *packages.Package) string {

@@ -168,7 +168,7 @@ func (p *Program) instrMayPanic(instr ssa.Instruction, known map[ssa.Value]bool)
 			}
 			return true
 		}
-		fn := c.StaticCallee()
+		fn := p.calleeFor(x.Parent(), c)
 		if fn == nil {
 			return true
 		}
@@ -206,7 +206,7 @@ func (p *Program) deferRecordNeeded(fn *ssa.Function, od *openDefers) bool {
 		case *ssa.Builtin:
 			return true
 		case *ssa.Function:
-			if p.mayPanicCall(v, c.Args, func(a ssa.Value) bool { return nonNil(a, known) }) {
+			if !p.sameUnit(fn, v) || p.mayPanicCall(v, c.Args, func(a ssa.Value) bool { return nonNil(a, known) }) {
 				return true
 			}
 		case *ssa.MakeClosure:

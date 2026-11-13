@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Gaurav-Gosain/marmot/internal/cgo"
+	"github.com/Gaurav-Gosain/marmot/internal/genapi"
 	"golang.org/x/tools/go/gcexportdata"
 	"golang.org/x/tools/go/packages"
 )
@@ -106,7 +107,14 @@ func returnsReflect(fn *types.Func, name string) bool {
 }
 
 type pkgMeta struct {
-	ExportHash  string
+	ExportHash string
+	// APIHash hashes the export data written without positions: what an
+	// importer's code can depend on, so it stays the same across body edits
+	// and edits that only move declarations.
+	APIHash string `json:",omitempty"`
+	// GenericAPI: the API exposes generic code (genapi.Exposed), so
+	// importers may compile instances of it.
+	GenericAPI  bool `json:",omitempty"`
 	Generic     bool
 	Facts       *Facts
 	GenericDeps []string `json:",omitempty"` // packages whose generics this package instantiates
@@ -120,6 +128,13 @@ type IncrementalPackage struct {
 	Key        string // cache key (files, configuration, import export hashes)
 	FromSource bool   // parsed and type checked in this load
 	Facts      *Facts
+	// ModBase is the key of what separately compiled code of the package
+	// depends on: its own files, the API and facts of its imports
+	// (transitively), and the source of every package it depends on whose
+	// API exposes generic code (genapi; instances of that code may be
+	// compiled into the package's module). The same string goes to
+	// NeedSource.
+	ModBase string
 }
 
 type incrState struct {
@@ -136,7 +151,73 @@ type incrState struct {
 	forceSrc map[string]bool // generic packages a source package instantiates
 	byPath   map[string]*packages.Package
 	retry    []string
+	srcKeys  map[*packages.Package]string // transitive source (srcKeyOf)
+	apiKeys  map[*packages.Package]string // transitive API and facts (apiKeyOf)
+	genKeys  map[*packages.Package]string // transitive source of generic packages (apiKeyOf)
 	mu       sync.Mutex
+}
+
+// ownFiles are the files whose identity keys a package.
+func ownFiles(p *packages.Package) []string {
+	return append(append([]string(nil), p.CompiledGoFiles...), p.EmbedFiles...)
+}
+
+// srcKeyOf records the key of p's source and, transitively, its imports'.
+// Called with st.mu held, after the imports are done.
+func (st *incrState) srcKeyOf(p *packages.Package, own string) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "src v1 %s\n%s\n", p.PkgPath, own)
+	for _, path := range sortedImports(p) {
+		fmt.Fprintf(h, "%s %s\n", path, st.srcKeys[p.Imports[path]])
+	}
+	k := hex.EncodeToString(h.Sum(nil))[:32]
+	st.srcKeys[p] = k
+	return k
+}
+
+// apiKeyOf records the key of p's API and facts and, transitively, its
+// imports'. Called with st.mu held, after the imports are done.
+func (st *incrState) apiKeyOf(p *packages.Package, m *pkgMeta) {
+	h := sha256.New()
+	api := m.APIHash
+	if api == "" {
+		api = "export " + m.ExportHash // a cache entry from before APIHash
+	}
+	facts, _ := json.Marshal(m.Facts)
+	fmt.Fprintf(h, "api v1 %s\n%s\n%s\n", p.PkgPath, api, facts)
+	g := sha256.New()
+	fmt.Fprintf(g, "gen v1 %s\n", p.PkgPath)
+	if m.GenericAPI || (m.APIHash == "" && m.Generic) {
+		fmt.Fprintf(g, "generic %s\n", st.srcKeys[p])
+	}
+	for _, path := range sortedImports(p) {
+		d := p.Imports[path]
+		fmt.Fprintf(h, "%s %s\n", path, st.apiKeys[d])
+		fmt.Fprintf(g, "%s %s\n", path, st.genKeys[d])
+	}
+	st.apiKeys[p] = hex.EncodeToString(h.Sum(nil))[:32]
+	st.genKeys[p] = hex.EncodeToString(g.Sum(nil))[:32]
+}
+
+// modBase is IncrementalPackage.ModBase of p. Called with st.mu held,
+// after the imports are done.
+func (st *incrState) modBase(p *packages.Package, own string) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "mod v1 %s %s\n%s\n", p.PkgPath, p.Name, own)
+	for _, path := range sortedImports(p) {
+		d := p.Imports[path]
+		fmt.Fprintf(h, "import %s %s %s\n", path, st.apiKeys[d], st.genKeys[d])
+	}
+	return hex.EncodeToString(h.Sum(nil))[:32]
+}
+
+func sortedImports(p *packages.Package) []string {
+	paths := make([]string, 0, len(p.Imports))
+	for path := range p.Imports {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 // fileSig hashes the identity of files cheaply: path, size and mtime.
@@ -155,11 +236,10 @@ func filesSig(files []string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func (st *incrState) keyOf(p *packages.Package) string {
+func (st *incrState) keyOf(p *packages.Package, own string) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\n%s\n%s\n", st.confSig, p.PkgPath, p.Name)
-	files := append(append([]string(nil), p.CompiledGoFiles...), p.EmbedFiles...)
-	fmt.Fprintf(h, "%s\n", filesSig(files))
+	fmt.Fprintf(h, "%s\n", own)
 	var deps []string
 	for path, d := range p.Imports {
 		m := st.meta[d]
@@ -200,6 +280,12 @@ func (st *incrState) writeCache(key string, tpkg *types.Package, m *pkgMeta) err
 	data := buf.Bytes()
 	h := sha256.Sum256(data)
 	m.ExportHash = hex.EncodeToString(h[:16])
+	var api bytes.Buffer
+	if err := gcexportdata.Write(&api, token.NewFileSet(), tpkg); err != nil {
+		return err
+	}
+	ha := sha256.Sum256(api.Bytes())
+	m.APIHash = hex.EncodeToString(ha[:16])
 	if err := os.MkdirAll(st.cacheDir, 0o755); err != nil {
 		return err
 	}
@@ -487,6 +573,9 @@ func loadIncremental(cfg Config, pcfg *packages.Config, patterns []string, confS
 			meta:     map[*packages.Package]*pkgMeta{},
 			forceSrc: force,
 			byPath:   map[string]*packages.Package{},
+			srcKeys:  map[*packages.Package]string{},
+			apiKeys:  map[*packages.Package]string{},
+			genKeys:  map[*packages.Package]string{},
 		}
 		for _, p := range all {
 			st.byPath[p.PkgPath] = p
@@ -494,14 +583,20 @@ func loadIncremental(cfg Config, pcfg *packages.Config, patterns []string, confS
 		// Generic packages that the packages compiled from source used to
 		// instantiate (recorded by package path) come from source too.
 		for _, p := range all {
-			k := st.keyOf(p)
+			own := filesSig(ownFiles(p))
+			k := st.keyOf(p, own)
+			st.srcKeyOf(p, own)
 			m, ok := st.readMeta(k)
+			base := ""
 			if ok {
 				st.meta[p] = m
+				st.apiKeyOf(p, m)
+				base = st.modBase(p, own)
 			} else {
 				st.meta[p] = &pkgMeta{ExportHash: "unknown:" + k}
+				st.apiKeys[p], st.genKeys[p] = "unknown:"+k, "unknown:"+k
 			}
-			if !ok || needSrc != nil && needSrc(p, k) {
+			if !ok || needSrc != nil && needSrc(p, base) {
 				all, _ := st.lastGenericDeps(p.PkgPath)
 				for _, d := range all {
 					force[d] = true
@@ -637,14 +732,25 @@ func (st *incrState) loadOne(p *packages.Package, exportMu *sync.Mutex) error {
 		st.mu.Unlock()
 		// As go/packages does: empty syntax, so SSA gives it an init body.
 		p.Types, p.Syntax, p.TypesInfo, p.Fset = types.Unsafe, []*ast.File{}, new(types.Info), st.fset
-		st.setResult(p, &pkgMeta{}, &IncrementalPackage{Key: "unsafe", FromSource: true})
+		st.mu.Lock()
+		st.srcKeys[p], st.apiKeys[p], st.genKeys[p] = "unsafe", "unsafe", "unsafe"
+		st.mu.Unlock()
+		st.setResult(p, &pkgMeta{}, &IncrementalPackage{Key: "unsafe", FromSource: true, ModBase: "unsafe"})
 		return nil
 	}
+	own := filesSig(ownFiles(p))
 	st.mu.Lock()
-	k := st.keyOf(p)
+	k := st.keyOf(p, own)
+	st.srcKeyOf(p, own)
 	st.mu.Unlock()
 	m, cached := st.readMeta(k)
-	source := !cached || (st.needSrc != nil && st.needSrc(p, k)) || st.forceSrc[p.PkgPath]
+	base := ""
+	if cached {
+		st.mu.Lock()
+		base = st.modBase(p, own)
+		st.mu.Unlock()
+	}
+	source := !cached || (st.needSrc != nil && st.needSrc(p, base)) || st.forceSrc[p.PkgPath]
 	if !source {
 		exportMu.Lock()
 		st.mu.Lock()
@@ -658,7 +764,10 @@ func (st *incrState) loadOne(p *packages.Package, exportMu *sync.Mutex) error {
 			p.Types = tpkg
 			p.Fset = st.fset
 			p.TypesSizes = st.sizes
-			st.setResult(p, m, &IncrementalPackage{Key: k, Facts: m.Facts})
+			st.mu.Lock()
+			st.apiKeyOf(p, m)
+			st.mu.Unlock()
+			st.setResult(p, m, &IncrementalPackage{Key: k, Facts: m.Facts, ModBase: base})
 			return nil
 		}
 	}
@@ -694,7 +803,7 @@ func (st *incrState) loadOne(p *packages.Package, exportMu *sync.Mutex) error {
 	st.imports[p.PkgPath] = tpkg
 	st.mu.Unlock()
 	p.Types, p.TypesInfo, p.Syntax, p.Fset, p.TypesSizes = tpkg, info, files, st.fset, st.sizes
-	nm := &pkgMeta{Generic: hasGenerics(tpkg), Facts: factsOf(p, files)}
+	nm := &pkgMeta{Generic: hasGenerics(tpkg), GenericAPI: genapi.Exposed(tpkg), Facts: factsOf(p, files)}
 	reflectUses(p, info, nm.Facts)
 	nm.GenericDeps, nm.GenericDepsG = genericDeps(tpkg, info, files)
 	needCode := !cached || (st.needSrc != nil && st.needSrc(p, k))
@@ -712,10 +821,10 @@ func (st *incrState) loadOne(p *packages.Package, exportMu *sync.Mutex) error {
 		}
 	}
 	st.mu.Unlock()
-	if cached {
+	if cached && m.APIHash != "" {
 		// Same key, same export data; writing it again could change its
 		// hash (export data is not byte-stable) and so every importer's key.
-		nm.ExportHash = m.ExportHash
+		nm.ExportHash, nm.APIHash = m.ExportHash, m.APIHash
 	} else {
 		// Writing export data only reads the type-checked package, so
 		// packages write theirs in parallel.
@@ -724,7 +833,11 @@ func (st *incrState) loadOne(p *packages.Package, exportMu *sync.Mutex) error {
 			return err
 		}
 	}
-	st.setResult(p, nm, &IncrementalPackage{Key: k, FromSource: true, Facts: nm.Facts})
+	st.mu.Lock()
+	st.apiKeyOf(p, nm)
+	base = st.modBase(p, own)
+	st.mu.Unlock()
+	st.setResult(p, nm, &IncrementalPackage{Key: k, FromSource: true, Facts: nm.Facts, ModBase: base})
 	return nil
 }
 

@@ -115,7 +115,7 @@ func (p *Program) checkRegionFn(q *summaryQuery, fn *ssa.Function) bool {
 					allocs++
 				}
 			case *ssa.Call:
-				if callee := x.Call.StaticCallee(); callee != nil && isPtrRepr(x.Type()) && !x.Call.IsInvoke() &&
+				if callee := p.calleeFor(x.Parent(), &x.Call); callee != nil && isPtrRepr(x.Type()) && !x.Call.IsInvoke() &&
 					callee != fn && p.regionCloneableQ(q, callee) {
 					must[x] = true
 					addMay(x)
@@ -209,7 +209,7 @@ func (p *Program) checkRegionFn(q *summaryQuery, fn *ssa.Function) bool {
 				if x.Call.IsInvoke() {
 					return false
 				}
-				callee := x.Call.StaticCallee()
+				callee := p.calleeFor(x.Parent(), &x.Call)
 				if callee == nil {
 					return false
 				}
@@ -245,7 +245,7 @@ func (f *funcGen) findRegionCalls() {
 			if !ok || c.Call.IsInvoke() {
 				continue
 			}
-			callee := c.Call.StaticCallee()
+			callee := p.calleeFor(f.fn, &c.Call)
 			if callee == nil || callee == f.fn || f.region != "" || !p.regionCloneable(callee) {
 				continue
 			}
@@ -311,7 +311,7 @@ func confinedTo(p *Program, c *ssa.Call, b *ssa.BasicBlock, start int) (ssa.Inst
 				if x.Call.IsInvoke() {
 					return nil, false
 				}
-				callee := x.Call.StaticCallee()
+				callee := p.calleeFor(x.Parent(), &x.Call)
 				if callee == nil {
 					return nil, false
 				}

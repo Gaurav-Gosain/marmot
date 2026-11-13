@@ -36,6 +36,9 @@ func (m *moduleGen) loc(pos token.Pos) string {
 		}
 		m.locTF = tf
 	}
+	if m.p.opts.Separate && !m.locAllowed(tf) {
+		return ""
+	}
 	p := tf.Position(pos)
 	if p.Filename == "" {
 		return ""
@@ -75,6 +78,19 @@ func (m *moduleGen) loc(pos token.Pos) string {
 	m.locPos[pos] = n
 	m.locLast, m.locLastRef = pos, m.locRef[n]
 	return m.locLastRef
+}
+
+// locAllowed reports whether a module of separate compilation may carry
+// positions in tf: its own package's files and those of packages whose API
+// exposes generic code, whose source is in the module's key (instances of
+// it are compiled here). A position elsewhere (a wrapper of another package's
+// method) would go stale when that package's lines move but not its API.
+func (m *moduleGen) locAllowed(tf *token.File) bool {
+	pkg := m.p.locPkgs[tf]
+	if pkg == nil {
+		return false
+	}
+	return (m.pkg != nil && pkg == m.pkg.Pkg) || m.p.genericPkg[pkg]
 }
 
 // locKey is a location: quoted file name, line and column.

@@ -114,7 +114,7 @@ func (p *Program) deepEscapesQ(q *summaryQuery, v ssa.Value, seen map[ssa.Value]
 				}
 				return true
 			}
-			fn := c.StaticCallee()
+			fn := p.calleeFor(x.Parent(), c)
 			if fn == nil || fn.Signature.Variadic() {
 				return true
 			}
@@ -364,7 +364,7 @@ func leaksRegionValue(p *Program, v ssa.Value, seen map[ssa.Value]bool) bool {
 			if c.IsInvoke() {
 				return true
 			}
-			callee := c.StaticCallee()
+			callee := p.calleeFor(x.Parent(), c)
 			if callee == nil {
 				return true
 			}
@@ -446,7 +446,7 @@ func (p *Program) noPtrStoreThrough(v ssa.Value, seen map[ssa.Value]bool) bool {
 				}
 			}
 		case *ssa.Call:
-			callee := x.Call.StaticCallee()
+			callee := p.calleeFor(x.Parent(), &x.Call)
 			if callee == nil || x.Call.IsInvoke() {
 				return false
 			}
@@ -489,7 +489,7 @@ func (f *funcGen) findFrameRegionCalls() {
 			if !ok || c.Call.IsInvoke() || f.regionCalls[c] != nil {
 				continue
 			}
-			callee := c.Call.StaticCallee()
+			callee := p.calleeFor(f.fn, &c.Call)
 			if callee == nil || callee == f.fn {
 				continue
 			}

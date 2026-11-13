@@ -47,8 +47,9 @@ type Config struct {
 	// (incremental.go); only packages that changed, or that NeedSource asks
 	// for, are parsed, type checked and get SSA bodies.
 	Incremental bool
-	// NeedSource reports whether a package with the given key must be
-	// compiled this build (its code is not cached).
+	// NeedSource reports whether a package must be compiled this build (its
+	// code is not cached); key is its IncrementalPackage.ModBase. It is not
+	// asked about packages that are type checked from source anyway.
 	NeedSource func(p *packages.Package, key string) bool
 	// CacheDir holds the export data cache (default build/cache/types).
 	CacheDir string

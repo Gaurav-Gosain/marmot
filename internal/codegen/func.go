@@ -133,7 +133,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 	if (callsRecover(fn) || f.m.p.isRecoverWrapper(fn)) && f.m.p.pragmas[fn]&pragmaNoinline == 0 {
 		attrs = append(attrs, "no_inline")
 	}
-	if a := f.m.funcAttrs(fn, sym); a != "" {
+	if a := f.m.funcAttrs(fn, sym, false); a != "" {
 		attrs = append(attrs, a)
 	}
 	head.WriteString(" attributes {" + strings.Join(attrs, ", ") + "} {\n")

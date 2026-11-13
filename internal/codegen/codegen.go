@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Gaurav-Gosain/marmot/internal/genapi"
 	"github.com/Gaurav-Gosain/marmot/internal/loader"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
@@ -98,6 +99,11 @@ type Program struct {
 
 	mu   sync.Mutex
 	syms sync.Map // *ssa.Function -> symbol (symbol)
+	// Separate compilation: the package of each parsed file, and the
+	// packages whose API exposes generic code (genapi, locs.go).
+	hasReflect bool // reflect is part of the program (type links)
+	locPkgs    map[*token.File]*types.Package
+	genericPkg map[*types.Package]bool
 
 	escMu     sync.Mutex
 	recWrap   map[*ssa.Function]bool
@@ -175,6 +181,11 @@ func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package
 	for _, pkg := range p.pkgs {
 		p.pkgOf[pkg.Pkg] = pkg
 		p.collect(pkg)
+		// Not prog.ImportedPackage: the incremental loader creates packages
+		// checked from source as not importable.
+		if pkg.Pkg.Path() == "reflect" {
+			p.hasReflect = true
+		}
 	}
 	if !p.opts.Separate {
 		p.computeUsedMethods()
@@ -184,6 +195,20 @@ func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package
 		p.punAll = true // no whole-program pun analysis: every access may alias
 	}
 	p.collectFMABlocks()
+	if p.opts.Separate {
+		p.locPkgs = map[*token.File]*types.Package{}
+		for pkg, fs := range files {
+			for _, f := range fs {
+				if tf := p.fset.File(f.Pos()); tf != nil {
+					p.locPkgs[tf] = pkg
+				}
+			}
+		}
+		p.genericPkg = map[*types.Package]bool{}
+		for _, pkg := range p.pkgs {
+			p.genericPkg[pkg.Pkg] = genapi.Exposed(pkg.Pkg)
+		}
+	}
 	return p, nil
 }
 
@@ -497,4 +522,33 @@ func (p *Program) declaredSymbol(fn *ssa.Function, pkg *types.Package) string {
 		return fmt.Sprintf("%s.%s.%s", path, name, fn.Name())
 	}
 	return path + "." + fn.Name()
+}
+
+// sameUnit reports whether an analysis of from may use the body or a
+// summary of fn. In separate compilation (incremental dev builds) a
+// module's code may depend only on the bodies of its own package and of
+// shared functions (wrappers and instances, which every module that uses
+// them compiles itself): a function of another package is unknown, whether
+// or not its package happens to be loaded from source in this build. The
+// rule depends only on the two functions, not on the module asking, so
+// memoized summaries stay valid for every module.
+func (p *Program) sameUnit(from, fn *ssa.Function) bool {
+	if !p.opts.Separate {
+		return true
+	}
+	if from == nil || fn == nil {
+		return false
+	}
+	o := p.owner[fn]
+	return o == nil || o == p.owner[from]
+}
+
+// calleeFor is the static callee of c when an analysis of from may look
+// into it (sameUnit), else nil.
+func (p *Program) calleeFor(from *ssa.Function, c *ssa.CallCommon) *ssa.Function {
+	fn := c.StaticCallee()
+	if fn == nil || !p.sameUnit(from, fn) {
+		return nil
+	}
+	return fn
 }
