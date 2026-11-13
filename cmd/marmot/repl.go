@@ -189,7 +189,9 @@ func (s *replSession) meta(line string) (quit bool) {
 	return false
 }
 
-var printCall = regexp.MustCompile(`^(fmt\.(Print|Fprint|Sprint)|println|print|log\.|os\.Exit|panic)`)
+// printCall matches calls that print or stop instead of returning a
+// value to show (fmt.Sprint and friends return one).
+var printCall = regexp.MustCompile(`^(fmt\.(Print|Fprint)|println|print|log\.|os\.Exit|panic)`)
 
 // eval runs one entry: an import, declarations, an expression (printed),
 // or statements.
@@ -220,7 +222,40 @@ func (s *replSession) eval(in string) {
 			return
 		}
 	}
+	// Statements ending in an expression (slices.Sort(xs); xs): run the
+	// statements and show the expression.
+	if pre, last, ok := splitLastExpr(in); ok && !printCall.MatchString(last) {
+		if s.run(pre+"\n__fmt.Println("+last+")", "", true) {
+			s.stmts = append(s.stmts, pre)
+			s.names = append(s.names, definedNames(pre)...)
+			return
+		}
+	}
 	s.runStmt(in, false)
+}
+
+// splitLastExpr splits statements whose last one is an expression into
+// the statements before it and the expression.
+func splitLastExpr(in string) (pre, last string, ok bool) {
+	const head = "package p\nfunc _() {\n"
+	f, err := parser.ParseFile(token.NewFileSet(), "", head+in+"\n}", 0)
+	if err != nil || len(f.Decls) != 1 {
+		return "", "", false
+	}
+	body := f.Decls[0].(*ast.FuncDecl).Body.List
+	if len(body) < 2 {
+		return "", "", false
+	}
+	es, isExpr := body[len(body)-1].(*ast.ExprStmt)
+	if !isExpr {
+		return "", "", false
+	}
+	start, end := int(es.Pos())-1-len(head), int(es.End())-1-len(head)
+	if start < 0 || end > len(in) {
+		return "", "", false
+	}
+	pre = strings.TrimRight(strings.TrimSpace(in[:start]), ";")
+	return pre, in[start:end], true
 }
 
 func (s *replSession) runStmt(in string, quiet bool) {
@@ -391,6 +426,11 @@ func (s *replSession) run(entry, decl string, quiet bool) bool {
 	err := cmd.Run()
 	signal.Stop(sigs)
 	close(sigs)
+	// The prompt is drawn at the start of the line: end a last line of
+	// output that has no newline, or the prompt would erase it.
+	if o, ok := cmd.Stdout.(*markWriter); ok && o.last != 0 && o.last != '\n' {
+		fmt.Fprintln(os.Stdout)
+	}
 	if s.timing {
 		fmt.Fprintln(os.Stderr, s.color("\x1b[2m", fmt.Sprintf("(build %v, run %v)", built.Round(time.Millisecond), (time.Since(start)-built).Round(time.Millisecond))))
 	}
@@ -402,16 +442,23 @@ type markWriter struct {
 	w    io.Writer
 	buf  *bytes.Buffer
 	open bool
+	last byte // the last byte passed through, 0 before any
 }
 
 func (m *markWriter) Write(p []byte) (int, error) {
 	if m.open {
+		if len(p) > 0 {
+			m.last = p[len(p)-1]
+		}
 		return m.w.Write(p)
 	}
 	m.buf.Write(p)
 	if i := bytes.Index(m.buf.Bytes(), []byte(replMark)); i >= 0 {
 		m.open = true
 		rest := m.buf.Bytes()[i+len(replMark):]
+		if len(rest) > 0 {
+			m.last = rest[len(rest)-1]
+		}
 		m.w.Write(rest)
 	}
 	return len(p), nil
