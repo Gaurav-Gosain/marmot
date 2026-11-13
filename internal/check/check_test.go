@@ -463,3 +463,55 @@ func TestWatchDiff(t *testing.T) {
 		t.Errorf("gone %+v", gone)
 	}
 }
+
+func TestStagedTree(t *testing.T) {
+	if testing.Short() {
+		t.Skip("loads the standard library")
+	}
+	t.Setenv("GOWORK", "off")
+	dir := t.TempDir()
+	if d, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = d
+	}
+	git := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/st\n\ngo 1.26\n"), 0o644)
+	main := filepath.Join(dir, "main.go")
+	os.WriteFile(main, []byte("package main\n\nfunc main() {}\n\nfunc staged() {}\n"), 0o644)
+	git("init", "-q")
+	git("add", ".")
+	// The working copy drops the dead function; the index keeps it.
+	os.WriteFile(main, []byte("package main\n\nfunc main() {}\n"), 0o644)
+	cache := t.TempDir()
+	snap, root, err := stagedTree(dir, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := Run(Options{Dir: snap, Only: []string{"deadcode"}, CacheDir: cache})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapPaths(r, snap, root)
+	fs := r.Checks[0].Findings
+	if len(fs) != 1 || fs[0].Span.File != main || !strings.Contains(fs[0].Message, "staged") {
+		t.Fatalf("staged findings: %+v", fs)
+	}
+	w, _ := Run(Options{Dir: dir, Only: []string{"deadcode"}, CacheDir: cache})
+	if n := len(w.Checks[0].Findings); n != 0 {
+		t.Errorf("working tree findings: %d", n)
+	}
+	// Staging the edit updates the tree in place.
+	git("add", "main.go")
+	if _, _, err := stagedTree(dir, cache); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(filepath.Join(snap, "main.go")); strings.Contains(string(data), "staged") {
+		t.Error("the staged tree kept the old version")
+	}
+}

@@ -101,7 +101,23 @@ func Main(args []string, version string) int {
 		return Watch(opts, rep, *cf.Details)
 	}
 	start := time.Now()
+	var stagedFrom, stagedTo string
+	if *cf.Staged {
+		wd, _ := os.Getwd()
+		if d, err := filepath.EvalSymlinks(wd); err == nil {
+			wd = d
+		}
+		snap, root, err := stagedTree(wd, opts.CacheDir)
+		if err != nil {
+			return rep.Usage("marmot check -staged: " + err.Error())
+		}
+		opts.Dir = snap
+		stagedFrom, stagedTo = strings.TrimSuffix(snap, strings.TrimPrefix(wd, root)), root
+	}
 	res, err := Run(opts)
+	if err == nil && stagedFrom != "" {
+		mapPaths(res, stagedFrom, stagedTo)
+	}
 	if p := os.Getenv("MARMOT_CHECK_MEMPROFILE"); p != "" {
 		if f, err := os.Create(p); err == nil {
 			err := pprof.Lookup("allocs").WriteTo(f, 0)

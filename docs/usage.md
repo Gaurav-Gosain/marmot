@@ -295,6 +295,11 @@ package graph. With no packages it checks every module of the `go.work`, or the 
 
     marmot check -changed -only vet,lint
 
+`-watch` runs the checks again after every save and prints only the findings that are new and
+those that went away. `-staged` checks what git has staged rather than the working tree, for a
+pre-commit hook (`marmot check -staged` in `.git/hooks/pre-commit`); nothing in the repository
+changes.
+
 Results are cached per package, keyed by its files and what its dependencies export, so an
 unchanged tree answers at once and an edit reanalyzes only what it affects (`-nocache` turns this
 off). On a workspace of 10 modules and 204 packages, the full set takes 46 s from an empty cache

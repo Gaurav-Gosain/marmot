@@ -27,6 +27,7 @@ type Check struct {
 	Offline *bool
 	Targets *string
 	Watch   *bool
+	Staged  *bool
 }
 
 // NewCheck returns the flag set of marmot check.
@@ -44,6 +45,7 @@ func NewCheck() (*flag.FlagSet, *Check) {
 		Details: fs.Bool("details", false, "show every finding with its source and suggested fix"),
 		Offline: fs.Bool("offline", false, "no network: the vulnerability check is skipped"),
 		Watch:   fs.Bool("watch", false, "run again after every change to the files and report only new and resolved findings"),
+		Staged:  fs.Bool("staged", false, "check exactly what git has staged (for a pre-commit hook), not the working tree"),
 		Targets: fs.String("targets", "", "cross build targets, comma separated goos/goarch (default: scripts/platforms.txt, else linux, darwin and windows on amd64 and arm64)"),
 	}
 	return fs, c
