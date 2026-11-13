@@ -255,7 +255,11 @@ func (f *fuzzer) compare(main, _ string) string {
 			return "module " + filepath.Base(m) + " of the clean build is not in the incremental cache"
 		}
 		if !bytes.Equal(got, want) {
-			return "module " + filepath.Base(m) + " differs"
+			keep := filepath.Join(f.dir, "differs")
+			os.MkdirAll(keep, 0o755)
+			os.WriteFile(filepath.Join(keep, "incremental-"+filepath.Base(m)), got, 0o644)
+			os.WriteFile(filepath.Join(keep, "clean-"+filepath.Base(m)), want, 0o644)
+			return "module " + filepath.Base(m) + " differs (both kept in " + keep + ")"
 		}
 	}
 	return ""

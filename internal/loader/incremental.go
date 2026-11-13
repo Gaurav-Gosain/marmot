@@ -256,6 +256,17 @@ func (st *incrState) modBase(p *packages.Package, own string) string {
 	return hex.EncodeToString(h.Sum(nil))[:32]
 }
 
+func inSpan(spans []span, pos token.Pos) bool {
+	for _, s := range spans {
+		if s.pos <= pos && pos < s.end {
+			return true
+		}
+	}
+	return false
+}
+
+type span struct{ pos, end token.Pos }
+
 func sortedImports(p *packages.Package) []string {
 	paths := make([]string, 0, len(p.Imports))
 	for path := range p.Imports {
@@ -897,7 +908,6 @@ func (st *incrState) loadOne(p *packages.Package, exportMu *sync.Mutex) error {
 // genericDeps lists the other packages whose generic functions or types
 // info instantiates: anywhere, and inside generic declarations only.
 func genericDeps(tpkg *types.Package, info *types.Info, files []*ast.File) (all, inGeneric []string) {
-	type span struct{ pos, end token.Pos }
 	var spans []span
 	for _, f := range files {
 		for _, d := range f.Decls {
@@ -918,12 +928,57 @@ func genericDeps(tpkg *types.Package, info *types.Info, files []*ast.File) (all,
 		}
 		path := obj.Pkg().Path()
 		seen[path] = true
-		for _, s := range spans {
-			if s.pos <= id.Pos() && id.Pos() < s.end {
-				seenG[path] = true
-				break
+		if inSpan(spans, id.Pos()) {
+			seenG[path] = true
+		}
+	}
+	// Instances of other packages' generic types used without being named
+	// here (the result of a call, a field): calling their methods compiles
+	// the methods' instances into this package's module too.
+	visited := map[types.Type]bool{}
+	var walk func(t types.Type, pos token.Pos)
+	walk = func(t types.Type, pos token.Pos) {
+		if t == nil || visited[t] {
+			return
+		}
+		visited[t] = true
+		switch t := t.(type) {
+		case *types.Named:
+			if t.TypeArgs().Len() > 0 {
+				if pkg := t.Obj().Pkg(); pkg != nil && pkg != tpkg {
+					seen[pkg.Path()] = true
+					if inSpan(spans, pos) {
+						seenG[pkg.Path()] = true
+					}
+				}
+				for a := range t.TypeArgs().Types() {
+					walk(a, pos)
+				}
+			}
+		case *types.Alias:
+			walk(types.Unalias(t), pos)
+		case *types.Pointer:
+			walk(t.Elem(), pos)
+		case *types.Slice:
+			walk(t.Elem(), pos)
+		case *types.Array:
+			walk(t.Elem(), pos)
+		case *types.Map:
+			walk(t.Key(), pos)
+			walk(t.Elem(), pos)
+		case *types.Chan:
+			walk(t.Elem(), pos)
+		case *types.Signature:
+			walk(t.Params(), pos)
+			walk(t.Results(), pos)
+		case *types.Tuple:
+			for i := 0; i < t.Len(); i++ {
+				walk(t.At(i).Type(), pos)
 			}
 		}
+	}
+	for e, tv := range info.Types {
+		walk(tv.Type, e.Pos())
 	}
 	return sortedKeys(seen), sortedKeys(seenG)
 }
