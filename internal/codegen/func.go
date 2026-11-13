@@ -251,7 +251,11 @@ func (f *funcGen) gen(sym string, shared bool) {
 	// loads, then (when block 0 has predecessors, which the entry block of
 	// an MLIR region cannot have) the branch to block 0's header.
 	f.flushBufs(out)
-	out.WriteString("  }" + f.m.loc(fn.Pos()) + "\n")
+	end := ""
+	if !f.wrapperNoLocs() {
+		end = f.m.loc(fn.Pos())
+	}
+	out.WriteString("  }" + end + "\n")
 }
 
 // blockHeader starts block b. For block 0 with predecessors the entry

@@ -115,7 +115,19 @@ func (f *funcGen) opLoc() string {
 	if f.curPos.IsValid() {
 		f.lastPos = f.curPos
 	}
+	if f.wrapperNoLocs() {
+		return ""
+	}
 	return f.m.loc(f.lastPos)
+}
+
+// wrapperNoLocs: in separate compilation a synthetic function that is not
+// an instance (a wrapper of another package's method, a bound method)
+// carries no positions. They would come from the wrapped declaration, which
+// export data keeps less exactly than source, so the module would differ
+// with how that package was loaded.
+func (f *funcGen) wrapperNoLocs() bool {
+	return f.m.p.opts.Separate && f.fn != nil && f.fn.Synthetic != "" && f.fn.Origin() == nil
 }
 
 // locFile maps a file in the merged GOROOT (a symlink) to the file it
