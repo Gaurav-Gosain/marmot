@@ -101,7 +101,9 @@ func (f *fuzzer) runProgram(src string) (checked, failed int) {
 		if out, err := sh(f.repo, nil, "sh", "-c", "mkdir -p "+f.prog+" && git archive HEAD | tar -x -C "+f.prog); err != nil {
 			fatal(fmt.Errorf("copy the tree: %v\n%s", err, out))
 		}
-		if out, err := sh(f.prog, []string{"GOFLAGS=-mod=mod", "GOPROXY=off"}, "go", "mod", "vendor"); err != nil {
+		// -e: packages of the module that cmd/marmot does not import may
+		// need modules that are not in the cache; they are left out.
+		if out, err := sh(f.prog, []string{"GOFLAGS=-mod=mod", "GOPROXY=off"}, "go", "mod", "vendor", "-e"); err != nil {
 			fatal(fmt.Errorf("go mod vendor: %v\n%s", err, out))
 		}
 		src = "cmd/marmot"
