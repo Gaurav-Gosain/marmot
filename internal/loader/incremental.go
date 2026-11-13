@@ -158,6 +158,12 @@ type incrState struct {
 	mu       sync.Mutex
 }
 
+// allNames reports whether a package's export data keeps its unexported
+// declarations (rtexport.WriteAll): code generation looks up unexported
+// runtime functions and types by name, and the entry module calls a main
+// package's main, so these load from export data like the rest.
+func allNames(path, name string) bool { return path == "runtime" || name == "main" }
+
 // ownFiles are the files whose identity keys a package.
 func ownFiles(p *packages.Package) []string {
 	return append(append([]string(nil), p.CompiledGoFiles...), p.EmbedFiles...)
@@ -240,7 +246,7 @@ func filesSig(files []string) string {
 func (st *incrState) keyOf(p *packages.Package, own string) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\n%s\n%s\n", st.confSig, p.PkgPath, p.Name)
-	if p.PkgPath == "runtime" {
+	if allNames(p.PkgPath, p.Name) {
 		fmt.Fprintf(h, "export data with every name\n")
 	}
 	fmt.Fprintf(h, "%s\n", own)
@@ -279,9 +285,7 @@ func (st *incrState) readMeta(key string) (*pkgMeta, bool) {
 func (st *incrState) writeCache(key string, tpkg *types.Package, m *pkgMeta) error {
 	var buf bytes.Buffer
 	write := gcexportdata.Write
-	if tpkg.Path() == "runtime" {
-		// Code generation looks up unexported runtime functions and types
-		// by name: keep them all, so runtime too loads from export data.
+	if allNames(tpkg.Path(), tpkg.Name()) {
 		write = rtexport.WriteAll
 	}
 	if err := write(&buf, st.fset, tpkg); err != nil {

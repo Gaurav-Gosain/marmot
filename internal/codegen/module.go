@@ -207,7 +207,11 @@ func (p *Program) GenerateMain(mainPkg *ssa.Package) (Module, error) {
 	}
 	call(p.runtime.Func("init"))
 	call(mainPkg.Func("init"))
-	call(mainPkg.Func("main"))
+	main := mainPkg.Func("main")
+	if main == nil {
+		return Module{}, fmt.Errorf("%s: no function main (main package loaded without it)", mainPkg.Pkg.Path())
+	}
+	call(main)
 	b.WriteString("    llvm.return\n  }\n")
 	m.defs.WriteString(b.String())
 	return m.finish("marmot:main")
