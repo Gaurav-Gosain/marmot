@@ -78,9 +78,11 @@ type gen struct {
 	names    map[string]bool    // top-level Go names taken
 	methods  map[string]map[string]bool
 	// hasStatus: some function returns an error from a status result.
-	hasStatus bool
-	funcNames map[string]bool
-	usedType  map[string]bool // Go types the bound functions use
+	hasStatus   bool
+	funcNames   map[string]bool
+	usedType    map[string]bool      // Go types the bound functions use
+	structs     map[string]*goStruct // C record or typedef name -> Go struct
+	structAlias map[string]string    // Go alias name -> Go struct name (Texture2D = Texture)
 }
 
 type handle struct {
@@ -147,7 +149,7 @@ func (g *gen) setup() {
 	g.funcNames = map[string]bool{}
 	for _, fn := range g.h.Funcs {
 		if g.cfg.included(fn.Name) {
-			g.funcNames[goName(fn.Name, g.cfg.Prefixes)] = true
+			g.funcNames[g.name(fn.Name)] = true
 		}
 	}
 	for c, fn := range g.cfg.Close {
@@ -160,6 +162,7 @@ func (g *gen) setup() {
 			g.enums[e.Name] = g.typeName(e.Name, e.Name)
 		}
 	}
+	g.planStructs()
 }
 
 // typeName is the Go name of a C type.
@@ -170,11 +173,19 @@ func (g *gen) typeName(c, tag string) string {
 	if n, ok := g.cfg.Types[tag]; ok {
 		return n
 	}
-	n := goName(c, g.cfg.Prefixes)
+	n := g.name(c)
 	if n == "" || n == "X" {
 		n = goName(c, nil)
 	}
 	return n
+}
+
+// name is the Go name of a C name: [rename] first, else goName.
+func (g *gen) name(c string) string {
+	if n, ok := g.cfg.Rename[c]; ok {
+		return n
+	}
+	return goName(c, g.cfg.Prefixes)
 }
 
 // goName turns a C name into an exported Go name: prefixes stripped,
@@ -301,13 +312,26 @@ func (g *gen) goExpr(e string) string {
 }
 
 func (g *gen) emitMacros() {
-	var lines []string
+	var lines, vars []string
 	for _, m := range g.h.Macros {
 		if !g.cfg.included(m.Name) {
 			continue
 		}
+		if lit, typ := g.compoundMacro(m.Expr); lit != "" {
+			// #define RED CLITERAL(Color){...}: a Go variable.
+			name := g.name(m.Name)
+			if g.funcNames[name] || g.names[name] {
+				name = m.Name
+			}
+			if !g.names[name] {
+				g.names[name] = true
+				g.usedType[typ] = true
+				vars = append(vars, fmt.Sprintf("\t%s = %s // %s", name, lit, m.Name))
+			}
+			continue
+		}
 		v := g.goExpr(m.Expr)
-		name := goName(m.Name, g.cfg.Prefixes)
+		name := g.name(m.Name)
 		if g.funcNames[name] || g.names[name] {
 			name = m.Name // a function has the name: the constant keeps its C name
 		}
@@ -320,6 +344,9 @@ func (g *gen) emitMacros() {
 	}
 	if len(lines) > 0 {
 		g.body.WriteString("// Constants from #define.\nconst (\n" + strings.Join(lines, "\n") + "\n)\n\n")
+	}
+	if len(vars) > 0 {
+		g.body.WriteString("// Values from #define of struct literals.\nvar (\n" + strings.Join(vars, "\n") + "\n)\n\n")
 	}
 }
 
@@ -336,7 +363,7 @@ func (g *gen) emitEnums() {
 		var names []string
 		g.body.WriteString("const (\n")
 		for _, c := range e.Consts {
-			n := goName(c.Name, g.cfg.Prefixes)
+			n := g.name(c.Name)
 			if n == "" || g.names[n] {
 				n = goName(c.Name, nil)
 			}
@@ -389,10 +416,11 @@ func (g *gen) emitTypes() {
 			g.note("handle %s (%s): no free function in [close]; it has no Close method", hd.goName, hd.c)
 		}
 	}
+	g.emitStructs()
 	for _, k := range sortedKeys(g.aliases) {
 		r := g.h.Records[k]
 		name := g.aliases[k]
-		if done[name] || r == nil || !g.usedType[name] {
+		if done[name] || r == nil || !g.usedType[name] || g.structs[k] != nil {
 			continue
 		}
 		done[name] = true

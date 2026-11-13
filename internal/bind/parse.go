@@ -44,7 +44,7 @@ type Func struct {
 	Ret    Type
 	Params []Param
 	Doc    string
-	Line   int
+	Line   int // line in the header (after trailingDocs)
 	// Variadic: cgo cannot call it.
 	Variadic bool
 }
@@ -112,6 +112,7 @@ type node struct {
 type locInfo struct {
 	File         string   `json:"file"`
 	Line         int      `json:"line"`
+	Offset       int      `json:"offset"`
 	SpellingLoc  *locInfo `json:"spellingLoc"`
 	ExpansionLoc *locInfo `json:"expansionLoc"`
 }
@@ -148,6 +149,7 @@ func Parse(clang, header string, cflags, files []string) (*Header, error) {
 	}
 	h := &Header{Records: map[string]*Record{}, Typedef: map[string]Type{}}
 	cur := ""
+	mainFile := ""
 	pendingEnum := map[string]*Enum{}
 	for _, n := range root.Inner {
 		f, line := nodeFile(n, &cur)
@@ -160,6 +162,9 @@ func Parse(clang, header string, cflags, files []string) (*Header, error) {
 		}
 		if !ours || n.IsImplicit {
 			continue
+		}
+		if mainFile == "" && filepath.Base(f) == filepath.Base(header) {
+			mainFile = f // the header as clang found it (on the include path)
 		}
 		switch n.Kind {
 		case "FunctionDecl":
@@ -245,6 +250,7 @@ func Parse(clang, header string, cflags, files []string) (*Header, error) {
 			pendingEnum[n.ID] = e
 		}
 	}
+	trailingDocs(h, or(mainFile, header))
 	macros, err := readMacros(clang, src, header, cflags, want)
 	if err != nil {
 		return nil, err
@@ -296,10 +302,14 @@ func nodeFile(n *node, cur *string) (string, int) {
 				break
 			}
 		}
-		if l.Line != 0 {
-			line = l.Line
-		} else if l.ExpansionLoc != nil && l.ExpansionLoc.Line != 0 {
-			line = l.ExpansionLoc.Line
+		// clang leaves out lines equal to the last one it printed, but
+		// always writes the byte offset: keep the offset (plus 1, so that
+		// 0 means unknown); trailingDocs turns it into a line.
+		switch {
+		case l.ExpansionLoc != nil:
+			line = l.ExpansionLoc.Offset + 1
+		default:
+			line = l.Offset + 1
 		}
 	}
 	return *cur, line
@@ -390,6 +400,36 @@ func cleanDoc(lines []string) string {
 		out = out[:len(out)-1]
 	}
 	return strings.Join(out, "\n")
+}
+
+// trailingDocs gives functions the comment that follows their declaration
+// on the same line (raylib's style: RLAPI void InitWindow(...); //
+// Initialize window and OpenGL context). It wins over a comment above,
+// which in such headers is a section title.
+func trailingDocs(h *Header, header string) {
+	data, err := os.ReadFile(header)
+	if err != nil {
+		return
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, fn := range h.Funcs {
+		// fn.Line holds the byte offset of the name plus 1 (nodeFile).
+		if fn.Line <= 0 || fn.Line > len(data) {
+			continue
+		}
+		fn.Line = strings.Count(string(data[:fn.Line-1]), "\n") + 1
+		// The declaration may span lines: look from its first line to the
+		// line ending in ';'.
+		for i := fn.Line - 1; i < len(lines) && i < fn.Line+5; i++ {
+			l := lines[i]
+			if j := strings.Index(l, ";"); j >= 0 {
+				if k := strings.Index(l[j:], "//"); k >= 0 {
+					fn.Doc = strings.TrimSpace(l[j+k+2:])
+				}
+				break
+			}
+		}
+	}
 }
 
 // readMacros lists the object-like #defines of the bound headers whose

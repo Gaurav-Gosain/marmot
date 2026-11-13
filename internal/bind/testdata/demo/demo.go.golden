@@ -90,10 +90,18 @@ func wrapFile(p C.demo_file) *File {
 	return &File{p}
 }
 
-// Point is the C struct demo_point (fields keep their C types).
+// Point is the C struct demo_point.
 //
 // A point, passed by pointer.
-type Point = C.demo_point
+type Point struct {
+	X int32 // x
+	Y int32 // y
+}
+
+// The Go structs have the size of the C structs (a mismatch fails to compile).
+var (
+	_ = [1]struct{}{}[unsafe.Sizeof(Point{})-unsafe.Sizeof(C.demo_point{})]
+)
 
 // Open calls demo_open.
 //
@@ -176,7 +184,7 @@ func (h *DB) DBColor() Color {
 //
 // Moves a point.
 func Move(p *Point, dx int, dy int) {
-	C.demo_move(p, C.int(dx), C.int(dy))
+	C.demo_move((*C.demo_point)(unsafe.Pointer(p)), C.int(dx), C.int(dy))
 }
 
 // Fopen calls demo_fopen.

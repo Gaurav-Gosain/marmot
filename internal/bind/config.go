@@ -22,6 +22,10 @@ type Config struct {
 	// Types renames C types: "sqlite3" = "DB".
 	Types map[string]string `toml:"types"`
 
+	// Rename gives Go names to other C names (functions, constants, enum
+	// constants): "DARKGRAY" = "DarkGray".
+	Rename map[string]string `toml:"rename"`
+
 	// Status describes int results that report errors.
 	Status struct {
 		Functions []string `toml:"functions"` // globs of functions whose int result is a status

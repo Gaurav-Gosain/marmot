@@ -133,6 +133,15 @@ func (g *gen) aliasOf(t ctype) string {
 	return ""
 }
 
+// goTypeName is the Go name of a mapped struct as the C code spells it:
+// an alias (Texture2D) keeps its own name.
+func (g *gen) goTypeName(t ctype, gs *goStruct) string {
+	if a := g.typeName(t.orig, t.orig); g.structAlias[a] == gs.name {
+		return a
+	}
+	return gs.name
+}
+
 func (g *gen) enumOf(t ctype) string {
 	for _, n := range []string{t.q, strings.TrimPrefix(t.q, "enum "), strings.TrimPrefix(t.base, "enum ")} {
 		if e := g.enums[n]; e != "" {
@@ -251,6 +260,19 @@ func (g *gen) emitFunc(fn *Func) string {
 			used[goIdent(ps[i+1].Name)] = true
 			g.note("%s: %s and %s are taken as one []byte (pointer and length)", fn.Name, p.Name, ps[i+1].Name)
 			i++
+		case t.ptrs == 1 && t.isCost && fieldTypes[t.base] != "" && t.base != "char" && i+1 < len(ps) &&
+			reLenName.MatchString(ps[i+1].Name) && parseType(ps[i+1].Type, g.h.Typedef).ptrs == 0 &&
+			scalars[parseType(ps[i+1].Type, g.h.Typedef).base] != "":
+			// (const T *array, count): a slice of the exact size Go type.
+			lt := parseType(ps[i+1].Type, g.h.Typedef)
+			et := fieldTypes[t.base]
+			params = append(params, name+" []"+et)
+			g.used["unsafe"] = true
+			pre = append(pre, fmt.Sprintf("%sp := (*C.%s)(unsafe.Pointer(unsafe.SliceData(%s)))", name, cSpell(ctype{q: t.q}), name))
+			args = append(args, name+"p", fmt.Sprintf("C.%s(len(%s))", cSpell(lt), name))
+			used[goIdent(ps[i+1].Name)] = true
+			g.note("%s: %s and %s are taken as one []%s (array and count)", fn.Name, p.Name, ps[i+1].Name, et)
+			i++
 		case t.ptrs == 1 && t.base == "char" && t.isCost:
 			params = append(params, name+" string")
 			g.used["unsafe"] = true
@@ -264,6 +286,16 @@ func (g *gen) emitFunc(fn *Func) string {
 			} else {
 				args = append(args, name)
 			}
+		case t.ptrs == 0 && g.structOf(t) != nil:
+			gs := g.structOf(t)
+			g.used["unsafe"] = true
+			params = append(params, name+" "+g.goTypeName(t, gs))
+			args = append(args, fmt.Sprintf("*(*C.%s)(unsafe.Pointer(&%s))", gs.c, name))
+		case t.ptrs == 1 && g.structOf(t) != nil:
+			gs := g.structOf(t)
+			g.used["unsafe"] = true
+			params = append(params, name+" *"+g.goTypeName(t, gs))
+			args = append(args, fmt.Sprintf("(*C.%s)(unsafe.Pointer(%s))", gs.c, name))
 		case t.ptrs == 1 && g.aliasOf(t) != "":
 			params = append(params, name+" *"+g.aliasOf(t))
 			args = append(args, name)
@@ -307,7 +339,7 @@ func (g *gen) emitFunc(fn *Func) string {
 		switch {
 		case owned:
 			g.used["unsafe"] = true
-			body = append(body, "r := "+call, fmt.Sprintf("defer C.%s(unsafe.Pointer(r))", owner))
+			body = append(body, "r := "+call, fmt.Sprintf("defer C.%s(%s)", owner, g.freeArg(owner, "r")))
 		case rt.isCost || slices.Contains(g.cfg.Borrowed, fn.Name):
 			if !slices.Contains(g.cfg.Borrowed, fn.Name) {
 				g.note("%s: returns %s; copied into a Go string and not freed (const). Put it in owned to free it", fn.Name, fn.Ret.Q)
@@ -338,6 +370,13 @@ func (g *gen) emitFunc(fn *Func) string {
 		results = append(results, "*"+g.aliasOf(rt))
 		retValues = append(retValues, "r")
 		body = append(body, "r := "+call)
+	case rt.ptrs == 0 && g.structOf(rt) != nil:
+		gs := g.structOf(rt)
+		g.used["unsafe"] = true
+		gt := g.goTypeName(rt, gs)
+		results = append(results, gt)
+		retValues = append(retValues, fmt.Sprintf("*(*%s)(unsafe.Pointer(&r))", gt))
+		body = append(body, "r := "+call)
 	case rt.ptrs == 0 && g.enumOf(rt) != "":
 		results = append(results, g.enumOf(rt))
 		retValues = append(retValues, g.enumOf(rt)+"(r)")
@@ -356,7 +395,7 @@ func (g *gen) emitFunc(fn *Func) string {
 		body = append(body, "return "+strings.Join(retValues, ", "))
 	}
 	// Name and receiver.
-	name := goName(fn.Name, g.cfg.Prefixes)
+	name := g.name(fn.Name)
 	if recv != nil && recv.close == fn.Name {
 		name = "Close"
 	}
@@ -412,6 +451,19 @@ func (g *gen) emitFunc(fn *Func) string {
 	return ""
 }
 
+// freeArg is v converted for the free function fn: unsafe.Pointer for a
+// void * parameter, else as is.
+func (g *gen) freeArg(fn, v string) string {
+	for _, f := range g.h.Funcs {
+		if f.Name == fn && len(f.Params) == 1 {
+			if t := parseType(f.Params[0].Type, g.h.Typedef); t.base != "void" {
+				return v
+			}
+		}
+	}
+	return "unsafe.Pointer(" + v + ")"
+}
+
 func zeroes(results []string) string {
 	var z []string
 	for _, r := range results {
@@ -422,6 +474,8 @@ func zeroes(results []string) string {
 			z = append(z, `""`)
 		case r == "bool":
 			z = append(z, "false")
+		case len(r) > 0 && r[0] >= 'A' && r[0] <= 'Z':
+			z = append(z, r+"{}")
 		default:
 			z = append(z, "0")
 		}
