@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
 )
@@ -93,6 +94,10 @@ func Fix(fo FixOptions) (*FixResult, error) {
 		return nil, fmt.Errorf("the packages do not type check (%s); fix the errors first (marmot build shows them)", before[0])
 	}
 	for round := 0; round < fo.Rounds; round++ {
+		// A file written after the round's analysis began is someone
+		// else's edit in progress: its fixes are left out, and no file is
+		// written unless it still holds what was read.
+		start := time.Now()
 		r, err := Run(fo.Options)
 		if err != nil {
 			return nil, err
@@ -104,6 +109,7 @@ func Fix(fo FixOptions) (*FixResult, error) {
 		res.Rounds++
 		chosen, conflicts := selectFixes(cands)
 		res.Conflicts = conflicts
+		chosen = res.skipChanged(chosen, start)
 		files, err := applyEdits(chosen)
 		if err != nil {
 			return nil, err
@@ -113,7 +119,7 @@ func Fix(fo FixOptions) (*FixResult, error) {
 			res.Applied = append(res.Applied, appliedOf(chosen)...)
 			break
 		}
-		writeFiles(files, true)
+		res.writeFiles(files, true)
 		if ok, _ := verify(fo, files); ok {
 			res.Applied = append(res.Applied, appliedOf(chosen)...)
 			if conflicts == 0 {
@@ -124,7 +130,7 @@ func Fix(fo FixOptions) (*FixResult, error) {
 		}
 		// Undo the round, then keep the fixes of one directory at a time
 		// when they verify.
-		writeFiles(files, false)
+		res.writeFiles(files, false)
 		byDir := map[string][]candidate{}
 		var dirs []string
 		for _, c := range chosen {
@@ -141,13 +147,13 @@ func Fix(fo FixOptions) (*FixResult, error) {
 			if err != nil {
 				return nil, err
 			}
-			writeFiles(fs, true)
+			res.writeFiles(fs, true)
 			if ok, _ := verify(fo, fs); ok {
 				res.Applied = append(res.Applied, appliedOf(byDir[d])...)
 				progress = true
 				continue
 			}
-			writeFiles(fs, false)
+			res.writeFiles(fs, false)
 			res.RolledBack = append(res.RolledBack, appliedOf(byDir[d])...)
 		}
 		if !progress {
@@ -343,11 +349,45 @@ func offset(src []byte, line, col int) int {
 	return off
 }
 
-func writeFiles(fs []*fileState, forward bool) {
+// skipChanged drops the fixes of files modified since start, with a note.
+func (res *FixResult) skipChanged(cs []candidate, start time.Time) []candidate {
+	changed := map[string]bool{}
+	var out []candidate
+	for _, c := range cs {
+		ok := true
+		for _, e := range c.edits {
+			if v, seen := changed[e.File]; seen {
+				ok = ok && !v
+				continue
+			}
+			st, err := os.Stat(e.File)
+			moved := err != nil || st.ModTime().After(start)
+			changed[e.File] = moved
+			if moved {
+				res.Notes = append(res.Notes, "changed while the fixes were computed, left alone: "+e.File)
+				ok = false
+			}
+		}
+		if ok {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// writeFiles writes the fixed contents (forward) or restores the old ones,
+// each only if the file still holds the other version: a file someone
+// edited in between is left as they left it.
+func (res *FixResult) writeFiles(fs []*fileState, forward bool) {
 	for _, f := range fs {
-		data := f.new
+		data, want := f.new, f.old
 		if !forward {
-			data = f.old
+			data, want = f.old, f.new
+		}
+		cur, err := os.ReadFile(f.path)
+		if err != nil || !bytes.Equal(cur, want) {
+			res.Notes = append(res.Notes, "changed by someone else meanwhile, not written: "+f.path)
+			continue
 		}
 		mode := os.FileMode(0o644)
 		if st, err := os.Stat(f.path); err == nil {

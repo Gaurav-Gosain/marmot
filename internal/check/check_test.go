@@ -10,6 +10,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Gaurav-Gosain/marmot/internal/diag"
 )
 
 func TestParseNolint(t *testing.T) {
@@ -398,5 +401,20 @@ func TestFmtFiles(t *testing.T) {
 	all := &scope{dir: "/m", patterns: []string{"./..."}}
 	if !all.fmtFile("/m/a.go") || !all.fmtFile("/m/x/b.go") || all.fmtFile("/m/x/testdata/c.go") {
 		t.Error("./... selects the module minus testdata")
+	}
+}
+
+func TestFixLeavesConcurrentEdits(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "a.go")
+	os.WriteFile(p, []byte("someone else's edit"), 0o644)
+	res := &FixResult{}
+	res.writeFiles([]*fileState{{path: p, old: []byte("read by fix"), new: []byte("fixed")}}, true)
+	if data, _ := os.ReadFile(p); string(data) != "someone else's edit" || len(res.Notes) != 1 {
+		t.Errorf("a file changed after it was read was overwritten: %q %v", data, res.Notes)
+	}
+	start := time.Now().Add(-time.Hour)
+	c := candidate{edits: []diag.Edit{{File: p}}}
+	if kept := res.skipChanged([]candidate{c}, start); len(kept) != 0 {
+		t.Error("the fix of a file modified after the analysis began was kept")
 	}
 }
