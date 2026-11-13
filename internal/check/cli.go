@@ -269,6 +269,9 @@ func FixMain(args []string, version string) int {
 		fmt.Println(n)
 	}
 	wd, _ := os.Getwd()
+	if d, err := filepath.EvalSymlinks(wd); err == nil {
+		wd = d
+	}
 	for _, a := range res.Applied {
 		fmt.Printf("%s:%d: %s [%s %s]\n", diag.RelPath(wd, a.File), a.Line, a.Title, a.Check, a.Analyzer)
 	}

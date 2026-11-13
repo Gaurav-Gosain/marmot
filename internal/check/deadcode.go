@@ -96,7 +96,7 @@ func deadcode(sc *scope, opts Options) deadResult {
 		Mode:  packages.LoadAllSyntax | packages.NeedModule,
 		Tests: true,
 		Dir:   sc.dir,
-		Env:   os.Environ(),
+		Env:   append(os.Environ(), "PWD="+sc.dir),
 	}
 	if len(opts.Tags) > 0 {
 		cfg.BuildFlags = []string{"-tags=" + strings.Join(opts.Tags, ",")}

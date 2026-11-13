@@ -370,7 +370,7 @@ func workspaceModules(dir string) ([]module, error) {
 func goCmd(dir string, env []string, args ...string) (string, error) {
 	cmd := exec.Command("go", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = append(append(os.Environ(), "PWD="+dir), env...) // the go command trusts $PWD
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {

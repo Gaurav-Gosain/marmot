@@ -78,7 +78,7 @@ func goList(dir string, patterns []string, tags []string, env []string, tests bo
 	args = append(args, patterns...)
 	cmd := exec.Command("go", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = append(append(os.Environ(), "PWD="+dir), env...) // the go command trusts $PWD
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb

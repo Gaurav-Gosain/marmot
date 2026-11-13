@@ -129,6 +129,9 @@ type fixFlags struct {
 	codes, tags *string
 	all         *bool
 	output      outputFlags
+	// Analyzer fixes, run by marmot-check.
+	only, upgrade *string
+	diff, test    *bool
 }
 
 func newFixFlags() (*flag.FlagSet, *fixFlags) {
@@ -137,6 +140,10 @@ func newFixFlags() (*flag.FlagSet, *fixFlags) {
 	f.codes = fs.String("code", "", "only apply fixes for these comma separated codes, for example M0004,M0005")
 	f.all = fs.Bool("all", false, "also apply fixes that may be incorrect (typo corrections); check the result")
 	f.tags = fs.String("tags", "", "comma separated build tags")
+	f.only = fs.String("only", "", "apply only the fixes of these checks (fmt, modernize, vet, lint, exhaustive), not the build errors")
+	f.diff = fs.Bool("diff", false, "print the check fixes as patches, change nothing")
+	f.test = fs.Bool("test", false, "keep a check fix only if the tests of its package still pass")
+	f.upgrade = fs.String("upgrade", "", "raise the go version of the modules to go1.N and apply the modernizers it unlocks")
 	f.output = addOutputFlags(fs)
 	return fs, f
 }
@@ -149,6 +156,28 @@ func cmdFix(args []string) int {
 	}
 	codesFlag, all, tags, of := ff.codes, ff.all, ff.tags, ff.output
 	rep := of.reporter("fix")
+	// The fixes of marmot check findings (formatting, modernizers, and
+	// with -all vet and lint suggestions) come from marmot-check.
+	var toolArgs []string
+	for _, f := range []struct {
+		name, val string
+	}{{"only", *ff.only}, {"upgrade", *ff.upgrade}, {"tags", *tags}, {"color", *of.color}} {
+		if f.val != "" {
+			toolArgs = append(toolArgs, "-"+f.name+"="+f.val)
+		}
+	}
+	for _, f := range []struct {
+		name string
+		on   bool
+	}{{"all", *all}, {"diff", *ff.diff}, {"test", *ff.test}, {"json", *of.json}} {
+		if f.on {
+			toolArgs = append(toolArgs, "-"+f.name)
+		}
+	}
+	toolArgs = append(toolArgs, fs.Args()...)
+	if *codesFlag == "" && (*ff.only != "" || *ff.diff || *ff.test || *ff.upgrade != "") {
+		return runCheckTool("fix", toolArgs)
+	}
 	codes := map[string]bool{}
 	for _, c := range strings.Split(*codesFlag, ",") {
 		if c = strings.ToUpper(strings.TrimSpace(c)); c != "" {
@@ -225,6 +254,10 @@ func cmdFix(args []string) int {
 	}
 	if remaining > 0 {
 		return 1
+	}
+	if *codesFlag == "" {
+		// The build is clean: apply the check fixes too.
+		return runCheckTool("fix", toolArgs)
 	}
 	return 0
 }

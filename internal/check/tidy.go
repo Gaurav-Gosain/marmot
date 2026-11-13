@@ -32,7 +32,7 @@ func runTidy(sc *scope, st *store, r *CheckResult) {
 		} else {
 			cmd := exec.Command("go", "mod", "tidy", "-diff")
 			cmd.Dir = m.Dir
-			cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=-mod=mod")
+			cmd.Env = append(os.Environ(), "PWD="+m.Dir, "GOWORK=off", "GOFLAGS=-mod=mod")
 			var out, errb bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &out, &errb
 			err := cmd.Run()
