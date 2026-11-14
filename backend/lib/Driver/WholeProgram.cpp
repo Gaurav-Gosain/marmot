@@ -1371,10 +1371,16 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   // Each thread takes the first job, largest first, that fits the
   // admission budget, so small jobs run beside a large one instead of
   // waiting behind the next large one.
-  // MARMOT_MEMLOG=1: one line per job on stderr: phase (count of parallel
-  // phases), the job's input text, process memory, and the text admitted
-  // and kept parsed, in MB; for sizing the budgets above.
-  const bool memLog = std::getenv("MARMOT_MEMLOG") != nullptr;
+  // MARMOT_MEMLOG=FILE: one line per job appended to FILE: phase (count of
+  // parallel phases), the job's input text, process memory, and the text
+  // admitted and kept parsed, in MB; for sizing the budgets above.
+  std::unique_ptr<raw_fd_ostream> memLog;
+  if (const char *e = std::getenv("MARMOT_MEMLOG")) {
+    std::error_code ec;
+    memLog = std::make_unique<raw_fd_ostream>(e, ec, sys::fs::OF_Append);
+    if (ec)
+      memLog.reset();
+  }
   unsigned phaseNo = 0;
   std::atomic<uint64_t> parsedBytes{0}; // input text of the modules kept parsed
   auto parallel = [&](auto fn) {
@@ -1412,9 +1418,10 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           watchdogEnd(jobs[i].in);
           if (memLog) {
             std::lock_guard<std::mutex> l(admitMu);
-            errs << format("memlog phase %u job %u text %.1f mem %llu admitted %.1f kept %.1f\n", phaseNo, i,
+            *memLog << format("memlog phase %u job %u text %.1f mem %llu admitted %.1f kept %.1f\n", phaseNo, i,
                            n / 1e6, (unsigned long long)(processMemory() >> 20), admitted / 1e6,
                            parsedBytes.load() / 1e6);
+            memLog->flush(); // the watchdog may end the process
           }
           {
             std::lock_guard<std::mutex> l(admitMu);
