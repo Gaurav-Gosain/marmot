@@ -1920,9 +1920,10 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       DefaultThreadPool pool(hardware_concurrency(threads));
       for (Group &g : groups)
         pool.async([&, gp = &g] {
-          // A group weighs four times its share of the module's text: it
-          // also carries the module's declarations and the bodies it imports.
-          uint64_t gn = 4 * inputSize[gp->job] / std::max(1u, nparts[gp->job]);
+          // A group weighs its bitcode (with the declarations and imported
+          // bodies it carries): on tuios a group of 12 MB of bitcode used
+          // about 330 MB compiling, 27 times, close to the 30 of text.
+          uint64_t gn = gp->bitcode.size();
           admitWait(gn);
           std::string name = jobs[gp->job].in + "#" + std::to_string(gp->index);
           watchdogBegin(name);
@@ -1959,6 +1960,13 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
               sys::fs::remove(out);
           }
           watchdogEnd(name);
+          if (memLog) {
+            std::lock_guard<std::mutex> l(admitMu);
+            *memLog << format("memlog group %u.%u text %.1f mem %llu admitted %.1f bitcode %.1f\n", gp->job, gp->index,
+                              gn / 1e6, (unsigned long long)(processMemory() >> 20), admitted / 1e6,
+                              gp->bitcode.size() / 1e6);
+            memLog->flush();
+          }
           admitDone(gn);
           report(gp->job, msgs, t);
         });
@@ -2550,9 +2558,10 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     DefaultThreadPool pool(hardware_concurrency(threads));
     for (Group &g : groups)
       pool.async([&, gp = &g] {
-        // A group weighs four times its share of the module's text: it
-        // also carries the module's declarations and the bodies it imports.
-        uint64_t gn = 4 * inputSize[gp->job] / std::max(1u, nparts[gp->job]);
+        // A group weighs its bitcode (with the declarations and imported
+        // bodies it carries): on tuios a group of 12 MB of bitcode used
+        // about 330 MB compiling, 27 times, close to the 30 of text.
+        uint64_t gn = gp->bitcode.size();
         admitWait(gn);
         std::string name = jobs[gp->job].in + "#" + std::to_string(gp->index);
         watchdogBegin(name);
@@ -2585,6 +2594,13 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           }
         }
         watchdogEnd(name);
+        if (memLog) {
+          std::lock_guard<std::mutex> l(admitMu);
+          *memLog << format("memlog group %u.%u text %.1f mem %llu admitted %.1f bitcode %.1f\n", gp->job, gp->index,
+                            gn / 1e6, (unsigned long long)(processMemory() >> 20), admitted / 1e6,
+                            gp->bitcode.size() / 1e6);
+          memLog->flush();
+        }
         admitDone(gn);
         report(gp->job, msgs, t);
       });
