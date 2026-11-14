@@ -713,6 +713,9 @@ private:
 
   // Instructions.
   void e(uint32_t w32) { w.emit32(w32); }
+  void mv(unsigned d, unsigned s) {  // a 64-bit move, none to itself
+    if (d != s) e(movReg(d, s));
+  }
   uint64_t here() const { return w.size(Sect::Text); }
   void addrOf(unsigned rd, uint64_t off);  // rd = sp + off
   void ldSlot(unsigned r, uint64_t off, uint64_t size);
@@ -797,6 +800,9 @@ void FuncGen::layout() {
     sret = true;
     sretSlot = alloc(8, 8);
   }
+  // Values of at most 32 bytes first, near sp (ldp/stp reach 504 bytes);
+  // larger values and alloca storage after them.
+  std::vector<std::pair<Value, Operation *>> large;
   // Function arguments are the entry block's arguments.
   for (Block &b : fn.getBody()) {
     for (BlockArgument a : b.getArguments())
@@ -813,16 +819,28 @@ void FuncGen::layout() {
             continue;
           }
         uint64_t sz = sizeOf(r.getType());
+        if (sz > 32) {
+          large.push_back({r, nullptr});
+          continue;
+        }
         slot[r] = alloc(sz < 8 ? 8 : sz, std::max<uint64_t>(8, alignOf(r.getType())));
       }
       if (auto a = dyn_cast<LL::AllocaOp>(op)) {
         if (&b != &fn.getBody().front()) unsupported("alloca outside the entry block");
         auto c = a.getArraySize().getDefiningOp<LL::ConstantOp>();
         if (!c) unsupported("dynamic alloca");
-        uint64_t n = cast<IntegerAttr>(c.getValue()).getValue().getZExtValue();
-        uint64_t al = std::max<uint64_t>(a.getAlignment().value_or(0), alignOf(a.getElemType()));
-        allocaStorage[&op] = alloc(std::max<uint64_t>(n * sizeOf(a.getElemType()), 1), std::max<uint64_t>(al, 8));
+        large.push_back({Value(), &op});
       }
+    }
+  }
+  for (auto [r, op] : large) {
+    if (op) {
+      auto a = cast<LL::AllocaOp>(op);
+      uint64_t n = cast<IntegerAttr>(a.getArraySize().getDefiningOp<LL::ConstantOp>().getValue()).getValue().getZExtValue();
+      uint64_t al = std::max<uint64_t>(a.getAlignment().value_or(0), alignOf(a.getElemType()));
+      allocaStorage[op] = alloc(std::max<uint64_t>(n * sizeOf(a.getElemType()), 1), std::max<uint64_t>(al, 8));
+    } else {
+      slot[r] = alloc(sizeOf(r.getType()), std::max<uint64_t>(8, alignOf(r.getType())));
     }
   }
   // Temporary area for parallel block argument moves.
@@ -952,7 +970,7 @@ void FuncGen::get(unsigned r, Value v) {
     return;
   }
   if (auto h = home.find(v); h != home.end()) {
-    if (h->second != r) e(movReg(r, h->second));
+    if (h->second != r) mv(r, h->second);
     return;
   }
   ldSlot(r, of(v), 8);
@@ -960,7 +978,7 @@ void FuncGen::get(unsigned r, Value v) {
 
 void FuncGen::putRaw(unsigned r, Value v) {
   if (auto h = home.find(v); h != home.end()) {
-    if (h->second != r) e(movReg(h->second, r));
+    if (h->second != r) mv(h->second, r);
     return;
   }
   stSlot(r, of(v), 8);
@@ -1235,7 +1253,7 @@ void FuncGen::emitCall(LL::CallOp call) {
       if (isFloat(t)) {
         e(fmovToGp(d, nfp++, t.isF64()));
       } else {
-        e(movReg(d, ngp++));
+        mv(d, ngp++);
         normalize(d, t);
       }
       putRaw(d, r);
@@ -1248,7 +1266,7 @@ void FuncGen::emitCall(LL::CallOp call) {
       stAt(ngp++, SP, of(r) + off, sizeOf(t));  // an aggregate: the register as it is
       continue;
     } else {
-      e(movReg(R1, ngp++));
+      mv(R1, ngp++);
       normalize(R1, t);
     }
     if (isAggregate(r.getType()))
@@ -1321,7 +1339,7 @@ void FuncGen::emitReturn(LL::ReturnOp ret) {
       if (isFloat(t))
         e(fmovFromGp(nfp++, R1, t.isF64()));
       else
-        e(movReg(ngp++, R1));
+        mv(ngp++, R1);
     }
   }
   epilogue();
@@ -1591,7 +1609,7 @@ void FuncGen::emitOp(Operation &op) {
       })
       .Case<LL::SelectOp>([&](auto s) {
         Type t = s.getType();
-        if (unsigned c = src(s.getCondition(), R3); c != R3) e(movReg(R3, c));
+        if (unsigned c = src(s.getCondition(), R3); c != R3) mv(R3, c);
         if (isAggregate(t)) {
           // Copy whichever value the condition picks.
           uint64_t sz = std::max<uint64_t>((sizeOf(t) + 7) & ~uint64_t(7), 8);
@@ -1621,7 +1639,7 @@ void FuncGen::emitOp(Operation &op) {
           putRaw(d, c.getResult());
           return;
         }
-        if (d != a) e(movReg(d, a));
+        if (d != a) mv(d, a);
         putRaw(d, c.getResult());  // zext and pointer casts: already canonical
       })
       .Case<LL::SExtOp>([&](auto c) {
@@ -1803,7 +1821,7 @@ void FuncGen::emitOp(Operation &op) {
           e(addReg(d, acc, R2));
           acc = d;
         }
-        if (acc != d) e(movReg(d, acc));
+        if (acc != d) mv(d, acc);
         putRaw(d, g.getResult());
       })
       .Case<LL::ExtractValueOp>([&](auto x) {
@@ -1896,7 +1914,7 @@ void FuncGen::emitOp(Operation &op) {
         unsigned ls = log2Size(sizeOf(t));
         get(R2, x.getPtr());
         get(R1, x.getCmp());
-        e(movReg(R4, R1));
+        mv(R4, R1);
         get(R3, x.getVal());
         e(casal(R1, R3, R2, ls));  // R1 <- old
         // Result {old, success}.
@@ -2144,7 +2162,8 @@ static bool raOff() {
 // block go through the liveness dataflow.
 static llvm::DenseMap<Value, unsigned> linearScan(LL::LLVMFuncOp fn, llvm::ArrayRef<unsigned> regs,
                                                   const llvm::DenseSet<Operation *> &skip,
-                                                  const llvm::DenseSet<StringAttr> &twice) {
+                                                  const llvm::DenseSet<StringAttr> &twice,
+                                                  llvm::ArrayRef<unsigned> low = {}) {
   llvm::DenseMap<Value, unsigned> res;
   if (raOff() || callsReturnsTwice(fn, twice)) return res;
   llvm::DenseMap<Value, unsigned> idx;
@@ -2167,6 +2186,7 @@ static llvm::DenseMap<Value, unsigned> linearScan(LL::LLVMFuncOp fn, llvm::Array
   };
   // Uses of values defined in another block: (value, block).
   std::vector<std::pair<unsigned, unsigned>> far;
+  std::vector<unsigned> barrier;  // positions of operations that use the low registers
   unsigned p = 0;
   for (Block &b : fn.getBody()) {
     unsigned i = unsigned(blocks.size());
@@ -2176,6 +2196,7 @@ static llvm::DenseMap<Value, unsigned> linearScan(LL::LLVMFuncOp fn, llvm::Array
     for (BlockArgument a : b.getArguments()) cand(a, i, start);
     for (Operation &op : b) {
       unsigned at = p++;
+      if (isa<LL::CallOp, LL::MemcpyOp, LL::MemmoveOp, LL::MemsetOp, LL::ReturnOp>(op)) barrier.push_back(at);
       llvm::SmallVector<Value, 4> used(op.getOperands());
       // A skipped operation (a fused compare, a lazy load) is emitted at its
       // users: its operands live there.
@@ -2242,40 +2263,56 @@ static llvm::DenseMap<Value, unsigned> linearScan(LL::LLVMFuncOp fn, llvm::Array
   std::vector<unsigned> order(n);
   for (unsigned i = 0; i < n; i++) order[i] = i;
   std::stable_sort(order.begin(), order.end(), [&](unsigned a, unsigned b) { return iv[a].first < iv[b].first; });
-  std::vector<unsigned> active;  // value indices holding a register
   std::vector<unsigned> reg(n, ~0u);
-  uint32_t freeRegs = 0;
-  for (unsigned r : regs) freeRegs |= 1u << r;
-  for (unsigned v : order) {
-    unsigned start = iv[v].first;
-    for (size_t k = 0; k < active.size();) {
-      unsigned a = active[k];
-      if (iv[a].second < start) {
-        freeRegs |= 1u << reg[a];
-        active[k] = active.back();
-        active.pop_back();
-      } else {
-        k++;
+  // One linear scan of the values that want takes over regs.
+  auto scan = [&](llvm::ArrayRef<unsigned> rs, auto want) {
+    std::vector<unsigned> active;  // value indices holding a register
+    uint32_t freeRegs = 0;
+    for (unsigned r : rs) freeRegs |= 1u << r;
+    for (unsigned v : order) {
+      if (reg[v] != ~0u || !want(v)) continue;
+      unsigned start = iv[v].first;
+      for (size_t k = 0; k < active.size();) {
+        unsigned a = active[k];
+        if (iv[a].second < start) {
+          freeRegs |= 1u << reg[a];
+          active[k] = active.back();
+          active.pop_back();
+        } else {
+          k++;
+        }
+      }
+      if (freeRegs) {
+        unsigned r = unsigned(llvm::countr_zero(freeRegs));
+        freeRegs &= ~(1u << r);
+        reg[v] = r;
+        active.push_back(v);
+        continue;
+      }
+      // Full: the interval that ends last stays in memory.
+      size_t fk = 0;
+      for (size_t k = 1; k < active.size(); k++)
+        if (iv[active[k]].second > iv[active[fk]].second) fk = k;
+      unsigned a = active[fk];
+      if (iv[a].second > iv[v].second) {
+        reg[v] = reg[a];
+        reg[a] = ~0u;
+        active[fk] = v;
       }
     }
-    if (freeRegs) {
-      unsigned r = unsigned(llvm::countr_zero(freeRegs));
-      freeRegs &= ~(1u << r);
-      reg[v] = r;
-      active.push_back(v);
-      continue;
-    }
-    // Full: the interval that ends last stays in memory.
-    size_t fk = 0;
-    for (size_t k = 1; k < active.size(); k++)
-      if (iv[active[k]].second > iv[active[fk]].second) fk = k;
-    unsigned a = active[fk];
-    if (iv[a].second > iv[v].second) {
-      reg[v] = reg[a];
-      reg[a] = ~0u;
-      active[fk] = v;
-    }
+  };
+  // The low registers first, for values that no call, memory intrinsic or
+  // return meets after their definition (a call's result may start there)
+  // and that the prologue does not write (entry block arguments).
+  if (!low.empty()) {
+    Block *entry = &fn.getBody().front();
+    scan(low, [&](unsigned v) {
+      if (auto ba = dyn_cast<BlockArgument>(vals[v]); ba && ba.getOwner() == entry) return false;
+      auto it = std::upper_bound(barrier.begin(), barrier.end(), iv[v].first);
+      return it == barrier.end() || *it > iv[v].second;
+    });
   }
+  scan(regs, [](unsigned) { return true; });
   for (unsigned v = 0; v < n; v++)
     if (reg[v] != ~0u) res[vals[v]] = reg[v];
   return res;
@@ -2283,8 +2320,10 @@ static llvm::DenseMap<Value, unsigned> linearScan(LL::LLVMFuncOp fn, llvm::Array
 
 void FuncGen::allocate() {
   static const unsigned regs[] = {19, 20, 21, 22, 23, 24, 25, 26, 27, 28};
-  home = linearScan(fn, regs, fusedCmp, mg.returnsTwice);
-  for (auto [v, r] : home) calleeUsed |= 1u << r;
+  static const unsigned low[] = {0, 1, 2, 3, 4, 5, 6, 7};
+  home = linearScan(fn, regs, fusedCmp, mg.returnsTwice, low);
+  for (auto [v, r] : home)
+    if (r >= 19) calleeUsed |= 1u << r;
 }
 
 static std::mutex opBytesMu;
