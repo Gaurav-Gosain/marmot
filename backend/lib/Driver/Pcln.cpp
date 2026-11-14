@@ -581,16 +581,280 @@ namespace {
 uint32_t be32(const uint8_t *p) {
   return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3];
 }
+void putBe32(uint8_t *p, uint32_t v) {
+  p[0] = uint8_t(v >> 24);
+  p[1] = uint8_t(v >> 16);
+  p[2] = uint8_t(v >> 8);
+  p[3] = uint8_t(v);
+}
+template <class T> T readAt(StringRef data, uint64_t off) {
+  T v;
+  std::memcpy(&v, data.data() + off, sizeof v);
+  return v;
+}
+template <class T> void writeAt(std::string &s, uint64_t off, const T &v) {
+  std::memcpy(&s[off], &v, sizeof v);
+}
+
+// A replacement of the bytes at `at` in the output file.
+struct Edit {
+  uint64_t at;
+  std::string bytes;
+};
+
+// The bytes [lo, hi) of the output: the input with the edits applied.
+void patchedRange(StringRef data, const std::vector<Edit> &edits, uint64_t lo, uint64_t hi,
+                  std::string &out) {
+  out.assign(hi - lo, '\0');
+  if (lo < data.size())
+    std::memcpy(out.data(), data.data() + lo, std::min<uint64_t>(hi, data.size()) - lo);
+  for (const Edit &e : edits) {
+    uint64_t a = std::max(lo, e.at), z = std::min(hi, e.at + e.bytes.size());
+    if (a < z)
+      std::memcpy(&out[a - lo], e.bytes.data() + (a - e.at), z - a);
+  }
+}
+
+// The tail of __LINKEDIT without the local symbols: the symbol table (globals
+// and undefined symbols only), the indirect symbol table renumbered, a new
+// string table, then the code signature (written by the caller at
+// sigOff). Only for the layout ld64 writes: symbol table, indirect symbols,
+// strings and signature last in the file, locals first in the table.
+// Edits the load commands in hdr. False (and nothing changed) otherwise.
+bool dropLocals(const MachOObjectFile &m, StringRef data, std::string &hdr, uint64_t &newSigOff,
+                std::string &tail, uint32_t &dropped) {
+  uint64_t symtabCmd = 0, dysymCmd = 0, linkeditCmd = 0;
+  MachO::symtab_command st{};
+  MachO::dysymtab_command dy{};
+  uint64_t sigOff = 0;
+  std::vector<std::pair<uint64_t, uint64_t>> other; // what must end before the symbols
+  for (const auto &lc : m.load_commands()) {
+    uint64_t at = uint64_t(lc.Ptr - data.data());
+    switch (lc.C.cmd) {
+    case MachO::LC_SYMTAB:
+      symtabCmd = at;
+      st = m.getSymtabLoadCommand();
+      break;
+    case MachO::LC_DYSYMTAB:
+      dysymCmd = at;
+      dy = m.getDysymtabLoadCommand();
+      break;
+    case MachO::LC_CODE_SIGNATURE:
+      sigOff = m.getLinkeditDataLoadCommand(lc).dataoff;
+      break;
+    case MachO::LC_SEGMENT_64:
+    {
+      auto seg = m.getSegment64LoadCommand(lc);
+      if (StringRef(seg.segname, strnlen(seg.segname, 16)) == "__LINKEDIT")
+        linkeditCmd = at;
+      else if (seg.filesize)
+        other.push_back({seg.fileoff, seg.fileoff + seg.filesize});
+      break;
+    }
+    case MachO::LC_FUNCTION_STARTS:
+    case MachO::LC_DATA_IN_CODE:
+    case MachO::LC_DYLD_CHAINED_FIXUPS:
+    case MachO::LC_DYLD_EXPORTS_TRIE:
+    case MachO::LC_LINKER_OPTIMIZATION_HINT:
+    case MachO::LC_DYLIB_CODE_SIGN_DRS: {
+      auto d = m.getLinkeditDataLoadCommand(lc);
+      if (d.datasize)
+        other.push_back({d.dataoff, d.dataoff + d.datasize});
+      break;
+    }
+    case MachO::LC_DYLD_INFO:
+    case MachO::LC_DYLD_INFO_ONLY: {
+      auto d = m.getDyldInfoLoadCommand(lc);
+      for (auto [o, s] : {std::pair{d.rebase_off, d.rebase_size}, {d.bind_off, d.bind_size},
+                          {d.weak_bind_off, d.weak_bind_size}, {d.lazy_bind_off, d.lazy_bind_size},
+                          {d.export_off, d.export_size}})
+        if (s)
+          other.push_back({o, uint64_t(o) + s});
+      break;
+    }
+    default:
+      break;
+    }
+  }
+  if (!symtabCmd || !dysymCmd || !linkeditCmd || !sigOff)
+    return false;
+  uint32_t nloc = dy.nlocalsym;
+  if (nloc == 0 || dy.ilocalsym != 0 || dy.iextdefsym != nloc ||
+      dy.iundefsym != dy.iextdefsym + dy.nextdefsym || dy.iundefsym + dy.nundefsym != st.nsyms ||
+      dy.ntoc || dy.nmodtab || dy.nextrefsyms || dy.nextrel || dy.nlocrel)
+    return false;
+  uint64_t symEnd = uint64_t(st.symoff) + uint64_t(st.nsyms) * sizeof(MachO::nlist_64);
+  uint64_t indEnd = uint64_t(dy.indirectsymoff) + uint64_t(dy.nindirectsyms) * 4;
+  if (dy.nindirectsyms && (dy.indirectsymoff < symEnd || indEnd > st.stroff))
+    return false;
+  if (symEnd > st.stroff || uint64_t(st.stroff) + st.strsize > sigOff || sigOff > data.size())
+    return false;
+  for (auto [lo, hi] : other)
+    if (hi > st.symoff)
+      return false;
+  auto seg = readAt<MachO::segment_command_64>(StringRef(hdr), linkeditCmd);
+  if (seg.fileoff + seg.filesize != data.size())
+    return false;
+
+  StringRef strtab = data.substr(st.stroff, st.strsize);
+  std::string strs;
+  size_t first = strtab.find('\0');
+  strs = first == StringRef::npos ? std::string(1, '\0') : strtab.substr(0, first + 1).str();
+  tail.clear();
+  for (uint32_t k = nloc; k < st.nsyms; ++k) {
+    auto n = readAt<MachO::nlist_64>(data, st.symoff + uint64_t(k) * sizeof(MachO::nlist_64));
+    if (n.n_strx) {
+      if (n.n_strx >= st.strsize)
+        return false;
+      StringRef name(strtab.data() + n.n_strx, strnlen(strtab.data() + n.n_strx, st.strsize - n.n_strx));
+      n.n_strx = uint32_t(strs.size());
+      strs += name;
+      strs += '\0';
+    }
+    tail.append(reinterpret_cast<const char *>(&n), sizeof n);
+  }
+  uint64_t indOff = st.symoff + tail.size();
+  for (uint32_t k = 0; k < dy.nindirectsyms; ++k) {
+    uint32_t e = readAt<uint32_t>(data, dy.indirectsymoff + uint64_t(k) * 4);
+    if (!(e & (MachO::INDIRECT_SYMBOL_LOCAL | MachO::INDIRECT_SYMBOL_ABS))) {
+      if (e < nloc)
+        return false;
+      e -= nloc;
+    }
+    tail.append(reinterpret_cast<const char *>(&e), 4);
+  }
+  uint64_t strOff = st.symoff + tail.size();
+  while ((strOff + strs.size()) % 16)
+    strs += '\0';
+  tail += strs;
+  newSigOff = st.symoff + tail.size();
+
+  auto sym = readAt<MachO::symtab_command>(StringRef(hdr), symtabCmd);
+  sym.nsyms = st.nsyms - nloc;
+  sym.stroff = uint32_t(strOff);
+  sym.strsize = uint32_t(strs.size());
+  writeAt(hdr, symtabCmd, sym);
+  auto dys = readAt<MachO::dysymtab_command>(StringRef(hdr), dysymCmd);
+  dys.ilocalsym = 0;
+  dys.nlocalsym = 0;
+  dys.iextdefsym = 0;
+  dys.iundefsym = dys.nextdefsym;
+  if (dys.nindirectsyms)
+    dys.indirectsymoff = uint32_t(indOff);
+  writeAt(hdr, dysymCmd, dys);
+  dropped = nloc;
+  return true;
+}
+
+// The ad hoc code signature sig (a superblob) for an output whose signed
+// part ends at codeLimit: each code directory gets the hashes of the pages
+// edits touched, or that end at a new limit; the others keep theirs.
+bool resign(StringRef data, const std::vector<Edit> &edits, StringRef sig, uint64_t oldLimit,
+            uint64_t codeLimit, std::string &out, std::string &err, bool hashPages = true) {
+  auto *sb = reinterpret_cast<const uint8_t *>(sig.data());
+  if (sig.size() < 12 || be32(sb) != 0xfade0cc0) {
+    err = "unknown code signature";
+    return false;
+  }
+  uint32_t count = be32(sb + 8);
+  if (12 + uint64_t(count) * 8 > sig.size()) {
+    err = "bad code signature";
+    return false;
+  }
+  std::vector<std::pair<uint32_t, std::string>> blobs;
+  std::string page;
+  for (uint32_t b = 0; b < count; ++b) {
+    uint32_t type = be32(sb + 12 + 8 * b), off = be32(sb + 12 + 8 * b + 4);
+    if (uint64_t(off) + 8 > sig.size()) {
+      err = "bad code signature";
+      return false;
+    }
+    uint32_t magic = be32(sb + off), len = be32(sb + off + 4);
+    if (uint64_t(off) + len > sig.size()) {
+      err = "bad code signature";
+      return false;
+    }
+    std::string blob(sig.substr(off, len));
+    if (magic == 0xfade0c02) {
+      auto *cd = reinterpret_cast<uint8_t *>(blob.data());
+      uint32_t version = be32(cd + 8), hashOffset = be32(cd + 16), identOffset = be32(cd + 20);
+      uint32_t nCodeSlots = be32(cd + 28);
+      uint8_t hashSize = cd[36], hashType = cd[37], pageShift = cd[39];
+      uint32_t scatter = version >= 0x20100 ? be32(cd + 44) : 0;
+      uint32_t team = version >= 0x20200 ? be32(cd + 48) : 0;
+      uint64_t limit64 = 0;
+      if (version >= 0x20300)
+        std::memcpy(&limit64, cd + 56, 8);
+      if ((hashType != 1 && hashType != 2) || scatter || limit64 || identOffset > hashOffset ||
+          team > hashOffset || hashOffset > len) {
+        err = "unsupported code signature";
+        return false;
+      }
+      uint64_t ps = pageShift ? uint64_t(1) << pageShift : 4096;
+      uint64_t slots = (codeLimit + ps - 1) / ps;
+      std::string ncd = blob.substr(0, hashOffset);
+      ncd.resize(hashOffset + slots * hashSize);
+      auto *n = reinterpret_cast<uint8_t *>(ncd.data());
+      putBe32(n + 4, uint32_t(ncd.size()));
+      putBe32(n + 28, uint32_t(slots));
+      putBe32(n + 32, uint32_t(codeLimit));
+      for (uint64_t p = 0; p < slots; ++p) {
+        uint64_t lo = p * ps, hi = std::min(lo + ps, codeLimit);
+        bool same = p < nCodeSlots && hi == std::min(lo + ps, oldLimit);
+        for (const Edit &e : edits)
+          if (e.at < hi && e.at + e.bytes.size() > lo)
+            same = false;
+        uint8_t *slot = n + hashOffset + p * hashSize;
+        if (!hashPages)
+          continue;
+        if (same) {
+          std::memcpy(slot, cd + hashOffset + p * hashSize, hashSize);
+          continue;
+        }
+        patchedRange(data, edits, lo, hi, page);
+        ArrayRef<uint8_t> bytes(reinterpret_cast<const uint8_t *>(page.data()), page.size());
+        if (hashType == 2) {
+          auto h = SHA256::hash(bytes);
+          std::memcpy(slot, h.data(), std::min<size_t>(hashSize, h.size()));
+        } else {
+          auto h = SHA1::hash(bytes);
+          std::memcpy(slot, h.data(), std::min<size_t>(hashSize, h.size()));
+        }
+      }
+      blob = std::move(ncd);
+    } else if (magic != 0xfade0c01) {
+      // Only ad hoc signatures (a code directory and requirements).
+      err = "not an ad hoc code signature";
+      return false;
+    }
+    blobs.push_back({type, std::move(blob)});
+  }
+  out.assign(12 + blobs.size() * 8, '\0');
+  auto *o = reinterpret_cast<uint8_t *>(out.data());
+  putBe32(o, 0xfade0cc0);
+  putBe32(o + 8, uint32_t(blobs.size()));
+  for (size_t b = 0; b < blobs.size(); ++b) {
+    putBe32(reinterpret_cast<uint8_t *>(&out[12 + 8 * b]), blobs[b].first);
+    putBe32(reinterpret_cast<uint8_t *>(&out[12 + 8 * b + 4]), uint32_t(out.size()));
+    out += blobs[b].second;
+  }
+  putBe32(reinterpret_cast<uint8_t *>(out.data()) + 4, uint32_t(out.size()));
+  return true;
+}
 } // namespace
 
-bool patchMachO(const std::string &binary, StringRef table, std::string &err) {
+bool patchMachO(const std::string &binary, StringRef table, std::string &err, bool stripLocals,
+                uint32_t *droppedLocals) {
+  if (droppedLocals)
+    *droppedLocals = 0;
   auto bufOr = MemoryBuffer::getFile(binary, /*IsText=*/false, /*RequiresNullTerminator=*/false);
   if (!bufOr) {
     err = binary + ": " + bufOr.getError().message();
     return false;
   }
-  // The file stays mapped; only the section and the signature change, and
-  // they are built apart (a copy of the whole file cost more than the rest).
+  // The file stays mapped; the edits (the section, and with stripLocals the
+  // load commands and the end of __LINKEDIT) and the signature are built
+  // apart (a copy of the whole file cost more than the rest).
   StringRef data = (*bufOr)->getBuffer();
   auto objOr = ObjectFile::createObjectFile(MemoryBufferRef(data, binary));
   if (!objOr) {
@@ -605,6 +869,7 @@ bool patchMachO(const std::string &binary, StringRef table, std::string &err) {
   uint64_t off = 0, size = 0;
   bool found = false;
   uint32_t sigOff = 0, sigSize = 0;
+  uint64_t sigCmd = 0;
   for (const auto &lc : m->load_commands()) {
     if (lc.C.cmd == MachO::LC_SEGMENT_64) {
       auto seg = m->getSegment64LoadCommand(lc);
@@ -621,6 +886,7 @@ bool patchMachO(const std::string &binary, StringRef table, std::string &err) {
       auto cs = m->getLinkeditDataLoadCommand(lc);
       sigOff = cs.dataoff;
       sigSize = cs.datasize;
+      sigCmd = uint64_t(lc.Ptr - data.data());
     }
   }
   if (!found) {
@@ -636,51 +902,90 @@ bool patchMachO(const std::string &binary, StringRef table, std::string &err) {
     err = binary + ": bad section or code signature offset";
     return false;
   }
-  objOr->reset();
+  std::vector<Edit> edits;
   std::string sect(size, '\0');
   std::memcpy(sect.data(), table.data(), table.size());
-  std::string sig(data.substr(sigOff, sigSize));
+  edits.push_back({off, std::move(sect)});
+  uint64_t end = data.size(), codeLimit = sigOff;
+  bool dropping = false;
+  // Local symbols: the link kept them for this tool; without them the
+  // binary keeps the global and undefined ones, as a link with -x would.
+  // Needs the signature to be rebuilt, so only with one.
+  if (stripLocals && sigSize) {
+    uint32_t sizeofcmds = m->getHeader64().sizeofcmds;
+    std::string hdr(data.substr(0, sizeof(MachO::mach_header_64) + sizeofcmds));
+    std::string tail;
+    uint64_t newSigOff = 0;
+    uint32_t dropped = 0;
+    if (dropLocals(*m, data, hdr, newSigOff, tail, dropped)) {
+      uint64_t symoff = newSigOff - tail.size();
+      edits.push_back({0, std::move(hdr)});
+      edits.push_back({symoff, std::move(tail)});
+      codeLimit = newSigOff;
+      dropping = true;
+      if (droppedLocals)
+        *droppedLocals = dropped;
+    }
+  }
+  objOr->reset();
 
-  // Ad hoc code signature: rehash the pages that hold the section in every
-  // code directory.
+  // Ad hoc code signature: the pages the edits changed get new hashes.
+  std::string sig;
   if (sigSize) {
-    auto *sb = reinterpret_cast<const uint8_t *>(sig.data());
-    if (sigSize < 12 || be32(sb) != 0xfade0cc0) {
-      err = binary + ": unknown code signature";
+    std::string newSig;
+    // With dropping, first only the new size (the load commands say it).
+    if (!resign(data, edits, data.substr(sigOff, sigSize), sigOff, codeLimit, newSig, err,
+                /*hashPages=*/!dropping)) {
+      err = binary + ": " + err;
       return false;
     }
-    uint32_t count = be32(sb + 8);
-    std::string page;
-    for (uint32_t b = 0; b < count; ++b) {
-      uint32_t blobOff = be32(sb + 12 + 8 * b + 4);
-      auto *cd = reinterpret_cast<uint8_t *>(&sig[blobOff]);
-      if (be32(cd) != 0xfade0c02)
-        continue;
-      uint32_t hashOffset = be32(cd + 16), nCodeSlots = be32(cd + 28), codeLimit = be32(cd + 32);
-      uint8_t hashSize = cd[36], hashType = cd[37], pageShift = cd[39];
-      uint64_t pageSize = pageShift ? uint64_t(1) << pageShift : 4096;
-      if (hashType != 1 && hashType != 2) {
-        err = binary + ": unsupported code signature hash";
+    if (dropping) {
+      // The signature moves to the new end of __LINKEDIT, padded as ld64
+      // does; the load commands say where and how large.
+      while (newSig.size() % 16)
+        newSig += '\0';
+      std::string &hdr = edits[1].bytes;
+      auto cs = readAt<MachO::linkedit_data_command>(StringRef(hdr), sigCmd);
+      cs.dataoff = uint32_t(codeLimit);
+      cs.datasize = uint32_t(newSig.size());
+      writeAt(hdr, sigCmd, cs);
+      end = codeLimit + newSig.size();
+      // __LINKEDIT ends with the file.
+      uint64_t at = sizeof(MachO::mach_header_64);
+      uint32_t ncmds = readAt<MachO::mach_header_64>(StringRef(hdr), 0).ncmds;
+      for (uint32_t c = 0; c < ncmds; ++c) {
+        auto lc = readAt<MachO::load_command>(StringRef(hdr), at);
+        if (lc.cmd == MachO::LC_SEGMENT_64) {
+          auto seg = readAt<MachO::segment_command_64>(StringRef(hdr), at);
+          if (StringRef(seg.segname, strnlen(seg.segname, 16)) == "__LINKEDIT") {
+            seg.filesize = end - seg.fileoff;
+            seg.vmsize = alignTo(seg.filesize, 0x4000);
+            writeAt(hdr, at, seg);
+          }
+        }
+        at += lc.cmdsize;
+      }
+      // Now the hashes, of the final header too.
+      if (!resign(data, edits, data.substr(sigOff, sigSize), sigOff, codeLimit, newSig, err)) {
+        err = binary + ": " + err;
         return false;
       }
-      for (uint64_t p = off / pageSize; p <= (off + size - 1) / pageSize && p < nCodeSlots; ++p) {
-        uint64_t lo = p * pageSize, hi = std::min<uint64_t>(lo + pageSize, codeLimit);
-        // The page as it is after the patch.
-        page.assign(data.data() + lo, hi - lo);
-        uint64_t a = std::max(lo, off), z = std::min(hi, off + size);
-        if (a < z)
-          std::memcpy(&page[a - lo], sect.data() + (a - off), z - a);
-        ArrayRef<uint8_t> bytes(reinterpret_cast<const uint8_t *>(page.data()), page.size());
-        uint8_t *slot = cd + hashOffset + p * hashSize;
-        if (hashType == 2) {
-          auto h = SHA256::hash(bytes);
-          std::memcpy(slot, h.data(), std::min<size_t>(hashSize, h.size()));
-        } else {
-          auto h = SHA1::hash(bytes);
-          std::memcpy(slot, h.data(), std::min<size_t>(hashSize, h.size()));
-        }
+      while (newSig.size() % 16)
+        newSig += '\0';
+      if (newSig.size() != cs.datasize) {
+        err = binary + ": code signature size changed";
+        return false;
       }
+    } else {
+      // In place: the signature keeps its size.
+      if (newSig.size() > sigSize) {
+        err = binary + ": code signature grew";
+        return false;
+      }
+      newSig.resize(sigSize, '\0');
     }
+    sig = std::move(newSig);
+    edits.push_back({codeLimit, std::move(sig)});
   }
 
   // A new file (not a write in place): the kernel caches code signatures per
@@ -689,15 +994,14 @@ bool patchMachO(const std::string &binary, StringRef table, std::string &err) {
   sys::fs::status(binary, st);
   std::string tmp = binary + ".pcln.tmp";
 #ifdef __APPLE__
-  // A clone shares the blocks of the binary: only the section and the
-  // signature are written.
+  // A clone shares the blocks of the binary: only the edits are written.
   sys::fs::remove(tmp);
   if (clonefile(binary.c_str(), tmp.c_str(), 0) == 0) {
     int fd = ::open(tmp.c_str(), O_WRONLY);
-    auto put = [&](const std::string &b, uint64_t at) {
-      return ::pwrite(fd, b.data(), b.size(), off_t(at)) == ssize_t(b.size());
-    };
-    bool ok = fd >= 0 && put(sect, off) && put(sig, sigOff);
+    bool ok = fd >= 0;
+    for (const Edit &e : edits)
+      ok = ok && ::pwrite(fd, e.bytes.data(), e.bytes.size(), off_t(e.at)) == ssize_t(e.bytes.size());
+    ok = ok && (end == data.size() || ::ftruncate(fd, off_t(end)) == 0);
     if (fd >= 0)
       ok = ::close(fd) == 0 && ok;
     if (ok && !sys::fs::rename(tmp, binary))
@@ -712,21 +1016,12 @@ bool patchMachO(const std::string &binary, StringRef table, std::string &err) {
       err = tmp + ": " + ec.message();
       return false;
     }
-    // In file order: the section and the signature replace their bytes.
-    struct Piece {
-      uint64_t at;
-      const std::string *b;
-    } pieces[2] = {{off, &sect}, {sigOff, &sig}};
-    if (sigOff < off)
-      std::swap(pieces[0], pieces[1]);
-    uint64_t pos = 0;
-    for (const Piece &pc : pieces) {
-      if (pc.b->empty())
-        continue;
-      os << data.slice(pos, pc.at) << *pc.b;
-      pos = pc.at + pc.b->size();
+    // In chunks, the edits applied.
+    std::string chunk;
+    for (uint64_t lo = 0; lo < end; lo += 1 << 20) {
+      patchedRange(data, edits, lo, std::min<uint64_t>(end, lo + (1 << 20)), chunk);
+      os << chunk;
     }
-    os << data.substr(pos);
   }
   sys::fs::setPermissions(tmp, st.permissions());
   if (std::error_code ec = sys::fs::rename(tmp, binary)) {

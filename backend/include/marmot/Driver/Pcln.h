@@ -99,8 +99,12 @@ uint64_t imageBase(const llvm::object::ObjectFile &obj);
 // Writes table into the __TEXT,__marmot_pcln section of a linked Mach-O
 // binary in place (the section must be at least as large; the rest is zero
 // filled) and updates the hashes of the changed pages in its ad hoc code
-// signature.
-bool patchMachO(const std::string &binary, llvm::StringRef table, std::string &err);
+// signature. With stripLocals it also drops the local symbols from the
+// symbol table (as linking with -x would; the link keeps them for the
+// table's function addresses) when the layout allows, and sets
+// *droppedLocals to how many.
+bool patchMachO(const std::string &binary, llvm::StringRef table, std::string &err,
+                bool stripLocals = false, uint32_t *droppedLocals = nullptr);
 
 } // namespace marmot::pcln
 

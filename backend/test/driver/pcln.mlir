@@ -39,6 +39,23 @@
 // RUN: %t.fr/exe; test $? -eq 15
 // RUN: %llvm-objcopy --dump-section __TEXT,__marmot_pcln=%t.fr/table %t.fr/exe %t.fr/junk
 // RUN: python3 %S/Inputs/pcln_decode.py %t.fr/table $(python3 %S/Inputs/pcln_offsets.py %t.fr/exe main.add 0 4 8) | %FileCheck %s --check-prefix=FRAG
+// -strip-locals: the local symbols go (as ld -x); the table, the signature
+// and the program stay as they are without it.
+// RUN: printf 'static int x = 3;\nstatic __attribute__((noinline)) int loc(void) { return x; }\nint lp(void) { return loc(); }\n' > %t.fr/loc.c
+// RUN: %clang -O0 -c %t.fr/loc.c -o %t.fr/loc.o
+// RUN: %clang %t.fr/a.o %t.main.o %t.fr/loc.o -Wl,-sectcreate,__TEXT,__marmot_pcln,%t.fr/ph -o %t.fr/exe3
+// RUN: cp %t.fr/exe3 %t.fr/exe4
+// RUN: nm %t.fr/exe3 | grep -c " [tsdb] " | grep -qv "^0$"
+// RUN: %pcln -frags %t.fr/frags -patch %t.fr/exe4
+// RUN: %pcln -frags %t.fr/frags -patch %t.fr/exe3 -strip-locals 2>&1 | %FileCheck %s --check-prefix=STRIP
+// RUN: codesign -v %t.fr/exe3
+// RUN: %t.fr/exe3; test $? -eq 15
+// RUN: nm %t.fr/exe3 > %t.fr/syms3 && %not grep " [tsdb] " %t.fr/syms3
+// RUN: test $(wc -c < %t.fr/exe3) -lt $(wc -c < %t.fr/exe4)
+// RUN: %llvm-objcopy --dump-section __TEXT,__marmot_pcln=%t.fr/table3 %t.fr/exe3 %t.fr/junk3
+// RUN: %llvm-objcopy --dump-section __TEXT,__marmot_pcln=%t.fr/table4 %t.fr/exe4 %t.fr/junk4
+// RUN: cmp %t.fr/table3 %t.fr/table4
+// STRIP: {{[1-9][0-9]*}} local symbols dropped
 // FRAG: main.add /src/p/main.go:7
 // FRAG-NEXT: main.add /src/p/main.go:8
 // FRAG-NEXT: main.add /src/p/main.go:9

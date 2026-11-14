@@ -54,6 +54,8 @@ static cl::opt<std::string> extraObjects(
              "text symbols get name-only entries)"));
 static cl::opt<std::string> patch("patch", cl::desc("With -frags: write the table into this "
                                                      "linked Mach-O binary"));
+static cl::opt<bool> stripLocals("strip-locals",
+                                 cl::desc("With -patch: also drop the local symbols (as ld -x)"));
 static cl::opt<std::string> binaryOpt("binary",
                                       cl::desc("With -frags -o: the linked binary"));
 
@@ -252,8 +254,9 @@ int fromFragments() {
   }
   pcln::addTextSymbols(text, t);
   std::string table = pcln::encode(t, pcln::imageBase(bin), quantumOf(bin), version, renameMain);
+  uint32_t dropped = 0;
   if (!patch.empty()) {
-    if (!pcln::patchMachO(patch, table, err)) {
+    if (!pcln::patchMachO(patch, table, err, stripLocals, &dropped)) {
       fail(err);
       // Too small a placeholder: exit 3, so the caller can relink with the
       // size printed on stdout.
@@ -272,6 +275,8 @@ int fromFragments() {
   }
   errs() << "marmot-pcln: " << t.funcs.size() << " functions, " << t.files.size() << " files, "
          << table.size() << " bytes\n";
+  if (stripLocals && !patch.empty())
+    errs() << "marmot-pcln: " << dropped << " local symbols dropped\n";
   return 0;
 }
 

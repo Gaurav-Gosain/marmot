@@ -243,6 +243,9 @@ func sameText(a, b string) (bool, error) {
 
 var needsRe = regexp.MustCompile(`the table needs (\d+) bytes`)
 
+// droppedRe is marmot-pcln's report that -strip-locals dropped the locals.
+var droppedRe = regexp.MustCompile(`[1-9][0-9]* local symbols dropped`)
+
 // linkWithFrags links once with a zero filled placeholder section and writes
 // the table from the objects' fragments into it (marmot-pcln -patch). The
 // placeholder is the previous build's table size for this output plus 10%
@@ -280,6 +283,10 @@ func (b *build) linkWithFrags(objs []string, link func(extra []string, out strin
 		}
 		args := append([]string{"-frags", list}, b.pclnVersionArgs()...)
 		args = append(args, "-patch", tmp)
+		keep := os.Getenv("MARMOT_KEEP_SYMBOLS") != ""
+		if !keep {
+			args = append(args, "-strip-locals")
+		}
 		err = b.run(b.pclnTool(), args...)
 		if err == nil {
 			if m := regexp.MustCompile(`(\d+) bytes`).FindStringSubmatch(b.lastOutput); m != nil {
@@ -295,12 +302,11 @@ func (b *build) linkWithFrags(objs []string, link func(extra []string, out strin
 				used, _ := strconv.Atoi(m[1])
 				b.patchCOriginMacho(tmp, b.rtLib("librtcore.a"), used)
 			}
-			// The link kept the local symbols for marmot-pcln. Release builds
-			// drop them now (as -x does on a normal link; the table stays in
-			// __TEXT). Dev builds keep them, as go build does: the strip cost
-			// 40 ms of a 0.8 s leaf edit of cmd/marmot, for 10 MB of symbols
-			// that debuggers and profilers use.
-			if b.cfg.Release && os.Getenv("MARMOT_KEEP_SYMBOLS") == "" {
+			// The link kept the local symbols for marmot-pcln, which drops
+			// them while it writes the table (as -x does on a normal link);
+			// they were most of a dev binary (47.6 of 196 MB of tuios), and
+			// names come from the pc table. strip -x when it could not.
+			if !keep && !droppedRe.MatchString(b.lastOutput) {
 				if err := b.run("xcrun", "strip", "-x", tmp); err != nil {
 					return err
 				}
