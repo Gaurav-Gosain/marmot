@@ -508,6 +508,7 @@ extern int64_t rt_gcstress;  // collect every N allocations, 0 off
 // pcln.c: stack maps of the running binary (pc table version 4).
 bool pcln_has_stackmaps(void);
 uint32_t pcln_stackmap(uintptr_t pc, const uint8_t **bits);
+uint32_t pcln_frameinfo(uintptr_t pc, const uint8_t **bits, uint32_t *csr_off, uint32_t *csr_words);
 
 #pragma GCC visibility pop
 

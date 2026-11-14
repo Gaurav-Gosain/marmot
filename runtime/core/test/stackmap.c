@@ -27,12 +27,15 @@ static void var(buf *b, uint32_t v) {
 
 // A version 4 table: functions at starts[0..nf), text up to end; function
 // mapfn has the given maps (nwords, bitmap bytes) and sites (offset, map id).
+// With csr_v5 set, a version 5 table whose blob starts with csr_v5[0] and
+// csr_v5[1] (the save area offset and words).
+static const uint32_t *csr_v5;
 static uint32_t build(uint8_t *t, const uint32_t *starts, uint32_t nf, uint32_t end, uint32_t mapfn,
                       uint32_t nmaps, const uint32_t *nwords, const uint8_t *const *bits, uint32_t nsites,
                       const uint32_t *site_off, const uint32_t *site_map) {
   memset(t, 0, 84);
   memcpy(t, "MRMTPCLN", 8);
-  put32(t + 8, 4);
+  put32(t + 8, csr_v5 ? 5 : 4);
   put32(t + 12, nf);
   put32(t + 28, 1);
   put32(t + 32, end);
@@ -48,6 +51,10 @@ static uint32_t build(uint8_t *t, const uint32_t *starts, uint32_t nf, uint32_t 
   put32(t + b.n + 4, 0);
   b.n += 8;
   put32(t + 80, b.n);
+  if (csr_v5) {
+    var(&b, csr_v5[0]);
+    var(&b, csr_v5[1]);
+  }
   var(&b, nmaps);
   for (uint32_t m = 0; m < nmaps; m++) {
     var(&b, nwords[m]);
@@ -89,6 +96,21 @@ static void decoder(void) {
   }
   put32(t + 8, 3);  // version 3: no maps
   CHECK(rt_pcln_stackmap(t, len, base, base + 0x210, &got) == 0);
+  // Version 5: the same maps after the save area fields.
+  static const uint32_t csr[2] = {200, 12};
+  csr_v5 = csr;
+  len = build(t, starts, 3, 0x500, 1, 2, nw, bits, 3, off, map);
+  csr_v5 = NULL;
+  uint32_t co = 1, cw = 1;
+  CHECK(rt_pcln_frameinfo(t, len, base, base + 0x210, &got, &co, &cw) == 9 && got[0] == 0x05);
+  CHECK(co == 200 && cw == 12);
+  CHECK(rt_pcln_stackmap(t, len, base, base + 0x224, &got) == 8 && got[0] == 0x80);
+  CHECK(rt_pcln_frameinfo(t, len, base, base + 0x214, &got, &co, &cw) == 0 && co == 200 && cw == 12);
+  CHECK(rt_pcln_frameinfo(t, len, base, base + 0x110, &got, &co, &cw) == 0 && co == 0 && cw == 0);
+  for (uint32_t cut = 0; cut < len; cut++) {
+    uint32_t n = rt_pcln_frameinfo(t, cut, base, base + 0x224, &got, &co, &cw);
+    CHECK(n == 0 || (n == 8 && got + 1 <= t + cut));
+  }
 }
 
 #if defined(__APPLE__)

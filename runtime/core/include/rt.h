@@ -431,6 +431,9 @@ int32_t rt_pcln(const uint8_t **table, intptr_t *len, uintptr_t *base);
 // bitmap, bit i set when the word at fp - 8*(i+1) may hold a pointer. 0
 // when there is none (the frame is scanned conservatively).
 uint32_t rt_pcln_stackmap(const uint8_t *t, intptr_t len, uintptr_t base, uintptr_t pc, const uint8_t **bits);
+// rt_pcln_stackmap with the callee-saved save area of the function (version 5).
+uint32_t rt_pcln_frameinfo(const uint8_t *t, intptr_t len, uintptr_t base, uintptr_t pc,
+                           const uint8_t **bits, uint32_t *csr_off, uint32_t *csr_words);
 
 // The type link table (reflect type identity): the start of an array of
 // type descriptor pointers in the binary and, in *n, its length; NULL with

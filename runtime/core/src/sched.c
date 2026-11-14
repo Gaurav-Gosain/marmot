@@ -2171,21 +2171,44 @@ uint64_t sched_progress(void) {
 // the rest of the stack (runtime C frames, frames without a map, words a
 // map does not cover) is scanned conservatively. The chain is followed only
 // while it climbs within [lo, hi).
+// [lo, hi) without [xlo, xhi).
+static void scan_except(uintptr_t lo, uintptr_t hi, uintptr_t xlo, uintptr_t xhi,
+                        void (*scan)(uintptr_t lo, uintptr_t hi)) {
+  if (xlo >= xhi || xhi <= lo || xlo >= hi) {
+    if (hi > lo) scan(lo, hi);
+    return;
+  }
+  if (xlo > lo) scan(lo, xlo);
+  if (hi > xhi) scan(xhi, hi);
+}
+
 static void scan_frames(uintptr_t lo, uintptr_t hi, uintptr_t fp, uintptr_t pc,
                         void (*scan)(uintptr_t lo, uintptr_t hi)) {
   uintptr_t cur = lo;
   for (int i = 0; i < 100000 && !(fp & 7) && fp + 16 <= hi; i++) {
     if (fp >= cur) {
-      const uint8_t *bits;
-      uint32_t n = pc ? pcln_stackmap(pc, &bits) : 0;
+      const uint8_t *bits, *cbits;
+      uint32_t coff = 0, cwords = 0;
+      uint32_t n = pc ? pcln_frameinfo(pc, &bits, &coff, &cwords) : 0;
+      // A frame whose caller is at a call site with a map: the caller keeps
+      // no GC pointer in a callee-saved register across the call, so this
+      // frame's save area holds none.
+      uintptr_t xlo = 0, xhi = 0;
+      if (cwords && coff <= fp - cur && pcln_stackmap(((uintptr_t *)fp)[1], &cbits)) {
+        xlo = fp - coff;
+        xhi = xlo + 8 * (uintptr_t)cwords;
+      }
       if (n) {
         uintptr_t start = n * 8 > fp - cur ? cur : fp - (uintptr_t)n * 8;
-        if (start > cur) scan(cur, start);
+        scan_except(cur, start, xlo, xhi, scan);
         for (uint32_t w = 0; w < n; w++) {
           uintptr_t a = fp - 8 * ((uintptr_t)w + 1);
-          if (a >= cur && (bits[w / 8] >> (w % 8) & 1)) scan(a, a + 8);
+          if (a >= cur && (a < xlo || a >= xhi) && (bits[w / 8] >> (w % 8) & 1)) scan(a, a + 8);
         }
         cur = fp;  // the frame record (saved fp and return address) holds no heap pointer
+      } else if (xhi > xlo) {
+        scan_except(cur, fp, xlo, xhi, scan);
+        cur = fp;
       }
     }
     uintptr_t up = ((uintptr_t *)fp)[0];

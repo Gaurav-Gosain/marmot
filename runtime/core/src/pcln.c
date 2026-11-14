@@ -133,7 +133,12 @@ RT_API void **rt_typelinks(intptr_t *n) {
 }
 #endif
 
-// ---- stack maps (pc table version 4) ----
+// ---- stack maps (pc table versions 4 and 5) ----
+//
+// Version 5 starts each function's blob with two uvarints, csrOff and
+// csrWords: the function's callee-saved register save area is
+// [fp - csrOff, fp - csrOff + 8*csrWords) (csrWords 0: not recorded); the
+// rest is as version 4.
 //
 // Version 4 adds, after the version 3 header fields, nsm, smIdxOff and
 // smOff: nsm pairs of u32 (function index, offset into the blob at smOff),
@@ -166,10 +171,16 @@ static bool rdvar(const uint8_t *t, uintptr_t end, uintptr_t *off, uint32_t *v) 
 // The map of the frame suspended at return address pc in table t (len
 // bytes, offsets from base): its word count, with *bits its bitmap; 0 when
 // pc has none.
-RT_API uint32_t rt_pcln_stackmap(const uint8_t *t, intptr_t len, uintptr_t base, uintptr_t pc,
-                                 const uint8_t **bits) {
+// With *csr_off and *csr_words (version 5, when not NULL) the save area of
+// the function containing pc, 0 words when none is recorded.
+RT_API uint32_t rt_pcln_frameinfo(const uint8_t *t, intptr_t len, uintptr_t base, uintptr_t pc,
+                                  const uint8_t **bits, uint32_t *csr_off, uint32_t *csr_words) {
   uintptr_t n = (uintptr_t)len;
-  if (!t || n < 84 || __builtin_memcmp(t, "MRMTPCLN", 8) != 0 || rd32(t, 8) != 4) return 0;
+  if (csr_off) *csr_off = 0;
+  if (csr_words) *csr_words = 0;
+  if (!t || n < 84 || __builtin_memcmp(t, "MRMTPCLN", 8) != 0) return 0;
+  uint32_t version = rd32(t, 8);
+  if (version != 4 && version != 5) return 0;
   uint32_t nfuncs = rd32(t, 12), text_end = rd32(t, 32), func_off = rd32(t, 36);
   uint32_t nsm = rd32(t, 72), idx_off = rd32(t, 76), sm_off = rd32(t, 80);
   if (!nfuncs || !nsm || (uintptr_t)func_off + (uintptr_t)nfuncs * 12 > n ||
@@ -200,6 +211,12 @@ RT_API uint32_t rt_pcln_stackmap(const uint8_t *t, intptr_t len, uintptr_t base,
   if (a >= nsm || rd32(t, idx_off + 8 * (uintptr_t)a) != fn) return 0;
   uintptr_t p = (uintptr_t)sm_off + rd32(t, idx_off + 8 * (uintptr_t)a + 4);
   uint32_t nmaps, nw, nsites, d, id;
+  if (version == 5) {
+    uint32_t co, cw;
+    if (p >= n || !rdvar(t, n, &p, &co) || !rdvar(t, n, &p, &cw)) return 0;
+    if (csr_off) *csr_off = co;
+    if (csr_words) *csr_words = cw;
+  }
   if (p >= n || !rdvar(t, n, &p, &nmaps)) return 0;
   uintptr_t maps = p;
   for (uint32_t i = 0; i < nmaps; i++) {
@@ -229,7 +246,12 @@ RT_API uint32_t rt_pcln_stackmap(const uint8_t *t, intptr_t len, uintptr_t base,
   return 0;
 }
 
-// The running binary's table, when it has stack maps (version 4).
+RT_API uint32_t rt_pcln_stackmap(const uint8_t *t, intptr_t len, uintptr_t base, uintptr_t pc,
+                                 const uint8_t **bits) {
+  return rt_pcln_frameinfo(t, len, base, pc, bits, NULL, NULL);
+}
+
+// The running binary's table, when it has stack maps (version 4 or 5).
 static int sm_state;  // 0 not looked, 1 no maps, 2 maps
 static const uint8_t *sm_t;
 static intptr_t sm_len;
@@ -242,7 +264,7 @@ bool pcln_has_stackmaps(void) {
     intptr_t len;
     uintptr_t base;
     s = 1;
-    if (rt_pcln(&t, &len, &base) && len >= 84 && rd32(t, 8) == 4) {
+    if (rt_pcln(&t, &len, &base) && len >= 84 && (rd32(t, 8) == 4 || rd32(t, 8) == 5)) {
       sm_t = t, sm_len = len, sm_base = base;
       s = 2;
     }
@@ -253,5 +275,9 @@ bool pcln_has_stackmaps(void) {
 
 // The map at pc in the running binary (0: none). pcln_has_stackmaps first.
 uint32_t pcln_stackmap(uintptr_t pc, const uint8_t **bits) {
-  return rt_pcln_stackmap(sm_t, sm_len, sm_base, pc, bits);
+  return rt_pcln_frameinfo(sm_t, sm_len, sm_base, pc, bits, NULL, NULL);
+}
+
+uint32_t pcln_frameinfo(uintptr_t pc, const uint8_t **bits, uint32_t *csr_off, uint32_t *csr_words) {
+  return rt_pcln_frameinfo(sm_t, sm_len, sm_base, pc, bits, csr_off, csr_words);
 }
