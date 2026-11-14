@@ -11,6 +11,7 @@
 #include <mutex>
 
 #include "Arm64.h"
+#include "llvm/Support/Format.h"
 #include "MachO.h"
 #include "X64.h"
 
@@ -282,6 +283,10 @@ public:
     unsigned sym;
     uint64_t size;
     std::vector<Row> rows;
+    // Stack maps (MARMOT_STACKMAPS=1): (nwords, bits) and (return pc offset,
+    // map) of each call, for the pc table (Pcln.h StackMap).
+    std::vector<std::pair<uint32_t, std::string>> maps;
+    std::vector<std::pair<uint64_t, uint32_t>> sites;
   };
   std::vector<Lines> lines;
   std::vector<std::string> files;
@@ -623,7 +628,7 @@ void ModuleGen::emitFunctions(std::vector<std::string> &fallback, std::vector<st
     for (Lines &l : pt.g->lines) {
       std::vector<Row> rows = std::move(l.rows);
       for (auto &[off, line, file] : rows) file = fileId(pt.g->files[file]);
-      lines.push_back({symMap[l.sym], l.size, std::move(rows)});
+      lines.push_back({symMap[l.sym], l.size, std::move(rows), std::move(l.maps), std::move(l.sites)});
     }
     fallback.insert(fallback.end(), pt.fallback.begin(), pt.fallback.end());
     reasons.insert(reasons.end(), pt.reasons.begin(), pt.reasons.end());
@@ -682,6 +687,16 @@ private:
   // call uses (a string literal {ptr, len}): never made in a slot, the call
   // puts each field in its argument register (absent fields are zero).
   llvm::DenseMap<Value, std::map<uint64_t, Value>> lazyAgg;
+  // Stack maps: the map of each call (computeStackMaps), the function's
+  // distinct maps, and the sites emitted (return pc offset from fnStart).
+  llvm::DenseMap<Operation *, uint32_t> callMap;
+  std::vector<std::pair<uint32_t, std::string>> smaps;
+  std::vector<std::pair<uint64_t, uint32_t>> smSites;
+  uint64_t fnStart = 0;
+  void computeStackMaps();
+  // Per value of vals: its first and last live position (a hull over the
+  // liveness dataflow; block arguments include their predecessors' branches).
+  std::vector<std::pair<unsigned, unsigned>> slotHulls(const std::vector<Value> &vals);
   llvm::DenseSet<Operation *> lazyChainOps;
   void findLazyAggArgs();
   void addressOf(unsigned d, LL::AddressOfOp a);  // d = the global's address
@@ -836,27 +851,26 @@ void FuncGen::layout() {
   // Values of at most 32 bytes first, near sp (ldp/stp reach 504 bytes);
   // larger values and alloca storage after them.
   std::vector<std::pair<Value, Operation *>> large;
-  // Function arguments are the entry block's arguments.
+  // Values that need a slot, in definition order; an insertvalue whose
+  // aggregate has no other use updates it in place (one slot for the
+  // chain: building a struct field by field copies nothing).
+  std::vector<Value> vals;
+  llvm::DenseMap<Value, unsigned> leader;  // value -> index of its slot's first value
   for (Block &b : fn.getBody()) {
     for (BlockArgument a : b.getArguments())
-      if (!home.count(a)) slot[a] = alloc(sizeOf(a.getType()) < 8 ? 8 : sizeOf(a.getType()), 8);
+      if (!home.count(a)) {
+        leader[a] = unsigned(vals.size());
+        vals.push_back(a);
+      }
     for (Operation &op : b) {
       for (Value r : op.getResults()) {
         uint64_t bits;
         if (home.count(r) || constBits(r, bits) || fusedCmp.count(&op)) continue;
-        // An insertvalue whose aggregate has no other use updates it in
-        // place: chains that build a struct field by field copy nothing.
+        unsigned me = unsigned(vals.size());
+        vals.push_back(r);
+        leader[r] = me;
         if (auto ins = dyn_cast<LL::InsertValueOp>(op); ins && ins.getContainer().hasOneUse())
-          if (auto it = slot.find(ins.getContainer()); it != slot.end()) {
-            slot[r] = it->second;
-            continue;
-          }
-        uint64_t sz = sizeOf(r.getType());
-        if (sz > 32) {
-          large.push_back({r, nullptr});
-          continue;
-        }
-        slot[r] = alloc(sz < 8 ? 8 : sz, std::max<uint64_t>(8, alignOf(r.getType())));
+          if (auto it = leader.find(ins.getContainer()); it != leader.end()) leader[r] = it->second;
       }
       if (auto a = dyn_cast<LL::AllocaOp>(op)) {
         if (&b != &fn.getBody().front()) unsupported("alloca outside the entry block");
@@ -866,6 +880,58 @@ void FuncGen::layout() {
       }
     }
   }
+  // Slots are shared by values whose lifetimes do not overlap (each value's
+  // hull, from its first to its last live position, as one interval): the
+  // frame shrinks, more slots are within ldp/stp reach, and a dead
+  // pointer's slot is soon written by another value. Values of at most 32
+  // bytes first, near sp; larger ones after.
+  std::vector<std::pair<unsigned, unsigned>> hull = slotHulls(vals);
+  struct Group {
+    unsigned first, last;
+    uint64_t size, align;
+    std::vector<unsigned> members;
+  };
+  std::vector<Group> groups;
+  llvm::DenseMap<unsigned, unsigned> groupOf;  // leader -> group
+  for (unsigned v = 0; v < vals.size(); v++) {
+    unsigned l = leader[vals[v]];
+    auto [it, fresh] = groupOf.try_emplace(l, unsigned(groups.size()));
+    if (fresh) {
+      uint64_t sz = sizeOf(vals[v].getType());
+      groups.push_back({hull[v].first, hull[v].second, sz < 8 ? 8 : (sz + 7) & ~uint64_t(7),
+                        std::max<uint64_t>(8, alignOf(vals[v].getType())), {}});
+    }
+    Group &g = groups[it->second];
+    g.first = std::min(g.first, hull[v].first);
+    g.last = std::max(g.last, hull[v].second);
+    g.members.push_back(v);
+  }
+  auto place = [&](bool small) {
+    std::vector<unsigned> order;
+    for (unsigned g = 0; g < groups.size(); g++)
+      if ((groups[g].size <= 32) == small) order.push_back(g);
+    llvm::stable_sort(order, [&](unsigned a, unsigned b) { return groups[a].first < groups[b].first; });
+    // Slots by (size, align): offset and the last position of their value.
+    std::map<std::pair<uint64_t, uint64_t>, std::vector<std::pair<uint64_t, unsigned>>> slots;
+    for (unsigned g : order) {
+      Group &gr = groups[g];
+      auto &list = slots[{gr.size, gr.align}];
+      uint64_t off = UINT64_MAX;
+      for (auto &[o, last] : list)
+        if (last < gr.first) {
+          off = o;
+          last = gr.last;
+          break;
+        }
+      if (off == UINT64_MAX) {
+        off = alloc(gr.size, gr.align);
+        list.push_back({off, gr.last});
+      }
+      for (unsigned v : gr.members) slot[vals[v]] = off;
+    }
+  };
+  place(true);
+  place(false);
   for (auto [r, op] : large) {
     if (op) {
       auto a = cast<LL::AllocaOp>(op);
@@ -1346,8 +1412,12 @@ void FuncGen::emitCall(LL::CallOp call) {
   }
   bool memResult = call.getNumResults() == 1 && returnsInMemory(call.getResult().getType());
   if (memResult) addrOf(X8, of(call.getResult()));
+  auto site = [&] {
+    if (auto m = callMap.find(call.getOperation()); m != callMap.end()) smSites.push_back({here() - fnStart, m->second});
+  };
   if (indirect) {
     e(blr(17));
+    site();
   } else {
     StringRef callee = *call.getCallee();
     if (callee == "marmot_gpu_for") {
@@ -1357,6 +1427,7 @@ void FuncGen::emitCall(LL::CallOp call) {
       uint64_t at = here();
       e(bl(0));
       w.reloc(Sect::Text, at, Reloc::Branch26, w.symbol(machoName(callee)));
+      site();
     }
   }
   if (call.getNumResults() == 0 || memResult) return;
@@ -2480,6 +2551,236 @@ void FuncGen::addressOf(unsigned d, LL::AddressOfOp a) {
   }
 }
 
+std::vector<std::pair<unsigned, unsigned>> FuncGen::slotHulls(const std::vector<Value> &vals) {
+  const unsigned n = unsigned(vals.size());
+  std::vector<std::pair<unsigned, unsigned>> hull(n, {UINT_MAX, 0});
+  if (!n) return hull;
+  llvm::DenseMap<Value, unsigned> idx;
+  for (unsigned v = 0; v < n; v++) idx[vals[v]] = v;
+  auto skipped = [&](Operation *d) { return d && (fusedCmp.count(d) || lazyChainOps.count(d)); };
+  auto usesOf = [&](Operation &op, llvm::SmallVectorImpl<unsigned> &out) {
+    llvm::SmallVector<Value, 8> work(op.getOperands());
+    llvm::DenseSet<Operation *> seen;
+    while (!work.empty()) {
+      Value v = work.pop_back_val();
+      if (auto it = idx.find(v); it != idx.end()) out.push_back(it->second);
+      if (Operation *d = v.getDefiningOp(); skipped(d) && seen.insert(d).second)
+        work.append(d->getOperands().begin(), d->getOperands().end());
+    }
+  };
+  auto touch = [&](unsigned v, unsigned at) {
+    hull[v].first = std::min(hull[v].first, at);
+    hull[v].second = std::max(hull[v].second, at);
+  };
+  std::vector<Block *> blocks;
+  llvm::DenseMap<Block *, unsigned> bi;
+  std::vector<std::pair<unsigned, unsigned>> span;  // block start, terminator position
+  unsigned p = 0;
+  for (Block &b : fn.getBody()) {
+    bi[&b] = unsigned(blocks.size());
+    blocks.push_back(&b);
+    unsigned start = p++;
+    for (Operation &op : b) {
+      (void)op;
+      p++;
+    }
+    span.push_back({start, p - 1});
+  }
+  std::vector<llvm::BitVector> gen(blocks.size(), llvm::BitVector(n)), kill(blocks.size(), llvm::BitVector(n)),
+      in(blocks.size(), llvm::BitVector(n)), out(blocks.size(), llvm::BitVector(n));
+  for (unsigned k = 0; k < blocks.size(); k++) {
+    Block *b = blocks[k];
+    unsigned at = span[k].first;
+    for (BlockArgument a : b->getArguments())
+      if (auto it = idx.find(a); it != idx.end()) {
+        touch(it->second, at);
+        kill[k].set(it->second);
+      }
+    for (Operation &op : *b) {
+      ++at;
+      if (skipped(&op)) continue;
+      llvm::SmallVector<unsigned, 8> u;
+      usesOf(op, u);
+      for (unsigned v : u) {
+        touch(v, at);
+        if (!kill[k].test(v)) gen[k].set(v);
+      }
+      for (Value r : op.getResults())
+        if (auto it = idx.find(r); it != idx.end()) {
+          touch(it->second, at);
+          kill[k].set(it->second);
+        }
+      // A branch writes its successors' argument slots here.
+      for (Block *s2 : op.getSuccessors())
+        for (BlockArgument a : s2->getArguments())
+          if (auto it = idx.find(a); it != idx.end()) touch(it->second, at);
+    }
+  }
+  for (bool changed = true; changed;) {
+    changed = false;
+    for (unsigned k = unsigned(blocks.size()); k-- > 0;) {
+      llvm::BitVector o(n);
+      for (Block *s2 : blocks[k]->getSuccessors()) o |= in[bi[s2]];
+      llvm::BitVector i2 = o;
+      i2.reset(kill[k]);
+      i2 |= gen[k];
+      if (o != out[k] || i2 != in[k]) {
+        out[k] = std::move(o);
+        in[k] = std::move(i2);
+        changed = true;
+      }
+    }
+  }
+  for (unsigned k = 0; k < blocks.size(); k++) {
+    for (unsigned v : in[k].set_bits()) touch(v, span[k].first);
+    for (unsigned v : out[k].set_bits()) touch(v, span[k].second);
+  }
+  for (auto &h : hull)
+    if (h.first == UINT_MAX) h = {0, 0};
+  return hull;
+}
+
+static bool holdsPointers(Type t) {
+  if (isa<LLVM::LLVMPointerType>(t)) return true;
+  if (auto st = dyn_cast<LLVM::LLVMStructType>(t)) return llvm::any_of(st.getBody(), holdsPointers);
+  if (auto at = dyn_cast<LLVM::LLVMArrayType>(t)) return holdsPointers(at.getElementType());
+  return false;
+}
+
+// Per call, the frame words the collector scans: every word except those
+// that only hold values (their slots) that are dead after the call or
+// hold no pointers. Words outside value slots (allocas, the callee saved
+// registers, outgoing arguments, temporaries) are always scanned. Off
+// unless MARMOT_STACKMAPS=1 (the runtime reads them from pc table v4).
+void FuncGen::computeStackMaps() {
+  static const bool on = [] {
+    const char *e = getenv("MARMOT_STACKMAPS");
+    return e && *e == '1';
+  }();
+  if (!on || frameSize == 0 || frameSize % 8 || callsReturnsTwice(fn, mg.returnsTwice)) return;
+  // Only frames that can stay on the stack across collections while their
+  // dead slots go stale: functions with a loop (a branch back to an earlier
+  // block). Other frames return soon; they stay conservative, and their
+  // maps would cost more table than they save.
+  {
+    llvm::DenseMap<Block *, unsigned> order;
+    for (Block &b : fn.getBody()) order[&b] = unsigned(order.size());
+    bool loop = false;
+    for (Block &b : fn.getBody())
+      for (Block *s2 : b.getSuccessors())
+        if (order[s2] <= order[&b]) loop = true;
+    if (!loop) return;
+  }
+  // Slot values, by index.
+  llvm::DenseMap<Value, unsigned> idx;
+  std::vector<Value> vals;
+  for (auto &[v, off] : slot) {
+    idx[v] = unsigned(vals.size());
+    vals.push_back(v);
+  }
+  if (vals.empty()) return;
+  const unsigned n = unsigned(vals.size()), nwords = unsigned(frameSize / 8);
+  auto skipped = [&](Operation *d) { return d && (fusedCmp.count(d) || lazyChainOps.count(d)); };
+  // The values op uses where it is emitted (operands of the skipped
+  // operations it makes at its place included).
+  auto usesOf = [&](Operation &op, llvm::BitVector &out) {
+    llvm::SmallVector<Value, 8> work(op.getOperands());
+    llvm::DenseSet<Operation *> seen;
+    while (!work.empty()) {
+      Value v = work.pop_back_val();
+      if (auto it = idx.find(v); it != idx.end()) out.set(it->second);
+      if (Operation *d = v.getDefiningOp(); skipped(d) && seen.insert(d).second)
+        work.append(d->getOperands().begin(), d->getOperands().end());
+    }
+  };
+  // Liveness over blocks.
+  std::vector<Block *> blocks;
+  llvm::DenseMap<Block *, unsigned> bi;
+  for (Block &b : fn.getBody()) {
+    bi[&b] = unsigned(blocks.size());
+    blocks.push_back(&b);
+  }
+  std::vector<llvm::BitVector> gen(blocks.size(), llvm::BitVector(n)), kill(blocks.size(), llvm::BitVector(n)),
+      in(blocks.size(), llvm::BitVector(n)), out(blocks.size(), llvm::BitVector(n));
+  for (unsigned k = 0; k < blocks.size(); k++) {
+    Block *b = blocks[k];
+    // Backward: gen = uses not preceded by a def in the block.
+    for (Operation &op : llvm::reverse(*b)) {
+      if (skipped(&op)) continue;
+      for (Value r : op.getResults())
+        if (auto it = idx.find(r); it != idx.end()) {
+          kill[k].set(it->second);
+          gen[k].reset(it->second);
+        }
+      llvm::BitVector u(n);
+      usesOf(op, u);
+      gen[k] |= u;
+    }
+    for (BlockArgument a : b->getArguments())
+      if (auto it = idx.find(a); it != idx.end()) {
+        kill[k].set(it->second);
+        gen[k].reset(it->second);
+      }
+  }
+  for (bool changed = true; changed;) {
+    changed = false;
+    for (unsigned k = unsigned(blocks.size()); k-- > 0;) {
+      llvm::BitVector o(n);
+      for (Block *s2 : blocks[k]->getSuccessors()) o |= in[bi[s2]];
+      llvm::BitVector i2 = o;
+      i2.reset(kill[k]);
+      i2 |= gen[k];
+      if (o != out[k] || i2 != in[k]) {
+        out[k] = std::move(o);
+        in[k] = std::move(i2);
+        changed = true;
+      }
+    }
+  }
+  // Words: covered by some value slot; the pointer values covering each.
+  std::vector<char> covered(nwords, 0);
+  std::vector<std::vector<unsigned>> ptrVals(nwords);
+  auto wordOf = [&](uint64_t off) { return int64_t(frameSize - off) / 8 - 1; };  // sp + off = fp - 8*(i+1)
+  for (unsigned v = 0; v < n; v++) {
+    uint64_t off = slot[vals[v]], sz = std::max<uint64_t>((sizeOf(vals[v].getType()) + 7) & ~uint64_t(7), 8);
+    bool ptr = holdsPointers(vals[v].getType());
+    for (uint64_t o = off; o < off + sz; o += 8) {
+      int64_t i = wordOf(o);
+      if (i < 0 || i >= int64_t(nwords)) continue;
+      covered[i] = 1;
+      if (ptr) ptrVals[i].push_back(v);
+    }
+  }
+  llvm::StringMap<uint32_t> mapId;
+  for (unsigned k = 0; k < blocks.size(); k++) {
+    llvm::BitVector live = out[k];
+    for (Operation &op : llvm::reverse(*blocks[k])) {
+      if (skipped(&op)) continue;
+      if (auto call = dyn_cast<LL::CallOp>(op)) {
+        // Live across the call: live after it; a result the callee writes
+        // into the frame (returned in memory) too.
+        llvm::BitVector at = live;
+        for (Value r : op.getResults())
+          if (auto it = idx.find(r); it != idx.end()) {
+            if (returnsInMemory(r.getType())) at.set(it->second);
+            else at.reset(it->second);
+          }
+        std::string bits((nwords + 7) / 8, '\0');
+        for (unsigned i = 0; i < nwords; i++) {
+          bool scan = !covered[i] || llvm::any_of(ptrVals[i], [&](unsigned v) { return at.test(v); });
+          if (scan) bits[i / 8] = char(bits[i / 8] | (1 << (i % 8)));
+        }
+        auto [it, fresh] = mapId.try_emplace(bits, uint32_t(smaps.size()));
+        if (fresh) smaps.push_back({nwords, bits});
+        callMap[call.getOperation()] = it->second;
+      }
+      for (Value r : op.getResults())
+        if (auto it = idx.find(r); it != idx.end()) live.reset(it->second);
+      usesOf(op, live);
+    }
+  }
+}
+
 void FuncGen::findLazyAggArgs() {
   fn.walk([&](LL::CallOp call) {
     if (call.getVarCalleeType()) return;
@@ -2664,6 +2965,8 @@ void FuncGen::run() {
   allocate();
   layout();
   uint64_t start = here();
+  fnStart = start;
+  computeStackMaps();
   std::vector<ModuleGen::Row> rows;
   auto row = [&](Location l) {
     auto r = lineOf(l);
@@ -2713,7 +3016,7 @@ void FuncGen::run() {
   auto lk = fn.getLinkage();
   std::string sym = machoName(fn.getSymName());
   w.define(sym, Sect::Text, start, !isLocalLinkage(lk), isWeakLinkage(lk), isHidden(fn));
-  mg.lines.push_back({w.symbol(sym), here() - start, std::move(rows)});
+  mg.lines.push_back({w.symbol(sym), here() - start, std::move(rows), std::move(smaps), std::move(smSites)});
 }
 
 #include "CodegenX64.inc"
@@ -2900,6 +3203,12 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
     // Mach-O names carry a leading "_"; fragments use the IR name.
     os << "F\t" << l.size << "\t" << StringRef(w.name(l.sym)).drop_front(x64 ? 0 : 1) << "\n";
     for (auto &[off, line, file] : l.rows) os << "R\t" << off << "\t" << line << "\t" << file << "\n";
+    for (auto &[nwords, bits] : l.maps) {
+      os << "M\t" << nwords << "\t";
+      for (unsigned char c : bits) os << llvm::format("%02x", c);
+      os << "\n";
+    }
+    for (auto &[off, id] : l.sites) os << "S\t" << off << "\t" << id << "\n";
   }
   os.flush();
   // What stays for LLVM: the fallback functions, everything else declared.

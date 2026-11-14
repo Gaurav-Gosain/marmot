@@ -343,6 +343,38 @@ bool parseFragment(StringRef fragment, Fragment &out, std::string &err) {
       cur->inl.push_back(std::move(in));
       break;
     }
+    case 'M': {
+      if (!cur)
+        break;
+      body.split(f, '\t');
+      if (f.size() != 2 || f[1].size() % 2) {
+        err = "bad fragment stack map";
+        return false;
+      }
+      StackMap m;
+      m.nwords = uint32_t(num(f[0]));
+      for (size_t k = 0; k + 1 < f[1].size(); k += 2) {
+        unsigned v = 0;
+        f[1].substr(k, 2).getAsInteger(16, v);
+        m.bits.push_back(char(v));
+      }
+      if (m.bits.size() != (m.nwords + 7) / 8) {
+        err = "bad fragment stack map";
+        return false;
+      }
+      cur->maps.push_back(std::move(m));
+      break;
+    }
+    case 'S':
+      if (!cur)
+        break;
+      body.split(f, '\t');
+      if (f.size() != 2 || num(f[1]) >= cur->maps.size()) {
+        err = "bad fragment stack map site";
+        return false;
+      }
+      cur->sites.push_back({num(f[0]), uint32_t(num(f[1]))});
+      break;
     case 'G':
       if (!cur || cur->inl.empty())
         break;
@@ -383,6 +415,8 @@ void addParsed(Fragment &frag, const std::function<uint64_t(StringRef)> &addr, T
         lo += a, hi += a;
     }
     cur.inl = std::move(fn.inl);
+    cur.maps = std::move(fn.maps);
+    cur.sites = std::move(fn.sites);
   }
 }
 
@@ -439,7 +473,8 @@ std::string encode(Table &t, uint64_t base, uint32_t quantum, unsigned version,
   for (const std::string &f : t.files)
     fileRec.push_back(prefixed(f, false));
 
-  std::string ftab, lines, inlIdx, inl;
+  std::string ftab, lines, inlIdx, inl, smIdx, sm;
+  uint32_t nsm = 0;
   uint64_t textEnd = 0;
   uint32_t ninl = 0, funcIndex = 0;
   for (auto &[lo, f] : t.funcs) {
@@ -507,6 +542,25 @@ std::string encode(Table &t, uint64_t base, uint32_t quantum, unsigned version,
         at = b;
       }
     }
+    // Stack maps (version 4): the function's maps, then its sites by pc.
+    if (version >= 3 && !f.sites.empty()) {
+      u32(smIdx, funcIndex);
+      u32(smIdx, sm.size());
+      ++nsm;
+      uvarint(sm, f.maps.size());
+      for (const StackMap &m : f.maps) {
+        uvarint(sm, m.nwords);
+        sm += m.bits;
+      }
+      llvm::sort(f.sites);
+      uvarint(sm, f.sites.size());
+      uint64_t prev = 0;
+      for (auto &[off, id] : f.sites) {
+        uvarint(sm, off - prev);
+        uvarint(sm, id);
+        prev = off;
+      }
+    }
     ++funcIndex;
     // Only rows that change the line or the file (DWARF also has rows for
     // columns and statement flags).
@@ -549,13 +603,16 @@ std::string encode(Table &t, uint64_t base, uint32_t quantum, unsigned version,
   for (const std::string &p : pkgs)
     u32(pkgTab, addStr(p));
 
-  const uint32_t hdr = 8 + 4 * (version >= 3 ? 16 : 13);
+  // Version 4 (version 3 with stack maps) only when a function has maps.
+  const bool v4 = version >= 3 && nsm > 0;
+  const uint32_t hdr = 8 + 4 * (v4 ? 19 : version >= 3 ? 16 : 13);
   uint32_t funcOff = hdr, fileOff = funcOff + ftab.size(), dirOff = fileOff + fileTab.size(),
            pkgOff = dirOff + dirTab.size(), lineOff = pkgOff + pkgTab.size(),
            inlIdxOff = lineOff + lines.size(), inlOff = inlIdxOff + inlIdx.size(),
-           strOff = inlOff + inl.size();
+           smIdxOff = inlOff + inl.size(), smOff = smIdxOff + smIdx.size(),
+           strOff = smOff + sm.size();
   std::string table = "MRMTPCLN";
-  u32(table, version >= 3 ? 3 : 2);
+  u32(table, v4 ? 4 : version >= 3 ? 3 : 2);
   u32(table, t.funcs.size());
   u32(table, t.files.size());
   u32(table, dirs.size());
@@ -573,7 +630,12 @@ std::string encode(Table &t, uint64_t base, uint32_t quantum, unsigned version,
     u32(table, inlIdxOff);
     u32(table, inlOff);
   }
-  table += ftab + fileTab + dirTab + pkgTab + lines + inlIdx + inl + strs;
+  if (v4) {
+    u32(table, nsm);
+    u32(table, smIdxOff);
+    u32(table, smOff);
+  }
+  table += ftab + fileTab + dirTab + pkgTab + lines + inlIdx + inl + smIdx + sm + strs;
   return table;
 }
 

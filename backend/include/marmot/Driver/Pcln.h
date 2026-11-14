@@ -30,11 +30,22 @@ struct Inline {
   std::vector<std::pair<uint64_t, uint64_t>> ranges;
 };
 
+// A stack map: nwords words below the frame pointer; bit i of bits (byte
+// i/8, LSB first) set = the word at fp-8*(i+1) is scanned.
+struct StackMap {
+  uint32_t nwords = 0;
+  std::string bits;
+};
+
 struct Func {
   uint64_t lo = 0, hi = 0;
   std::string name;
   std::vector<Inline> inl;
   std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> rows; // pc, line, file index
+  // Stack maps (version 4) and the call sites that use them: return pc
+  // offset from lo, map index. Frames suspended elsewhere stay conservative.
+  std::vector<StackMap> maps;
+  std::vector<std::pair<uint64_t, uint32_t>> sites;
 };
 
 // Functions by start address, and the file names their rows refer to.
@@ -81,6 +92,8 @@ struct Fragment {
     uint64_t size = 0;
     std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> rows;
     std::vector<Inline> inl;
+    std::vector<StackMap> maps;                       // "M nwords hexbits"
+    std::vector<std::pair<uint64_t, uint32_t>> sites; // "S retoff map"
   };
   std::vector<std::string> files;
   std::vector<Fn> funcs;
