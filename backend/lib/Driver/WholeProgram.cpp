@@ -1336,45 +1336,80 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   // Memory follows input text: a module of tuios with 31 MB of text peaked
   // at 927 MB compiling alone at -O 2 (30 times), and a parse alone takes
   // about 6 times its text. The two budgets below keep their estimate
-  // under four fifths of MARMOT_MAX_MEM_MB (0: no limit).
+  // under two thirds of MARMOT_MAX_MEM_MB (0: no limit; four fifths
+  // peaked at 3.5 GB on a cold -O 2 build of tuios).
   constexpr uint64_t kCompileCost = 30, kParseCost = 6;
   uint64_t memLimit = 3072ull << 20;
   if (const char *e = std::getenv("MARMOT_MAX_MEM_MB"))
     memLimit = std::strtoull(e, nullptr, 10) << 20;
-  const uint64_t memBudget = memLimit ? memLimit / 5 * 4 : UINT64_MAX;
+  const uint64_t memBudget = memLimit ? memLimit / 3 * 2 : UINT64_MAX;
   // Jobs in flight: a job starts when the input text of the jobs running
-  // plus its own fits in the admission budget, half the memory budget (one
-  // job always runs), so a program of a few very large modules does not
-  // parse and optimize them all at once (tuios: 19 modules of about 30 MB
-  // of text in one package).
-  uint64_t admitBudget = memLimit ? memBudget / 2 / kCompileCost : UINT64_MAX;
+  // plus its own fits in the memory budget (one job always runs), so a
+  // program of a few very large modules does not parse and optimize them
+  // all at once (tuios: 19 modules of about 30 MB of text in one package).
+  // Kept parses give way to them (releaseParsed).
+  uint64_t admitBudget = memLimit ? memBudget / kCompileCost : UINT64_MAX;
   if (const char *e = std::getenv("MARMOT_ADMIT_MB"))
     admitBudget = std::strtoull(e, nullptr, 10) << 20;
   std::mutex admitMu;
   std::condition_variable admitCv;
   uint64_t admitted = 0;
+  // For the groups of split modules (their own pools): wait until n more
+  // bytes of text fit, and give them back.
+  auto admitWait = [&](uint64_t n) {
+    std::unique_lock<std::mutex> l(admitMu);
+    admitCv.wait(l, [&] { return admitted == 0 || admitted + n <= admitBudget; });
+    admitted += n;
+  };
+  auto admitDone = [&](uint64_t n) {
+    {
+      std::lock_guard<std::mutex> l(admitMu);
+      admitted -= n;
+    }
+    admitCv.notify_all();
+  };
+  // Each thread takes the first job, largest first, that fits the
+  // admission budget, so small jobs run beside a large one instead of
+  // waiting behind the next large one.
   auto parallel = [&](auto fn) {
+    std::vector<unsigned> pending(order.begin(), order.end());
     DefaultThreadPool pool(hardware_concurrency(threads));
-    for (unsigned i : order)
-      pool.async([&, i] {
-        uint64_t n = inputSize[i];
-        {
-          std::unique_lock<std::mutex> l(admitMu);
-          admitCv.wait(l, [&] { return admitted == 0 || admitted + n <= admitBudget; });
-          admitted += n;
+    unsigned workers = std::max(1u, std::min<unsigned>(pool.getMaxConcurrency(), pending.size()));
+    for (unsigned w = 0; w < workers; ++w)
+      pool.async([&] {
+        for (;;) {
+          unsigned i = 0;
+          uint64_t n = 0;
+          {
+            std::unique_lock<std::mutex> l(admitMu);
+            auto pick = [&] {
+              for (size_t k = 0; k < pending.size(); ++k)
+                if (admitted == 0 || admitted + inputSize[pending[k]] <= admitBudget)
+                  return k;
+              return pending.size();
+            };
+            size_t k;
+            admitCv.wait(l, [&] { return pending.empty() || (k = pick()) < pending.size(); });
+            if (pending.empty())
+              return;
+            i = pending[k];
+            pending.erase(pending.begin() + k);
+            n = inputSize[i];
+            admitted += n;
+          }
+          watchdogBegin(jobs[i].in);
+          std::string msgs;
+          raw_string_ostream es(msgs);
+          PhaseTimes t;
+          fn(i, es, t);
+          watchdogEnd(jobs[i].in);
+          {
+            std::lock_guard<std::mutex> l(admitMu);
+            admitted -= n;
+          }
+          admitCv.notify_all();
+          report(i, msgs, t);
         }
-        watchdogBegin(jobs[i].in);
-        std::string msgs;
-        raw_string_ostream es(msgs);
-        PhaseTimes t;
-        fn(i, es, t);
-        watchdogEnd(jobs[i].in);
-        {
-          std::lock_guard<std::mutex> l(admitMu);
-          admitted -= n;
-        }
-        admitCv.notify_all();
-        report(i, msgs, t);
       });
     pool.wait();
   };
@@ -1403,7 +1438,9 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       std::lock_guard<std::mutex> l(admitMu);
       others = admitted - std::min(admitted, inputSize[i]);
     }
-    if (always || (memLimit && parsedBytes.load() * kParseCost + others * kCompileCost > memBudget)) {
+    // Parses are kept in the phases before translation, whose jobs parse
+    // and analyze: they count at the parse cost too.
+    if (always || (memLimit && (parsedBytes.load() + others) * kParseCost > memBudget)) {
       mods[i].parsed = nullptr;
       parsedBytes -= inputSize[i];
     }
@@ -1771,6 +1808,9 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       DefaultThreadPool pool(hardware_concurrency(threads));
       for (Group &g : groups)
         pool.async([&, gp = &g] {
+          // A group weighs its share of the module's text.
+          uint64_t gn = inputSize[gp->job] / std::max(1u, nparts[gp->job]);
+          admitWait(gn);
           std::string name = jobs[gp->job].in + "#" + std::to_string(gp->index);
           watchdogBegin(name);
           std::string msgs;
@@ -1806,6 +1846,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
               sys::fs::remove(out);
           }
           watchdogEnd(name);
+          admitDone(gn);
           report(gp->job, msgs, t);
         });
       pool.wait();
@@ -2396,6 +2437,9 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     DefaultThreadPool pool(hardware_concurrency(threads));
     for (Group &g : groups)
       pool.async([&, gp = &g] {
+        // A group weighs its share of the module's text.
+        uint64_t gn = inputSize[gp->job] / std::max(1u, nparts[gp->job]);
+        admitWait(gn);
         std::string name = jobs[gp->job].in + "#" + std::to_string(gp->index);
         watchdogBegin(name);
         std::string msgs;
@@ -2427,6 +2471,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           }
         }
         watchdogEnd(name);
+        admitDone(gn);
         report(gp->job, msgs, t);
       });
     pool.wait();
