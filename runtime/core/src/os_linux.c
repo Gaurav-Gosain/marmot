@@ -8,7 +8,9 @@
 #include <errno.h>
 #include <link.h>
 #ifdef __GLIBC__
-#include <malloc.h>
+// From glibc malloc.h (the runtime's own malloc.h shadows it on -Isrc).
+int mallopt(int param, int value);
+#define M_ARENA_MAX (-8)
 #endif
 #include <linux/futex.h>
 #include <pthread.h>
