@@ -117,21 +117,25 @@ void watchdogEnd(const std::string &input) {
 
 
 
-void startWatchdog() {
+void startWatchdog(bool background) {
   uint64_t maxMB = envLimit("MARMOT_MAX_MEM_MB", 3072);
-  uint64_t maxSec = envLimit("MARMOT_MAX_SECONDS", 300);
+  // A background run (the tier 1 runner) outlives the build that started it
+  // and runs at idle priority as long as it takes: no time limit and no
+  // parent check, only the memory limit.
+  uint64_t maxSec = background ? 0 : envLimit("MARMOT_MAX_SECONDS", 300);
   const bool scaled = std::getenv("MARMOT_MAX_SECONDS") == nullptr;
-  pid_t parent = getppid();
+  const pid_t parent = background ? 0 : getppid();
 #if defined(__linux__)
   // The kernel kills us when the parent thread exits; the poll below covers
   // the race where the parent died before this call.
-  prctl(PR_SET_PDEATHSIG, SIGKILL);
+  if (!background)
+    prctl(PR_SET_PDEATHSIG, SIGKILL);
 #endif
   auto start = std::chrono::steady_clock::now();
   std::thread([=] {
     for (;;) {
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
-      if (getppid() != parent)
+      if (parent && getppid() != parent)
         _exit(3); // parent died, we were reparented
       if (maxMB) {
         uint64_t mb = memoryInUse() >> 20;

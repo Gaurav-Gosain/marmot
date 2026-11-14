@@ -281,7 +281,12 @@ static std::string optionKey(int argc, char **argv) {
 
 int main(int argc, char **argv) {
   InitLLVM init(argc, argv);
-  marmot::startWatchdog();
+  // Before option parsing (the watchdog guards it too): the tier 1 runner
+  // is known from its argument.
+  bool background = false;
+  for (int i = 1; i < argc; ++i)
+    background |= StringRef(argv[i]).ltrim('-') == "tier1-run";
+  marmot::startWatchdog(background);
   cl::HideUnrelatedOptions(cat);
   // Extra options from MARMOT_BACKEND_FLAGS, for example
   // MARMOT_BACKEND_FLAGS="-no-escape -no-bce" through the marmot driver.

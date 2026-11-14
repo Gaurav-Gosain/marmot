@@ -88,8 +88,10 @@ std::string hashHex(StringRef data) {
   return out;
 }
 
-// Background tier 1 spool (see runTier1): at most this many modules wait.
-constexpr int kTier1SpoolMax = 64;
+// Background tier 1 spool (see runTier1): at most this many modules wait
+// (entries are hard links to the MLIR cache, so a whole cold build of a
+// large program fits: tuios is about 500 modules).
+constexpr int kTier1SpoolMax = 4096;
 
 // The keys of the modules in a tier 1 spool, newest first.
 std::vector<std::string> tier1Spooled(StringRef dir) {
@@ -1236,54 +1238,71 @@ bool runTier1(const CompileOptions &opts, const std::string &cacheDir, raw_ostre
   if (const char *e = std::getenv("MARMOT_MAX_MEM_MB"))
     textBudget = std::strtoull(e, nullptr, 10) << 20;
   textBudget = textBudget ? textBudget / 32 : UINT64_MAX;
-  bool ok = true;
-  // Newest first: the module edited last is the one the next build needs.
-  // Entries that arrive while this runs are taken in the next round.
-  for (;;) {
-    std::vector<std::string> keys = tier1Spooled(opts.tier1Spool);
-    if (keys.empty())
-      break;
-    for (const std::string &k : keys) {
-      SmallString<256> base(opts.tier1Spool);
-      sys::path::append(base, k);
-      const std::string in = (base + ".mlir").str(), fpFile = (base + ".fp").str();
-      auto drop = [&] {
-        sys::fs::remove(in);
-        sys::fs::remove(fpFile);
-      };
-      auto fpBuf = MemoryBuffer::getFile(fpFile);
-      uint64_t size = 0;
-      sys::fs::file_size(in, size);
-      if (!fpBuf || (*fpBuf)->getBuffer() != fpHash || size > textBudget ||
-          cache.has(k, "o")) {
-        drop();
-        continue;
-      }
-      std::string msgs;
-      raw_string_ostream es(msgs);
-      PhaseTimes t;
-      std::string err, obj;
-      auto tm = createTargetMachine(o2, err);
-      ParsedModulePtr pm = tm ? parseFile(in, opts, es) : nullptr;
-      bool good = pm && lowerModule(*pm, in, opts, *tm, t, es);
+  std::atomic<bool> ok{true};
+  std::mutex mu; // errs, the cache and the admission count
+  std::condition_variable cv;
+  // Jobs run on every core (the process runs at idle priority, so only on
+  // cores nothing else wants); the modules in flight are bounded by their
+  // text at the -O2 compile cost (30 times text, as in the batch), within
+  // two thirds of the memory limit. One job always runs.
+  uint64_t memLimit = 3072ull << 20;
+  if (const char *e = std::getenv("MARMOT_MAX_MEM_MB"))
+    memLimit = std::strtoull(e, nullptr, 10) << 20;
+  const uint64_t inFlightBudget = memLimit ? memLimit / 3 * 2 / 30 : UINT64_MAX;
+  uint64_t inFlight = 0;
+  auto compileOne = [&](const std::string &k) {
+    SmallString<256> base(opts.tier1Spool);
+    sys::path::append(base, k);
+    const std::string in = (base + ".mlir").str(), fpFile = (base + ".fp").str();
+    auto drop = [&] {
+      sys::fs::remove(in);
+      sys::fs::remove(fpFile);
+    };
+    auto fpBuf = MemoryBuffer::getFile(fpFile);
+    uint64_t size = 0;
+    sys::fs::file_size(in, size);
+    bool have;
+    {
+      std::lock_guard<std::mutex> l(mu);
+      have = cache.has(k, "o");
+    }
+    if (!fpBuf || (*fpBuf)->getBuffer() != fpHash || size > textBudget || have) {
+      drop();
+      return;
+    }
+    {
+      std::unique_lock<std::mutex> l(mu);
+      cv.wait(l, [&] { return inFlight == 0 || inFlight + size <= inFlightBudget; });
+      inFlight += size;
+    }
+    std::string msgs;
+    raw_string_ostream es(msgs);
+    PhaseTimes t;
+    std::string err, obj;
+    auto tm = createTargetMachine(o2, err);
+    ParsedModulePtr pm = tm ? parseFile(in, opts, es) : nullptr;
+    bool good = pm && lowerModule(*pm, in, opts, *tm, t, es);
+    if (good) {
+      LLVMContext ctx;
+      auto lm = translateLowered(*pm, in, *tm, ctx, t, es);
+      pm = nullptr;
+      const std::string out = (base + ".o").str();
+      good = lm && optimizeAndEmit(*lm, *tm, in, out, o2, t, es);
       if (good) {
-        LLVMContext ctx;
-        auto lm = translateLowered(*pm, in, *tm, ctx, t, es);
-        pm = nullptr;
-        const std::string out = (base + ".o").str();
-        good = lm && optimizeAndEmit(*lm, *tm, in, out, o2, t, es);
-        if (good) {
-          auto buf = MemoryBuffer::getFile(out);
-          good = bool(buf);
-          if (good)
-            obj = (*buf)->getBuffer().str();
-        }
-        sys::fs::remove(out);
+        auto buf = MemoryBuffer::getFile(out);
+        good = bool(buf);
+        if (good)
+          obj = (*buf)->getBuffer().str();
       }
-      std::string text;
-      if (good && opts.pclnFragments &&
-          !pcln::makeFragment(MemoryBufferRef(obj, in), 3, text, err))
-        good = false;
+      sys::fs::remove(out);
+    }
+    pm = nullptr;
+    std::string text;
+    if (good && opts.pclnFragments && !pcln::makeFragment(MemoryBufferRef(obj, in), 3, text, err))
+      good = false;
+    {
+      std::lock_guard<std::mutex> l(mu);
+      inFlight -= size;
       if (good) {
         // The fragment first: a build that finds the object finds its table.
         if (opts.pclnFragments)
@@ -1293,8 +1312,25 @@ bool runTier1(const CompileOptions &opts, const std::string &cacheDir, raw_ostre
         ok = false;
         errs << "marmot-backend: tier1: " << in << ": " << (tm ? msgs : err) << "\n";
       }
-      drop();
     }
+    cv.notify_all();
+    drop();
+  };
+  // Newest first: the module edited last is the one the next build needs.
+  // Entries that arrive while this runs are taken in the next round.
+  for (;;) {
+    std::vector<std::string> keys = tier1Spooled(opts.tier1Spool);
+    if (keys.empty())
+      break;
+    std::atomic<size_t> next{0};
+    DefaultThreadPool pool(hardware_concurrency());
+    unsigned workers = std::max(1u, std::min<unsigned>(pool.getMaxConcurrency(), keys.size()));
+    for (unsigned w = 0; w < workers; ++w)
+      pool.async([&] {
+        for (size_t i; (i = next++) < keys.size();)
+          compileOne(keys[i]);
+      });
+    pool.wait();
   }
   return ok;
 }

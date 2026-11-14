@@ -14,8 +14,9 @@ namespace marmot {
 //  - wall time passes MARMOT_MAX_SECONDS (default 300, plus what
 //    watchdogAddTime added for the size of the input),
 // and that exits quietly with status 3 when the parent process dies. A limit
-// of 0 turns that check off.
-void startWatchdog();
+// of 0 turns that check off. background (the tier 1 runner, which outlives
+// the build that starts it): the memory limit only.
+void startWatchdog(bool background = false);
 
 // Adds secs to the default time limit (a guard against hangs that scales
 // with the input, not a speed rule); MARMOT_MAX_SECONDS, when set, stays.
