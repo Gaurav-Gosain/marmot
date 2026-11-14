@@ -509,7 +509,7 @@ static void gc_helper(void *arg) {
   for (;;) {
     uint32_t g;
     while ((g = atomic_load(&helper_gen)) == seen) os_futex_wait(&helper_gen, seen, -1);
-    if (trace_on()) trace_wake_record(&(trace_why){WAKE_GC, 0, {0, 0, 0}, 0});
+    if (trace_on()) trace_wake_record(&(trace_why){.cause = WAKE_GC});
     seen = g;
     atomic_fetch_add(&phase_joined, 1);
     if (atomic_load(&phase_open)) {

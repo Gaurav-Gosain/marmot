@@ -83,6 +83,7 @@ void trace_frames(void *fp, uint64_t pc[TRACE_FRAMES]);
 // that timer was made (else NULL): a ticker's re-arm and a goroutine its
 // send readies point at the program's timer, not at the timer goroutine.
 const uint64_t *timer_firing_frames(void);
+bool timer_goroutine(rt_g *g);  // g runs timer functions (timerproc)
 void trace_wake_record(const trace_why *w);
 static inline bool trace_on(void) { return __builtin_expect(trace_fd >= 0, 0); }
 // The timer due first (its creation frames), for a wakeup by timeout.

@@ -121,6 +121,8 @@ static void tlock_unlock(void *unused) { spin_unlock(&tlock); }
 static uint64_t firing_pc[TRACE_FRAMES];
 static bool firing;
 
+bool timer_goroutine(rt_g *g) { return g && g == timer_g; }
+
 const uint64_t *timer_firing_frames(void) {
   rt_m *m = getm();
   return firing && m && m->curg == timer_g ? firing_pc : NULL;

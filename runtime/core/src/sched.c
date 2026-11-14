@@ -647,8 +647,13 @@ void sched_timer_added(int64_t when) {
   // No M waits for timers. When this M is parking its goroutine with
   // nothing else to run, it goes idle next and waits for this timer
   // itself: starting another M for it would cost a wakeup per timer.
+  // The same for a timer the timer goroutine re-arms (a ticker), due 1 ms
+  // or more from now: this M runs what the timer readied, then waits.
   rt_m *me = getm();
-  bool none = tm == NULL && !(me && me->in_park && me->p && runqempty(me->p) && sched.runqsize == 0);
+  bool self = me && me->p &&
+              ((me->in_park && runqempty(me->p) && sched.runqsize == 0) ||
+               (timer_goroutine(me->curg) && when - os_nanotime() >= 1000000));
+  bool none = tm == NULL && !self;
   spin_unlock(&sched.lock);
   if (none) wakep();
 }
