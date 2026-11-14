@@ -171,7 +171,7 @@ static void idle_gc_proc(void *arg) {
     rt_park(idle_gc_park_done, NULL);
     gc_collect(true);
     spin_lock(&heap_lock);
-    heap_scavenge(0);
+    heap_scavenge_min(0, rt_pagesize);
     spin_unlock(&heap_lock);
   }
 }

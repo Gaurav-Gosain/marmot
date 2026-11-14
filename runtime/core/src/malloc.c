@@ -321,8 +321,12 @@ void span_free(mspan *s) {
 // the same amount every cycle reuses its pages instead of faulting them in
 // and clearing them again after each collection. The largest spans go
 // first. Spans under 64 KiB are kept.
-void heap_scavenge(uint64_t retain) {
-  const uintptr_t min = 64 << 10;
+void heap_scavenge(uint64_t retain) { heap_scavenge_min(retain, 64 << 10); }
+
+// heap_scavenge with spans of min bytes or more released (the idle
+// collection releases down to the OS page).
+void heap_scavenge_min(uint64_t retain, uintptr_t min) {
+  if (min < rt_pagesize) min = rt_pagesize;
   uint64_t idle = 0;
   for (mspan *s = free_large; s; s = s->next)
     if (!s->released) idle += s->npages * PAGE_SIZE;
