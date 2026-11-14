@@ -132,8 +132,11 @@ func printWakeups(r *wakeups.Report, name string, lines bool) {
 			where = "(no site: the runtime itself)"
 		}
 		extra := ""
+		if s.Detail != "" {
+			extra = ", " + s.Detail
+		}
 		if s.PeriodNs > 0 {
-			extra = fmt.Sprintf(", every %v", time.Duration(s.PeriodNs))
+			extra += fmt.Sprintf(", every %v", time.Duration(s.PeriodNs))
 		}
 		fmt.Printf("  %8.2f/s  %5d  %-17s %s%s\n", s.PerSecond, s.Count, s.Cause, where, extra)
 	}

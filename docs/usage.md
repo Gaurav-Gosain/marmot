@@ -173,6 +173,20 @@ and cumulative), the hottest path, `-tree` for the call tree as a text flame gra
 REGEXP` for the source of matching functions with the cost of each line, `-sample
 alloc_space` and friends for memory profiles, `-json` for programs.
 
+`marmot prof -wakeups PROGRAM [arguments]` shows what a long running program costs while
+idle: it runs the program, leaves out the first 10 seconds (`-settle`), and reports the next 60
+(`-window`) as wakeups per second by cause (timer, goroutine readied, netpoll, GC, signal,
+scheduler) and by source site, with file and line: a ticker's wakeups point at the code that made
+it, with its period.
+
+    $ marmot prof -wakeups -settle 2s -window 6s ./server
+    server: 1.00 wakeups/s (6 in 6.0 s, after 2.0 s to settle)
+    ...
+         1.00/s      6  timer             main.poll (./main.go:9), every 1s
+
+The program must be built by marmot (its runtime writes the trace, `MARMOT_TRACE=wakeups=FILE`);
+`-trace FILE` reads a trace written earlier, `-json` gives the report as one object.
+
 Programs built by marmot record CPU profiles with the standard `runtime/pprof` API
 (`pprof.StartCPUProfile`), so the same profile can be read with `marmot prof` or `go tool
 pprof`. On Linux each thread is sampled on its own CPU clock; on macOS the process timer is used.

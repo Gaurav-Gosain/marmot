@@ -156,8 +156,26 @@ type SiteCount struct {
 	Site
 	Count     int     `json:"count"`
 	PerSecond float64 `json:"perSecond"`
+	// Detail says which kind of scheduler wake it was.
+	Detail string `json:"detail,omitempty"`
 	// PeriodNs is a ticker's period (the runtime's aux for timers).
 	PeriodNs uint64 `json:"periodNs,omitempty"`
+}
+
+// detail names the kind of a scheduler wake from its aux.
+func detail(cause uint8, aux uint64) string {
+	if cause != CauseScheduler {
+		return ""
+	}
+	switch aux {
+	case 0:
+		return "sysmon timeout"
+	case 1:
+		return "sysmon kicked"
+	case 2:
+		return "thread started"
+	}
+	return ""
 }
 
 // Report is the summary of a window of a trace.
@@ -194,8 +212,9 @@ func Summarize(h Header, recs []Record, settleNs, windowNs uint64, resolve Resol
 	last := from
 	byCause := map[uint8]int{}
 	type key struct {
-		cause uint8
-		site  Site
+		cause  uint8
+		detail string
+		site   Site
 	}
 	sites := map[string]Site{}
 	siteOf := func(pcs []uint64) Site {
@@ -216,7 +235,7 @@ func Summarize(h Header, recs []Record, settleNs, windowNs uint64, resolve Resol
 		last = max(last, x.T)
 		r.Total++
 		byCause[x.Cause]++
-		k := key{x.Cause, siteOf(x.PCs)}
+		k := key{x.Cause, detail(x.Cause, x.Aux), siteOf(x.PCs)}
 		bySite[k]++
 		if x.Cause == CauseTimer && x.Aux > 0 {
 			period[k] = x.Aux
@@ -249,7 +268,7 @@ func Summarize(h Header, recs []Record, settleNs, windowNs uint64, resolve Resol
 		return r.Causes[i].Cause < r.Causes[j].Cause
 	})
 	for k, n := range bySite {
-		r.Sites = append(r.Sites, SiteCount{Cause: CauseName(k.cause), Site: k.site, Count: n, PerSecond: rate(n), PeriodNs: period[k]})
+		r.Sites = append(r.Sites, SiteCount{Cause: CauseName(k.cause), Site: k.site, Detail: k.detail, Count: n, PerSecond: rate(n), PeriodNs: period[k]})
 	}
 	sort.Slice(r.Sites, func(i, j int) bool {
 		a, b := r.Sites[i], r.Sites[j]
@@ -296,6 +315,9 @@ func pickSite(base uint64, pcs []uint64, resolve Resolver) Site {
 // program's own code.
 func internalFunc(fn string) bool {
 	fn = strings.TrimLeft(fn, "(*")
+	if !strings.Contains(fn, ".") {
+		return true // C and assembly of the runtime (rt_timer_start)
+	}
 	for _, p := range []string{"runtime.", "runtime/", "time.", "sync.", "sync/", "internal/", "context."} {
 		if strings.HasPrefix(fn, p) {
 			return true
