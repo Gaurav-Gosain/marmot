@@ -14,7 +14,7 @@ import (
 // it is loaded (sameUnit). tests/incremental checks the result end to end.
 func TestAnalysesUseCalleeFor(t *testing.T) {
 	fset := token.NewFileSet()
-	for _, name := range []string{"escape.go", "frameregion.go", "panics.go", "region.go"} {
+	for _, name := range []string{"ctorinline.go", "escape.go", "frameregion.go", "panics.go", "region.go"} {
 		f, err := parser.ParseFile(fset, name, nil, 0)
 		if err != nil {
 			t.Fatal(err)

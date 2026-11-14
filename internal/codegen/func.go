@@ -571,6 +571,12 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 	case *ssa.UnOp:
 		f.vals[v] = f.unop(v)
 	case *ssa.Call:
+		if f.stackOK[v] {
+			if c := f.m.p.ctorCall(v); c != nil {
+				f.vals[v] = f.inlineCtor(v, c)
+				break
+			}
+		}
 		r := f.call(v.Common(), v)
 		if r != "" {
 			f.vals[v] = r

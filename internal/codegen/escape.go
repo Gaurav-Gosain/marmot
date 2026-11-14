@@ -341,7 +341,72 @@ func (p *Program) callLeaksF(c *ssa.CallCommon, v ssa.Value, res ssa.Value, seen
 		}
 		return false
 	}
+	// A call through a function value that a static callee returns: when
+	// every return of that callee returns a closure of one function, that
+	// function is the callee (range over slices.Backward(s): the loop body
+	// closure is passed to Backward's own closure, which only calls it).
+	if g := p.returnedClosure(c.Value, v); g != nil {
+		toResult := false
+		for i, a := range c.Args {
+			if a != v || !p.paramEscapes(g, i) {
+				continue
+			}
+			if res == nil || !optEscapeExt || !p.paramToResult(g, i) {
+				return true
+			}
+			toResult = true
+		}
+		if toResult {
+			return p.escapesF(res, seen, noPhi, ret)
+		}
+		return false
+	}
 	return true
+}
+
+// returnedClosure returns the function g when fv is the result of a static
+// call whose callee returns only closures of g, and summaries may look into
+// both (MARMOT_ESCAPE_SUMMARY); else nil.
+func (p *Program) returnedClosure(fv ssa.Value, v ssa.Value) *ssa.Function {
+	call, ok := fv.(*ssa.Call)
+	if !optEscSummary || !ok {
+		return nil
+	}
+	f := p.calleeFor(call.Parent(), &call.Call)
+	if f == nil || len(f.Blocks) == 0 || !summaryAllowed(v, f) {
+		return nil
+	}
+	var g *ssa.Function
+	for _, b := range f.Blocks {
+		r, ok := b.Instrs[len(b.Instrs)-1].(*ssa.Return)
+		if !ok {
+			continue
+		}
+		if len(r.Results) != 1 {
+			return nil
+		}
+		res := r.Results[0]
+		for {
+			ct, ok := res.(*ssa.ChangeType) // a closure returned as a named func type (iter.Seq2)
+			if !ok {
+				break
+			}
+			res = ct.X
+		}
+		mc, ok := res.(*ssa.MakeClosure)
+		if !ok {
+			return nil
+		}
+		fn, ok := mc.Fn.(*ssa.Function)
+		if !ok || (g != nil && fn != g) {
+			return nil
+		}
+		g = fn
+	}
+	if g == nil || len(g.Blocks) == 0 || !p.sameUnit(call.Parent(), g) {
+		return nil
+	}
+	return g
 }
 
 // stackAllocs decides which heap Allocs and MakeClosures of fn can live in
@@ -365,6 +430,13 @@ func (p *Program) stackAllocs(fn *ssa.Function) map[ssa.Value]bool {
 				}
 				v = x
 			case *ssa.MakeClosure:
+				v = x
+			case *ssa.Call:
+				// A closure constructor's closure, built here instead
+				// (ctorinline.go).
+				if p.ctorCall(x) == nil {
+					continue
+				}
 				v = x
 			case *ssa.MakeInterface:
 				// The box of a value that is not pointer shaped.
