@@ -171,7 +171,16 @@ static void touched_ranges(uintptr_t lo, uintptr_t hi, void (*fn)(void *start, v
   if (run) fn((void *)run, (void *)hi);
 }
 
-void os_data_segments(void (*fn)(void *start, void *end)) {
+// The main image's writable segments, found once at startup. A collection
+// must not ask dyld: it runs with the world stopped, and a thread stopped
+// by a signal inside dlopen holds dyld's loader lock (_dyld_get_image_header
+// then waited for it forever).
+static struct {
+  uintptr_t start, end;
+} data_segs[16];
+static int ndata_segs;
+
+void os_data_segments_init(void) {
   const struct mach_header_64 *mh = (const struct mach_header_64 *)_dyld_get_image_header(0);
   intptr_t slide = _dyld_get_image_vmaddr_slide(0);
   const struct load_command *lc = (const struct load_command *)(mh + 1);
@@ -182,12 +191,20 @@ void os_data_segments(void (*fn)(void *start, void *end)) {
       // holds only link-time constants and is skipped.
       if ((seg->initprot & VM_PROT_WRITE) && seg->vmsize > 0 &&
           __builtin_strcmp(seg->segname, "__DATA_CONST") != 0) {
+        if (ndata_segs == (int)(sizeof data_segs / sizeof data_segs[0]))
+          rt_throw("os_data_segments_init: too many writable segments");
         uintptr_t start = (uintptr_t)seg->vmaddr + (uintptr_t)slide;
-        touched_ranges(start, start + seg->vmsize, fn);
+        data_segs[ndata_segs].start = start;
+        data_segs[ndata_segs].end = start + seg->vmsize;
+        ndata_segs++;
       }
     }
     lc = (const struct load_command *)((const char *)lc + lc->cmdsize);
   }
+}
+
+void os_data_segments(void (*fn)(void *start, void *end)) {
+  for (int i = 0; i < ndata_segs; i++) touched_ranges(data_segs[i].start, data_segs[i].end, fn);
 }
 
 typedef struct {

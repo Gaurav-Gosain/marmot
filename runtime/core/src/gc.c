@@ -1059,6 +1059,9 @@ void gc_collect(bool forced) {
   } else if (gc_nhelpers < 0) {
     gc_nhelpers = 0;
   }
+  // Settled before the world stops: the first look at the pc table may ask
+  // the loader, whose lock a thread stopped inside dlopen can hold.
+  pcln_has_stackmaps();
   int64_t t0 = os_nanotime();
   stop_the_world();
   rt_m *m = getm();

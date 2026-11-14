@@ -798,6 +798,7 @@ RT_API void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uint
 }
 
 void malloc_init(void) {
+  os_data_segments_init();
   poison_init();
   classes_init();
   fixalloc_init(&span_alloc, sizeof(mspan));

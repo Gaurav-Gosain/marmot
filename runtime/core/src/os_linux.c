@@ -138,23 +138,34 @@ void os_usleep(uint32_t us) { usleep(us); }
 
 void os_yield(void) { sched_yield(); }
 
-static void (*seg_fn)(void *, void *);
+// The main program's writable segments, found once at startup. A
+// collection must not call dl_iterate_phdr: it runs with the world stopped,
+// and a thread stopped by a signal inside dlopen holds the loader lock.
+static struct {
+  uintptr_t start, end;
+} data_segs[16];
+static int ndata_segs;
 
 static int phdr_cb(struct dl_phdr_info *info, size_t size, void *data) {
   // The first object is the main program.
   for (int i = 0; i < info->dlpi_phnum; i++) {
     const ElfW(Phdr) *ph = &info->dlpi_phdr[i];
     if (ph->p_type == PT_LOAD && (ph->p_flags & PF_W)) {
+      if (ndata_segs == (int)(sizeof data_segs / sizeof data_segs[0]))
+        rt_throw("os_data_segments_init: too many writable segments");
       uintptr_t start = info->dlpi_addr + ph->p_vaddr;
-      seg_fn((void *)start, (void *)(start + ph->p_memsz));
+      data_segs[ndata_segs].start = start;
+      data_segs[ndata_segs].end = start + ph->p_memsz;
+      ndata_segs++;
     }
   }
   return 1;  // stop after the main program
 }
 
+void os_data_segments_init(void) { dl_iterate_phdr(phdr_cb, NULL); }
+
 void os_data_segments(void (*fn)(void *start, void *end)) {
-  seg_fn = fn;
-  dl_iterate_phdr(phdr_cb, NULL);
+  for (int i = 0; i < ndata_segs; i++) fn((void *)data_segs[i].start, (void *)data_segs[i].end);
 }
 
 typedef struct {

@@ -169,6 +169,8 @@ void os_yield(void) {}
 // (wasm-ld's __global_base and __data_end).
 extern char __global_base[] __attribute__((weak));
 extern char __data_end[] __attribute__((weak));
+void os_data_segments_init(void) {}
+
 void os_data_segments(void (*fn)(void *start, void *end)) {
   if (__data_end) fn(__global_base ? (void *)__global_base : (void *)1024, __data_end);
 }

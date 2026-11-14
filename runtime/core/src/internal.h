@@ -116,6 +116,7 @@ void os_futex_wake(_Atomic uint32_t *addr, bool all);
 void os_usleep(uint32_t us);
 void os_yield(void);
 // Iterate writable data segments of the main executable.
+void os_data_segments_init(void);  // at startup: os_data_segments asks no loader
 void os_data_segments(void (*fn)(void *start, void *end));
 // Thread creation. The new thread runs fn(arg) and exits when it returns.
 bool os_thread_create(void (*fn)(void *), void *arg, uintptr_t stacksize);
