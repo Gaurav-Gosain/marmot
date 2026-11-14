@@ -1445,9 +1445,10 @@ RT_API void rt_ready(rt_g *g) {
     spin_unlock(&sched.lock);
   }
   if (m) m->locks--;
-  // Readied by a timer this M runs from the scheduler: this M runs it next,
-  // another M started for it would find nothing.
-  if (!m || !m->in_timers) wakep();
+  // Readied by a timer this M runs from the scheduler, or by the timer
+  // goroutine (a ticker's channel send): this M runs it next, another M
+  // started for it would find nothing.
+  if (!m || !(m->in_timers || timer_goroutine(m->curg))) wakep();
   if (why) m->wake_next.cause = 0;
 }
 
