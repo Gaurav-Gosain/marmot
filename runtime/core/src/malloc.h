@@ -44,6 +44,7 @@ struct mspan {
   int32_t allidx;          // index in allspans
   uint32_t divmul;         // index = (offset * divmul) >> 32 for small spans
   uint32_t swept_live;     // live objects found by the last sweep
+  uint32_t partrel;        // bytes of free OS pages released inside this in-use span
   // Large precise objects: pointer map of one element.
   const uint8_t *ptrmap;
   uintptr_t ptrelem;       // element size
@@ -113,6 +114,7 @@ void memprof_maybe(void *p, uintptr_t size, void *fp);
 void memprof_free(uintptr_t obj);
 void memprof_sweep(bool (*marked)(uintptr_t));
 void heap_scavenge_min(uint64_t retain, uintptr_t min);  // heap_lock held
+uintptr_t heap_scavenge_partial(void);                   // heap_lock held
 void gc_collect(bool forced);
 void gc_mark_new(void *p);  // an object reused while marking runs: allocated black
 bool gc_has_finalizers(void);

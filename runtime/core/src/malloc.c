@@ -311,6 +311,8 @@ static mspan *page_alloc(uintptr_t npages) {
 
 void span_free(mspan *s) {
   allspans_remove(s);
+  heap_released -= s->partrel;
+  s->partrel = 0;
   if (s->allocbits) {
     uint32_t nw = (s->nelems + 63) / 64;
     bits_free(s->allocbits, nw);
@@ -356,6 +358,37 @@ void heap_scavenge_min(uint64_t retain, uintptr_t min) {
       idle -= n;
     }
   }
+}
+
+// Release the OS pages inside small in-use spans that hold no allocated
+// object (an object across a page boundary keeps both pages). Spans owned
+// by a cache are skipped: their owner hands out objects without the lock.
+// The pages read back as zero or stale; needzero makes the allocator clear
+// each object it hands out from them. Returns the bytes released.
+uintptr_t heap_scavenge_partial(void) {
+  uintptr_t ps = rt_pagesize, total = 0;
+  for (int32_t i = 0; i < nallspans; i++) {
+    mspan *s = allspans[i];
+    if (!s->cls || s->cached || s->state != SPAN_INUSE || s->partrel) continue;
+    uintptr_t lo = (s->base + ps - 1) & ~(ps - 1), end = s->base + s->npages * PAGE_SIZE;
+    uintptr_t got = 0;
+    for (uintptr_t pg = lo; pg + ps <= end; pg += ps) {
+      uintptr_t first = (pg - s->base) / s->elemsize, last = (pg + ps - 1 - s->base) / s->elemsize;
+      if (last >= s->nelems) last = s->nelems - 1;
+      bool used = false;
+      for (uintptr_t k = first; k <= last && !used; k++) used = (s->allocbits[k / 64] >> (k % 64)) & 1;
+      if (used) continue;
+      os_release((void *)pg, ps);
+      got += ps;
+    }
+    if (got) {
+      s->needzero = 1;
+      s->partrel = (uint32_t)got;
+      total += got;
+    }
+  }
+  heap_released += total;
+  return total;
 }
 
 // ---- central lists (heap_lock held) ----
@@ -527,6 +560,9 @@ static void mcache_refill(mcache *c, uint32_t spc) {
   }
   s->freeindex = 0;
   refill_alloc_cache(s);
+  // Pages released inside it come back as the cache allocates from it.
+  heap_released -= s->partrel;
+  s->partrel = 0;
   uint32_t nw = (s->nelems + 63) / 64;
   uint32_t nfree = 0;
   for (uint32_t i = 0; i < nw; i++) nfree += (uint32_t)popcount64(~s->allocbits[i]);

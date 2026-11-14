@@ -188,6 +188,7 @@ static void idle_gc_proc(void *arg) {
     gc_collect(true);
     spin_lock(&heap_lock);
     heap_scavenge_min(0, rt_pagesize);
+    heap_scavenge_partial();
     spin_unlock(&heap_lock);
   }
 }
@@ -197,6 +198,14 @@ bool gc_idle_wanted(void) {
 }
 
 // From sysmon: start the idle collection (no P needed).
+// Tests: a collection's partial scavenge, under the heap lock.
+uintptr_t gc_scavenge_partial_test(void) {
+  spin_lock(&heap_lock);
+  uintptr_t n = heap_scavenge_partial();
+  spin_unlock(&heap_lock);
+  return n;
+}
+
 void gc_idle_start(void) {
   uint32_t one = 1;
   if (idle_gc_g && atomic_compare_exchange_strong(&idle_gc_parked, &one, 0)) rt_ready(idle_gc_g);
