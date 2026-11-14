@@ -1,6 +1,7 @@
 // The pc table: function names, files and lines for code addresses, which
-// the compiler writes into the binary (versions 2 and 3; version 3 adds the
-// inline trees that give the frames of inlined calls). It serves
+// the compiler writes into the binary (versions 2 to 4; version 3 adds the
+// inline trees that give the frames of inlined calls, version 4 the stack
+// maps, which only the C core reads). It serves
 // runtime.Caller, runtime.Callers frames, FuncForPC and panic tracebacks.
 //
 // The table is read in place; lookups allocate nothing except when a name
@@ -73,10 +74,10 @@ func (t *pclnTable) init(data unsafe.Pointer, size, base uintptr) bool {
 	}
 	t.data, t.size, t.base = data, size, base
 	version := t.u32(8)
-	if version != 2 && version != 3 {
+	if version < 2 || version > 4 {
 		return false
 	}
-	if version == 3 {
+	if version >= 3 {
 		if size < hdr+12 {
 			return false
 		}
