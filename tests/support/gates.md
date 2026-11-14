@@ -24,3 +24,16 @@ forced on. Update a row when the switch or the default changes.
 Incremental build changes (module keys, separate compilation, the cache) gate on
 tests/incremental plus tests/editfuzz: a sweep of cmd/marmot with a writable copy
 of GOROOT (`-prog self -sweep -goroot DIR`), keys on and off, 0 failures.
+
+## Regular gates
+
+A change to the compiler or the runtime lands after these pass at its commit:
+
+- The conformance matrix: `go run ./tests/conform -modes dev,release,Oz`.
+- GC stress over every program: `go run ./tests/conform -modes gcstress`, 0 failures
+  outside tests/known_failures.txt. `MARMOT_GCSTRESS=1` collects at every slow-path
+  allocation; a program whose `NAME.gcstress` golden holds N collects at every Nth
+  instead (the slowest programs: tests/goroot/peano, tests/run/gc/tree_alloc), and the
+  run timeout is ten times the normal one. A failure here is a GC bug until shown
+  otherwise: a timeout must be shown to be progress (collections continuing), not a hang.
+- A fuzz round: `go run ./tests/fuzz -n 100 -release`.
