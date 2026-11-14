@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"go/types"
+	"strings"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
 	"github.com/Gaurav-Gosain/marmot/internal/target"
@@ -101,8 +102,8 @@ func (f *funcGen) wasmClaim(sym string) string {
 // forwardsToRecover reports whether fn is a compiler wrapper whose call may
 // reach a function that calls recover: the token must go through it.
 func forwardsToRecover(fn *ssa.Function) bool {
-	if fn.Synthetic == "" {
-		return false
+	if !isWrapperKind(fn.Synthetic) {
+		return false // a generic instance or package initializer is the function itself
 	}
 	for _, b := range fn.Blocks {
 		for _, instr := range b.Instrs {
@@ -114,7 +115,7 @@ func forwardsToRecover(fn *ssa.Function) bool {
 				return true
 			}
 			callee := c.Common().StaticCallee()
-			if callee == nil || callsRecover(callee) || callee.Synthetic != "" {
+			if callee == nil || callsRecover(callee) || isWrapperKind(callee.Synthetic) {
 				return true
 			}
 		}
@@ -170,4 +171,15 @@ func (p *Program) wasmDeferCalleeVar() *ssa.Global {
 	}
 	g, _ := p.runtime.Members["wasmDeferCallee"].(*ssa.Global)
 	return g
+}
+
+// isWrapperKind reports whether an ssa Synthetic string names a wrapper that
+// only forwards to another function (not a generic instance or an init).
+func isWrapperKind(syn string) bool {
+	for _, p := range []string{"wrapper for ", "bound method wrapper for ", "thunk for ", "instantiation wrapper of "} {
+		if strings.HasPrefix(syn, p) {
+			return true
+		}
+	}
+	return false
 }

@@ -1,0 +1,6 @@
+helper recover nil: true
+generic calls helper outer caught: x
+helper recover nil: true
+generic calls func value outer caught: y
+iface helper recover nil: true
+generic calls interface outer caught: z

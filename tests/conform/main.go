@@ -168,6 +168,9 @@ func main() {
 			if _, arch, ok := strings.Cut(*flTarget, "/"); ok && known[j.test+"@"+arch] {
 				results[i].Known = true // NAME@wasm: expected on that target
 			}
+			if *flTarget == "" && known[j.test+"@native"] {
+				results[i].Known = true // NAME@native: expected on the host target only
+			}
 		}()
 	}
 	wg.Wait()
