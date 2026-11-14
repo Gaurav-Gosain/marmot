@@ -354,6 +354,34 @@ func normStderr(s string) string {
 	return b.String()
 }
 
+func hasGCStress(env []string) bool {
+	for _, e := range env {
+		if strings.HasPrefix(e, "MARMOT_GCSTRESS=") {
+			return true
+		}
+	}
+	return false
+}
+
+// gcstressEnv is env with MARMOT_GCSTRESS=1 replaced by the interval in the
+// program's .gcstress golden, when it has one: a program that allocates too
+// much for a collection at every slow-path allocation collects at every Nth.
+func gcstressEnv(env []string, gbase string) []string {
+	b, err := os.ReadFile(golden(gbase, ".gcstress"))
+	if err != nil {
+		return env
+	}
+	n := strings.TrimSpace(string(b))
+	out := make([]string, len(env))
+	for i, e := range env {
+		if e == "MARMOT_GCSTRESS=1" {
+			e = "MARMOT_GCSTRESS=" + n
+		}
+		out[i] = e
+	}
+	return out
+}
+
 type config struct {
 	label   string
 	o       string
@@ -456,7 +484,11 @@ func runOne(root, testsDir, work, marmot, name string, cfg config) result {
 		r.Detail = firstLines(bo.stdout+bo.stderr, 12)
 		return r
 	}
-	ro, err := execute(*flTimeout, tdir, cfg.env, exe)
+	runEnv, rto := gcstressEnv(cfg.env, gbase), *flTimeout
+	if hasGCStress(runEnv) {
+		rto *= 10 // collections at slow-path allocations
+	}
+	ro, err := execute(rto, tdir, runEnv, exe)
 	if err != nil {
 		r.Reason, r.Detail = "crash", err.Error()
 		return r

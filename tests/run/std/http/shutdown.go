@@ -49,13 +49,17 @@ func main() {
 	err = <-done
 	fmt.Println(errors.Is(err, http.ErrServerClosed))
 	srv2 := &http.Server{}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
 	ln2, _ := net.Listen("tcp", "127.0.0.1:0")
-	srv2.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { time.Sleep(time.Second) })
+	inHandler := make(chan struct{})
+	srv2.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(inHandler)
+		time.Sleep(time.Second)
+	})
 	go srv2.Serve(ln2)
 	go http.Get("http://" + ln2.Addr().String())
-	time.Sleep(50 * time.Millisecond)
+	<-inHandler // a request is in flight: Shutdown cannot finish within its deadline
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
 	fmt.Println(errors.Is(srv2.Shutdown(ctx), context.DeadlineExceeded))
 	srv2.Close()
 }

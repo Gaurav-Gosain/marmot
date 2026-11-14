@@ -11,7 +11,9 @@ import (
 
 func main() {
 	gotCancel := make(chan bool, 1)
+	entered := make(chan struct{}, 3)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		entered <- struct{}{}
 		select {
 		case <-r.Context().Done():
 			gotCancel <- true
@@ -27,7 +29,7 @@ func main() {
 		_, err := http.DefaultClient.Do(req)
 		errc <- err
 	}()
-	time.Sleep(50 * time.Millisecond)
+	<-entered // cancel once the server has the request
 	cancel()
 	err := <-errc
 	fmt.Println(errors.Is(err, context.Canceled))
@@ -37,10 +39,21 @@ func main() {
 	req2, _ := http.NewRequestWithContext(ctx2, "GET", ts.URL, nil)
 	_, err = http.DefaultClient.Do(req2)
 	fmt.Println(errors.Is(err, context.DeadlineExceeded))
-	<-gotCancel
+	handlerDone(gotCancel)
 	c := &http.Client{Timeout: 40 * time.Millisecond}
 	_, err = c.Get(ts.URL)
 	var to interface{ Timeout() bool }
 	fmt.Println(errors.As(err, &to) && to.Timeout())
-	<-gotCancel
+	handlerDone(gotCancel)
+}
+
+// handlerDone waits for the handler of a request that timed out on the
+// client side. The deadline can pass before the request reaches the server
+// (a slow run), and then no handler runs: give up after the handler's own
+// five seconds.
+func handlerDone(gotCancel chan bool) {
+	select {
+	case <-gotCancel:
+	case <-time.After(6 * time.Second):
+	}
 }
