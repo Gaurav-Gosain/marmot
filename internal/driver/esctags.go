@@ -2,6 +2,7 @@ package driver
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -31,19 +32,28 @@ func (b *build) escapeTags(lp *loader.Program, cg *codegen.Program, pkgs []*ssa.
 		path := pkgs[i].Pkg.Path()
 		ip := lp.Incremental[path]
 		if ip == nil || ip.Key == "" || byPath[path] == nil {
+			if os.Getenv("MARMOT_DEBUG_TAGS") != "" {
+				debugTags("none %s ip=%v key=%v all=%v", path, ip != nil, ip != nil && ip.Key != "", byPath[path] != nil)
+			}
 			return
 		}
 		file := b.escTagsPath(ip.Key)
 		if !ip.FromSource {
-			if data, err := os.ReadFile(file); err == nil {
+			data, err := os.ReadFile(file)
+			if err != nil && os.Getenv("MARMOT_DEBUG_TAGS") != "" {
+				debugTags("none %s read %v", path, err)
+			}
+			if err == nil {
 				var t codegen.EscTags
 				if json.Unmarshal(data, &t) == nil {
 					tags[i] = t
 				}
+				debugTags("read %s key %s: %d tags %s", path, ip.Key, len(t), t.Hash())
 			}
 			return
 		}
 		t := cg.ComputeEscTags(pkgs[i])
+		debugTags("computed %s key %s: %d tags %s", path, ip.Key, len(t), t.Hash())
 		if data, err := json.Marshal(t); err == nil {
 			_ = os.MkdirAll(filepath.Dir(file), 0o755) // a failed write only costs a recomputation
 			_ = loader.WriteAtomic(file, data)
@@ -129,4 +139,16 @@ func (b *build) saveTagKey(i int, k string) {
 func (b *build) dropModule(k string) {
 	_ = os.Remove(filepath.Join(b.cfg.Root, "build", "cache", "mlir", k+".mlir")) // best effort: it is regenerated
 	_ = os.Remove(b.tagKeyPath(k))
+}
+
+// debugTags appends a line to $MARMOT_DEBUG_TAGS (debugging aid).
+func debugTags(format string, args ...any) {
+	f := os.Getenv("MARMOT_DEBUG_TAGS")
+	if f == "" {
+		return
+	}
+	if w, err := os.OpenFile(f, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+		fmt.Fprintf(w, format+"\n", args...)
+		w.Close()
+	}
 }

@@ -715,6 +715,19 @@ func loadIncremental(cfg Config, pcfg *packages.Config, patterns []string, confS
 		for _, d := range st.retry {
 			force[d] = true
 		}
+		// What this attempt loaded from source stays from source. Its export
+		// data was written under a key the next attempt would find in the
+		// cache, but what the build derives from a source load and keeps
+		// next to the export data (escape tags, driver/esctags.go) was not
+		// written yet: loaded from export data again, such a package had no
+		// tags, so importers compiled its parameters as escaping where a
+		// clean build did not (editfuzz, body edit in bufio, x/tools
+		// internal/imports calling gopathwalk.WalkSkip).
+		for p, r := range st.result {
+			if r.FromSource {
+				force[p.PkgPath] = true
+			}
+		}
 	}
 }
 
