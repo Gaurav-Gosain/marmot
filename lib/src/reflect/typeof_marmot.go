@@ -44,61 +44,102 @@ func madeType(key any, build func() *rtabi.Type) *rtabi.Type {
 // canonicalType returns the compiler's descriptor of the type that t
 // describes, or nil.
 func canonicalType(t *rtabi.Type) *rtabi.Type {
-	for _, c := range typelinksByString()[t.Str] {
-		if c.Kind_ == t.Kind_ && !c.HasName() && haveIdenticalUnderlyingType(c, t, true) {
-			return c
-		}
-	}
-	return nil
+	return typelinksFind(t.Str, func(c *rtabi.Type) bool {
+		return c.Kind_ == t.Kind_ && !c.HasName() && haveIdenticalUnderlyingType(c, t, true)
+	})
 }
 
 // canonicalPtrTo returns the compiler's descriptor of *t, or nil.
 func canonicalPtrTo(t *rtabi.Type) *rtabi.Type {
-	for _, c := range typelinksByString()["*"+t.Str] {
-		if c.Kind_ == rtabi.Pointer && (*rtabi.PtrType)(unsafe.Pointer(c)).Elem == t {
-			return c
-		}
-	}
-	return nil
+	return typelinksFind("*"+t.Str, func(c *rtabi.Type) bool {
+		return c.Kind_ == rtabi.Pointer && (*rtabi.PtrType)(unsafe.Pointer(c)).Elem == t
+	})
 }
 
 //go:linkname rt_typelinks rt_typelinks
 //go:noescape
 func rt_typelinks(n *int) unsafe.Pointer
 
+// The descriptors of unnamed composite types the compiler emitted (section
+// marmot_tlinks, found by rt_typelinks), indexed by type string: an open
+// addressing table of uint32 positions into the section (+1, 0 empty),
+// one slot per distinct descriptor at load 1/2 or less. A descriptor the
+// section lists more than once is indexed once. About 8 bytes per type,
+// against some 60 for a map of slices.
 var (
-	typelinksOnce  sync.Once
-	typelinksIndex map[string][]*rtabi.Type
+	typelinksOnce sync.Once
+	tlTypes       []*rtabi.Type
+	tlSlots       []uint32
 )
 
-// typelinksByString indexes the descriptors of unnamed composite types the
-// compiler emitted (section marmot_tlinks, found by rt_typelinks) by
-// their type string.
-func typelinksByString() map[string][]*rtabi.Type {
-	typelinksOnce.Do(func() {
-		var n int
-		p := rt_typelinks(&n)
-		m := make(map[string][]*rtabi.Type)
-		if p != nil {
-			for _, t := range unsafe.Slice((**rtabi.Type)(p), n) {
-				if t == nil {
-					continue
-				}
-				dup := false
-				for _, c := range m[t.Str] {
-					if c == t {
-						dup = true
-						break
-					}
-				}
-				if !dup {
-					m[t.Str] = append(m[t.Str], t)
-				}
+func strHash(s string) uint32 {
+	h := uint32(2166136261)
+	for i := 0; i < len(s); i++ {
+		h = (h ^ uint32(s[i])) * 16777619
+	}
+	return h
+}
+
+func typelinksBuild() {
+	var n int
+	p := rt_typelinks(&n)
+	if p == nil || n == 0 {
+		return
+	}
+	tlTypes = unsafe.Slice((**rtabi.Type)(p), n)
+	slots := make([]uint32, 1024)
+	used := 0
+	insert := func(slots []uint32, i int) bool {
+		t := tlTypes[i]
+		mask := uint32(len(slots) - 1)
+		for k := strHash(t.Str) & mask; ; k = (k + 1) & mask {
+			j := slots[k]
+			if j == 0 {
+				slots[k] = uint32(i + 1)
+				return true
+			}
+			if tlTypes[j-1] == t {
+				return false // already indexed
 			}
 		}
-		typelinksIndex = m
-	})
-	return typelinksIndex
+	}
+	for i, t := range tlTypes {
+		if t == nil {
+			continue
+		}
+		if (used+1)*2 > len(slots) {
+			bigger := make([]uint32, len(slots)*2)
+			for _, j := range slots {
+				if j != 0 {
+					insert(bigger, int(j-1))
+				}
+			}
+			slots = bigger
+		}
+		if insert(slots, i) {
+			used++
+		}
+	}
+	tlSlots = slots
+}
+
+// typelinksFind returns the first descriptor with type string s for which
+// ok holds, or nil.
+func typelinksFind(s string, ok func(*rtabi.Type) bool) *rtabi.Type {
+	typelinksOnce.Do(typelinksBuild)
+	if len(tlSlots) == 0 {
+		return nil
+	}
+	mask := uint32(len(tlSlots) - 1)
+	for k := strHash(s) & mask; ; k = (k + 1) & mask {
+		j := tlSlots[k]
+		if j == 0 {
+			return nil
+		}
+		if t := tlTypes[j-1]; t.Str == s && ok(t) {
+			return t
+		}
+	}
 }
 
 // gcBits is a pointer bitmap under construction, one bit per word.
