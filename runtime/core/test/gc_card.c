@@ -18,6 +18,18 @@ extern uint64_t gc_verify_missed;
 static node *shared[NSHARED];  // global: no barrier, rescanned as a root
 static waitgroup wg;
 
+// A small object's card may be marked through any of its words (the second
+// stop rescans small objects whole): edge stores mark the card of the
+// node's first word.
+static inline void st_field(node *obj, void *slot, void *v) {
+  *(void **)slot = v;
+  if (obj->npay < 500) {
+    rt_card_table[((uintptr_t)obj >> RT_CARD_SHIFT) & RT_CARD_MASK] = 0;
+  } else {
+    rt_card_table[((uintptr_t)slot >> RT_CARD_SHIFT) & RT_CARD_MASK] = 0;  // large: per card
+  }
+}
+
 static inline void st(void *slot, void *v) {
   *(void **)slot = v;
   rt_card_table[((uintptr_t)slot >> RT_CARD_SHIFT) & RT_CARD_MASK] = 0;
@@ -38,7 +50,7 @@ static void worker(void *arg) {
           break;
         case 2: {
           node *a = roots[i], *b = roots[(r >> 40) % 500];
-          if (a) st(&a->edge[(r >> 50) % NE], b);
+          if (a) st_field(a, &a->edge[(r >> 50) % NE], b);
           break;
         }
         case 3:
@@ -59,7 +71,7 @@ static void worker(void *arg) {
         }
         case 6: {  // an edge of a node to a shared one
           node *a = roots[i], *b = __atomic_load_n(&shared[j], __ATOMIC_ACQUIRE);
-          if (a) st(&a->edge[(r >> 50) % NE], b);
+          if (a) st_field(a, &a->edge[(r >> 50) % NE], b);
           break;
         }
       }

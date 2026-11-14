@@ -974,9 +974,12 @@ static void cards_clear(void) {
   }
 }
 
-// The pointer words in [lo, hi) of marked objects, into the mark: the
-// objects a store changed while marking ran beside the program.
-NO_SANITIZE static void scan_card(gcw *w, uintptr_t lo, uintptr_t hi) {
+// The marked objects a store changed while marking ran beside the program,
+// into the mark: every small object that overlaps [lo, hi) whole (so the
+// compiler may mark the card of any word of a small object it stores into),
+// and the pointer words in [lo, hi) of a large one. *last is the small
+// object scanned last: consecutive dirty cards scan an object once.
+NO_SANITIZE static void scan_card(gcw *w, uintptr_t lo, uintptr_t hi, uintptr_t *last) {
   uintptr_t p = lo;
   while (p < hi) {
     mspan *s = rt_pagemap[(p - rt_arena_start) >> PAGE_SHIFT];
@@ -990,16 +993,21 @@ NO_SANITIZE static void scan_card(gcw *w, uintptr_t lo, uintptr_t hi) {
       continue;
     }
     uintptr_t obj = s->base + idx * s->elemsize, end = obj + s->elemsize;
-    if (end > hi) end = hi;
     bool live = ((s->allocbits[idx / 64] >> (idx % 64)) & 1) && ((s->markbits[idx / 64] >> (idx % 64)) & 1);
+    if (s->cls) {
+      if (live && obj != *last) {
+        scan_object(w, obj);
+        *last = obj;
+      }
+      p = end;
+      continue;
+    }
+    if (end > hi) end = hi;
     if (live) {
       for (uintptr_t q = p; q + WORDSZ <= end; q += WORDSZ) {
         bool ptr;
         if (s->kind == RT_ALLOC_CONSERVATIVE) {
           ptr = true;
-        } else if (s->cls) {
-          uintptr_t wd = (q - rt_arena_start) / WORDSZ;
-          ptr = (rt_heapbits[wd / 64] >> (wd % 64)) & 1;
         } else {
           uintptr_t e = (q - obj) / s->ptrelem, i = ((q - obj) % s->ptrelem) / WORDSZ;
           ptr = e < s->ptrcount && ((s->ptrmap[i / 8] >> (i % 8)) & 1);
@@ -1017,6 +1025,7 @@ static void scan_dirty_cards(void) {
   cards_scanned = 0;
   if (!rt_card_table) return;
   gcw *w = &workers[0];
+  uintptr_t last = 0;
   uintptr_t a = rt_arena_start >> RT_CARD_SHIFT, b = (rt_arena_used + (1u << RT_CARD_SHIFT) - 1) >> RT_CARD_SHIFT;
   for (uintptr_t i = a; i < b; i++) {
     if (rt_card_table[i & RT_CARD_MASK]) continue;
@@ -1024,7 +1033,7 @@ static void scan_dirty_cards(void) {
     uintptr_t lo = i << RT_CARD_SHIFT, hi = lo + ((uintptr_t)1 << RT_CARD_SHIFT);
     if (lo < rt_arena_start) lo = rt_arena_start;
     if (hi > rt_arena_used) hi = rt_arena_used;
-    scan_card(w, lo, hi);
+    scan_card(w, lo, hi, &last);
   }
 }
 
