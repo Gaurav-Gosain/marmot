@@ -71,7 +71,7 @@ func (b *build) spillParts(i int, m *codegen.Module, parts []codegen.Module, cac
 		b.partKeys = append(b.partKeys, "")
 		b.partMu.Unlock()
 		p := filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", j))
-		if err := os.WriteFile(p, appendAliasTypes(nil, pm.Text), 0o644); err != nil {
+		if err := writeModuleFile(p, nil, pm.Text); err != nil {
 			return err
 		}
 		pm.Path, pm.Text = p, ""

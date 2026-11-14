@@ -38,6 +38,25 @@ func (f *funcGen) findConstLits() {
 	if noLitCopy || f.fn == nil {
 		return
 	}
+	// Most functions have no literal worth an image: a cheap count first
+	// (on tuios the maps and walks below were 1.25 GB of allocation).
+	consts, updates := 0, 0
+	for _, b := range f.fn.Blocks {
+		for _, instr := range b.Instrs {
+			switch x := instr.(type) {
+			case *ssa.Store:
+				switch x.Addr.(type) {
+				case *ssa.FieldAddr, *ssa.IndexAddr:
+					consts++ // a store into a literal's element
+				}
+			case *ssa.MapUpdate:
+				updates++
+			}
+		}
+	}
+	if consts < minLitCopyStores && updates < minMapLitEntries {
+		return
+	}
 	s := &staticInit{m: f.m, images: map[ssa.Value]*memImage{}}
 	type cand struct {
 		a   *ssa.Alloc
@@ -46,17 +65,25 @@ func (f *funcGen) findConstLits() {
 	}
 	var cands []cand
 	for _, b := range f.fn.Blocks {
-		pos := map[ssa.Instruction]int{}
-		for i, instr := range b.Instrs {
-			pos[instr] = i
-		}
+		var pos map[ssa.Instruction]int
 		for _, instr := range b.Instrs {
 			a, ok := instr.(*ssa.Alloc)
 			if !ok || f.skipInstr[a] || f.volatile[a] {
 				continue
 			}
+			switch a.Type().(*types.Pointer).Elem().Underlying().(type) {
+			case *types.Array, *types.Struct:
+			default:
+				continue
+			}
 			if _, ok := f.m.static.runtimeObj(a); ok {
 				continue
+			}
+			if pos == nil {
+				pos = make(map[ssa.Instruction]int, len(b.Instrs))
+				for i, instr := range b.Instrs {
+					pos[instr] = i
+				}
 			}
 			cands = append(cands, cand{a, b, pos})
 		}

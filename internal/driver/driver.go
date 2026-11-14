@@ -326,6 +326,7 @@ func (b *build) run1() (string, error) {
 		infos[p.Types] = p.TypesInfo
 	}
 	cg.SetTypesInfo(infos)
+	dropTypesInfo(lp)
 	mainSSA := lp.SSAPkgs[root.Types]
 
 	// Generate MLIR for every package in parallel, skipping packages whose
@@ -520,7 +521,7 @@ func (b *build) spill(i int, m *codegen.Module, cacheable bool, keys []string) e
 		}
 	}
 	p := filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", i))
-	if err := os.WriteFile(p, b.moduleFile(m), 0o644); err != nil {
+	if err := writeModuleFile(p, b.moduleHead(m), m.Text); err != nil {
 		return err
 	}
 	m.Path, m.Text = p, ""
@@ -530,14 +531,13 @@ func (b *build) spill(i int, m *codegen.Module, cacheable bool, keys []string) e
 	return nil
 }
 
-// moduleFile is the file content for module m in the work directory: its
-// text with struct types aliased, after its name with -work.
-func (b *build) moduleFile(m *codegen.Module) []byte {
-	var head []byte
+// moduleHead is the first line of module m's file in the work directory:
+// its name with -work (writeModuleFile writes the aliased text after it).
+func (b *build) moduleHead(m *codegen.Module) []byte {
 	if b.cfg.Work {
-		head = []byte("// " + m.Name + "\n")
+		return []byte("// " + m.Name + "\n")
 	}
-	return appendAliasTypes(head, m.Text)
+	return nil
 }
 
 func defaultOutput(p *packages.Package, emit string) string {
@@ -578,7 +578,7 @@ func (b *build) compile(mods []codegen.Module, emit string, want int) ([]string,
 		ins[i] = m.Path
 		if m.Text != "" {
 			ins[i] = filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", i))
-			werrs[i] = os.WriteFile(ins[i], b.moduleFile(&m), 0o644)
+			werrs[i] = writeModuleFile(ins[i], b.moduleHead(&m), m.Text)
 		}
 		objs[i] = filepath.Join(b.work, fmt.Sprintf("m%03d%s", i, ext))
 	})
@@ -1047,4 +1047,36 @@ func (b *build) allocReport() io.Writer {
 	}
 	b.closers = append(b.closers, f.Close)
 	return f
+}
+
+// dropTypesInfo clears the type checker's records of the packages that
+// declare no generic function or type: code generation reads type info
+// only at setup (SetTypesInfo) and for the local types of generic
+// functions (localTypeArgs). On tuios the records are 0.4 GB of the
+// driver's 1.6 GB live heap during generation.
+func dropTypesInfo(lp *loader.Program) {
+	for _, p := range lp.All {
+		if p.TypesInfo == nil || p.Types == nil || declaresGeneric(p.Types) {
+			continue
+		}
+		*p.TypesInfo = types.Info{}
+	}
+}
+
+// declaresGeneric reports whether pkg declares a generic function or type.
+func declaresGeneric(pkg *types.Package) bool {
+	sc := pkg.Scope()
+	for _, name := range sc.Names() {
+		switch o := sc.Lookup(name).(type) {
+		case *types.Func:
+			if o.Signature().TypeParams().Len() > 0 {
+				return true
+			}
+		case *types.TypeName:
+			if n, ok := o.Type().(*types.Named); ok && n.TypeParams().Len() > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }

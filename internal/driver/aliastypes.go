@@ -1,8 +1,11 @@
 package driver
 
 import (
+	"bufio"
+	"bytes"
+	"io"
 	"os"
-	"slices"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,10 +23,21 @@ func aliasTypes(text string) string {
 }
 
 // appendAliasTypes appends text with its struct types aliased (aliasTypes)
-// to dst, so the result is written without another copy.
+// to dst.
 func appendAliasTypes(dst []byte, text string) []byte {
+	var b bytes.Buffer
+	b.Write(dst)
+	_ = writeAliasTypes(&b, text)
+	return b.Bytes()
+}
+
+// writeAliasTypes writes text with its struct types aliased (aliasTypes) to
+// w, without building the result in memory: on tuios the copies were 1.7 GB
+// of the driver's allocation.
+func writeAliasTypes(w io.Writer, text string) error {
 	if os.Getenv("MARMOT_NO_TYPEALIAS") != "" {
-		return append(dst, text...)
+		_, err := io.WriteString(w, text)
+		return err
 	}
 	const prefix = "!llvm.struct<"
 	type span struct{ start, end int }
@@ -77,29 +91,59 @@ func appendAliasTypes(dst []byte, text string) []byte {
 		}
 	}
 	if len(types) == 0 {
-		return append(dst, text...)
+		_, err := io.WriteString(w, text)
+		return err
 	}
 	sort.Strings(types)
 	name := make(map[string]string, len(types))
-	size := len(text)
-	for _, t := range types {
-		size += len(t) + 12
-	}
-	dst = slices.Grow(dst, size)
 	for k, t := range types {
 		name[t] = "!mt" + strconv.Itoa(k)
-		dst = append(dst, name[t]...)
-		dst = append(dst, " = "...)
-		dst = append(dst, t...)
-		dst = append(dst, '\n')
+		if _, err := io.WriteString(w, name[t]+" = "+t+"\n"); err != nil {
+			return err
+		}
 	}
 	last := 0
 	for _, s := range spans {
 		if n, ok := name[text[s.start:s.end]]; ok {
-			dst = append(dst, text[last:s.start]...)
-			dst = append(dst, n...)
+			if _, err := io.WriteString(w, text[last:s.start]); err != nil {
+				return err
+			}
+			if _, err := io.WriteString(w, n); err != nil {
+				return err
+			}
 			last = s.end
 		}
 	}
-	return append(dst, text[last:]...)
+	_, err := io.WriteString(w, text[last:])
+	return err
+}
+
+// writeModuleFile writes head and then text with its struct types aliased to
+// path, atomically (a temporary file renamed into place), through a buffer.
+func writeModuleFile(path string, head []byte, text string) error {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp*")
+	if err != nil {
+		return err
+	}
+	bw := bufio.NewWriterSize(f, 1<<20)
+	_, err = bw.Write(head)
+	if err == nil {
+		err = writeAliasTypes(bw, text)
+	}
+	if err == nil {
+		err = bw.Flush()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(f.Name(), 0o644)
+	}
+	if err == nil {
+		err = os.Rename(f.Name(), path)
+	}
+	if err != nil {
+		_ = os.Remove(f.Name()) // best effort: the temporary file of a failed write
+	}
+	return err
 }

@@ -267,7 +267,7 @@ func (b *build) saveModule(k, text string) string {
 		n := strings.IndexByte(text, '\n') + 1
 		head, text = []byte(text[:n]), text[n:]
 	}
-	if loader.WriteAtomic(p, appendAliasTypes(head, text)) == nil {
+	if writeModuleFile(p, head, text) == nil {
 		return p
 	}
 	return ""
