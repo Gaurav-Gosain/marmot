@@ -365,6 +365,7 @@ typedef struct {
   int64_t goid;     // 0: not a goroutine stack
   uintptr_t pc;     // the frame owning the word (a stack root), 0: unknown
   uintptr_t off;    // from the stack's top
+  intptr_t spoff;   // from the saved sp of a stopped goroutine, -1: none
 } root_rec;
 static root_rec top_roots[20];
 static rt_g *root_g;  // the goroutine whose stack is being scanned
@@ -416,10 +417,12 @@ NO_SANITIZE static void scan_range_roots(gcw *w, uintptr_t lo, uintptr_t hi) {
     for (int i = 1; i < 20; i++)
       if (top_roots[i].bytes < top_roots[k].bytes) k = i;
     if (got > top_roots[k].bytes) {
-      root_rec r = {p, got, root_g ? root_g->id : 0, 0, 0};
+      root_rec r = {p, got, root_g ? root_g->id : 0, 0, 0, -1};
       if (root_g) {
         r.pc = owner_pc(root_g, p);
         r.off = root_g->stack_hi - p;
+        uintptr_t sp = (uintptr_t)root_g->sp;
+        if (sp && p >= sp && atomic_load(&root_g->status) != G_RUNNING) r.spoff = (intptr_t)(p - sp);
       }
       top_roots[k] = r;
     }
@@ -446,6 +449,11 @@ static void print_roots(void) {
       rt_printu(r.off);
       rt_print(" frame pc ");
       rt_printx(r.pc);
+      if (r.spoff >= 0 && r.spoff < (RT_ARCH_ARM64 ? 160 : 56)) {
+        rt_print(" (saved context +");  // callee-saved registers at the switch
+        rt_printu((uint64_t)r.spoff);
+        rt_print(")");
+      }
     } else {
       rt_print(" (data segment or registered root)");
     }
