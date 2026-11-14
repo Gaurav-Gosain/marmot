@@ -141,6 +141,17 @@ void rt_set_waitreason(uint32_t reason);
 extern volatile uint8_t rt_gc_marking __attribute__((visibility("hidden")));
 RT_PRESERVE_ALL void rt_wb(void **slot, void *new_value);
 RT_PRESERVE_ALL void rt_wb_range(void *dst, const void *src, uintptr_t n);
+// Card marking, the barrier of macOS and Linux builds: after every store of
+// a pointer to memory that may be the heap, compiled code clears the card
+// byte of the destination, unconditionally:
+//   *slot = new; rt_card_table[(uintptr_t)slot >> RT_CARD_SHIFT] = 0;
+// (one byte per 512 bytes of address space, 0 is dirty). The table covers
+// the whole user address space and its pages are committed on first touch,
+// so a store to any address is safe. Bulk copies of pointerful memory call
+// rt_card_range(dst, n) instead. NULL on wasm (which uses rt_wb).
+#define RT_CARD_SHIFT 9
+extern uint8_t *rt_card_table __attribute__((visibility("hidden")));
+RT_PRESERVE_ALL void rt_card_range(void *dst, uintptr_t n);
 // GOGC style pacing percent. Negative disables collection. Returns the old value.
 int32_t rt_gc_set_percent(int32_t percent);
 

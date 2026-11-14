@@ -954,6 +954,70 @@ static void weak_clear(void) {
 
 static void scan_data_segment(void *lo, void *hi) { gc_scan_range((uintptr_t)lo, (uintptr_t)hi); }
 
+// ---- cards ----
+
+// The heap's cards, cleared at the first stop of a concurrent cycle; every
+// pointer store into the heap after that dirties its card.
+static void cards_clear(void) {
+  if (!rt_card_table) return;
+  uintptr_t a = rt_arena_start >> RT_CARD_SHIFT, b = (rt_arena_used + (1u << RT_CARD_SHIFT) - 1) >> RT_CARD_SHIFT;
+  __builtin_memset(rt_card_table + a, 0xff, b - a);
+}
+
+// The pointer words in [lo, hi) of marked objects, into the mark: the
+// objects a store changed while marking ran beside the program.
+NO_SANITIZE static void scan_card(gcw *w, uintptr_t lo, uintptr_t hi) {
+  uintptr_t p = lo;
+  while (p < hi) {
+    mspan *s = rt_pagemap[(p - rt_arena_start) >> PAGE_SHIFT];
+    if (!s || s->state != SPAN_INUSE || s->kind == RT_ALLOC_NOSCAN || p < s->base || p >= s->limit) {
+      p = (p & ~(PAGE_SIZE - 1)) + PAGE_SIZE;
+      continue;
+    }
+    uintptr_t idx = s->cls ? (uintptr_t)(((uint64_t)(p - s->base) * s->divmul) >> 32) : 0;
+    if (idx >= s->nelems) {
+      p = s->limit;
+      continue;
+    }
+    uintptr_t obj = s->base + idx * s->elemsize, end = obj + s->elemsize;
+    if (end > hi) end = hi;
+    bool live = ((s->allocbits[idx / 64] >> (idx % 64)) & 1) && ((s->markbits[idx / 64] >> (idx % 64)) & 1);
+    if (live) {
+      for (uintptr_t q = p; q + WORDSZ <= end; q += WORDSZ) {
+        bool ptr;
+        if (s->kind == RT_ALLOC_CONSERVATIVE) {
+          ptr = true;
+        } else if (s->cls) {
+          uintptr_t wd = (q - rt_arena_start) / WORDSZ;
+          ptr = (rt_heapbits[wd / 64] >> (wd % 64)) & 1;
+        } else {
+          uintptr_t e = (q - obj) / s->ptrelem, i = ((q - obj) % s->ptrelem) / WORDSZ;
+          ptr = e < s->ptrcount && ((s->ptrmap[i / 8] >> (i % 8)) & 1);
+        }
+        if (ptr) mark_ptr(w, *(uintptr_t *)q);
+      }
+    }
+    p = end;
+  }
+}
+
+static uint64_t cards_scanned;  // dirty heap cards found at the last second stop (trace)
+
+static void scan_dirty_cards(void) {
+  cards_scanned = 0;
+  if (!rt_card_table) return;
+  gcw *w = &workers[0];
+  uintptr_t a = rt_arena_start >> RT_CARD_SHIFT, b = (rt_arena_used + (1u << RT_CARD_SHIFT) - 1) >> RT_CARD_SHIFT;
+  for (uintptr_t i = a; i < b; i++) {
+    if (rt_card_table[i]) continue;
+    cards_scanned++;
+    uintptr_t lo = i << RT_CARD_SHIFT, hi = lo + ((uintptr_t)1 << RT_CARD_SHIFT);
+    if (lo < rt_arena_start) lo = rt_arena_start;
+    if (hi > rt_arena_used) hi = rt_arena_used;
+    scan_card(w, lo, hi);
+  }
+}
+
 // Every root into worker 0's stack; mark_parallel drains it.
 static void scan_roots(void) {
   gcw *w = &workers[0];
@@ -1241,7 +1305,9 @@ NOINLINE static void gc_print_trace(uint64_t before, uint64_t live, int64_t t0, 
     rt_printu((uint64_t)pace_percent);
     rt_print("), trigger ");
     rt_printu(gc_trigger >> 10);
-    rt_print(" KiB, allocated during mark ");
+    rt_print(" KiB, dirty cards ");
+    rt_printu(cards_scanned);
+    rt_print(", allocated during mark ");
     rt_printu(pace_last_alloc >> 10);
     rt_print(" KiB, waits ");
     rt_printu(__atomic_load_n(&gc_pace_waits, __ATOMIC_RELAXED));
@@ -1372,6 +1438,7 @@ void gc_collect(bool forced) {
     before = atomic_load(&heap_live);
     mcache_flush_all();
     mark_live0 = atomic_load(&heap_live);
+    cards_clear();
     __atomic_store_n(&rt_gc_marking, 1, __ATOMIC_SEQ_CST);
     atomic_store(&gc_cycle, 1);
     scan_roots();
@@ -1402,7 +1469,14 @@ void gc_collect(bool forced) {
     pace_last_alloc = a;
   }
   int64_t t1 = os_nanotime();
-  mark_roots();
+  if (conc) {
+    // Roots again, and the marked objects on the cards stores dirtied.
+    scan_roots();
+    scan_dirty_cards();
+    mark_parallel();
+  } else {
+    mark_roots();
+  }
   if (UNLIKELY(gc_verify)) verify_mark();
   if (weak_live) weak_clear();
   bool queued = mark_finalizers();

@@ -154,6 +154,46 @@ static void arena_init(void) {
   if (!rt_pagemap || !rt_heapbits) rt_throw("cannot reserve heap metadata");
 }
 
+// ---- card table ----
+
+uint8_t *rt_card_table;  // hidden (rt.h)
+static uintptr_t card_table_size;
+
+static void cards_init(void) {
+#if !RT_OS_WASI
+  for (int bits = 48; bits >= 47 && !rt_card_table; bits--) {
+    card_table_size = ((uintptr_t)1 << bits) >> RT_CARD_SHIFT;
+    rt_card_table = os_reserve(card_table_size);
+  }
+  if (!rt_card_table) card_table_size = 0;
+#endif
+}
+
+// Commit the card pages for [lo, lo+n) (the heap's, ahead of its stores).
+static void cards_commit(uintptr_t lo, uintptr_t n) {
+  if (!rt_card_table || !n) return;
+  uintptr_t ps = rt_pagesize;
+  uintptr_t a = ((lo >> RT_CARD_SHIFT) & ~(ps - 1)), b = (((lo + n - 1) >> RT_CARD_SHIFT) + ps) & ~(ps - 1);
+  if (b > card_table_size) b = card_table_size;
+  if (a < b) os_commit(rt_card_table + a, b - a);
+}
+
+// From the fault handler: a card store to a page not committed yet (a
+// stack, a C buffer, a global) commits it. Async signal safe (mprotect).
+bool card_fault(uintptr_t addr) {
+  if (!rt_card_table || addr - (uintptr_t)rt_card_table >= card_table_size) return false;
+  uintptr_t chunk = (uintptr_t)64 << 10;
+  uintptr_t off = (addr - (uintptr_t)rt_card_table) & ~(chunk - 1);
+  uintptr_t n = off + chunk > card_table_size ? card_table_size - off : chunk;
+  return os_commit(rt_card_table + off, n);
+}
+
+RT_API RT_PRESERVE_ALL void rt_card_range(void *dst, uintptr_t n) {
+  if (!rt_card_table || !n) return;
+  uintptr_t a = (uintptr_t)dst >> RT_CARD_SHIFT, b = ((uintptr_t)dst + n - 1) >> RT_CARD_SHIFT;
+  for (uintptr_t i = a; i <= b; i++) rt_card_table[i] = 0;
+}
+
 static void meta_commit(uintptr_t upto) {
   if (upto <= meta_committed) return;
   uintptr_t ps = rt_pagesize;
@@ -258,6 +298,7 @@ static void arena_grow(uintptr_t npages) {
   uintptr_t base = rt_arena_used;
   rt_arena_used += n;
   meta_commit(rt_arena_used - rt_arena_start);
+  cards_commit(base, n);
   heap_sys += n;
   mspan *s = fixalloc_alloc(&span_alloc);
   s->base = base;
@@ -854,6 +895,7 @@ RT_API void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uint
 }
 
 void malloc_init(void) {
+  cards_init();
   os_data_segments_init();
   poison_init();
   classes_init();

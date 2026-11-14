@@ -116,6 +116,7 @@ void memprof_sweep(bool (*marked)(uintptr_t));
 void heap_scavenge_min(uint64_t retain, uintptr_t min);  // heap_lock held
 uintptr_t heap_scavenge_partial(void);                   // heap_lock held
 void gc_collect(bool forced);
+bool card_fault(uintptr_t addr);  // signal handler: commit a card page
 void gc_mark_new(void *p);  // an object reused while marking runs: allocated black
 bool gc_has_finalizers(void);
 
