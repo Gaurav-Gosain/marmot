@@ -703,6 +703,9 @@ func (b *build) link1(objs []string, rt, out string, extra []string) error {
 	}
 	args = append(args, linkLibraries(b.dylibs)...)
 	args = append(args, b.cgoLDFLAGS...)
+	// MARMOT_LDFLAGS: extra linker flags (measurements, for example
+	// -Wl,--icf=all).
+	args = append(args, strings.Fields(os.Getenv("MARMOT_LDFLAGS"))...)
 	if mp := os.Getenv("MARMOT_LINKMAP"); mp != "" && runtime.GOOS == "darwin" {
 		args = append(args, "-Wl,-map,"+mp)
 	}
@@ -724,6 +727,7 @@ func (b *build) link1(objs []string, rt, out string, extra []string) error {
 		// entries alive, so an entry goes with its dead descriptor (each is
 		// SHF_LINK_ORDER on that descriptor's section).
 		args = append(args, "-Wl,--gc-sections", "-Wl,-z,start-stop-gc")
+		args = append(args, linuxLinker()...)
 		if !b.wantPcln() {
 			args = append(args, "-s")
 		}

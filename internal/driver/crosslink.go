@@ -35,6 +35,25 @@ func (b *build) crossSysroot() string {
 	return ""
 }
 
+// linuxLinker picks the linker of a native Linux link. The default is the
+// system's (GNU ld on the test host: 13 s of the 283 s tuios -release
+// build, against 1.6 s for the pc table after it); MARMOT_LD=lld or mold
+// chooses another, for measuring before it becomes the default (run time,
+// size and startup must not regress, SPEC 3c).
+func linuxLinker() []string {
+	switch os.Getenv("MARMOT_LD") {
+	case "lld":
+		if p := ldLLD(); p != "" {
+			return []string{"--ld-path=" + p}
+		}
+	case "mold":
+		if p, err := exec.LookPath("mold"); err == nil {
+			return []string{"--ld-path=" + p}
+		}
+	}
+	return nil
+}
+
 // ldLLD finds ld.lld: beside marmot's clang, in Homebrew's lld, or on PATH.
 func ldLLD() string {
 	for _, p := range []string{llvmTool("ld.lld"), filepath.Join(filepath.Dir(llvmBin), "..", "lld@22", "bin", "ld.lld"), "/opt/homebrew/opt/lld@22/bin/ld.lld", "/usr/local/opt/lld@22/bin/ld.lld"} {
