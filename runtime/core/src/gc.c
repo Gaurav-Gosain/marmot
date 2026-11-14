@@ -368,6 +368,11 @@ typedef struct {
   intptr_t spoff;   // from the saved sp of a stopped goroutine, -1: none
 } root_rec;
 static root_rec top_roots[20];
+#if RT_ARCH_ARM64
+#define CTX_BYTES 160  // the saved context: x19-x28, fp, lr, d8-d15
+#else
+#define CTX_BYTES 56   // rbp, rbx, r12-r15, return address
+#endif
 static rt_g *root_g;  // the goroutine whose stack is being scanned
 static void drain_serial(gcw *w);
 
@@ -449,7 +454,7 @@ static void print_roots(void) {
       rt_printu(r.off);
       rt_print(" frame pc ");
       rt_printx(r.pc);
-      if (r.spoff >= 0 && r.spoff < (RT_ARCH_ARM64 ? 160 : 56)) {
+      if (r.spoff >= 0 && r.spoff < CTX_BYTES) {
         rt_print(" (saved context +");  // callee-saved registers at the switch
         rt_printu((uint64_t)r.spoff);
         rt_print(")");
