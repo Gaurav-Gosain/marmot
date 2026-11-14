@@ -148,6 +148,48 @@ static void finproc(void *unused) {
 
 bool gc_has_finalizers(void) { return finlen > 0; }
 
+// ---- the idle collection ----
+//
+// A program that goes idle after allocating keeps its heap until it
+// allocates again, which an idle program does not. Once every P has been
+// idle for a while (sysmon decides), a system goroutine collects once and
+// returns every free span to the OS: one wakeup after a burst, none while
+// the program stays idle (nothing allocated since that collection).
+
+static _Atomic uint64_t gc_alloc_mark;  // stat_total_alloc at the last collection
+static rt_g *idle_gc_g;
+static _Atomic uint32_t idle_gc_parked;  // 1 while idle_gc_g waits to be readied
+
+// Bytes allocated since the last collection, past which an idle program
+// is worth one collection.
+#define IDLE_GC_MIN (1u << 20)
+
+static void idle_gc_park_done(void *arg) { atomic_store(&idle_gc_parked, 1); }
+
+static void idle_gc_proc(void *arg) {
+  for (;;) {
+    rt_park(idle_gc_park_done, NULL);
+    gc_collect(true);
+    spin_lock(&heap_lock);
+    heap_scavenge(0);
+    spin_unlock(&heap_lock);
+  }
+}
+
+bool gc_idle_wanted(void) {
+  return gc_percent >= 0 && atomic_load(&stat_total_alloc) - atomic_load(&gc_alloc_mark) >= IDLE_GC_MIN;
+}
+
+// From sysmon: start the idle collection (no P needed).
+void gc_idle_start(void) {
+  uint32_t one = 1;
+  if (idle_gc_g && atomic_compare_exchange_strong(&idle_gc_parked, &one, 0)) rt_ready(idle_gc_g);
+}
+
+// Made at startup, before the main goroutine (its stack is reserved only
+// when it first runs).
+void gc_idle_init(void) { idle_gc_g = new_system_g(idle_gc_proc, NULL); }
+
 RT_API void rt_gc_set_finalizer(void *obj, void (*fn)(void *)) {
   uintptr_t p = (uintptr_t)obj;
   if (p - rt_arena_start >= rt_arena_used - rt_arena_start) return;  // not a heap object
@@ -825,6 +867,7 @@ void gc_collect(bool forced) {
   int64_t t3 = os_nanotime();
   uint64_t live = atomic_load(&heap_live);
   last_live = live;
+  atomic_store(&gc_alloc_mark, atomic_load(&stat_total_alloc));
   if (gc_percent >= 0) {
     uint64_t goal = live + live * (uint64_t)gc_percent / 100;
     next_gc = goal < (4 << 20) ? (4 << 20) : goal;

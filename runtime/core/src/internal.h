@@ -393,6 +393,10 @@ bool signal_waiting(void);
 void signal_check_stuck(void);
 void sysmon_start(void);
 void sysmon_kick(void);
+// gc.c: the idle collection, started by sysmon.
+bool gc_idle_wanted(void);
+void gc_idle_init(void);
+void gc_idle_start(void);
 // netpoll.c
 bool netpoll_inited(void);
 int32_t netpoll(int64_t ns);  // ns < 0 blocks; returns events handled
