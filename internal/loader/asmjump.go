@@ -43,6 +43,13 @@ var rtStubs = map[string]map[string]string{
 	"golang.org/x/sys/cpu": {
 		"cpuid":  "{ var r [4]uint32; zz_marmot_rt_cpuid(%s, %s, &r[0]); return r[0], r[1], r[2], r[3] }",
 		"xgetbv": "{ var r [2]uint32; zz_marmot_rt_xgetbv(&r[0]); return r[0], r[1] }",
+		// arm64 ID registers: read only on freebsd and openbsd, or on linux
+		// without HWCAP; darwin and linux take their features from sysctl and
+		// the auxiliary vector. Zero reads as no feature.
+		"getisar0": "{ return 0 }",
+		"getisar1": "{ return 0 }",
+		"getpfr0":  "{ return 0 }",
+		"getzfr0":  "{ return 0 }",
 	},
 }
 
@@ -179,7 +186,7 @@ func asmEdits(p *packages.Package, f *ast.File, jumps map[string]asmJump) []embe
 				continue
 			}
 			out = append(out, embedEditAt{pos: p.Fset.Position(fd.End()).Offset, text: " " + fmt.Sprintf(tmpl, params...)})
-			if !rtDeclared {
+			if !rtDeclared && strings.Contains(tmpl, "zz_marmot_rt_") {
 				rtDeclared = true
 				out = append(out, embedEditAt{pos: p.Fset.Position(f.End()).Offset, text: rtDecls})
 			}
