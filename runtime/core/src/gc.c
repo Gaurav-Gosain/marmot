@@ -1391,7 +1391,21 @@ static void set_goal(uint64_t live) {
   gc_trigger = live + at;
 }
 
-void gc_collect(bool forced) {
+// The collector's own goroutine is scanned from the stop point of
+// gc_collect, a small frame: the callee-saved registers spilled there and
+// everything above. gc_collect_body's frame lies below it, so its slots,
+// with the stale words earlier calls left in that stack memory, are not
+// roots (a larger body frame kept a dead 4 MiB string alive).
+static NOINLINE void gc_collect_body(bool forced, void *sp, void *fp);
+
+NOINLINE void gc_collect(bool forced) {
+  void *regs[24];
+  void *sp = rt_spill_regs(regs);
+  gc_collect_body(forced, sp, __builtin_frame_address(0));
+  __asm__ volatile("" ::"r"(regs) : "memory");
+}
+
+static NOINLINE void gc_collect_body(bool forced, void *sp, void *fp) {
 #if !RT_OS_WASI
   // sysmon starts the idle collection; a program that never starts a
   // second thread has no sysmon otherwise.
@@ -1428,7 +1442,6 @@ void gc_collect(bool forced) {
   // Settled before the world stops: the first look at the pc table may ask
   // the loader, whose lock a thread stopped inside dlopen can hold.
   pcln_has_stackmaps();
-  void *regs[24];
   rt_m *m;
   uint64_t before = 0;
   int64_t pause1 = 0, tconc = 0;
@@ -1442,9 +1455,9 @@ void gc_collect(bool forced) {
     int64_t c0 = os_nanotime();
     stop_the_world();
     m = getm();
-    m->stop_sp = rt_spill_regs(regs);
+    m->stop_sp = sp;
     m->stop_hi = m->curg->stack_hi;
-    m->stop_fp = __builtin_frame_address(0);
+    m->stop_fp = fp;
     before = atomic_load(&heap_live);
     mcache_flush_all();
     mark_live0 = atomic_load(&heap_live);
@@ -1466,9 +1479,9 @@ void gc_collect(bool forced) {
   int64_t t0 = os_nanotime();
   stop_the_world();
   m = getm();
-  m->stop_sp = rt_spill_regs(regs);
+  m->stop_sp = sp;
   m->stop_hi = m->curg->stack_hi;
-  m->stop_fp = __builtin_frame_address(0);
+  m->stop_fp = fp;
   if (!conc) before = atomic_load(&heap_live);
   mcache_flush_all();  // while marking is on, objects allocated since the first stop are black
   if (conc) {
@@ -1529,7 +1542,6 @@ void gc_collect(bool forced) {
     spin_unlock(&fin_lock);
   }
   start_the_world();
-  __asm__ volatile("" ::"r"(regs) : "memory");
   rt_unlock(&gc_mu);
   if (wake) rt_ready(fing);
 }
