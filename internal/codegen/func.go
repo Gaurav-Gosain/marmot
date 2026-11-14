@@ -51,6 +51,8 @@ type funcGen struct {
 	slot0             map[string]bool            // the stack slots among them
 	slotCast          map[string]string          // stack slot -> its cast to a GC pointer
 	stack0            map[string]bool            // stack slots and addresses computed from them (wb.go)
+	fresh             map[string]bool            // objects allocated since the last call in this block, and their parts (wb.go)
+	wbFlag            string                     // the marking flag loaded since the last call in this block (wb.go)
 	mapLits           map[*ssa.MapUpdate]*mapLit // constant map literals: the loop at their last update (maplit.go)
 	appendMake        map[*ssa.MakeSlice]bool    // append(s, make([]T, n)...): no temporary
 	skipInstr         map[ssa.Instruction]bool   // instructions folded into others
@@ -300,6 +302,7 @@ func (f *funcGen) blockHeader(b *ssa.BasicBlock, entry bool) {
 	} else {
 		fmt.Fprintf(f.b, "  %s:\n", f.blkName[b])
 	}
+	f.fresh, f.wbFlag = nil, ""
 }
 
 // ---- emission helpers ----
@@ -315,6 +318,9 @@ func (f *funcGen) newBlock() string {
 }
 
 func (f *funcGen) emit(format string, args ...any) {
+	if optWB && strings.HasPrefix(format, "llvm.call") {
+		f.fresh, f.wbFlag = nil, ""
+	}
 	f.b.WriteString("    ")
 	fmt.Fprintf(f.b, format, args...)
 	f.b.WriteString(f.opLoc())
@@ -323,6 +329,9 @@ func (f *funcGen) emit(format string, args ...any) {
 
 // op emits "%v = text" and returns %v.
 func (f *funcGen) op(format string, args ...any) string {
+	if optWB && strings.HasPrefix(format, "llvm.call") {
+		f.fresh, f.wbFlag = nil, ""
+	}
 	v := f.newVal()
 	f.b.WriteString("    ")
 	f.b.WriteString(v)
@@ -861,7 +870,9 @@ func (f *funcGen) newObject(t types.Type) string {
 	if f.goOps() {
 		return f.op("go.new %s, %s", mlir.Symbol(f.m.typeDescSym(t)), f.tm.memType(t))
 	}
-	return f.rtcall("newobject", f.typeDesc(t))
+	v := f.rtcall("newobject", f.typeDesc(t))
+	f.markFresh(v)
+	return v
 }
 
 // unsafeAttr returns ", go.unsafe" for accesses of punned types.
@@ -961,6 +972,7 @@ func (f *funcGen) directCall(fn *ssa.Function, args []string) string {
 	}
 	sig := fmt.Sprintf("(%s) -> %s", strings.Join(params, ", "), retOrVoid(ret))
 	args = f.gcArgs(args)
+	f.fresh = nil
 	attr := ""
 	if f.noinlineCalls {
 		attr = " {no_inline}"

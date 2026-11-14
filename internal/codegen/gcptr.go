@@ -74,6 +74,9 @@ func (f *funcGen) gcv(v string) string {
 // derived records the address computed from base: in address space 0 when
 // base is. It returns v.
 func (f *funcGen) derived(base, v string) string {
+	if optWB && f.fresh[base] {
+		f.fresh[v] = true
+	}
 	if trackAddr && f.addr0[base] {
 		f.addr0[v] = true
 		if f.stack0[base] {

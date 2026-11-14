@@ -67,6 +67,7 @@ func (f *funcGen) indirectCall(code string, args, params []string, ret string) s
 		attr = " {no_inline}"
 	}
 	args = f.gcArgs(args)
+	f.fresh = nil
 	if ret == "" {
 		f.emit("llvm.call %s(%s)%s : %s", code, strings.Join(args, ", "), attr, t)
 		return ""

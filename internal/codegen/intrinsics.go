@@ -72,7 +72,7 @@ func (f *funcGen) intrinsic(fn *ssa.Function, args []string) (res string, ok boo
 		// compare and swap.
 		slot, nv := args[0], args[len(args)-1]
 		f.wbCheck(func() {
-			f.emit("llvm.call @rt_wb(%s, %s) : (%s, %s) -> ()", f.gcv(slot), f.gcv(nv), tP, tP)
+			f.wb(slot, nv)
 		})
 	}
 	switch op.kind {
