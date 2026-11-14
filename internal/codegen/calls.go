@@ -139,12 +139,29 @@ func (m *moduleGen) funcValueSym(fn *ssa.Function) string {
 	if ret != "" {
 		b.WriteString(" -> " + ret)
 	}
-	b.WriteString(" attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n")
+	// A deferred func value whose function may run recover (g := f;
+	// defer g(), h := T.M; defer h(t)): the wrapper is a frame between the
+	// deferring call and the function, which recover must see through, as
+	// the $ifn and synthetic wrappers do (recoverwrap.go). wasm uses its
+	// own token scheme.
+	wrapRecover := m.p.opts.GOARCH != "wasm" && mayRecover(fn) && m.p.runtimeFunc("recoverWrapEnter") != nil
+	exit := ""
+	if wrapRecover {
+		b.WriteString(" attributes {no_unwind, no_inline, passthrough = [[\"disable-tail-calls\", \"true\"], [\"frame-pointer\", \"all\"], \"nooutline\"]} {\n")
+		enter := m.funcRef(m.p.runtimeFunc("recoverWrapEnter"))
+		fmt.Fprintf(&b, "    %%wz = llvm.mlir.constant(0 : i32) : i32\n")
+		fmt.Fprintf(&b, "    %%wfp = llvm.call_intrinsic \"llvm.frameaddress.p0\"(%%wz) : (i32) -> !llvm.ptr\n")
+		fmt.Fprintf(&b, "    %%wfpi = llvm.ptrtoint %%wfp : !llvm.ptr to i64\n")
+		fmt.Fprintf(&b, "    %%wold = llvm.call %s(%%wfpi) : (i64) -> i64\n", mlir.Symbol(enter))
+		exit = fmt.Sprintf("    llvm.call %s(%%wold) : (i64) -> ()\n", mlir.Symbol(m.funcRef(m.p.runtimeFunc("recoverWrapExit"))))
+	} else {
+		b.WriteString(" attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n")
+	}
 	sig := fmt.Sprintf("(%s) -> %s", strings.Join(params, ", "), retOrVoid(ret))
 	if ret == "" {
-		fmt.Fprintf(&b, "    llvm.call %s(%s) : %s\n    llvm.return\n  }\n", mlir.Symbol(target), strings.Join(args, ", "), sig)
+		fmt.Fprintf(&b, "    llvm.call %s(%s) : %s\n%s    llvm.return\n  }\n", mlir.Symbol(target), strings.Join(args, ", "), sig, exit)
 	} else {
-		fmt.Fprintf(&b, "    %%r = llvm.call %s(%s) : %s\n    llvm.return %%r : %s\n  }\n", mlir.Symbol(target), strings.Join(args, ", "), sig, ret)
+		fmt.Fprintf(&b, "    %%r = llvm.call %s(%s) : %s\n%s    llvm.return %%r : %s\n  }\n", mlir.Symbol(target), strings.Join(args, ", "), sig, exit, ret)
 	}
 	m.defined[wsym] = true
 	m.defs.WriteString(b.String())

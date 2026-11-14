@@ -1,0 +1,10 @@
+M true
+direct method expr no panic
+M true
+method expr value no panic
+plain true
+func value no panic
+M true
+method value no panic
+plain true
+plain no panic
