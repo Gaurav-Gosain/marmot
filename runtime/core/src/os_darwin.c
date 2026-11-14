@@ -149,18 +149,18 @@ void os_yield(void) { sched_yield(); }
 static void touched_ranges(uintptr_t lo, uintptr_t hi, void (*fn)(void *start, void *end)) {
   uintptr_t ps = rt_pagesize;
   lo &= ~(ps - 1);
-  char vec[1024];
+  unsigned char vec[1024];  // unsigned: the flags are tested as bits
   uintptr_t run = 0;  // start of the current run of touched pages, 0: none
   for (uintptr_t at = lo; at < hi;) {
     uintptr_t n = (hi - at + ps - 1) / ps;
     if (n > sizeof vec) n = sizeof vec;
-    if (mincore((void *)at, n * ps, vec) != 0) {
+    if (mincore((void *)at, n * ps, (char *)vec) != 0) {
       // Cannot tell: scan everything left.
       if (!run) run = at;
       break;
     }
     for (uintptr_t i = 0; i < n; i++, at += ps) {
-      if (vec[i] & ~MINCORE_ANONYMOUS) {  // an untouched anonymous page reports only that bit
+      if (vec[i] & (unsigned char)~MINCORE_ANONYMOUS) {  // an untouched anonymous page reports only that bit
         if (!run) run = at;
       } else if (run) {
         fn((void *)run, (void *)at);
