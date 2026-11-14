@@ -31,7 +31,7 @@ marmot test ./...
 
 ## Against go build
 
-Measured on an Apple M3 Pro on 2026-11-13, newest measurement of each. Every program's output is
+Measured on an Apple M3 Pro, build times on 2026-11-14, newest measurement of each. Every program's output is
 checked against Go. Method and every number: [docs/benchmarks.md](docs/benchmarks.md).
 
 | | marmot | go |
@@ -39,10 +39,10 @@ checked against Go. Method and every number: [docs/benchmarks.md](docs/benchmark
 | hello world with `println`, `-release` | **148 KB** | 1.68 MB |
 | hello world with `fmt.Println`, `-release` | **665 KB** | 2.4 MB |
 | run time, geometric mean of 43 programs, `-release` | **1.6x faster** | 1.0x |
-| first build of `cmd/marmot` (238 packages), empty caches | **5.13 to 5.43 s** | 5.23 to 6.34 s |
-| rebuild, nothing changed | **0.05 to 0.07 s** | 0.14 to 0.15 s |
-| rebuild after a one line edit in the main package | 0.68 to 0.70 s | **0.50 to 0.51 s** |
-| rebuild after a one line edit in a deep package | 0.94 to 0.96 s | **0.90 to 0.93 s** |
+| first build of `cmd/marmot` (325 packages), empty caches | **4.40 to 4.57 s** | 6.14 to 6.18 s |
+| rebuild, nothing changed | **0.05 s** | 0.15 s |
+| rebuild after a one line edit in the main package | **0.59 s** | 0.66 to 0.68 s |
+| rebuild after a one line edit in a deep package | **0.72 to 0.76 s** | 1.18 to 1.23 s |
 
 Of the 43 programs, 33 are faster than with Go and 10 slower: allocation heavy code and `defer`
 in hot loops are where Go still wins.
