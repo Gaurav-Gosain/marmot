@@ -31,6 +31,10 @@ void rt_fatal(const char *msg, uintptr_t len) __attribute__((noreturn));
 int32_t rt_argc(void);
 char **rt_argv(void);
 char **rt_envp(void);
+// The auxiliary vector the kernel passed (Linux: (key, value) words up to
+// and with AT_NULL, *n words; it follows the environment on the initial
+// stack). NULL and *n = 0 elsewhere.
+uintptr_t *rt_auxv(intptr_t *n);
 
 // ---- Memory ----
 

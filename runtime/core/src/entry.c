@@ -14,6 +14,22 @@ RT_API int32_t rt_argc(void) { return g_argc; }
 RT_API char **rt_argv(void) { return g_argv; }
 RT_API char **rt_envp(void) { return g_envp; }
 
+RT_API uintptr_t *rt_auxv(intptr_t *n) {
+  *n = 0;
+#if RT_OS_LINUX
+  if (!g_envp) return NULL;
+  char **e = g_envp;
+  while (*e) e++;
+  uintptr_t *a = (uintptr_t *)(e + 1);
+  intptr_t k = 0;
+  while (a[k] != 0) k += 2;  // AT_NULL ends it
+  *n = k + 2;
+  return a;
+#else
+  return NULL;
+#endif
+}
+
 // A normal exit (os.Exit, main returning). On darwin it goes through libc
 // exit, as gc does: C stdio buffers of cgo and purego code are flushed and
 // atexit handlers run (output piped to a file was lost with _exit). Linux
