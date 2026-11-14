@@ -840,6 +840,11 @@ NOINLINE static void gc_print_trace(uint64_t before, uint64_t live, int64_t t0, 
   }
 
 void gc_collect(bool forced) {
+#if !RT_OS_WASI
+  // sysmon starts the idle collection; a program that never starts a
+  // second thread has no sysmon otherwise.
+  sysmon_start();
+#endif
   uint64_t gen = atomic_load(&num_gc);
   rt_lock(&gc_mu);
   if (!forced && (atomic_load(&num_gc) != gen || atomic_load(&heap_live) < next_gc)) {
