@@ -11,10 +11,15 @@ namespace marmot {
 // a message on stderr when
 //  - resident plus compressed (macOS phys_footprint) or swapped (Linux)
 //    memory passes MARMOT_MAX_MEM_MB (default 3072),
-//  - wall time passes MARMOT_MAX_SECONDS (default 300),
+//  - wall time passes MARMOT_MAX_SECONDS (default 300, plus what
+//    watchdogAddTime added for the size of the input),
 // and that exits quietly with status 3 when the parent process dies. A limit
 // of 0 turns that check off.
 void startWatchdog();
+
+// Adds secs to the default time limit (a guard against hangs that scales
+// with the input, not a speed rule); MARMOT_MAX_SECONDS, when set, stays.
+void watchdogAddTime(uint64_t secs);
 
 // The memory the process uses now, as the watchdog counts it (resident
 // and swapped on Linux, the physical footprint on macOS); 0 if unknown.

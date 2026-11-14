@@ -91,8 +91,16 @@ std::atomic<int64_t> requestStart{-1};
 
 } // namespace
 
+// Seconds added to the default time limit for the size of the input
+// (watchdogAddTime; per request in --serve); not when MARMOT_MAX_SECONDS
+// is set.
+std::atomic<uint64_t> extraSec{0};
+
+void watchdogAddTime(uint64_t secs) { extraSec += secs; }
+
 void watchdogRequest(bool active) {
   requestStart = active ? std::chrono::steady_clock::now().time_since_epoch().count() : 0;
+  extraSec = 0;
 }
 
 void watchdogBegin(const std::string &input) {
@@ -107,9 +115,12 @@ void watchdogEnd(const std::string &input) {
     inFlight.erase(it);
 }
 
+
+
 void startWatchdog() {
   uint64_t maxMB = envLimit("MARMOT_MAX_MEM_MB", 3072);
   uint64_t maxSec = envLimit("MARMOT_MAX_SECONDS", 300);
+  const bool scaled = std::getenv("MARMOT_MAX_SECONDS") == nullptr;
   pid_t parent = getppid();
 #if defined(__linux__)
   // The kernel kills us when the parent thread exits; the poll below covers
@@ -135,8 +146,9 @@ void startWatchdog() {
         auto secs = std::chrono::duration_cast<std::chrono::seconds>(
                         std::chrono::steady_clock::now() - from)
                         .count();
-        if ((uint64_t)secs > maxSec)
-          die("time", secs, maxSec, "s", "MARMOT_MAX_SECONDS");
+        uint64_t limit = maxSec + (scaled ? extraSec.load() : 0);
+        if ((uint64_t)secs > limit)
+          die("time", secs, limit, "s", "MARMOT_MAX_SECONDS");
       }
     }
   }).detach();

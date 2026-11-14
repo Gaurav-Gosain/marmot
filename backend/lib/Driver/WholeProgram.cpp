@@ -1335,6 +1335,11 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       sys::fs::file_size(jobs[i].in, inputSize[i]);
     std::stable_sort(order.begin(), order.end(),
                      [&](unsigned a, unsigned b) { return inputSize[a] > inputSize[b]; });
+    // The default time limit grows by a second per 10 MB of input text.
+    uint64_t text = 0;
+    for (uint64_t sz : inputSize)
+      text += sz;
+    watchdogAddTime(text / (10ull << 20));
   }
   // Memory follows input text: a module of tuios with 31 MB of text peaked
   // at 927 MB compiling alone at -O 2 (30 times), and a 58 MB module took
