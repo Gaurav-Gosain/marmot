@@ -1,0 +1,19 @@
+/memory/classes/heap/objects:bytes uint64
+/memory/classes/heap/unused:bytes uint64
+/memory/classes/heap/stacks:bytes uint64
+/memory/classes/heap/free:bytes uint64
+/memory/classes/total:bytes uint64
+/gc/heap/live:bytes uint64
+/gc/heap/allocs:bytes uint64
+/gc/heap/allocs:objects uint64
+/gc/heap/frees:objects uint64
+/gc/heap/objects:objects uint64
+/gc/cycles/total:gc-cycles uint64
+/gc/cycles/automatic:gc-cycles uint64
+/sched/goroutines:goroutines uint64
+/sched/gomaxprocs:threads uint64
+/no/such/metric:bytes bad
+objects in use > 1000: true
+heap objects bytes > 1000 KB: true
+goroutines >= 1: true
+gomaxprocs >= 1: true
