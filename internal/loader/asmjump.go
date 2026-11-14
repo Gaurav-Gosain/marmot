@@ -22,9 +22,9 @@ import (
 // (an exported function of a package it imports, or any function of the
 // same package), through the same source edits as //go:embed. A few raw system
 // call stubs of x/sys/unix that are not jumps get bodies by name, and the
-// CPU probes of x/sys/cpu on x86 (cpuid, xgetbv) return zeros: every
-// optional feature reads as absent, as marmot's internal/cpu reports, and
-// the portable code paths run.
+// CPU probes of x/sys/cpu on x86 (cpuid, xgetbv) call the runtime's
+// rt_cpuid and rt_xgetbv (runtime/core cpu.c), so it reports the features
+// of the CPU as with gc.
 
 // asmJump is the target of a jump stub: package path ("" for the same
 // package) and function name.
@@ -37,14 +37,27 @@ var rawStubs = map[string]string{
 	"RawSyscallNoError": "RawSyscall",
 }
 
-// zeroStubs are assembly functions, by package, whose body returns zero
-// results.
-var zeroStubs = map[string][]string{
-	"golang.org/x/sys/cpu": {"cpuid", "xgetbv"},
+// rtStubs are assembly functions, by package, whose bodies call a function
+// of the C runtime: the body, with %s for the parameter names in order.
+var rtStubs = map[string]map[string]string{
+	"golang.org/x/sys/cpu": {
+		"cpuid":  "{ var r [4]uint32; zz_marmot_rt_cpuid(%s, %s, &r[0]); return r[0], r[1], r[2], r[3] }",
+		"xgetbv": "{ var r [2]uint32; zz_marmot_rt_xgetbv(&r[0]); return r[0], r[1] }",
+	},
 }
 
-// zeroBody marks a zero stub in asmJump.name.
-const zeroBody = "\x00zero"
+// rtDecls declares the runtime functions that rtStubs call, once per file.
+const rtDecls = `
+
+//go:linkname zz_marmot_rt_cpuid rt_cpuid
+func zz_marmot_rt_cpuid(eax, ecx uint32, out *uint32)
+
+//go:linkname zz_marmot_rt_xgetbv rt_xgetbv
+func zz_marmot_rt_xgetbv(out *uint32)
+`
+
+// rtBody marks a runtime stub in asmJump.name.
+const rtBody = "\x00rt"
 
 // asmJumps reads the jump stubs of p's assembly files.
 func asmJumps(p *packages.Package) map[string]asmJump {
@@ -126,12 +139,12 @@ func asmJumps(p *packages.Package) map[string]asmJump {
 			}
 		}
 	}
-	for _, stub := range zeroStubs[p.PkgPath] {
+	for stub := range rtStubs[p.PkgPath] {
 		if _, ok := out[stub]; !ok {
 			if out == nil {
 				out = map[string]asmJump{}
 			}
-			out[stub] = asmJump{"", zeroBody}
+			out[stub] = asmJump{"", rtBody}
 		}
 	}
 	return out
@@ -144,6 +157,7 @@ func asmEdits(p *packages.Package, f *ast.File, jumps map[string]asmJump) []embe
 	}
 	var out []embedEditAt
 	aliases := map[string]string{}
+	rtDeclared := false
 	for _, d := range f.Decls {
 		fd, ok := d.(*ast.FuncDecl)
 		if !ok || fd.Body != nil || fd.Recv != nil {
@@ -153,13 +167,22 @@ func asmEdits(p *packages.Package, f *ast.File, jumps map[string]asmJump) []embe
 		if !ok {
 			continue
 		}
-		if j.name == zeroBody {
-			// Named results (or none): a bare return gives zeros.
-			res := fd.Type.Results
-			if res != nil && res.NumFields() > 0 && len(res.List[0].Names) == 0 {
+		if j.name == rtBody {
+			var params []any
+			for _, fl := range fd.Type.Params.List {
+				for _, n := range fl.Names {
+					params = append(params, n.Name)
+				}
+			}
+			tmpl := rtStubs[p.PkgPath][fd.Name.Name]
+			if strings.Count(tmpl, "%s") != len(params) {
 				continue
 			}
-			out = append(out, embedEditAt{pos: p.Fset.Position(fd.End()).Offset, text: " { return }"})
+			out = append(out, embedEditAt{pos: p.Fset.Position(fd.End()).Offset, text: " " + fmt.Sprintf(tmpl, params...)})
+			if !rtDeclared {
+				rtDeclared = true
+				out = append(out, embedEditAt{pos: p.Fset.Position(f.End()).Offset, text: rtDecls})
+			}
 			continue
 		}
 		var args []string

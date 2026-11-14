@@ -402,6 +402,8 @@ void **rt_typelinks(intptr_t *n);
 // F, BW, CD, DQ, VL, with ZMM state). 0 on other architectures. Computed on
 // the first call, then a load of a cached value.
 int32_t rt_x86_level(void);
+void rt_cpuid(uint32_t eax, uint32_t ecx, uint32_t *out);
+void rt_xgetbv(uint32_t *out);
 // Mark the current goroutine as entering/leaving a blocking system call.
 void rt_entersyscall(void);
 void rt_exitsyscall(void);

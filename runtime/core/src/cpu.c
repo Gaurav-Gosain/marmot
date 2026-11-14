@@ -1,5 +1,7 @@
 // cpu.c: rt_x86_level, the x86-64 psABI micro-architecture level of the
-// running CPU, for loop multiversioning.
+// running CPU, for loop multiversioning; rt_cpuid and rt_xgetbv, the
+// instructions behind Go declarations that are assembly in gc (cpuid and
+// xgetbv of golang.org/x/sys/cpu and internal/cpu).
 
 #include "internal.h"
 
@@ -49,6 +51,31 @@ RT_API int32_t rt_x86_level(void) {
   }
   return l;
 }
+
+// CPUID leaf eax, subleaf ecx: out[0..3] = eax, ebx, ecx, edx.
+RT_API void rt_cpuid(uint32_t eax, uint32_t ecx, uint32_t *out) {
+  unsigned a, b, c, d;
+  __cpuid_count(eax, ecx, a, b, c, d);
+  out[0] = a;
+  out[1] = b;
+  out[2] = c;
+  out[3] = d;
+}
+
+// XGETBV of XCR0: out[0..1] = eax, edx. As in gc, the caller checks
+// OSXSAVE first.
+RT_API void rt_xgetbv(uint32_t *out) {
+  unsigned lo, hi;
+  __asm__ volatile("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+  out[0] = lo;
+  out[1] = hi;
+}
 #else
 RT_API int32_t rt_x86_level(void) { return 0; }
+RT_API void rt_cpuid(uint32_t eax, uint32_t ecx, uint32_t *out) {
+  (void)eax;
+  (void)ecx;
+  out[0] = out[1] = out[2] = out[3] = 0;
+}
+RT_API void rt_xgetbv(uint32_t *out) { out[0] = out[1] = 0; }
 #endif
