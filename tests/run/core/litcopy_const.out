@@ -1,0 +1,17 @@
+map[a:true b:true c:false d:true e:true f:true g:false h:true i:true j:true]
+map[1:{-1 -1} 2:{3 4} 3:{5 6} 4:{7 8} 5:{9 10} 6:{11 12} 7:{13 14} 8:{15 16} 9:{0 0}] 9
+map[k1:v1 k2:v2 k3:run time k4:v4 k5:v5 k6:v6 k7:v7 k8:v8] 8
+int string float bool pos int8 rune nil 8
+8 true
+map[1:{-1 -1} 2:{3 4} 3:{5 6} 4:{7 8} 5:{9 10} 6:{11 12} 7:{13 14} 8:{15 16} 9:{0 0}] 9
+map[k1:v1 k2:v2 k3:v3 k4:v4 k5:v5 k6:v6 k7:v7 k8:v8 other:run time] 9
+int string float bool pos int8 rune nil 8
+8 true
+{changed  Run launcher 1 false} {shot  Window screenshot 99 true}
+{run  Run launcher 1 false} {shot  Window screenshot 2 true} {region drag Window region 3 false} {paste  Clipboard paste_image 4 false}
+{dyn0  c b 0 false} dyn0! 5 {a  c a 1 false}
+{dyn1  c b 10 false} dyn1! 6 {a  c a 1 false}
+{dyn2  c b 20 false} dyn2! 7 {a  c a 1 false}
+{100 2 3 4} {1 2 3 4} [{5 6 7 8} {0 0 0 0} {9 10 11 12}] boxed 42 7 true [s0 s1 s2 s3] changed
+[{9 9 9 9} {5 6 7 8}]
+74

@@ -169,6 +169,10 @@ func (f *funcGen) lookup(v *ssa.Lookup) {
 
 func (f *funcGen) mapUpdate(v *ssa.MapUpdate) {
 	m := f.value(v.Map)
+	if ml := f.mapLits[v]; ml != nil {
+		f.mapLitLoop(m, v.Map.Type(), ml)
+		return
+	}
 	mt := mapTypeOf(v.Map.Type())
 	if slot, ok := f.fuseSlot[v]; ok {
 		f.store(f.value(v.Value), slot, mt.Elem())

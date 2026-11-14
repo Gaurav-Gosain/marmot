@@ -223,8 +223,8 @@ func (m *moduleGen) typeDescSym(t types.Type) string {
 	if m.defined[sym] {
 		return sym
 	}
-	if owner := m.p.descOwner(t); owner != nil && owner != m.pkg {
-		// Defined by the module of its package.
+	if owner := m.p.descOwner(t); owner != nil && (owner != m.pkg || m.laterPart) {
+		// Defined by the module of its package (its first part, emitOwnTypes).
 		if _, ok := m.decls[sym]; !ok {
 			m.decls[sym] = fmt.Sprintf("  llvm.mlir.global external constant %s() {addr_space = 0 : i32} : !llvm.ptr\n", mlir.Symbol(sym))
 		}
@@ -513,14 +513,21 @@ func (m *moduleGen) uncommon(sym string, t types.Type) string {
 			if m.p.methodLive(fn, t) {
 				if s := m.ifaceFunc(t, sel); s != "" {
 					ifn = cAddr(s)
-					if m.p.reflectCall {
+					// reflect makes method values of exported methods only
+					// (reflect.Value.methodValue).
+					if m.p.reflectCall && fn.Exported() {
 						tfn = cAddr(m.methodValueWrapper(s, fn))
 					}
 				}
 			}
 			tfnEs = append(tfnEs, tfn)
 			if m.p.reflectCall || m.p.keepExported {
-				mexprEs = append(mexprEs, m.methodExprEntry(t, sel))
+				// reflect.Type.Method reads the entries of exported methods only.
+				if fn.Exported() {
+					mexprEs = append(mexprEs, m.methodExprEntry(t, sel))
+				} else {
+					mexprEs = append(mexprEs, cStruct(cNull(), cNull()))
+				}
 			}
 			es = append(es, cStruct(m.cString(methodName(fn)),
 				cAddr(m.typeDescSym(stripRecv(fn.Type().(*types.Signature)))), ifn))

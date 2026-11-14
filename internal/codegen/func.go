@@ -45,6 +45,8 @@ type funcGen struct {
 	reuseAppend       map[ssa.Instruction]bool          // appends whose old array can be freed on growth
 	reuseNow          bool
 	appendElems       map[*ssa.Slice][]ssa.Value // append(s, a, b): elements by varargs slice
+	litCopy           map[*ssa.Alloc]string      // constant literal objects: their image (litcopy.go)
+	mapLits           map[*ssa.MapUpdate]*mapLit // constant map literals: the loop at their last update (maplit.go)
 	appendMake        map[*ssa.MakeSlice]bool    // append(s, make([]T, n)...): no temporary
 	skipInstr         map[ssa.Instruction]bool   // instructions folded into others
 	forceUnsafe       bool                       // the access goes through a locally punned pointer
@@ -193,6 +195,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 	if !f.evalOrderOn() {
 		f.computeSinks() // the older load sinking while the scheduler is off
 	}
+	f.findConstLits()
 	f.sinkAllocs()
 	f.findMapFusions()
 	// Phis are block arguments; name them all first because branches
@@ -750,6 +753,14 @@ func (f *funcGen) nilCheck(p string) {
 const maxAllocSize = 1 << 47
 
 func (f *funcGen) alloc(v *ssa.Alloc) {
+	f.allocObj(v)
+	if sym, ok := f.litCopy[v]; ok {
+		f.memmove(f.vals[v], f.addressOf(sym), f.m.p.opts.Sizes.Sizeof(v.Type().(*types.Pointer).Elem()))
+	}
+}
+
+// allocObj allocates the (zeroed) object of v.
+func (f *funcGen) allocObj(v *ssa.Alloc) {
 	et := v.Type().(*types.Pointer).Elem()
 	if v.Comment == "makeslice" && f.m.p.opts.Sizes.Sizeof(et) > maxAllocSize {
 		// make([]T, n) with a constant n that x/tools turned into an array

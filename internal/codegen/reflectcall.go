@@ -1,6 +1,8 @@
 package codegen
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"go/token"
 	"go/types"
@@ -40,15 +42,32 @@ func tupleStruct(t *types.Tuple) *types.Struct {
 // callAdapter returns void call(closure, args, results) for signature sig:
 // it loads the arguments from a Go struct of the parameter types, calls the
 // func value, and stores the results into a Go struct of the result types.
+//
+// The adapter depends only on the ABI shape of sig: the memory layout of
+// the argument and result structs and the machine types of the call. All
+// signatures of one shape share it (tuios: one adapter per signature was
+// 7 MB of code).
 func (m *moduleGen) callAdapter(sig *types.Signature) string {
-	sym := "reflectcall:" + m.p.canonical(sig)
+	ps, rs := tupleStruct(sig.Params()), tupleStruct(sig.Results())
+	pmt, rmt := m.tm.memType(ps), m.tm.memType(rs)
+	params, ret := m.sigTypes(sig, true)
+	var shape strings.Builder
+	fmt.Fprintf(&shape, "%s|%s|%s|%s", pmt, rmt, strings.Join(params, ","), ret)
+	for i := 0; i < sig.Params().Len(); i++ {
+		t := sig.Params().At(i).Type()
+		fmt.Fprintf(&shape, "|%s/%s/%v", m.tm.memType(t), m.tm.valType(t), m.p.isPunned(t))
+	}
+	for j := 0; j < sig.Results().Len(); j++ {
+		t := sig.Results().At(j).Type()
+		fmt.Fprintf(&shape, "|%s/%s/%v", m.tm.memType(t), m.tm.valType(t), m.p.isPunned(t))
+	}
+	h := sha256.Sum256([]byte(shape.String()))
+	sym := "reflectcall:" + hex.EncodeToString(h[:12])
 	if m.defined[sym] {
 		return sym
 	}
 	m.defined[sym] = true
 	f := m.newAdapterGen()
-	ps, rs := tupleStruct(sig.Params()), tupleStruct(sig.Results())
-	pmt, rmt := m.tm.memType(ps), m.tm.memType(rs)
 	var args []string
 	for i := 0; i < sig.Params().Len(); i++ {
 		t := sig.Params().At(i).Type()
@@ -56,7 +75,6 @@ func (m *moduleGen) callAdapter(sig *types.Signature) string {
 	}
 	args = append(args, "%fv")
 	code := f.op("llvm.load %%fv {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr")
-	params, ret := m.sigTypes(sig, true)
 	r := f.indirectCall(code, args, params, ret)
 	for j := 0; j < sig.Results().Len(); j++ {
 		t := sig.Results().At(j).Type()

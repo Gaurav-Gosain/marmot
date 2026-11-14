@@ -16,6 +16,10 @@ import (
 type moduleGen struct {
 	p   *Program
 	pkg *ssa.Package // nil for the entry module
+	// laterPart is set for the parts of a package after the first: the
+	// first part defines the package's own type descriptors (and their
+	// method tables and wrappers), the others declare them.
+	laterPart bool
 	tm  *typeMapper
 
 	defs         textBuf           // definitions: globals and functions
@@ -151,6 +155,7 @@ func funcInstrs(fn *ssa.Function) int {
 // the globals, the static data and the package init.
 func (p *Program) generatePart(pkg *ssa.Package, fns []*ssa.Function, first bool, name string) (Module, error) {
 	m := p.newModule(pkg)
+	m.laterPart = !first
 	if first {
 		m.static = m.analyzeStaticInit(pkg)
 	} else {
