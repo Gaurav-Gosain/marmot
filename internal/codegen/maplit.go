@@ -16,7 +16,7 @@ import (
 // The entries are the MapUpdates of a MakeMap in its block, in order; the
 // constant ones before the first that is not constant (a run-time key may
 // equal a constant one, and the later update wins) run as the loop, at
-// the place of the last of them. MARMOT_NO_LITCOPY=1 turns it off too.
+// the place of the last of them. Off unless MARMOT_LITCOPY=1 (litcopy.go).
 
 // minMapLitEntries is the fewest constant entries worth a loop.
 const minMapLitEntries = 8

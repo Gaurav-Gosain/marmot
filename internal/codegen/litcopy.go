@@ -26,9 +26,11 @@ import (
 // time) may not overlap a constant one: it runs after the copy either way,
 // but a constant store after it would have won.
 //
-// MARMOT_NO_LITCOPY=1 turns it off.
+// Off by default (MARMOT_LITCOPY=1 turns it on) until the full gate passes
+// again: the first version dropped constant stores into a field after the
+// field's own literal (nestedConstStores).
 
-var noLitCopy = os.Getenv("MARMOT_NO_LITCOPY") != ""
+var noLitCopy = os.Getenv("MARMOT_LITCOPY") != "1"
 
 // minLitCopyStores is the fewest constant stores worth an image.
 const minLitCopyStores = 4
@@ -258,7 +260,27 @@ func (o *litObj) pureLocal(pos map[ssa.Instruction]int) bool {
 			return false
 		}
 	}
-	return true
+	return !o.nestedConstStores(pos)
+}
+
+// nestedConstStores reports whether one constant store of o writes inside
+// a location another writes whole (a literal field then one of its fields:
+// cfg := &Config{Notif: Notif{...}}; cfg.Notif.Bell = "toast"). The image
+// keeps a whole value and the parts written into it apart, and renders the
+// whole one, so such an object gets no image (tuios DefaultConfig lost
+// Notif.Bell and Notif.Style).
+func (o *litObj) nestedConstStores(pos map[ssa.Instruction]int) bool {
+	for i, x := range o.stores {
+		if !o.constStore(x, pos) {
+			continue
+		}
+		for j, y := range o.stores {
+			if i != j && o.constStore(y, pos) && len(x.path) < len(y.path) && isPrefix(x.path, y.path) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // image builds the image of o's constant stores, in order.
@@ -317,7 +339,7 @@ func (f *funcGen) constLit(s *staticInit, o *litObj, pos map[ssa.Instruction]int
 			n++
 		}
 	}
-	if n < minLitCopyStores {
+	if n < minLitCopyStores || o.nestedConstStores(pos) {
 		return
 	}
 	// A store that stays must not overlap a constant one.
