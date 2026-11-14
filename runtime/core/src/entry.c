@@ -22,8 +22,8 @@ RT_API uintptr_t *rt_auxv(intptr_t *n) {
   while (*e) e++;
   uintptr_t *a = (uintptr_t *)(e + 1);
   intptr_t k = 0;
-  while (a[k] != 0) k += 2;  // AT_NULL ends it
-  *n = k + 2;
+  while (a[k] != 0) k += 2;  // AT_NULL ends it (not included, as gc)
+  *n = k;
   return a;
 #else
   return NULL;
