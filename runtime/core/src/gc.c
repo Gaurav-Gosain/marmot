@@ -24,7 +24,7 @@ static uint64_t pause_total_ns;
 // Set while marking runs beside the program (MARMOT_GC_CONC=1), from the
 // first stop of a cycle to the second: pointer stores call rt_wb and new
 // objects are allocated black.
-RT_API volatile uint8_t rt_gc_marking;
+volatile uint8_t rt_gc_marking;  // hidden (rt.h)
 static int gc_conc;              // MARMOT_GC_CONC=1
 static _Atomic int32_t gc_cycle; // a concurrent cycle is between its two stops
 uint64_t gc_conc_cycles;         // cycles that marked beside the program (tests)
@@ -402,7 +402,7 @@ NO_SANITIZE static void shade(uintptr_t p) {
 
 // Shades both the value overwritten and the one stored (the hybrid
 // barrier): neither can hide from a mark that runs beside the program.
-RT_API void rt_wb(void **slot, void *new_value) {
+RT_API RT_PRESERVE_ALL void rt_wb(void **slot, void *new_value) {
   if (!rt_gc_marking) return;
   shade(*(uintptr_t *)slot);
   shade((uintptr_t)new_value);
@@ -410,7 +410,7 @@ RT_API void rt_wb(void **slot, void *new_value) {
 
 // Before a copy of n bytes of pointer words from src over dst. Every word
 // is shaded; words that are not pointers find no object.
-RT_API void rt_wb_range(void *dst, const void *src, uintptr_t n) {
+RT_API RT_PRESERVE_ALL void rt_wb_range(void *dst, const void *src, uintptr_t n) {
   if (!rt_gc_marking) return;
   const uintptr_t *d = dst, *q = src;
   for (uintptr_t i = 0; i < n / WORDSZ; i++) {

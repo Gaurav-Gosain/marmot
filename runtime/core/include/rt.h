@@ -126,14 +126,21 @@ typedef struct rt_memstats {
 void rt_gc_stats(rt_memstats *out);
 // Why the current goroutine is about to park (runtime.Stack prints it).
 void rt_set_waitreason(uint32_t reason);
-// The write barrier, for concurrent marking. Compiled code checks the flag
-// before a store of a pointer to the heap or a global:
+// The write barrier, for concurrent marking (MARMOT_GC_CONC=1). Compiled code
+// checks the flag before a store of a pointer to the heap or a global:
 //   if (rt_gc_marking) rt_wb(slot, new); *slot = new;
 // and calls rt_wb_range before a bulk copy of pointer words over dst. The
-// collector still stops the world to mark, so the flag stays 0 for now.
-extern volatile uint8_t rt_gc_marking;
-void rt_wb(void **slot, void *new_value);
-void rt_wb_range(void *dst, const void *src, uintptr_t n);
+// flag is a hidden symbol (one adrp and ldrb, no GOT load). rt_wb and
+// rt_wb_range use the preserve_all convention on arm64 and x86-64: the
+// caller saves no registers around the call (wasm32 keeps the default).
+#if defined(__aarch64__) || defined(__x86_64__)
+#define RT_PRESERVE_ALL __attribute__((preserve_all))
+#else
+#define RT_PRESERVE_ALL
+#endif
+extern volatile uint8_t rt_gc_marking __attribute__((visibility("hidden")));
+RT_PRESERVE_ALL void rt_wb(void **slot, void *new_value);
+RT_PRESERVE_ALL void rt_wb_range(void *dst, const void *src, uintptr_t n);
 // GOGC style pacing percent. Negative disables collection. Returns the old value.
 int32_t rt_gc_set_percent(int32_t percent);
 
