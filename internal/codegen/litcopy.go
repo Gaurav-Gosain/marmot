@@ -26,11 +26,12 @@ import (
 // time) may not overlap a constant one: it runs after the copy either way,
 // but a constant store after it would have won.
 //
-// Off by default (MARMOT_LITCOPY=1 turns it on) until the full gate passes
-// again: the first version dropped constant stores into a field after the
-// field's own literal (nestedConstStores).
+// MARMOT_LITCOPY=0 turns it off. The first version dropped constant stores
+// into a field after the field's own literal (nestedConstStores); it was
+// off until the full gate passed again (conform matrix dev and release,
+// fuzz with the literal mutation rule).
 
-var noLitCopy = os.Getenv("MARMOT_LITCOPY") != "1"
+var noLitCopy = os.Getenv("MARMOT_LITCOPY") == "0"
 
 // minLitCopyStores is the fewest constant stores worth an image.
 const minLitCopyStores = 4

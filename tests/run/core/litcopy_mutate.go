@@ -1,5 +1,5 @@
 // Stores into a composite literal right after it is built (codegen
-// litcopy.go with MARMOT_LITCOPY=1): constant and run-time stores into
+// litcopy.go): constant and run-time stores into
 // fields, nested fields, elements and whole nested values must all win
 // over the literal's own values, for pointer and value literals, in loops,
 // next to maps, and whether or not the object escapes. The first literal
