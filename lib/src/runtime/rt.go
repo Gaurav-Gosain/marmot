@@ -24,6 +24,8 @@ type rtMemstats struct {
 	frees        uint64
 	numGC        uint64
 	pauseTotalNs uint64
+	lastLive     uint64 // heap marked live by the last collection
+	heapReleased uint64 // part of heapSys returned to the OS
 }
 
 // Allocation kinds for rt_alloc.

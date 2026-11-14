@@ -882,6 +882,8 @@ RT_API void rt_gc_stats(rt_memstats *out) {
   out->frees = atomic_load(&stat_frees) + pf;
   out->num_gc = atomic_load(&num_gc);
   out->pause_total_ns = pause_total_ns;
+  out->last_live = last_live;
+  out->heap_released = heap_released;
 }
 
 RT_API int32_t rt_gc_set_percent(int32_t percent) {

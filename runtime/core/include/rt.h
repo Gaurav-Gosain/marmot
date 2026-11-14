@@ -116,6 +116,8 @@ typedef struct rt_memstats {
   uint64_t frees;
   uint64_t num_gc;
   uint64_t pause_total_ns;
+  uint64_t last_live;      // bytes live after the last collection (marked)
+  uint64_t heap_released;  // part of heap_sys returned to the OS
 } rt_memstats;
 void rt_gc_stats(rt_memstats *out);
 // GOGC style pacing percent. Negative disables collection. Returns the old value.
