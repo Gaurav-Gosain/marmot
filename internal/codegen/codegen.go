@@ -148,9 +148,23 @@ const (
 
 // NewProgram prepares code generation for all packages of prog.
 func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package][]*ast.File, opts Options) (*Program, error) {
+	// The main package is the one named main that no other package imports.
+	// A test build of a package main has two: the generated test main and
+	// the package under test, which the test main imports. gc compiles the
+	// latter under its import path, so its symbols do not clash.
+	imported := map[*types.Package]bool{}
+	for _, pkg := range pkgs {
+		for _, imp := range pkg.Pkg.Imports() {
+			imported[imp] = true
+		}
+	}
 	mainPath := ""
 	for _, pkg := range pkgs {
 		if pkg.Pkg.Name() == "main" {
+			if imported[pkg.Pkg] {
+				notMain.Store(pkg.Pkg, true)
+				continue
+			}
 			mainPath = pkg.Pkg.Path()
 		}
 	}

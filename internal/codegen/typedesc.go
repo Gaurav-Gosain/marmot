@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
 	"golang.org/x/tools/go/ssa"
@@ -436,13 +437,21 @@ func pkgPathOf(t types.Type) string {
 
 // rtPath is the package path as gc shows it at run time (reflect,
 // symbols, tracebacks): "main" for the main package (gc names it so
-// whatever its import path), the import path otherwise.
+// whatever its import path), the import path otherwise, also for a
+// package main that another package imports (a test build's package
+// under test).
 func rtPath(pkg *types.Package) string {
 	if pkg.Name() == "main" {
-		return "main"
+		if _, ok := notMain.Load(pkg); !ok {
+			return "main"
+		}
 	}
 	return pkg.Path()
 }
+
+// notMain holds the packages named main that are not the program's main
+// package (NewProgram): a test build's package under test.
+var notMain sync.Map // *types.Package -> bool
 
 // methodName is the runtime method name: bare when exported, else
 // qualified with the package path.
