@@ -1920,8 +1920,9 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       DefaultThreadPool pool(hardware_concurrency(threads));
       for (Group &g : groups)
         pool.async([&, gp = &g] {
-          // A group weighs its share of the module's text.
-          uint64_t gn = inputSize[gp->job] / std::max(1u, nparts[gp->job]);
+          // A group weighs four times its share of the module's text: it
+          // also carries the module's declarations and the bodies it imports.
+          uint64_t gn = 4 * inputSize[gp->job] / std::max(1u, nparts[gp->job]);
           admitWait(gn);
           std::string name = jobs[gp->job].in + "#" + std::to_string(gp->index);
           watchdogBegin(name);
@@ -2549,8 +2550,9 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     DefaultThreadPool pool(hardware_concurrency(threads));
     for (Group &g : groups)
       pool.async([&, gp = &g] {
-        // A group weighs its share of the module's text.
-        uint64_t gn = inputSize[gp->job] / std::max(1u, nparts[gp->job]);
+        // A group weighs four times its share of the module's text: it
+        // also carries the module's declarations and the bodies it imports.
+        uint64_t gn = 4 * inputSize[gp->job] / std::max(1u, nparts[gp->job]);
         admitWait(gn);
         std::string name = jobs[gp->job].in + "#" + std::to_string(gp->index);
         watchdogBegin(name);

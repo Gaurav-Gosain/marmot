@@ -22,6 +22,7 @@
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Intrinsics.h"
@@ -1026,6 +1027,40 @@ std::unique_ptr<llvm::Module> translateFile(const std::string &input,
   return lowerAndTranslate(*pm, input, opts, tm, lctx, times, errs, mlirOutput);
 }
 
+// Stores of constant aggregates of 32 bytes or more become a memcpy from a
+// private constant global before codegen. SelectionDAG expands such a store
+// into a store per field and merges them, quadratically in the stores of a
+// block: internal/app.GetCommandPaletteItems of tuios (124 stores of a
+// 20-field struct literal in one block) spent 246 s in instruction
+// selection. The constant is then data once instead of code per field.
+static void constantStoresToCopies(llvm::Module &m) {
+  const llvm::DataLayout &dl = m.getDataLayout();
+  llvm::DenseMap<llvm::Constant *, llvm::GlobalVariable *> made;
+  for (llvm::Function &f : m)
+    for (llvm::BasicBlock &b : f)
+      for (llvm::Instruction &inst : llvm::make_early_inc_range(b)) {
+        auto *st = llvm::dyn_cast<llvm::StoreInst>(&inst);
+        if (!st || !st->isSimple())
+          continue;
+        auto *c = llvm::dyn_cast<llvm::Constant>(st->getValueOperand());
+        llvm::Type *t = st->getValueOperand()->getType();
+        if (!c || !t->isAggregateType() || llvm::isa<llvm::UndefValue>(c) || c->isNullValue())
+          continue;
+        uint64_t size = dl.getTypeStoreSize(t);
+        if (size < 32)
+          continue;
+        llvm::GlobalVariable *&g = made[c];
+        if (!g) {
+          g = new llvm::GlobalVariable(m, t, true, llvm::GlobalValue::PrivateLinkage, c, ".agg");
+          g->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+          g->setAlignment(dl.getABITypeAlign(t));
+        }
+        llvm::IRBuilder<> ib(st);
+        ib.CreateMemCpy(st->getPointerOperand(), st->getAlign(), g, g->getAlign(), size);
+        st->eraseFromParent();
+      }
+}
+
 bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::string &input,
                      const std::string &output, const CompileOptions &opts,
                      PhaseTimes &times, llvm::raw_ostream &errs) {
@@ -1097,6 +1132,7 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
     break;
   case Emit::Obj:
   case Emit::Asm: {
+    constantStoresToCopies(lmod);
     llvm::SmallVector<char, 0> buf;
     {
       llvm::raw_svector_ostream bos(buf);
