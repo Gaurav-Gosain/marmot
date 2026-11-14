@@ -1640,6 +1640,13 @@ RT_API void rt_entersyscall(void) {
   rt_m *m = getm();
   if (!m || !m->curg || !m->p) return;
   rt_g *g = m->curg;
+  // Nested: only the outermost pair changes state. Entering again would
+  // store P_SYSCALL over a P_GCSTOP that a stop the world set meanwhile,
+  // and the stop would count the P a second time (stopwait -1).
+  if (atomic_load_explicit(&g->status, memory_order_relaxed) == G_SYSCALL) {
+    g->sysnest++;
+    return;
+  }
   g->syscallsp = rt_spill_regs(g->syscallregs);
   // Release stores, not seq_cst (each a locked instruction on x86): the
   // collector reads syscallsp after it sees G_SYSCALL, and whoever takes
@@ -1679,6 +1686,10 @@ RT_API void rt_exitsyscall(void) {
   if (!m || !m->curg) return;
   rt_g *g = m->curg;
   if (atomic_load_explicit(&g->status, memory_order_relaxed) != G_SYSCALL) return;
+  if (g->sysnest) {
+    g->sysnest--;
+    return;
+  }
   rt_p *p = m->p;
   uint32_t s = P_SYSCALL;
   if (p && atomic_compare_exchange_strong_explicit(&p->status, &s, P_RUNNING, memory_order_acquire,
@@ -1864,7 +1875,8 @@ static void cgo_dropm(rt_m *m) {
 // tok = rt_cgo_callback_enter(); f(args); rt_cgo_callback_exit(tok).
 // tok 0: a foreign thread (attached here, detached at exit); 1: a goroutine
 // in a quick C call; 2: a goroutine in a bracketed C call (in a system
-// call: it takes a P back, and gives it up again at exit).
+// call: it takes a P back, and gives it up again at exit), with the syscall
+// nesting depth in bits 8 and up.
 RT_API int32_t rt_cgo_callback_enter(void) {
   rt_m *m = getm();
   if (!m || (m->foreign && !m->curg)) {
@@ -1876,8 +1888,10 @@ RT_API int32_t rt_cgo_callback_enter(void) {
   m->incgo--;
   lock_to_m(m, g);
   if (atomic_load(&g->status) != G_SYSCALL) return 1;
+  int32_t nest = g->sysnest;  // left whole; entered again at exit
+  g->sysnest = 0;
   rt_exitsyscall();
-  return 2;
+  return 2 | nest << 8;
 }
 
 RT_API void rt_cgo_callback_exit(int32_t tok) {
@@ -1887,7 +1901,10 @@ RT_API void rt_cgo_callback_exit(int32_t tok) {
     return;
   }
   rt_g *g = m->curg;
-  if (tok == 2) rt_entersyscall();
+  if ((tok & 0xff) == 2) {
+    rt_entersyscall();
+    g->sysnest = (uint8_t)(tok >> 8);
+  }
   unlock_from_m(m, g);
   m->incgo++;
 }

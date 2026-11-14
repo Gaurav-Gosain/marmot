@@ -235,6 +235,8 @@ struct rt_g {
   void *syscallregs[24];  // callee-saved registers at rt_entersyscall
   rt_timer *sleeptimer;   // rt_sleep, allocated on first use (not GC memory)
   uint8_t waitreason;     // why it waits (WAIT_*), for runtime.Stack; set before a park
+  uint8_t sysnest;        // rt_entersyscall calls inside the outermost one (syscall.Syscall
+                          // brackets rt_syscall, which brackets itself)
   struct rt_group *group; // rt_group_join: counted in this group, NULL if none
   _Atomic bool durable;   // parked with rt_park_durable (not counted as running)
   int32_t cgo_errno;      // errno after the last C call (cgo.c)
