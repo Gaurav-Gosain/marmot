@@ -1,0 +1,8 @@
+main.plain
+main.adder.func1
+main.(*T).Get-fm
+main.T.Val-fm
+main.(*T).Get
+main.main.func1
+main.main.func2
+fmt.Println

@@ -963,8 +963,16 @@ func MakeFunc(typ Type, fn func(args []Value) (results []Value)) Value {
 // Pointer returns v's value as a uintptr.
 func (v Value) Pointer() uintptr {
 	switch v.kind() {
-	case Pointer, Chan, Map, UnsafePointer, Func:
+	case Pointer, Chan, Map, UnsafePointer:
 		return uintptr(v.pointer())
+	case Func:
+		// As gc: the code pointer, the first word of the func value, so
+		// runtime.FuncForPC(v.Pointer()) names the function.
+		p := v.pointer()
+		if p != nil {
+			p = *(*unsafe.Pointer)(p)
+		}
+		return uintptr(p)
 	case Slice:
 		return uintptr((*sliceHeader)(v.ptr).Data)
 	case String:

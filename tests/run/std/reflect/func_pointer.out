@@ -1,0 +1,10 @@
+plain ok
+closure ok
+method value ok
+method expression ok
+generic ok
+reflect method ok
+literal ok
+one literal, one code pointer: true
+two functions, two code pointers: true
+nil func: 0
