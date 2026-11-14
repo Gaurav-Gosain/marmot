@@ -3,6 +3,7 @@
 package runtime
 
 import (
+	"internal/abi"
 	"internal/goarch"
 	"internal/goos"
 	"unsafe"
@@ -543,8 +544,7 @@ func finEntryFor(obj unsafe.Pointer) *finEntry {
 	if e == nil {
 		e = &finEntry{}
 		finTable[key] = e
-		fin := runFinalizer
-		rt_gc_set_finalizer(obj, funcPC(unsafe.Pointer(&fin)))
+		rt_gc_set_finalizer(obj, cfuncPC(abi.FuncPCABI0(runFinalizer)))
 	}
 	return e
 }

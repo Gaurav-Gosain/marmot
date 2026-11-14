@@ -14,7 +14,10 @@
 
 package runtime
 
-import "unsafe"
+import (
+	"internal/abi"
+	"unsafe"
+)
 
 //go:linkname rt_group_new rt_group_new
 func rt_group_new(onIdle unsafe.Pointer, arg unsafe.Pointer) unsafe.Pointer
@@ -78,12 +81,9 @@ var (
 )
 
 func bubbleInit() {
-	f1 := bubbleIdle
-	bubbleIdlePC = funcPC(unsafe.Pointer(&f1))
-	f2 := bubbleDriverParkCommit
-	bubbleDriverParkPC = funcPC(unsafe.Pointer(&f2))
-	f3 := gostartBubble
-	gostartBubblePC = funcPC(unsafe.Pointer(&f3))
+	bubbleIdlePC = cfuncPC(abi.FuncPCABI0(bubbleIdle))
+	bubbleDriverParkPC = cfuncPC(abi.FuncPCABI0(bubbleDriverParkCommit))
+	gostartBubblePC = cfuncPC(abi.FuncPCABI0(gostartBubble))
 }
 
 // bubbleIdle runs on a scheduler thread when no member of the group is

@@ -3,7 +3,10 @@
 
 package runtime
 
-import "unsafe"
+import (
+	"internal/abi"
+	"unsafe"
+)
 
 //go:linkname time_Sleep time.Sleep
 func time_Sleep(ns int64) {
@@ -97,8 +100,7 @@ func (t *timeTimer) start(when, period int64) {
 }
 
 func timerFireCode() unsafe.Pointer {
-	tf := timerFire
-	return funcPC(unsafe.Pointer(&tf))
+	return cfuncPC(abi.FuncPCABI0(timerFire))
 }
 
 // stop disarms t and reports whether it was pending. t.mu is held.

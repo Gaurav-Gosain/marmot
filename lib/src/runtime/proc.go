@@ -3,15 +3,17 @@
 
 package runtime
 
-import "unsafe"
+import (
+	"internal/abi"
+	"unsafe"
+)
 
 // init runs before every other package init (the compiler calls it
 // first).
 func init() {
 	initParkPCs()
 	hashkey ^= uintptr(rt_nanotime()) * 0x9e3779b97f4a7c15
-	sp := sigpanic
-	rt_set_sigpanic(funcPC(unsafe.Pointer(&sp)))
+	rt_set_sigpanic(cfuncPC(abi.FuncPCABI0(sigpanic)))
 }
 
 // sigpanic is called by the C core on the faulting goroutine for a memory

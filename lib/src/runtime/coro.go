@@ -3,7 +3,10 @@
 
 package runtime
 
-import "unsafe"
+import (
+	"internal/abi"
+	"unsafe"
+)
 
 // coro is a coroutine: at any time exactly one of the two sides runs.
 type coro struct {
@@ -88,11 +91,9 @@ func coroexit(c *coro) {
 }
 
 func corostartCode() unsafe.Pointer {
-	f := corostart
-	return funcPC(unsafe.Pointer(&f))
+	return cfuncPC(abi.FuncPCABI0(corostart))
 }
 
 func coroReadyCommitCode() unsafe.Pointer {
-	f := coroReadyCommit
-	return funcPC(unsafe.Pointer(&f))
+	return cfuncPC(abi.FuncPCABI0(coroReadyCommit))
 }

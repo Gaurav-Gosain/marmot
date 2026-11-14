@@ -266,6 +266,15 @@ func funcPC(fv unsafe.Pointer) unsafe.Pointer {
 	return **(**unsafe.Pointer)(fv)
 }
 
+// cfuncPC is the code address abi.FuncPCABI0 gives for a top-level
+// function, as a pointer for the C core. It is the function itself, not the
+// wrapper of its func value (which takes the hidden closure parameter): wasm
+// checks the signature of an indirect call, so the C core must call a
+// function with exactly the parameters it passes.
+func cfuncPC(pc uintptr) unsafe.Pointer {
+	return unsafe.Pointer(pc)
+}
+
 //go:linkname rt_pcln rt_pcln
 //go:noescape
 func rt_pcln(table *unsafe.Pointer, n *int, base *uintptr) int32

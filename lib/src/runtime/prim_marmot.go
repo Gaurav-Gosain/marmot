@@ -33,6 +33,7 @@
 package runtime
 
 import (
+	"internal/abi"
 	"internal/runtime/atomic"
 	"unsafe"
 )
@@ -184,12 +185,9 @@ var (
 )
 
 func initParkPCs() {
-	pu := parkunlock
-	parkunlockPC = funcPC(unsafe.Pointer(&pu))
-	sc := selparkcommit
-	selparkcommitPC = funcPC(unsafe.Pointer(&sc))
-	gs := gostart
-	gostartPC = funcPC(unsafe.Pointer(&gs))
+	parkunlockPC = cfuncPC(abi.FuncPCABI0(parkunlock))
+	selparkcommitPC = cfuncPC(abi.FuncPCABI0(selparkcommit))
+	gostartPC = cfuncPC(abi.FuncPCABI0(gostart))
 }
 
 // lazyPC returns *pc, computing it with f on first use. The timer and
