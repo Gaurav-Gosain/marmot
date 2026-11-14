@@ -2188,63 +2188,123 @@ static void sm_record(uintptr_t a, uintptr_t pc, uintptr_t fp, uint8_t rule) {
   sm_ex[sm_nex++] = (sm_excl){v, pc, fp - a, rule};
 }
 
-// Every word of [lo, hi), left out of the scan by rule.
-static void sm_record_range(uintptr_t lo, uintptr_t hi, uintptr_t pc, uintptr_t fp, uint8_t rule) {
-  for (uintptr_t a = (lo + 7) & ~(uintptr_t)7; a + 8 <= hi; a += 8) sm_record(a, pc, fp, rule);
+// The frames of one stack walk, innermost first (scanning runs with the
+// world stopped, on one thread).
+#define SF_MAX 256
+#define SF_REGS 64
+typedef struct {
+  uintptr_t fp, pc;
+  const uint8_t *bits;  // the map at pc, n words
+  uint32_t n, nsaved;   // nsaved: RT_SAVED_UNKNOWN when not recorded
+  uint32_t skip;        // bit j: saved[j]'s slot is not a root
+  rt_saved_reg saved[16];
+} sframe;
+static sframe sf[SF_MAX];
+
+static bool skipped(const sframe *f, uintptr_t a) {
+  for (uint32_t j = 0; f->skip >> j; j++)
+    if ((f->skip >> j & 1) && a == f->fp - 8 * ((uintptr_t)f->saved[j].word + 1)) return true;
+  return false;
 }
 
-// [lo, hi) without [xlo, xhi).
-static void scan_except(uintptr_t lo, uintptr_t hi, uintptr_t xlo, uintptr_t xhi,
-                        void (*scan)(uintptr_t lo, uintptr_t hi)) {
-  if (xlo >= xhi || xhi <= lo || xlo >= hi) {
+// The words of [lo, hi) that are not skipped save slots of f.
+static void scan_unskipped(uintptr_t lo, uintptr_t hi, const sframe *f,
+                           void (*scan)(uintptr_t lo, uintptr_t hi)) {
+  if (!f->skip) {
     if (hi > lo) scan(lo, hi);
     return;
   }
-  if (xlo > lo) scan(lo, xlo);
-  if (hi > xhi) scan(xhi, hi);
+  uintptr_t run = lo;
+  for (uintptr_t a = (lo + 7) & ~(uintptr_t)7; a + 8 <= hi; a += 8) {
+    if (!skipped(f, a)) continue;
+    if (UNLIKELY(sm_check)) sm_record(a, f->pc, f->fp, 2);
+    if (a > run) scan(run, a);
+    run = a + 8;
+  }
+  if (hi > run) scan(run, hi);
 }
 
+// A frame with a map at its call site is scanned by the map; the rest of
+// the stack conservatively. A register value in a frame's save slot
+// belongs to the nearest frame further up that saves that register itself
+// (frames in between pass it through): the slot is not a root when that
+// owner is at a call site with a map (it keeps no GC pointer in a
+// callee-saved register across the call). Frames without save information
+// may save any register, so they own all of them as unmapped frames.
 static void scan_frames(uintptr_t lo, uintptr_t hi, uintptr_t fp, uintptr_t pc,
                         void (*scan)(uintptr_t lo, uintptr_t hi)) {
-  uintptr_t cur = lo;
+  uint32_t k = 0;
+  bool deep = false;
   for (int i = 0; i < 100000 && !(fp & 7) && fp + 16 <= hi; i++) {
-    if (fp >= cur) {
-      const uint8_t *bits, *cbits;
-      uint32_t coff = 0, cwords = 0;
-      uint32_t n = pc ? pcln_frameinfo(pc, &bits, &coff, &cwords) : 0;
-      // A frame whose caller is at a call site with a map: the caller keeps
-      // no GC pointer in a callee-saved register across the call, so this
-      // frame's save area holds none.
-      uintptr_t xlo = 0, xhi = 0;
-      if (cwords && coff <= fp - cur && pcln_stackmap(((uintptr_t *)fp)[1], &cbits)) {
-        xlo = fp - coff;
-        xhi = xlo + 8 * (uintptr_t)cwords;
-      }
-      if (UNLIKELY(sm_check) && xhi > xlo) sm_record_range(xlo < cur ? cur : xlo, xhi, pc, fp, 2);
-      if (n) {
-        uintptr_t start = n * 8 > fp - cur ? cur : fp - (uintptr_t)n * 8;
-        scan_except(cur, start, xlo, xhi, scan);
-        for (uint32_t w = 0; w < n; w++) {
-          uintptr_t a = fp - 8 * ((uintptr_t)w + 1);
-          if (a < cur || (a >= xlo && a < xhi)) continue;
-          if (bits[w / 8] >> (w % 8) & 1) {
-            scan(a, a + 8);
-          } else if (UNLIKELY(sm_check)) {
-            sm_record(a, pc, fp, 1);
-          }
-        }
-        cur = fp;  // the frame record (saved fp and return address) holds no heap pointer
-      } else if (xhi > xlo) {
-        scan_except(cur, fp, xlo, xhi, scan);
-        cur = fp;
-      }
+    if (k == SF_MAX) {
+      deep = true;
+      break;
+    }
+    sframe *f = &sf[k++];
+    f->fp = fp, f->pc = pc, f->skip = 0, f->nsaved = RT_SAVED_UNKNOWN;
+    rt_saved_reg sv[RT_MAX_SAVED];
+    uint32_t ns = RT_SAVED_UNKNOWN;
+    f->n = pc ? pcln_frameinfo(pc, &f->bits, sv, &ns) : 0;
+    if (ns != RT_SAVED_UNKNOWN && ns <= 16) {
+      f->nsaved = ns;
+      for (uint32_t j = 0; j < ns; j++) f->saved[j] = sv[j];
     }
     uintptr_t up = ((uintptr_t *)fp)[0];
     pc = ((uintptr_t *)fp)[1];
     if (up <= fp) break;
     fp = up;
   }
+  // Owners from the outermost frame in. A stack deeper than SF_MAX frames
+  // keeps every save slot (the owners of the inner frames are not known).
+  if (!deep) {
+    uint8_t owner[SF_REGS] = {0};  // 1: the owner is at a call site with a map
+    for (uint32_t i = k; i-- > 0;) {
+      sframe *f = &sf[i];
+      if (f->nsaved == RT_SAVED_UNKNOWN) {
+        __builtin_memset(owner, 0, sizeof owner);
+        continue;
+      }
+      for (uint32_t j = 0; j < f->nsaved; j++) {
+        uint32_t r = f->saved[j].reg;
+        if (r < SF_REGS && owner[r] && f->saved[j].word < 4096) f->skip |= 1u << j;
+      }
+      for (uint32_t j = 0; j < f->nsaved; j++) {
+        uint32_t r = f->saved[j].reg;
+        if (r < SF_REGS) owner[r] = f->n > 0;
+      }
+    }
+  }
+  uintptr_t cur = lo;
+  for (uint32_t i = 0; i < k; i++) {
+    sframe *f = &sf[i];
+    uintptr_t ffp = f->fp;
+    if (ffp < cur) continue;
+    if (f->n) {
+      uintptr_t start = f->n * 8 > ffp - cur ? cur : ffp - (uintptr_t)f->n * 8;
+      scan_unskipped(cur, start, f, scan);
+      for (uint32_t w = 0; w < f->n; w++) {
+        uintptr_t a = ffp - 8 * ((uintptr_t)w + 1);
+        if (a < cur) continue;
+        bool sk = f->skip && skipped(f, a);
+        if (!sk && (f->bits[w / 8] >> (w % 8) & 1)) {
+          scan(a, a + 8);
+        } else if (UNLIKELY(sm_check)) {
+          sm_record(a, f->pc, ffp, sk ? 2 : 1);
+        }
+      }
+      cur = ffp;  // the frame record (saved fp and return address) holds no heap pointer
+    } else if (f->skip) {
+      scan_unskipped(cur, ffp, f, scan);
+      cur = ffp;
+    }
+  }
   scan(cur, hi);
+}
+
+// Tests: scan_frames on a frame chain the test built.
+void sched_test_scan_frames(uintptr_t lo, uintptr_t hi, uintptr_t fp, uintptr_t pc,
+                            void (*scan)(uintptr_t lo, uintptr_t hi)) {
+  scan_frames(lo, hi, fp, pc, scan);
 }
 
 static void scan_g(rt_g *g, void (*scan)(uintptr_t lo, uintptr_t hi)) {

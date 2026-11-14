@@ -27,8 +27,8 @@ static void var(buf *b, uint32_t v) {
 
 // A version 4 table: functions at starts[0..nf), text up to end; function
 // mapfn has the given maps (nwords, bitmap bytes) and sites (offset, map id).
-// With csr_v5 set, a version 5 table whose blob starts with csr_v5[0] and
-// csr_v5[1] (the save area offset and words).
+// With csr_v5 set, a version 5 table whose blob starts with csr_v5[0]
+// saved registers, then csr_v5[1..] as (reg, word) pairs.
 static const uint32_t *csr_v5;
 static uint32_t build(uint8_t *t, const uint32_t *starts, uint32_t nf, uint32_t end, uint32_t mapfn,
                       uint32_t nmaps, const uint32_t *nwords, const uint8_t *const *bits, uint32_t nsites,
@@ -53,7 +53,7 @@ static uint32_t build(uint8_t *t, const uint32_t *starts, uint32_t nf, uint32_t 
   put32(t + 80, b.n);
   if (csr_v5) {
     var(&b, csr_v5[0]);
-    var(&b, csr_v5[1]);
+    for (uint32_t i = 0; i < 2 * csr_v5[0]; i++) var(&b, csr_v5[1 + i]);
   }
   var(&b, nmaps);
   for (uint32_t m = 0; m < nmaps; m++) {
@@ -97,18 +97,19 @@ static void decoder(void) {
   put32(t + 8, 3);  // version 3: no maps
   CHECK(rt_pcln_stackmap(t, len, base, base + 0x210, &got) == 0);
   // Version 5: the same maps after the save area fields.
-  static const uint32_t csr[2] = {200, 12};
+  static const uint32_t csr[5] = {2, 19, 0, 300, 141};  // r19 at word 0, r300 at word 141
   csr_v5 = csr;
   len = build(t, starts, 3, 0x500, 1, 2, nw, bits, 3, off, map);
   csr_v5 = NULL;
-  uint32_t co = 1, cw = 1;
-  CHECK(rt_pcln_frameinfo(t, len, base, base + 0x210, &got, &co, &cw) == 9 && got[0] == 0x05);
-  CHECK(co == 200 && cw == 12);
+  rt_saved_reg sv[RT_MAX_SAVED];
+  uint32_t ns = 0;
+  CHECK(rt_pcln_frameinfo(t, len, base, base + 0x210, &got, sv, &ns) == 9 && got[0] == 0x05);
+  CHECK(ns == 2 && sv[0].reg == 19 && sv[0].word == 0 && sv[1].reg == 300 && sv[1].word == 141);
   CHECK(rt_pcln_stackmap(t, len, base, base + 0x224, &got) == 8 && got[0] == 0x80);
-  CHECK(rt_pcln_frameinfo(t, len, base, base + 0x214, &got, &co, &cw) == 0 && co == 200 && cw == 12);
-  CHECK(rt_pcln_frameinfo(t, len, base, base + 0x110, &got, &co, &cw) == 0 && co == 0 && cw == 0);
+  CHECK(rt_pcln_frameinfo(t, len, base, base + 0x214, &got, sv, &ns) == 0 && ns == 2);
+  CHECK(rt_pcln_frameinfo(t, len, base, base + 0x110, &got, sv, &ns) == 0 && ns == RT_SAVED_UNKNOWN);
   for (uint32_t cut = 0; cut < len; cut++) {
-    uint32_t n = rt_pcln_frameinfo(t, cut, base, base + 0x224, &got, &co, &cw);
+    uint32_t n = rt_pcln_frameinfo(t, cut, base, base + 0x224, &got, sv, &ns);
     CHECK(n == 0 || (n == 8 && got + 1 <= t + cut));
   }
 }

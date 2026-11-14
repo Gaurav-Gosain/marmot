@@ -135,10 +135,10 @@ RT_API void **rt_typelinks(intptr_t *n) {
 
 // ---- stack maps (pc table versions 4 and 5) ----
 //
-// Version 5 starts each function's blob with two uvarints, csrOff and
-// csrWords: the function's callee-saved register save area is
-// [fp - csrOff, fp - csrOff + 8*csrWords) (csrWords 0: not recorded); the
-// rest is as version 4.
+// Version 5 starts each function's blob with the callee-saved registers
+// its prologue saves: uvarint nsaved, then per register uvarint reg (DWARF
+// number) and uvarint word (the slot at fp - 8*(word+1)); the rest is as
+// version 4.
 //
 // Version 4 adds, after the version 3 header fields, nsm, smIdxOff and
 // smOff: nsm pairs of u32 (function index, offset into the blob at smOff),
@@ -171,13 +171,13 @@ static bool rdvar(const uint8_t *t, uintptr_t end, uintptr_t *off, uint32_t *v) 
 // The map of the frame suspended at return address pc in table t (len
 // bytes, offsets from base): its word count, with *bits its bitmap; 0 when
 // pc has none.
-// With *csr_off and *csr_words (version 5, when not NULL) the save area of
-// the function containing pc, 0 words when none is recorded.
+// With saved (version 5, when not NULL): the registers the function
+// containing pc saves, at most RT_MAX_SAVED, and *nsaved their number;
+// *nsaved is RT_SAVED_UNKNOWN when the table records none for it.
 RT_API uint32_t rt_pcln_frameinfo(const uint8_t *t, intptr_t len, uintptr_t base, uintptr_t pc,
-                                  const uint8_t **bits, uint32_t *csr_off, uint32_t *csr_words) {
+                                  const uint8_t **bits, rt_saved_reg *saved, uint32_t *nsaved) {
   uintptr_t n = (uintptr_t)len;
-  if (csr_off) *csr_off = 0;
-  if (csr_words) *csr_words = 0;
+  if (nsaved) *nsaved = RT_SAVED_UNKNOWN;
   if (!t || n < 84 || __builtin_memcmp(t, "MRMTPCLN", 8) != 0) return 0;
   uint32_t version = rd32(t, 8);
   if (version != 4 && version != 5) return 0;
@@ -212,10 +212,13 @@ RT_API uint32_t rt_pcln_frameinfo(const uint8_t *t, intptr_t len, uintptr_t base
   uintptr_t p = (uintptr_t)sm_off + rd32(t, idx_off + 8 * (uintptr_t)a + 4);
   uint32_t nmaps, nw, nsites, d, id;
   if (version == 5) {
-    uint32_t co, cw;
-    if (p >= n || !rdvar(t, n, &p, &co) || !rdvar(t, n, &p, &cw)) return 0;
-    if (csr_off) *csr_off = co;
-    if (csr_words) *csr_words = cw;
+    uint32_t ns, reg, word;
+    if (p >= n || !rdvar(t, n, &p, &ns)) return 0;
+    for (uint32_t i = 0; i < ns; i++) {
+      if (!rdvar(t, n, &p, &reg) || !rdvar(t, n, &p, &word)) return 0;
+      if (saved && i < RT_MAX_SAVED) saved[i] = (rt_saved_reg){reg, word};
+    }
+    if (nsaved) *nsaved = ns <= RT_MAX_SAVED ? ns : RT_SAVED_UNKNOWN;
   }
   if (p >= n || !rdvar(t, n, &p, &nmaps)) return 0;
   uintptr_t maps = p;
@@ -278,6 +281,12 @@ uint32_t pcln_stackmap(uintptr_t pc, const uint8_t **bits) {
   return rt_pcln_frameinfo(sm_t, sm_len, sm_base, pc, bits, NULL, NULL);
 }
 
-uint32_t pcln_frameinfo(uintptr_t pc, const uint8_t **bits, uint32_t *csr_off, uint32_t *csr_words) {
-  return rt_pcln_frameinfo(sm_t, sm_len, sm_base, pc, bits, csr_off, csr_words);
+// Tests: use table t as the running binary's.
+void pcln_test_set(const uint8_t *t, intptr_t len, uintptr_t base) {
+  sm_t = t, sm_len = len, sm_base = base;
+  __atomic_store_n(&sm_state, 2, __ATOMIC_RELEASE);
+}
+
+uint32_t pcln_frameinfo(uintptr_t pc, const uint8_t **bits, rt_saved_reg *saved, uint32_t *nsaved) {
+  return rt_pcln_frameinfo(sm_t, sm_len, sm_base, pc, bits, saved, nsaved);
 }
