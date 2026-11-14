@@ -444,6 +444,7 @@ void sysmon_start(void);
 void sysmon_kick(void);
 // gc.c: the idle collection, started by sysmon.
 bool gc_idle_wanted(void);
+void gc_root_goroutine(rt_g *g);  // MARMOT_GCTRACE=3: the stack scanned next
 void gc_idle_init(void);
 void gc_idle_start(void);
 // netpoll.c

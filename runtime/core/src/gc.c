@@ -249,6 +249,7 @@ typedef struct gcw {
   uintptr_t *stk;
   uintptr_t len, cap;
   uint64_t nscan;  // objects scanned this cycle (trace)
+  uint64_t marked_bytes;  // bytes of objects this worker marked (MARMOT_GCTRACE=3)
 } __attribute__((aligned(128))) gcw;
 
 #define MAX_GCWORKERS 16
@@ -346,6 +347,7 @@ NO_SANITIZE INLINE void mark_ptr(gcw *w, uintptr_t p) {
   uint64_t *mw = &s->markbits[idx / 64];
   if (__atomic_load_n(mw, __ATOMIC_RELAXED) & bit) return;
   if (__atomic_fetch_or(mw, bit, __ATOMIC_RELAXED) & bit) return;
+  w->marked_bytes += s->elemsize;
   if (s->kind != RT_ALLOC_NOSCAN) gcw_push(w, s->base + idx * s->elemsize);
 }
 
@@ -354,8 +356,111 @@ NO_SANITIZE static void scan_range_w(gcw *w, uintptr_t lo, uintptr_t hi) {
   for (uintptr_t p = lo; p + WORDSZ <= hi; p += WORDSZ) mark_ptr(w, *(uintptr_t *)p);
 }
 
+// MARMOT_GCTRACE=3: the roots that keep the most bytes alive. Each root
+// word that marks a new object is drained at once (serially) and charged
+// what that marked.
+typedef struct {
+  uintptr_t addr;   // the root word
+  uint64_t bytes;
+  int64_t goid;     // 0: not a goroutine stack
+  uintptr_t pc;     // the frame owning the word (a stack root), 0: unknown
+  uintptr_t off;    // from the stack's top
+} root_rec;
+static root_rec top_roots[20];
+static rt_g *root_g;  // the goroutine whose stack is being scanned
+static void drain_serial(gcw *w);
+
+void gc_root_goroutine(rt_g *g) { root_g = g; }
+
+// The frame owning stack word a of g: the function whose frame pointer is
+// the first above a; its pc is the return address saved in the record
+// below it (the callee's), found from the saved context's frame chain.
+static NOINLINE uintptr_t owner_pc(rt_g *g, uintptr_t a) {
+  if (!g) return 0;
+  rt_m *me = getm();
+  uintptr_t fp, pc;
+  if (me && me->curg == g) {
+    // The collecting goroutine: its frames are below, from here.
+    fp = (uintptr_t)__builtin_frame_address(0);
+    pc = 0;
+    goto walk;
+  }
+  if (!g->sp || atomic_load(&g->status) == G_RUNNING) return 0;
+#if RT_ARCH_ARM64
+  fp = ((uintptr_t *)g->sp)[10], pc = ((uintptr_t *)g->sp)[11];
+#elif RT_ARCH_AMD64
+  fp = ((uintptr_t *)g->sp)[5], pc = ((uintptr_t *)g->sp)[6];
+#else
+  fp = 0, pc = 0;
+#endif
+walk:
+  for (int i = 0; i < 256 && fp >= g->stack_lo && fp + 16 <= g->stack_hi; i++) {
+    if (a < fp) return pc;
+    pc = ((uintptr_t *)fp)[1];
+    uintptr_t up = ((uintptr_t *)fp)[0];
+    if (up <= fp) break;
+    fp = up;
+  }
+  return pc;
+}
+
+NO_SANITIZE static void scan_range_roots(gcw *w, uintptr_t lo, uintptr_t hi) {
+  lo = (lo + WORDSZ - 1) & ~(WORDSZ - 1);
+  for (uintptr_t p = lo; p + WORDSZ <= hi; p += WORDSZ) {
+    uint64_t before = w->marked_bytes;
+    mark_ptr(w, *(uintptr_t *)p);
+    if (w->marked_bytes == before) continue;
+    drain_serial(w);
+    uint64_t got = w->marked_bytes - before;
+    int k = 0;
+    for (int i = 1; i < 20; i++)
+      if (top_roots[i].bytes < top_roots[k].bytes) k = i;
+    if (got > top_roots[k].bytes) {
+      root_rec r = {p, got, root_g ? root_g->id : 0, 0, 0};
+      if (root_g) {
+        r.pc = owner_pc(root_g, p);
+        r.off = root_g->stack_hi - p;
+      }
+      top_roots[k] = r;
+    }
+  }
+}
+
+static void print_roots(void) {
+  rt_print("  top roots (bytes marked first from each):\n");
+  for (int n = 0; n < 20; n++) {
+    int k = -1;
+    for (int i = 0; i < 20; i++)
+      if (top_roots[i].bytes && (k < 0 || top_roots[i].bytes > top_roots[k].bytes)) k = i;
+    if (k < 0) break;
+    root_rec r = top_roots[k];
+    top_roots[k].bytes = 0;
+    rt_print("    ");
+    rt_printu(r.bytes >> 10);
+    rt_print(" KiB from ");
+    rt_printx(r.addr);
+    if (r.goid) {
+      rt_print(" goroutine ");
+      rt_printi(r.goid);
+      rt_print(" stack top-");
+      rt_printu(r.off);
+      rt_print(" frame pc ");
+      rt_printx(r.pc);
+    } else {
+      rt_print(" (data segment or registered root)");
+    }
+    rt_print("\n");
+  }
+}
+
 // Root scanning runs on the collecting thread, into worker 0.
-NO_SANITIZE void gc_scan_range(uintptr_t lo, uintptr_t hi) { scan_range_w(&workers[0], lo, hi); }
+NO_SANITIZE void gc_scan_range(uintptr_t lo, uintptr_t hi) {
+  if (UNLIKELY(gc_trace >= 3)) {
+    scan_range_roots(&workers[0], lo, hi);
+    return;
+  }
+  scan_range_w(&workers[0], lo, hi);
+}
 
 NO_SANITIZE static void scan_object(gcw *w, uintptr_t obj) {
   mspan *s = rt_pagemap[(obj - rt_arena_start) >> PAGE_SHIFT];
@@ -961,6 +1066,7 @@ void gc_collect(bool forced) {
   pause_total_ns += (uint64_t)(t4 - t0);
   if (UNLIKELY(gc_trace)) gc_print_trace(before, live, t0, t1, t2, t3, t4);
   if (UNLIKELY(gc_trace >= 2)) gc_print_classes();
+  if (UNLIKELY(gc_trace >= 3)) print_roots();
   bool wake = false;
   if (queued) {
     spin_lock(&fin_lock);

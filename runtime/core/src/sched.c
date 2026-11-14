@@ -2180,10 +2180,12 @@ void sched_scan_roots(void (*scan)(uintptr_t lo, uintptr_t hi)) {
       while (bits) {
         uint32_t b = (uint32_t)__builtin_ctzll(bits);
         bits &= bits - 1;
+        gc_root_goroutine(ch->g[w * 64 + b]);
         scan_g(ch->g[w * 64 + b], scan);
       }
     }
   }
+  gc_root_goroutine(NULL);
 }
 
 // ---- init ----
