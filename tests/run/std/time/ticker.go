@@ -3,8 +3,10 @@ package main
 import "time"
 
 func main() {
-	tk := time.NewTicker(10 * time.Millisecond)
+	// start before the ticker: the fourth tick is due 40 ms after NewTicker,
+	// so at least that long after start, however long NewTicker takes.
 	start := time.Now()
+	tk := time.NewTicker(10 * time.Millisecond)
 	for i := 0; i < 4; i++ {
 		<-tk.C
 	}
