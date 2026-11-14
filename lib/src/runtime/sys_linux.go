@@ -54,9 +54,19 @@ func vgetrandom(p []byte, flags uint32) (ret int, supported bool) {
 	return -1, false
 }
 
-// getAuxv is pulled by golang.org/x/sys/cpu; marmot does not keep the
-// auxiliary vector.
-func getAuxv() []uintptr { return nil }
+//go:linkname rt_auxv rt_auxv
+func rt_auxv(n *int) unsafe.Pointer
+
+// getAuxv is pulled by golang.org/x/sys/cpu (AT_HWCAP, AT_HWCAP2): the
+// auxiliary vector the kernel passed, as (key, value) words.
+func getAuxv() []uintptr {
+	var n int
+	p := rt_auxv(&n)
+	if p == nil {
+		return nil
+	}
+	return unsafe.Slice((*uintptr)(p), n)
+}
 
 // os probes pidfd support with a syscall that may raise SIGSYS under a
 // seccomp filter, and ignores SIGSYS around the probe so that the default

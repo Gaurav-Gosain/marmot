@@ -188,3 +188,7 @@ func os_executablePath() string {
 		}
 	}
 }
+
+// getAuxv is pulled by golang.org/x/sys/cpu; darwin has no auxiliary
+// vector (nil, as gc).
+func getAuxv() []uintptr { return nil }
