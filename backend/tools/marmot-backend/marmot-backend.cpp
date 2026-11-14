@@ -128,6 +128,13 @@ static cl::opt<bool> stringsNoCopy(
     "strings-nocopy", cl::desc("go-strings rule S3: no-copy string(b) for transient uses"));
 static cl::opt<bool> noImport("no-import", cl::desc("-wpo without cross-module imports"),
                               cl::cat(cat));
+static cl::opt<unsigned> importBudget("import-budget",
+                                     cl::desc("-wpo: imported functions per module at most"),
+                                     cl::init(400), cl::cat(cat));
+static cl::opt<bool> importDirect("import-direct",
+                                  cl::desc("-wpo: import only callees of the module's own code, "
+                                           "not the callees of imported bodies"),
+                                  cl::cat(cat));
 static cl::opt<bool> noLoops("no-loops", cl::desc("Disable the loop optimizer"), cl::cat(cat));
 static cl::opt<bool> noPar("no-par", cl::desc("Loop optimizer: no parallel-for (the default)"),
                            cl::cat(cat));
@@ -298,6 +305,8 @@ int main(int argc, char **argv) {
   opts.verifyEach = verifyEach;
   opts.initOptNone = initOptNone;
   opts.wpoImport = !noImport;
+  opts.wpoImportBudget = importBudget;
+  opts.wpoImportTransitive = !importDirect;
   opts.splitInstrs = splitLarge;
   opts.stringsNoCopy = stringsNoCopy;
   opts.keepCallSites = keepCallSites;

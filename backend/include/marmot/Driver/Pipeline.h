@@ -34,6 +34,8 @@ struct CompileOptions {
   unsigned parseThreads = 1;   // threads to parse a large module with (parseFile, tier0)
   bool initOptNone = true;     // compile package init functions with optnone
   bool wpoImport = true;       // -wpo: import small functions across modules
+  unsigned wpoImportBudget = 400;  // -wpo: imported functions per module at most
+  bool wpoImportTransitive = true; // -wpo: also the callees of imported bodies
   // Dev batch: split a module above this many instructions into groups
   // compiled in parallel (0: never).
   unsigned splitInstrs = 0;

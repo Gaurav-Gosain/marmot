@@ -517,6 +517,9 @@ std::string fingerprint(const CompileOptions &opts) {
   if (opts.rtBitcode)
     os << opts.rtBitcode->fileHash();
   os << "|opts:" << opts.optionKey << "|loopopts:" << loops::cacheKey();
+  // Only when not the default, so the default keeps its keys.
+  if (opts.wpoImportBudget != 400 || !opts.wpoImportTransitive)
+    os << "|ib" << opts.wpoImportBudget << "t" << opts.wpoImportTransitive;
   os << "|g" << opts.debugLevel << "|ktc" << opts.keepTailCalls << "|gpu=" << opts.gpuArch << "|pgo-gen=" << opts.pgoGen << "|pgo=";
   if (!opts.pgoUse.empty()) {
     if (auto buf = MemoryBuffer::getFile(opts.pgoUse))
@@ -1910,8 +1913,9 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   };
   // The plan is transitive: an imported body's callees are candidates too
   // (so runtime.slicecopy imported into main brings runtime.memmove along),
-  // up to kImportBudget imported functions per module.
-  constexpr unsigned kImportBudget = 400;
+  // up to opts.wpoImportBudget imported functions per module (with
+  // -import-direct only the callees of the module's own code).
+  const unsigned kImportBudget = opts.wpoImportBudget;
   for (unsigned i = 0; i < mods.size(); ++i) {
     SmallVector<unsigned, 64> work;
     DenseSet<unsigned> taken;
@@ -1941,7 +1945,8 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       ++stats.imported;
       for (unsigned rr : ids[si][sj].refs) {
         use(rr, i);
-        work.push_back(rr);
+        if (opts.wpoImportTransitive)
+          work.push_back(rr);
       }
     }
   }
