@@ -94,7 +94,7 @@ func setup(cfg Config) (pcfg *packages.Config, patterns []string, goroot, realRo
 		return nil, nil, "", "", fmt.Errorf("merged GOROOT: %v", err)
 	}
 	// purego selects the pure Go fallbacks of packages with assembly.
-	tags := append([]string{"marmot", "purego", "math_big_pure_go"}, cfg.Tags...)
+	tags := append([]string{"marmot", "purego", "noasm", "math_big_pure_go"}, cfg.Tags...)
 	env := append(os.Environ(),
 		"GOROOT="+goroot,
 		"GOCACHE="+GoCache(cfg.Root),
@@ -338,7 +338,7 @@ func InputFiles(cfg Config) ([]string, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	tags := append([]string{"marmot", "purego", "math_big_pure_go"}, cfg.Tags...)
+	tags := append([]string{"marmot", "purego", "noasm", "math_big_pure_go"}, cfg.Tags...)
 	env := append(os.Environ(), "GOROOT="+goroot, "GOCACHE="+GoCache(cfg.Root), "CGO_ENABLED=0", "GOOS="+cfg.GOOS,
 		"GOARCH="+cfg.GOARCH, "GOFLAGS=-tags="+strings.Join(tags, ","), "GOTOOLCHAIN=local")
 	list := func(patterns ...string) (string, error) {

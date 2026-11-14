@@ -21,7 +21,10 @@ import (
 // The loader gives such a declaration a Go body that calls the target
 // (an exported function of a package it imports, or any function of the
 // same package), through the same source edits as //go:embed. A few raw system
-// call stubs of x/sys/unix that are not jumps get bodies by name.
+// call stubs of x/sys/unix that are not jumps get bodies by name, and the
+// CPU probes of x/sys/cpu on x86 (cpuid, xgetbv) return zeros: every
+// optional feature reads as absent, as marmot's internal/cpu reports, and
+// the portable code paths run.
 
 // asmJump is the target of a jump stub: package path ("" for the same
 // package) and function name.
@@ -33,6 +36,15 @@ var rawStubs = map[string]string{
 	"SyscallNoError":    "Syscall",
 	"RawSyscallNoError": "RawSyscall",
 }
+
+// zeroStubs are assembly functions, by package, whose body returns zero
+// results.
+var zeroStubs = map[string][]string{
+	"golang.org/x/sys/cpu": {"cpuid", "xgetbv"},
+}
+
+// zeroBody marks a zero stub in asmJump.name.
+const zeroBody = "\x00zero"
 
 // asmJumps reads the jump stubs of p's assembly files.
 func asmJumps(p *packages.Package) map[string]asmJump {
@@ -114,6 +126,14 @@ func asmJumps(p *packages.Package) map[string]asmJump {
 			}
 		}
 	}
+	for _, stub := range zeroStubs[p.PkgPath] {
+		if _, ok := out[stub]; !ok {
+			if out == nil {
+				out = map[string]asmJump{}
+			}
+			out[stub] = asmJump{"", zeroBody}
+		}
+	}
 	return out
 }
 
@@ -131,6 +151,15 @@ func asmEdits(p *packages.Package, f *ast.File, jumps map[string]asmJump) []embe
 		}
 		j, ok := jumps[fd.Name.Name]
 		if !ok {
+			continue
+		}
+		if j.name == zeroBody {
+			// Named results (or none): a bare return gives zeros.
+			res := fd.Type.Results
+			if res != nil && res.NumFields() > 0 && len(res.List[0].Names) == 0 {
+				continue
+			}
+			out = append(out, embedEditAt{pos: p.Fset.Position(fd.End()).Offset, text: " { return }"})
 			continue
 		}
 		var args []string
