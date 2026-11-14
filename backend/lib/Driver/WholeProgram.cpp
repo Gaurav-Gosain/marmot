@@ -1323,38 +1323,90 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   };
 
   // Largest first, so a big module does not start last.
+  std::vector<uint64_t> inputSize(jobs.size(), 0);
   std::vector<unsigned> order(jobs.size());
   for (unsigned i = 0; i < order.size(); ++i)
     order[i] = i;
   {
-    std::vector<uint64_t> size(jobs.size(), 0);
     for (unsigned i = 0; i < jobs.size(); ++i)
-      sys::fs::file_size(jobs[i].in, size[i]);
+      sys::fs::file_size(jobs[i].in, inputSize[i]);
     std::stable_sort(order.begin(), order.end(),
-                     [&](unsigned a, unsigned b) { return size[a] > size[b]; });
+                     [&](unsigned a, unsigned b) { return inputSize[a] > inputSize[b]; });
   }
+  // Memory follows input text: a module of tuios with 31 MB of text peaked
+  // at 927 MB compiling alone at -O 2 (30 times), and a parse alone takes
+  // about 6 times its text. The two budgets below keep their estimate
+  // under four fifths of MARMOT_MAX_MEM_MB (0: no limit).
+  constexpr uint64_t kCompileCost = 30, kParseCost = 6;
+  uint64_t memLimit = 3072ull << 20;
+  if (const char *e = std::getenv("MARMOT_MAX_MEM_MB"))
+    memLimit = std::strtoull(e, nullptr, 10) << 20;
+  const uint64_t memBudget = memLimit ? memLimit / 5 * 4 : UINT64_MAX;
+  // Jobs in flight: a job starts when the input text of the jobs running
+  // plus its own fits in the admission budget, half the memory budget (one
+  // job always runs), so a program of a few very large modules does not
+  // parse and optimize them all at once (tuios: 19 modules of about 30 MB
+  // of text in one package).
+  uint64_t admitBudget = memLimit ? memBudget / 2 / kCompileCost : UINT64_MAX;
+  if (const char *e = std::getenv("MARMOT_ADMIT_MB"))
+    admitBudget = std::strtoull(e, nullptr, 10) << 20;
+  std::mutex admitMu;
+  std::condition_variable admitCv;
+  uint64_t admitted = 0;
   auto parallel = [&](auto fn) {
     DefaultThreadPool pool(hardware_concurrency(threads));
     for (unsigned i : order)
       pool.async([&, i] {
+        uint64_t n = inputSize[i];
+        {
+          std::unique_lock<std::mutex> l(admitMu);
+          admitCv.wait(l, [&] { return admitted == 0 || admitted + n <= admitBudget; });
+          admitted += n;
+        }
         watchdogBegin(jobs[i].in);
         std::string msgs;
         raw_string_ostream es(msgs);
         PhaseTimes t;
         fn(i, es, t);
         watchdogEnd(jobs[i].in);
+        {
+          std::lock_guard<std::mutex> l(admitMu);
+          admitted -= n;
+        }
+        admitCv.notify_all();
         report(i, msgs, t);
       });
     pool.wait();
   };
   // Parses module i if not parsed yet.
+  std::atomic<uint64_t> parsedBytes{0}; // input text of the modules kept parsed
   auto ensureParsed = [&](unsigned i, raw_ostream &es, PhaseTimes &t) -> bool {
     if (mods[i].parsed)
       return true;
     auto t0 = std::chrono::steady_clock::now();
     mods[i].parsed = parseFile(jobs[i].in, opts, es);
     t.parse += msSince(t0);
+    if (mods[i].parsed)
+      parsedBytes += inputSize[i];
     return bool(mods[i].parsed);
+  };
+  // Parsed modules are kept between phases (escape rounds, translation)
+  // only while they and the jobs in flight fit the memory budget (keeping
+  // all of a large program's modules took more than 3 GB); module i's parse
+  // is freed at the end of its job otherwise, and a later miss parses it
+  // again.
+  auto releaseParsed = [&](unsigned i, bool always) {
+    if (!mods[i].parsed)
+      return;
+    uint64_t others;
+    {
+      std::lock_guard<std::mutex> l(admitMu);
+      others = admitted - std::min(admitted, inputSize[i]);
+    }
+    if (always || (memLimit && parsedBytes.load() * kParseCost + others * kCompileCost > memBudget)) {
+      mods[i].parsed = nullptr;
+      parsedBytes -= inputSize[i];
+    }
   };
   auto moduleOp = [&](unsigned i) {
     return mlir::ModuleOp::getFromOpaquePointer(parsedModuleOp(*mods[i].parsed));
@@ -1401,6 +1453,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       });
       cache.put(m.mlirHash, "decls", text);
       decls = text;
+      releaseParsed(i, false);
     }
     SmallVector<StringRef, 0> lines;
     StringRef(*decls).split(lines, '\n', -1, false);
@@ -1437,6 +1490,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         applyTable(moduleOp(i), in);
         found[i] = escapeSummaries(moduleOp(i));
         cache.put(key, "esc", found[i]);
+        releaseParsed(i, false);
       });
       if (!ok)
         return false;
@@ -1464,7 +1518,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         same = it != table.end() && it->second == e.getValue();
       }
       table = std::move(next);
-      stats.escapeRounds = round + 1;
+          stats.escapeRounds = round + 1;
       if (same)
         break;
     }
@@ -1484,7 +1538,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     if (bc && sum) {
       m.bitcode = std::move(*bc);
       loadSummary(*sum, i, m);
-      m.parsed = nullptr;
+      releaseParsed(i, true);
       m.ok = true;
       return;
     }
@@ -1502,7 +1556,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     }
     LLVMContext ctx;
     auto lm = lowerAndTranslate(*m.parsed, jobs[i].in, opts, *tm, ctx, t, es);
-    m.parsed = nullptr;
+    releaseParsed(i, true);
     if (!lm)
       return;
     auto t0 = std::chrono::steady_clock::now();
