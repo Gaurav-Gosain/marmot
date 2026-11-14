@@ -162,8 +162,8 @@ typedef struct {
 
 // Up to n records into out (inuse_zero: also buckets with nothing in use);
 // returns how many there are.
-RT_API intptr_t rt_memprof_read(rt_memprof_rec *out, intptr_t n, int32_t inuse_zero) {
-  intptr_t k = 0;
+RT_API int64_t rt_memprof_read(rt_memprof_rec *out, int64_t n, int32_t inuse_zero) {
+  int64_t k = 0;
   spin_lock(&mp_lock);
   for (mp_bucket *b = mp_all; b; b = b->all) {
     if (!inuse_zero && b->allocs == b->frees) continue;
