@@ -218,7 +218,7 @@ func (f *funcGen) dynType(x string, xt types.Type) string {
 	nb, done := f.newBlock(), f.newBlock()
 	f.emit("llvm.cond_br %s, %s(%s : %s), %s", isNil, done, n, tP, nb)
 	fmt.Fprintf(f.b, "  %s:\n", nb)
-	tp := f.gepByte(w, 8)
+	tp := f.gepByte(w, f.m.p.ptrSize()) // itab.typ
 	t := f.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", tp, f.pty(tp), tP)
 	f.emit("llvm.br %s(%s : %s)", done, t, tP)
 	r := f.newVal()

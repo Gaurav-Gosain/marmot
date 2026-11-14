@@ -84,7 +84,9 @@ Known differences from Go's `GOOS=wasip1 GOARCH=wasm`, which uses 8-byte pointer
 
 | Area | Difference |
 | --- | --- |
-| Pointer size | Pointers, `uintptr` and `unsafe.Pointer` are 4 bytes. `int` and `uint` stay 8 bytes, as in Go. |
+| Pointer size | Pointers and `unsafe.Pointer` are 4 bytes. `int`, `uint` and `uintptr` stay 8 bytes, as in Go, so integer behavior matches Go's wasm. A `uintptr` holding an address has its upper 4 bytes zero. |
 | `unsafe.Sizeof`, `unsafe.Alignof`, `unsafe.Offsetof` | Pointers, maps, channels and functions are 4 bytes instead of 8, interfaces 8 instead of 16. Slices (24 bytes) and strings (16 bytes) keep Go's size: the 8-byte length that follows the pointer is aligned to 8. Structs of pointers and smaller fields shrink. |
 | Struct layout | A field after a pointer can start 4 bytes earlier, so offsets differ. |
 | `reflect` | `Type.Size`, `Type.Align` and `Type.FieldAlign` report the sizes above. |
+| Struct copies of runtime types | A struct that mirrors a runtime struct with a `uintptr` in place of a pointer (as `sync.notifyList` does) is 4 bytes larger per such field than the runtime's; marmot's runtime pads its side to match the standard library's. |
+| `//go:wasmimport` | Parameters and results follow Go: `int32`, `uint32`, `int64`, `uint64`, `float32`, `float64` as they are; `bool` as i32; `uintptr`, `unsafe.Pointer` and pointers as i32 (an address in the 32-bit memory); a `string` as its pointer and length. |

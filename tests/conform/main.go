@@ -65,6 +65,8 @@ var (
 	flBFlags  = flag.String("bflags", "", "with -matrix: extra configs as label=FLAGS pairs separated by ';', run at -O2 with MARMOT_BACKEND_FLAGS=FLAGS")
 	flModes   = flag.String("modes", "", "comma list of build modes to run every program in: dev, release, gcstress, poison, stress, lifetime, evalorder, O0, O1, O2, O3, Os, Oz; results are named NAME@MODE")
 	flLive    = flag.Bool("live", false, "run against the live tree instead of a snapshot (other workers may be mid-edit)")
+	flRoot    = flag.String("root", "", "the marmot root to test (its build/bin, build/lib and lib; default this tree)")
+	flTarget  = flag.String("target", "", "build every program with -target (wasip1/wasm programs run under node tests/wasm/run.mjs)")
 )
 
 func main() {
@@ -124,9 +126,14 @@ func main() {
 	}
 
 	gitSHA := gitHead(root)
-	snapRoot := root
+	mroot := root
+	if *flRoot != "" {
+		mroot, err = filepath.Abs(*flRoot)
+		check(err)
+	}
+	snapRoot := mroot
 	if !*flLive {
-		snapRoot, err = snapshot(root, gitSHA)
+		snapRoot, err = snapshot(mroot, gitSHA)
 		check(err)
 		snapDir = snapRoot
 	}
@@ -459,6 +466,9 @@ func runOne(root, testsDir, work, marmot, name string, cfg config) result {
 	}
 	exe := filepath.Join(tdir, "prog")
 	args := []string{"build", "-o", exe}
+	if *flTarget != "" {
+		args = append(args, "-target", *flTarget)
+	}
 	if cfg.release {
 		args = append(args, "-release")
 	}
@@ -488,7 +498,11 @@ func runOne(root, testsDir, work, marmot, name string, cfg config) result {
 	if hasGCStress(runEnv) {
 		rto *= 10 // collections at slow-path allocations
 	}
-	ro, err := execute(rto, tdir, runEnv, exe)
+	run, runArgs := exe, []string(nil)
+	if strings.HasPrefix(*flTarget, "wasip1/") {
+		run, runArgs = "node", []string{filepath.Join(testsDir, "wasm", "run.mjs"), exe}
+	}
+	ro, err := execute(rto, tdir, runEnv, run, runArgs...)
 	if err != nil {
 		r.Reason, r.Detail = "crash", err.Error()
 		return r

@@ -626,7 +626,7 @@ func deadInitSafe(p *Program, instr ssa.Instruction) bool {
 		}
 		n, exact := constant.Int64Val(cc.Value)
 		elem := x.Type().Underlying().(*types.Slice).Elem()
-		size := types.SizesFor("gc", "amd64").Sizeof(elem)
+		size := p.sizes().Sizeof(elem)
 		return exact && n >= 0 && n <= 1<<24 && size <= 1<<12
 	case *ssa.Store:
 		// Stores into the dead variable or a literal object (both non-nil

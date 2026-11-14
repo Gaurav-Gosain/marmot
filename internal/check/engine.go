@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
+	"github.com/Gaurav-Gosain/marmot/internal/target"
 	"golang.org/x/sync/semaphore"
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/gcexportdata"
@@ -519,7 +520,7 @@ func (e *engine) run(p *listPkg, root bool, deps map[string]*factsEntry) (*facts
 	var typeErrs []types.Error
 	tc := &types.Config{
 		Importer:  importer,
-		Sizes:     types.SizesFor("gc", e.goarch),
+		Sizes:     target.Sizes(e.goarch),
 		GoVersion: p.goVersion(e.toolchain),
 		Error: func(err error) {
 			if te, ok := err.(types.Error); ok {

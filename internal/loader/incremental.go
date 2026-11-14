@@ -23,6 +23,7 @@ import (
 	"github.com/Gaurav-Gosain/marmot/internal/cgo"
 	"github.com/Gaurav-Gosain/marmot/internal/genapi"
 	"github.com/Gaurav-Gosain/marmot/internal/rtexport"
+	"github.com/Gaurav-Gosain/marmot/internal/target"
 	"golang.org/x/tools/go/gcexportdata"
 	"golang.org/x/tools/go/packages"
 )
@@ -639,7 +640,7 @@ func loadIncremental(cfg Config, pcfg *packages.Config, patterns []string, confS
 			fset:     token.NewFileSet(),
 			imports:  map[string]*types.Package{},
 			overlay:  copyOverlay(pcfg.Overlay),
-			sizes:    types.SizesFor("gc", cfg.GOARCH),
+			sizes:    target.Sizes(cfg.GOARCH),
 			needSrc:  needSrc,
 			result:   map[*packages.Package]*IncrementalPackage{},
 			meta:     map[*packages.Package]*pkgMeta{},

@@ -114,6 +114,7 @@ type notifyList struct {
 	wait   uint32 // ticket of the next waiter, updated atomically
 	notify uint32 // ticket of the next waiter to notify
 	lock   mutex  // at most one word
+	_      uint32 // sync's copy has a uintptr here: 8 bytes on wasm too
 	head   *sudog
 	tail   *sudog
 }

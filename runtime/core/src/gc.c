@@ -182,6 +182,8 @@ static _Atomic uint32_t idle_gc_parked;  // 1 while idle_gc_g waits to be readie
 
 static void idle_gc_park_done(void *arg) { atomic_store(&idle_gc_parked, 1); }
 
+static _Atomic bool idle_done;  // the idle collection ran since the last other collection
+
 static void idle_gc_proc(void *arg) {
   for (;;) {
     rt_park(idle_gc_park_done, NULL);
@@ -190,11 +192,19 @@ static void idle_gc_proc(void *arg) {
     heap_scavenge_min(0, rt_pagesize);
     heap_scavenge_partial();
     spin_unlock(&heap_lock);
+    atomic_store(&idle_done, true);
   }
 }
 
+// Also when little was allocated since the last collection but it kept
+// free memory for the goal (a burst that ended just after a collection):
+// once, until another collection runs. Allocation in cached spans counts
+// only when the span goes back, so the first test alone can miss a burst.
 bool gc_idle_wanted(void) {
-  return gc_percent >= 0 && atomic_load(&stat_total_alloc) - atomic_load(&gc_alloc_mark) >= IDLE_GC_MIN;
+  if (gc_percent < 0 || atomic_load(&idle_done)) return false;
+  if (atomic_load(&stat_total_alloc) - atomic_load(&gc_alloc_mark) >= IDLE_GC_MIN) return true;
+  uint64_t held = heap_sys - heap_released, live = atomic_load(&heap_live);
+  return held > live && held - live >= IDLE_GC_MIN;
 }
 
 // From sysmon: start the idle collection (no P needed).
@@ -1408,6 +1418,7 @@ void gc_collect(bool forced) {
   uint64_t live = atomic_load(&heap_live);
   last_live = live;
   atomic_store(&gc_alloc_mark, atomic_load(&stat_total_alloc));
+  atomic_store(&idle_done, false);
   set_goal(live);
   pace_last_end = os_nanotime();
   for (int32_t i = 0; i <= gc_nhelpers; i++) {

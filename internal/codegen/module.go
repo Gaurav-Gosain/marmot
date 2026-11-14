@@ -306,6 +306,9 @@ func (m *moduleGen) funcRef(fn *ssa.Function) string {
 		m.queue = append(m.queue, fn)
 		return sym
 	}
+	if m.p.opts.GOARCH == "wasm" && len(fn.Blocks) == 0 && isCSymbol(sym) && cWordSig(fn) {
+		return m.cWordWrapper(sym, fn)
+	}
 	m.declare(sym, fn)
 	return sym
 }
@@ -495,6 +498,9 @@ func (m *moduleGen) global(g *ssa.Global) {
 		// a zero definition is a common symbol, so the one with an
 		// initializer (or any one) wins at link time.
 		linkage = "common"
+		if m.p.opts.GOARCH == "wasm" {
+			linkage = "weak" // wasm objects have no common symbols
+		}
 	}
 	fmt.Fprintf(&m.defs, "  llvm.mlir.global %s %s() {addr_space = 0 : i32} : %s {\n    %%0 = llvm.mlir.zero : %s\n    llvm.return %%0 : %s\n  }\n",
 		linkage, mlir.Symbol(sym), mlir.Data(t), mlir.Data(t), mlir.Data(t))

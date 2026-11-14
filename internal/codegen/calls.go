@@ -97,7 +97,7 @@ func (f *funcGen) invoke(c *ssa.CallCommon) string {
 	f.nilCheck(tab)
 	it := c.Value.Type().Underlying().(*types.Interface)
 	idx := ifaceMethodIndex(it, c.Method)
-	slot := f.gepByte(tab, int64(24+8*idx))
+	slot := f.gepByte(tab, f.m.p.itabFun(idx))
 	code := f.markAddr(f.op("llvm.load %s {alignment = 8 : i64} : %s -> !llvm.ptr", slot, f.pty(slot)))
 	sig := c.Method.Type().(*types.Signature)
 	params, ret := f.m.sigTypes(stripRecv(sig), false)
@@ -505,7 +505,7 @@ func (f *funcGen) devirtualize(c *ssa.CallCommon) (string, bool) {
 	f.nilCheck(tab)
 	it := iface.Underlying().(*types.Interface)
 	idx := ifaceMethodIndex(it, c.Method)
-	slot := f.gepByte(tab, int64(24+8*idx))
+	slot := f.gepByte(tab, f.m.p.itabFun(idx))
 	code := f.markAddr(f.op("llvm.load %s {alignment = 8 : i64} : %s -> !llvm.ptr", slot, f.pty(slot)))
 	r := f.indirectCall(code, args, params, ret)
 	if ret == "" {

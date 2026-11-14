@@ -156,9 +156,9 @@ func (f *funcGen) setupOpenDefers() {
 	f.emit("llvm.store %s, %s {alignment = 8 : i64} : i8, %s", f.constInt(0, mlir.I8), od.slots, f.pty(od.slots))
 	code := f.addressOf(od.runner)
 	f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, %s", code, od.clo, f.pty(od.clo))
-	at1 := f.gepByte(od.clo, 8)
+	at1 := f.gepByte(od.clo, f.m.p.ptrSize())
 	f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", f.gcv(od.slots), at1, tP, f.pty(at1))
-	at2 := f.gepByte(od.clo, 16)
+	at2 := f.gepByte(od.clo, 2*f.m.p.ptrSize())
 	f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", f.gcv(od.rec), at2, tP, f.pty(at2))
 }
 
@@ -290,9 +290,9 @@ func (m *moduleGen) openDeferRunner(parent *funcGen, od *openDefers) string {
 	m.defined[sym] = true
 	t := &funcGen{m: m, fn: parent.fn, tm: m.tm, vals: map[ssa.Value]string{}, blkName: map[*ssa.BasicBlock]string{}, deferThunk: true}
 	m.initBufs(t)
-	at3 := t.gepByte("%ctx", 8)
+	at3 := t.gepByte("%ctx", t.m.p.ptrSize())
 	slots := t.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", at3, t.pty(at3), tP)
-	at4 := t.gepByte("%ctx", 16)
+	at4 := t.gepByte("%ctx", 2*t.m.p.ptrSize())
 	rec := t.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", at4, t.pty(at4), tP)
 	mt := m.tm.memType(od.slotT)
 	off, haveOff := m.p.gDeferOffset()

@@ -666,6 +666,9 @@ func (b *build) link(objs []string, out string) error {
 	if !fileExists(rt) {
 		return fmt.Errorf("%s is missing; run make rtcore", rt)
 	}
+	if b.goarch == "wasm" {
+		return b.linkWasm(objs, rt, out)
+	}
 	if b.cfg.Static {
 		if ok, err := b.linkCross(objs, rt, out); ok {
 			return err
@@ -805,6 +808,15 @@ func (b *build) backendArgs(emitKind, batch string) []string {
 	if b.cross() {
 		args = append(args, "--target="+b.goos+"/"+b.goarch)
 	}
+	if b.goarch == "wasm" {
+		// Defer frames call setjmp: lowered to wasm exceptions with the
+		// legacy encoding, as the runtime (runtime/core WASM_SJLJ_FLAGS).
+		args = append(args, "-wasm-enable-sjlj", "-wasm-use-legacy-eh=true")
+		// LLVM 22's WebAssembly FastISel (-O0 code generation) addresses
+		// memory with a GEP's i64 index as it is, which wasm32 rejects
+		// (i32.load8_u of an i64): selection DAG instead.
+		args = append(args, "-fast-isel=false")
+	}
 	if cpu := b.amd64CPU(); cpu != "" && !strings.Contains(os.Getenv("MARMOT_BACKEND_FLAGS"), "-mcpu") {
 		args = append(args, "-mcpu="+cpu)
 	}
@@ -898,10 +910,10 @@ func parseTarget(t string) (string, string, error) {
 		return "", "", fmt.Errorf("bad -target %q: want os/arch, for example linux/amd64", t)
 	}
 	switch t {
-	case "darwin/arm64", "darwin/amd64", "linux/amd64", "linux/arm64":
+	case "darwin/arm64", "darwin/amd64", "linux/amd64", "linux/arm64", "wasip1/wasm":
 		return parts[0], parts[1], nil
 	}
-	return "", "", fmt.Errorf("unsupported -target %q (darwin/arm64, darwin/amd64, linux/amd64, linux/arm64)", t)
+	return "", "", fmt.Errorf("unsupported -target %q (darwin/arm64, darwin/amd64, linux/amd64, linux/arm64, wasip1/wasm)", t)
 }
 
 // cross reports whether the target differs from the host.

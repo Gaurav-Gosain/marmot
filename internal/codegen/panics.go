@@ -102,7 +102,7 @@ func (p *Program) instrMayPanic(instr ssa.Instruction, known map[ssa.Value]bool)
 		// gc panics (makeslice: len out of range) when that is too large,
 		// so an impossibly large object may panic.
 		if pt, ok := x.Type().Underlying().(*types.Pointer); ok {
-			if sz := types.SizesFor("gc", "amd64").Sizeof(pt.Elem()); sz < 0 || sz >= 1<<40 {
+			if sz := p.sizes().Sizeof(pt.Elem()); sz < 0 || sz >= 1<<40 {
 				return true
 			}
 		}

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Gaurav-Gosain/marmot/internal/cgo"
+	"github.com/Gaurav-Gosain/marmot/internal/target"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -266,7 +267,7 @@ func Load(cfg Config) (*Program, error) {
 	_ = ssaPkgs
 	sizes := pkgs[0].TypesSizes
 	if sizes == nil {
-		sizes = types.SizesFor("gc", cfg.GOARCH)
+		sizes = target.Sizes(cfg.GOARCH)
 	}
 	lp := &Program{SSA: prog, Packages: pkgs, All: all, SSAPkgs: m, GOROOT: goroot, RealGOROOT: realRoot, Sizes: sizes}
 	if incr != nil {

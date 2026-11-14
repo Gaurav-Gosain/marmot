@@ -102,7 +102,7 @@ func (m *moduleGen) methodValueWrapper(ifn string, method *types.Func) string {
 	sig := stripRecv(method.Type().(*types.Signature))
 	params, ret := m.sigTypes(sig, false)
 	f := m.newAdapterGen()
-	at1 := f.gepByte("%ctx", 8)
+	at1 := f.gepByte("%ctx", f.m.p.ptrSize())
 	recv := f.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", at1, f.pty(at1), tP)
 	var head strings.Builder
 	fmt.Fprintf(&head, "  llvm.func linkonce_odr %s(", mlir.Symbol(sym))

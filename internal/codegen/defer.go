@@ -71,8 +71,14 @@ func (f *funcGen) setupFrame() {
 // (and where the defer stack is taken), so every value of the entry block,
 // in particular the named result slots, dominates the Recover block.
 func (f *funcGen) setjmp() {
-	f.m.declareRaw("rt_setjmp", []string{tP}, mlir.I32, `passthrough = ["returns_twice"]`)
-	r := f.op("llvm.call @rt_setjmp(%s) : (%s) -> i32", f.gcv(f.frame), tP)
+	// wasm: setjmp itself, which the WebAssembly backend lowers to wasm
+	// exceptions (-wasm-enable-sjlj); rt_longjmp throws the matching tag.
+	sj := "rt_setjmp"
+	if f.m.p.opts.GOARCH == "wasm" {
+		sj = "setjmp"
+	}
+	f.m.declareRaw(sj, []string{tP}, mlir.I32, `passthrough = ["returns_twice"]`)
+	r := f.op("llvm.call @%s(%s) : (%s) -> i32", sj, f.gcv(f.frame), tP)
 	z := f.constInt(0, mlir.I32)
 	nz := f.op("llvm.icmp \"ne\" %s, %s : i32", r, z)
 	cont := f.newBlock()

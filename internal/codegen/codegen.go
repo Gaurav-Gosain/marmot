@@ -18,6 +18,7 @@ import (
 	"github.com/Gaurav-Gosain/marmot/internal/loader"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
+	"github.com/Gaurav-Gosain/marmot/internal/target"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -101,6 +102,7 @@ type Program struct {
 	linkname     map[*ssa.Function]string // symbol overrides from //go:linkname
 	dynamic      map[string]string        // pkgpath.local -> C symbol from //go:cgo_import_dynamic
 	pragmas      map[*ssa.Function]pragma
+	wasmImports  map[*ssa.Function]wasmImport // //go:wasmimport, by function
 
 	mu   sync.Mutex
 	syms sync.Map // *ssa.Function -> symbol (symbol)
@@ -149,6 +151,9 @@ const (
 
 // NewProgram prepares code generation for all packages of prog.
 func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package][]*ast.File, opts Options) (*Program, error) {
+	if opts.Sizes == nil {
+		opts.Sizes = target.Sizes(opts.GOARCH)
+	}
 	// The main package is the one named main that no other package imports.
 	// A test build of a package main has two: the generated test main and
 	// the package under test, which the test main imports. gc compiles the
@@ -185,6 +190,7 @@ func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package
 		globalLink:   map[*ssa.Global]string{},
 		dylibs:       map[string]bool{},
 		pragmas:      map[*ssa.Function]pragma{},
+		wasmImports:  map[*ssa.Function]wasmImport{},
 	}
 	for _, pkg := range pkgs {
 		if pkg.Pkg.Path() == "runtime" {
@@ -325,6 +331,10 @@ func (p *Program) parseDirective(fn *ssa.Function, text string) {
 		p.pragmas[fn] |= pragmaNosplit
 	case "//go:noescape":
 		p.pragmas[fn] |= pragmaNoescape
+	case "//go:wasmimport":
+		if fs := strings.Fields(text); len(fs) == 3 && len(fn.Blocks) == 0 {
+			p.wasmImports[fn] = wasmImport{fs[1], fs[2]}
+		}
 	}
 }
 
