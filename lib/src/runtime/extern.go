@@ -350,8 +350,30 @@ func Stack(buf []byte, all bool) int {
 	n := copy(buf, "goroutine "+itoa(getg().goid)+" [running]:\n")
 	var pcs [64]uintptr
 	k := callers(getcallerfp(), 0, pcs[:])
+	n += stackFrames(buf[n:], pcs[:k])
+	if all {
+		// The others, with the world stopped while their frames are read.
+		cnt := rt_gstacks(nil, 0)
+		gs := make([]gstackRec, cnt+cnt/4+16)
+		m := rt_gstacks(unsafe.Pointer(&gs[0]), len(gs))
+		if m > len(gs) {
+			m = len(gs)
+		}
+		for i := range gs[:m] {
+			g := &gs[i]
+			n += copy(buf[n:], "\ngoroutine "+itoa(g.id)+" ["+gstatusName(g.status)+"]:\n")
+			n += stackFrames(buf[n:], g.pc[:g.n])
+		}
+	}
+	return n
+}
+
+// stackFrames writes the Go frames of pcs (return addresses), as Stack
+// prints them; frames of the C core are left out.
+func stackFrames(buf []byte, pcs []uintptr) int {
+	n := 0
 	var fr [maxInlineDepth]pcInfo
-	for _, pc := range pcs[:k] {
+	for _, pc := range pcs {
 		for _, info := range fr[:pcFrames(pc-1, fr[:])] {
 			if info.line == 0 && info.file == "" {
 				continue
@@ -360,6 +382,32 @@ func Stack(buf []byte, all bool) int {
 		}
 	}
 	return n
+}
+
+// gstackRec is rt_gstack (sched.c).
+type gstackRec struct {
+	id     int64
+	status int32
+	n      int32
+	pc     [64]uintptr
+}
+
+//go:linkname rt_gstacks rt_gstacks
+func rt_gstacks(out unsafe.Pointer, n int) int
+
+// gstatusName is the bracketed state Stack prints for a goroutine.
+func gstatusName(s int32) string {
+	switch s {
+	case 1:
+		return "runnable"
+	case 2:
+		return "running"
+	case 3:
+		return "waiting"
+	case 4:
+		return "syscall"
+	}
+	return "unknown"
 }
 
 // printTraceback prints the frames above fp, as in a fatal panic, without
