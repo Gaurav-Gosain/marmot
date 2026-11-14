@@ -53,6 +53,8 @@ type funcGen struct {
 	stack0            map[string]bool            // stack slots and addresses computed from them (wb.go)
 	fresh             map[string]bool            // objects allocated since the last call in this block, and their parts (wb.go)
 	wbFlag            string                     // the marking flag loaded since the last call in this block (wb.go)
+	cardBase          string                     // the card table, loaded in the entry block (wb.go)
+	cardSkip          bool                       // the value being stored points at no heap object (wb.go)
 	mapLits           map[*ssa.MapUpdate]*mapLit // constant map literals: the loop at their last update (maplit.go)
 	appendMake        map[*ssa.MakeSlice]bool    // append(s, make([]T, n)...): no temporary
 	skipInstr         map[ssa.Instruction]bool   // instructions folded into others
@@ -627,8 +629,9 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 			f.nilCheck(addr)
 		}
 		f.forceUnsafe = f.m.p.localPun[v.Addr]
+		f.cardSkip = f.m.cards() && staticValue(v.Val)
 		f.store(f.value(v.Val), addr, v.Val.Type(), f.volatile[v.Addr])
-		f.forceUnsafe = false
+		f.forceUnsafe, f.cardSkip = false, false
 	case *ssa.Extract:
 		tt := f.tm.valType(v.Tuple.Type())
 		f.vals[v] = f.extractRaw(f.value(v.Tuple), tt, v.Index)

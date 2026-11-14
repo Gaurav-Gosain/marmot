@@ -71,9 +71,16 @@ func (f *funcGen) intrinsic(fn *ssa.Function, args []string) (res string, ok boo
 		// The new pointer value is the last argument of store, swap and
 		// compare and swap.
 		slot, nv := args[0], args[len(args)-1]
-		f.wbCheck(func() {
-			f.wb(slot, nv)
-		})
+		switch {
+		case f.m.cards():
+			if !f.addr0[slot] {
+				f.card(slot)
+			}
+		default:
+			f.wbCheck(func() {
+				f.wb(slot, nv)
+			})
+		}
 	}
 	switch op.kind {
 	case "load":

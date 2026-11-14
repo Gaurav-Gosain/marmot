@@ -1,7 +1,9 @@
 package codegen
 
 import (
+	"fmt"
 	"go/types"
+	"golang.org/x/tools/go/ssa"
 	"os"
 	"strconv"
 	"strings"
@@ -22,7 +24,18 @@ import (
 // addresses computed from them) need no barrier: stacks are roots the
 // collector scans again when marking ends.
 
-var optWB = os.Getenv("MARMOT_WB") == "1"
+// MARMOT_WB=1: the flag test and rt_wb above. MARMOT_WB=cards: card
+// marking (runtime/core, RT_CARD_SHIFT): every store that may put a pointer
+// into the heap marks its 512-byte card dirty, one byte store with no test
+// and no call; the collector rescans the marked objects on dirty cards
+// when marking ends. Stores to globals need no card (globals are rescanned
+// as roots). wasm has no card table and uses the flag barrier.
+var wbMode = os.Getenv("MARMOT_WB")
+
+var optWB = wbMode == "1" || wbMode == "cards"
+
+// cards reports whether this module marks cards instead of calling rt_wb.
+func (m *moduleGen) cards() bool { return wbMode == "cards" && m.p.opts.GOARCH != "wasm" }
 
 // trackAddr: whether funcGen records address spaces and stack slots.
 var trackAddr = optGCPtr || optWB
@@ -46,8 +59,37 @@ func (f *funcGen) markFresh(v string) {
 
 // noBarrier reports whether a store at p needs no barrier.
 func (f *funcGen) noBarrier(p string, t types.Type) bool {
-	return !optWB || f.onStack(p) || f.fresh[p] || len(ptrWords(t, f.m.p.opts.Sizes)) == 0
+	if !optWB || f.onStack(p) || f.fresh[p] || len(ptrWords(t, f.m.p.opts.Sizes)) == 0 {
+		return true
+	}
+	// A global (or a part of one) is a root: no card.
+	return f.m.cards() && f.addr0[p]
 }
+
+// card marks the card of address a dirty.
+func (f *funcGen) card(a string) {
+	if f.cardBase == "" {
+		f.m.declareCards()
+		base, ref := f.newVal(), f.newVal()
+		fmt.Fprintf(&f.pro, "    %s = llvm.mlir.addressof @rt_card_table : !llvm.ptr\n", ref)
+		fmt.Fprintf(&f.pro, "    %s = llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr\n", base, ref)
+		f.cardBase = f.markAddr(base)
+	}
+	i := f.op("llvm.ptrtoint %s : %s to i64", a, f.pty(a))
+	n := f.op("llvm.lshr %s, %s : i64", i, f.constInt(cardShift, mlir.I64))
+	n = f.op("llvm.and %s, %s : i64", n, f.constInt(cardMask, mlir.I64))
+	c := f.op("llvm.getelementptr %s[%s] : (!llvm.ptr, i64) -> !llvm.ptr, i8", f.cardBase, n)
+	f.emit("llvm.store %s, %s {alignment = 1 : i64} : i8, !llvm.ptr", f.constInt(0, mlir.I8), c)
+}
+
+// cardShift and cardMask are RT_CARD_SHIFT and RT_CARD_MASK: 512-byte
+// cards, a 128 MiB table that repeats every 64 GiB of address space
+// (rtcore 2aeb79bd; an address outside the heap dirties some heap card,
+// which only costs a rescan).
+const (
+	cardShift = 9
+	cardMask  = 1<<27 - 1
+)
 
 // wbCheck emits the flag test and runs cold in a cold block that branches
 // back; code after it continues in a new block.
@@ -78,6 +120,14 @@ func (f *funcGen) wbStore(v, p string, t types.Type) {
 		return
 	}
 	mt := f.tm.memType(t)
+	if f.m.cards() {
+		// A pointer to an object allocated since the last call needs no card
+		// either: allocated while marking runs, it is already marked.
+		if !f.cardSkip && !(mt == tP && f.fresh[v]) {
+			f.cardStore(p, t, mt)
+		}
+		return
+	}
 	switch {
 	case mt == tP && !f.tm.isBig(t):
 		f.wbCheck(func() { f.wb(p, v) })
@@ -184,6 +234,10 @@ func (f *funcGen) wbCopy(dst, src string, t types.Type, n int64) {
 	if f.noBarrier(dst, t) {
 		return
 	}
+	if f.m.cards() {
+		f.cardRange(dst, n)
+		return
+	}
 	f.wbCheck(func() { f.wbRange(dst, src, n) })
 }
 
@@ -226,4 +280,54 @@ func (m *moduleGen) wbWord() string {
 		return mlir.I32
 	}
 	return mlir.I64
+}
+
+// cardStore marks the cards of the pointer words a store of type t at p
+// writes (before the store: the collector clears cards only while the
+// world is stopped, so the order does not matter).
+func (f *funcGen) cardStore(p string, t types.Type, mt string) {
+	switch {
+	case mt == tP && !f.tm.isBig(t), mt == tString, mt == tSlice:
+		f.card(p)
+		return
+	case mt == tIface:
+		f.card(f.gepByte(p, 8))
+		return
+	}
+	if leaves, ok := ptrLeaves(t, nil, nil); ok && !f.tm.isBig(t) {
+		for _, l := range leaves {
+			f.card(f.gep(p, mt, append([]int{0}, l...)...))
+		}
+		return
+	}
+	f.cardRange(p, f.m.p.opts.Sizes.Sizeof(t))
+}
+
+func (f *funcGen) cardRange(dst string, n int64) {
+	f.m.declareCards()
+	f.emit("llvm.call preserve_allcc @rt_card_range(%s, %s) : (%s, i64) -> ()", f.gcv(dst), f.constInt(n, mlir.I64), tP)
+}
+
+// declareCards declares the card table and rt_card_range.
+func (m *moduleGen) declareCards() {
+	if _, ok := m.decls["rt_card_table"]; ok {
+		return
+	}
+	m.decls["rt_card_table"] = "  llvm.mlir.global external hidden @rt_card_table() {addr_space = 0 : i32} : !llvm.ptr\n"
+	m.decls["rt_card_range"] = "  llvm.func preserve_allcc @rt_card_range(" + tP + ", i64)\n"
+}
+
+// staticValue reports whether every pointer in v points at static data or
+// is nil: a constant (nil, a string literal), a global's address, a
+// function without free variables. Card marking records new pointers only,
+// so storing such a value needs no card (the flag barrier, which also
+// shades the old value, still needs one).
+func staticValue(v ssa.Value) bool {
+	switch x := v.(type) {
+	case *ssa.Const, *ssa.Global:
+		return true
+	case *ssa.Function:
+		return len(x.FreeVars) == 0
+	}
+	return false
 }
