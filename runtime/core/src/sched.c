@@ -478,11 +478,14 @@ static rt_m *mget(void) {
   return m;
 }
 
+static void sysmon_resume(void);
+
 static void acquirep(rt_m *m, rt_p *p) {
   m->p = p;
   m->mcache = p->mcache;
   __atomic_store_n(&p->m, m, __ATOMIC_RELAXED);  // stop_the_world reads it without sched.lock
   atomic_store(&p->status, P_RUNNING);
+  sysmon_resume();
 }
 
 static rt_p *releasep(rt_m *m) {
@@ -1766,13 +1769,51 @@ void sysmon_kick(void) {
   os_futex_wake(&sysmon_wake, false);
 }
 
+// Set while sysmon sleeps with nothing to watch; the first P to start
+// running wakes it (acquirep).
+static _Atomic uint32_t sysmon_sleeping;
+
+static void sysmon_resume(void) {
+  if (UNLIKELY(atomic_load(&sysmon_sleeping))) {
+    atomic_store(&sysmon_sleeping, 0);
+    sysmon_kick();
+  }
+}
+
+// Nothing for sysmon to do: every P idle (none running, none in a system
+// call), and no network poller or timer that waits for it.
+static bool sysmon_nothing(void) {
+  if (atomic_load(&sched.npidle) < atomic_load(&sched.nprocs)) return false;
+  if (atomic_load(&netpoll_waiters) > 0 && !atomic_load(&netpoll_blocked)) return false;
+  return true;
+}
+
 static void sysmon(void *arg) {
   setm(&sysmon_m);
   uint32_t delay = 20;
   int idle = 0;
   for (;;) {
     uint32_t w = atomic_load(&sysmon_wake);
-    os_futex_wait(&sysmon_wake, w, (int64_t)delay * 1000);
+    int64_t ns = (int64_t)delay * 1000;
+    // Idle for a while and nothing to watch: sleep until a P runs again, a
+    // signal arrives or a timer no M waits for is due. sysmon_sleeping is
+    // set before the check, and acquirep reads it after it took its P.
+    if (idle > 50 && sysmon_nothing()) {
+      atomic_store(&sysmon_sleeping, 1);
+      if (sysmon_nothing()) {
+        int64_t next = atomic_load(&timer_next_when);
+        ns = -1;
+        if (next != INT64_MAX && sched.timer_m == NULL) {
+          ns = next - os_nanotime();
+          if (ns < 0) ns = 0;
+        }
+      } else {
+        atomic_store(&sysmon_sleeping, 0);
+      }
+    }
+    os_futex_wait(&sysmon_wake, w, ns);
+    atomic_store(&sysmon_sleeping, 0);
+    if (atomic_load(&sysmon_wake) != w) idle = 0;  // kicked: a P runs again, or a signal
     if (signal_deliver()) idle = 0;
     signal_check_stuck();
     if (idle > 50) {
