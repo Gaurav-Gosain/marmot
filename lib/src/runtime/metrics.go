@@ -60,7 +60,8 @@ func readMetrics(samplesp unsafe.Pointer, n int, _ int) {
 		default:
 			ok = false
 		}
-		s.kind, s.scalar, s.pointer = metricKindBad, 0, nil
+		// The pointer stays: gc leaves it for a caller's histogram.
+		s.kind, s.scalar = metricKindBad, 0
 		if ok {
 			s.kind, s.scalar = metricKindUint64, v
 		}
