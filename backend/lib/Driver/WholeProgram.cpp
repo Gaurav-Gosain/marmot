@@ -1536,7 +1536,11 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           // cold tuios -O 2 build, 4.4 GB).
           if (releaseHook)
             releaseHook(i);
-          releaseFreed();
+          // Only after a large job: malloc_trim takes every arena's lock, and
+          // after each of 330 small jobs it slowed cmd/marmot -O 2 from 65 to
+          // 80 s on the host (4.9 of 8 cores busy instead of 5.9).
+          if (n >= (2u << 20))
+            releaseFreed();
           if (memLog) {
             std::lock_guard<std::mutex> l(admitMu);
             auto [inUse, held] = heapStats();
