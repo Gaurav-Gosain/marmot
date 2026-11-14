@@ -13,6 +13,8 @@
 
 #include <stddef.h>
 
+size_t strlen(const char *s);
+
 #define WASI(name) __attribute__((import_module("wasi_snapshot_preview1"), import_name(#name)))
 
 typedef struct {
@@ -234,8 +236,74 @@ RT_API int32_t rt_isatty(int32_t fd) {
   return wasi_fd_fdstat_get(fd, &st) == 0 && st.filetype == 2;
 }
 
-// Files come later (path_open on the preopened directories).
-RT_API intptr_t rt_open(const char *path, int32_t flags, uint32_t mode) { return -WASI_ENOSYS; }
+// ---- files: WASI opens a path relative to a preopened directory ----
+
+typedef struct {
+  uint8_t tag;  // 0: directory
+  uint8_t pad[3];
+  uint32_t len;  // of its name
+} wasi_prestat;
+WASI(fd_prestat_get) int32_t wasi_fd_prestat_get(int32_t fd, wasi_prestat *st);
+WASI(fd_prestat_dir_name) int32_t wasi_fd_prestat_dir_name(int32_t fd, char *buf, uint32_t len);
+WASI(path_open)
+int32_t wasi_path_open(int32_t dirfd, uint32_t lookup, const char *path, uint32_t len, uint32_t oflags,
+                       uint64_t rights, uint64_t inheriting, uint32_t fdflags, int32_t *fd);
+
+enum { WASI_ENOENT = 44 };
+
+// The preopened directory (fds from 3 up) that holds path, with *rel set to
+// the rest of path: the longest name that is a prefix of an absolute path,
+// or "." for a relative one. -1 if none.
+static int32_t preopen_find(const char *path, const char **rel) {
+  int32_t best = -1;
+  uint32_t bestlen = 0;
+  for (int32_t fd = 3;; fd++) {
+    wasi_prestat st;
+    if (wasi_fd_prestat_get(fd, &st) != 0) break;
+    char name[256];
+    if (st.tag != 0 || st.len >= sizeof name || wasi_fd_prestat_dir_name(fd, name, st.len) != 0) continue;
+    uint32_t n = st.len;
+    while (n > 1 && name[n - 1] == '/') n--;
+    if (path[0] != '/') {
+      if ((n == 1 && name[0] == '.') || n == 0) {
+        *rel = path;
+        return fd;
+      }
+      continue;
+    }
+    if (n == 1 && name[0] == '/') n = 0;  // the root: every absolute path
+    uint32_t i = 0;
+    while (i < n && path[i] == name[i]) i++;
+    if (i < n || (path[n] != '/' && path[n] != 0)) continue;
+    if (best < 0 || n > bestlen) {
+      best = fd;
+      bestlen = n;
+    }
+  }
+  if (best >= 0) {
+    const char *r = path + bestlen;
+    while (*r == '/') r++;
+    *rel = *r ? r : ".";
+  }
+  return best;
+}
+
+// flags as on Linux (O_WRONLY 1, O_RDWR 2, O_CREAT 0100, O_EXCL 0200,
+// O_TRUNC 01000, O_APPEND 02000); mode is ignored (WASI has none).
+RT_API intptr_t rt_open(const char *path, int32_t flags, uint32_t mode) {
+  const char *rel;
+  int32_t dir = preopen_find(path, &rel);
+  if (dir < 0) return -WASI_ENOENT;
+  uint32_t oflags = (flags & 0100 ? 1 : 0) | (flags & 0200 ? 4 : 0) | (flags & 01000 ? 8 : 0);
+  uint32_t fdflags = flags & 02000 ? 1 : 0;
+  uint64_t read = (1ull << 1) | (1ull << 2) | (1ull << 21);  // fd_read, fd_seek, fd_filestat_get
+  uint64_t write = (1ull << 6) | (1ull << 2) | (1ull << 21);  // fd_write, fd_seek, fd_filestat_get
+  uint64_t rights = (flags & 3) == 0 ? read : (flags & 3) == 1 ? write : read | write;
+  int32_t fd = -1;
+  int32_t e = wasi_path_open(dir, 1 /* follow symlinks */, rel, (uint32_t)strlen(rel), oflags, rights, 0,
+                             fdflags, &fd);
+  return e ? -(intptr_t)e : fd;
+}
 
 RT_API intptr_t rt_close(int32_t fd) {
   int32_t e = wasi_fd_close(fd);
