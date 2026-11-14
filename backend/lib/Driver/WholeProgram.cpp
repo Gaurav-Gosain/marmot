@@ -1356,9 +1356,21 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   uint64_t admitted = 0;
   // For the groups of split modules (their own pools): wait until n more
   // bytes of text fit, and give them back.
+  // A job of n bytes of text fits when the jobs in flight and it fit the
+  // admission budget and the process memory now, plus its own estimate,
+  // stays under 85% of the limit (what the budgets do not count, such as
+  // the bitcode and summaries of every module, grows with the program; one
+  // job always runs). Called with admitMu held; mem is processMemory().
+  auto fits = [&](uint64_t n, uint64_t mem) {
+    if (admitted == 0)
+      return true;
+    if (admitted + n > admitBudget)
+      return false;
+    return !memLimit || mem + n * kCompileCost <= memLimit / 100 * 85;
+  };
   auto admitWait = [&](uint64_t n) {
     std::unique_lock<std::mutex> l(admitMu);
-    admitCv.wait(l, [&] { return admitted == 0 || admitted + n <= admitBudget; });
+    admitCv.wait(l, [&] { return fits(n, admitted ? processMemory() : 0); });
     admitted += n;
   };
   auto admitDone = [&](uint64_t n) {
@@ -1397,8 +1409,9 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           {
             std::unique_lock<std::mutex> l(admitMu);
             auto pick = [&] {
+              uint64_t mem = admitted && memLimit ? processMemory() : 0;
               for (size_t k = 0; k < pending.size(); ++k)
-                if (admitted == 0 || admitted + inputSize[pending[k]] <= admitBudget)
+                if (fits(inputSize[pending[k]], mem))
                   return k;
               return pending.size();
             };
@@ -1466,7 +1479,9 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     }
     // Parses are kept in the phases before translation, whose jobs parse
     // and analyze: they count at the parse cost too.
-    if (always || (memLimit && (parsedBytes.load() + others) * kParseCost > memBudget)) {
+    // Also when the process passes 60% of the limit, whatever the estimate.
+    if (always || (memLimit && ((parsedBytes.load() + others) * kParseCost > memBudget ||
+                                processMemory() > memLimit / 100 * 60))) {
       mods[i].parsed = nullptr;
       parsedBytes -= inputSize[i];
     }
