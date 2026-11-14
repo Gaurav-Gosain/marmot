@@ -33,6 +33,7 @@ if(MARMOT_STATIC)
     MLIRTransforms MLIRIR MLIRSupport
     LLVMAArch64CodeGen LLVMAArch64AsmParser LLVMAArch64Desc LLVMAArch64Info
     LLVMX86CodeGen LLVMX86AsmParser LLVMX86Desc LLVMX86Info
+    LLVMWebAssemblyCodeGen LLVMWebAssemblyAsmParser LLVMWebAssemblyDesc LLVMWebAssemblyInfo
     LLVMPasses LLVMLinker LLVMIRReader LLVMBitReader LLVMBitWriter LLVMipo
     LLVMTarget LLVMCodeGen LLVMMC LLVMSupport)
 else()

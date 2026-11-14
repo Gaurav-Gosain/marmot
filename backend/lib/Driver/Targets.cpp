@@ -23,12 +23,17 @@ void LLVMInitializeX86Target();
 void LLVMInitializeX86TargetMC();
 void LLVMInitializeX86AsmPrinter();
 void LLVMInitializeX86AsmParser();
+void LLVMInitializeWebAssemblyTargetInfo();
+void LLVMInitializeWebAssemblyTarget();
+void LLVMInitializeWebAssemblyTargetMC();
+void LLVMInitializeWebAssemblyAsmPrinter();
+void LLVMInitializeWebAssemblyAsmParser();
 }
 
 namespace marmot {
 
 bool initTargetFor(const llvm::Triple &triple, std::string &err) {
-  static std::once_flag aarch64Once, x86Once;
+  static std::once_flag aarch64Once, x86Once, wasmOnce;
   switch (triple.getArch()) {
   case llvm::Triple::aarch64:
     std::call_once(aarch64Once, [] {
@@ -46,6 +51,15 @@ bool initTargetFor(const llvm::Triple &triple, std::string &err) {
       LLVMInitializeX86TargetMC();
       LLVMInitializeX86AsmPrinter();
       LLVMInitializeX86AsmParser();
+    });
+    return true;
+  case llvm::Triple::wasm32:
+    std::call_once(wasmOnce, [] {
+      LLVMInitializeWebAssemblyTargetInfo();
+      LLVMInitializeWebAssemblyTarget();
+      LLVMInitializeWebAssemblyTargetMC();
+      LLVMInitializeWebAssemblyAsmPrinter();
+      LLVMInitializeWebAssemblyAsmParser();
     });
     return true;
   default:
@@ -90,6 +104,8 @@ llvm::Triple targetTriple(const std::string &target) {
     }
     if (os == "linux")
       return llvm::Triple(llarch + "-unknown-linux-gnu");
+    if (os == "wasip1" && arch == "wasm") // 32-bit memory, as WASI preview 1
+      return llvm::Triple("wasm32-unknown-wasip1");
     return llvm::Triple(llarch + "-unknown-" + os);
   }
   return llvm::Triple(llvm::Triple::normalize(target));
@@ -111,6 +127,8 @@ std::string defaultCPU(const llvm::Triple &triple, bool &isHost) {
   switch (triple.getArch()) {
   case llvm::Triple::aarch64:
     return triple.isOSDarwin() ? "apple-m1" : "generic";
+  case llvm::Triple::wasm32:
+    return "generic";
   default:
     return "";
   }

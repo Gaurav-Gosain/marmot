@@ -151,10 +151,16 @@ bool linkRuntimeBitcode(Module &m, const RuntimeLib &rt, std::string &err) {
   std::unique_ptr<Module> rtMod = std::move(*rtModOr);
   rtMod->setTargetTriple(m.getTargetTriple());
   rtMod->setDataLayout(m.getDataLayout());
+  // The module keeps only its own top-level asm: the runtime's comes from
+  // the runtime archive on every target (wasm: the __c_longjmp tag; the
+  // native rtcore.bc has none). Appended to every module it would be a
+  // duplicate symbol.
+  std::string asmBefore = m.getModuleInlineAsm();
   if (Linker::linkModules(m, std::move(rtMod), Linker::Flags::LinkOnlyNeeded)) {
     err = "linking runtime bitcode failed";
     return false;
   }
+  m.setModuleInlineAsm(asmBefore);
   for (Function &f : m)
     if (!f.isDeclaration() && rt.importable.contains(f.getName()))
       f.setLinkage(GlobalValue::AvailableExternallyLinkage);

@@ -16,7 +16,7 @@ bool initTargetFor(const llvm::Triple &triple, std::string &err);
 llvm::Triple hostTriple();
 
 // Parses -target: an LLVM triple, or GOOS/GOARCH (linux/amd64, linux/arm64,
-// darwin/arm64, darwin/amd64). Empty means the host.
+// darwin/arm64, darwin/amd64, wasip1/wasm). Empty means the host.
 llvm::Triple targetTriple(const std::string &target);
 
 // The default CPU for a target: the host CPU when the target is the host

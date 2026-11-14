@@ -112,6 +112,10 @@ makeTargetMachine(const CompileOptions &opts, llvm::Triple &triple,
       f.AddFeature(kv.first(), kv.second);
     features = f.getString();
   }
+  // wasm: defer frames use setjmp, which the WebAssembly backend lowers
+  // to wasm exceptions (the runtime is built the same way).
+  if (triple.isWasm() && features.find("exception-handling") == std::string::npos)
+    features += features.empty() ? "+exception-handling" : ",+exception-handling";
   llvm::TargetOptions to;
   to.FunctionSections = true;
   to.DataSections = true;
@@ -119,7 +123,8 @@ makeTargetMachine(const CompileOptions &opts, llvm::Triple &triple,
   // LLVM supports the splitter for ELF only (it crashes the Mach-O asm printer).
   to.EnableMachineFunctionSplitter = !opts.pgoUse.empty() && triple.isOSBinFormatELF();
   return std::unique_ptr<llvm::TargetMachine>(target->createTargetMachine(
-      triple, cpu, features, to, llvm::Reloc::PIC_, std::nullopt,
+      // wasm has no PIC short of dynamic linking: static, as wasm-ld links.
+      triple, cpu, features, to, triple.isWasm() ? llvm::Reloc::Static : llvm::Reloc::PIC_, std::nullopt,
       codegenLevel(opts.optLevel)));
 }
 
