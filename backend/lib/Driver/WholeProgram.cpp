@@ -50,6 +50,9 @@
 #include "llvm/IR/MDBuilder.h"
 
 #include <atomic>
+#if defined(__linux__)
+#include <malloc.h> // malloc_trim
+#endif
 #include <chrono>
 #include <functional>
 #include <condition_variable>
@@ -1522,6 +1525,14 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         freed += inputSize[j];
       }
     }
+    if (drop.empty())
+      return;
+    drop.clear();
+#if defined(__linux__)
+    // glibc keeps freed memory in its heaps, so the process memory the
+    // limit and the checks above read would not fall: give it back.
+    malloc_trim(0);
+#endif
   };
   releaseHook = [&](unsigned i) {
     releaseParsed(i, false);
