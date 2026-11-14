@@ -72,11 +72,6 @@ type funcGen struct {
 func (m *moduleGen) function(fn *ssa.Function, shared bool) {
 	sym := m.p.symbol(fn)
 	if len(fn.Blocks) == 0 {
-		if wi, ok := m.p.wasmImports[fn]; ok && m.p.opts.GOARCH == "wasm" {
-			m.defined[sym] = true
-			m.wasmImportWrapper(fn, sym, wi)
-			return
-		}
 		// Body-less: an external symbol provided by another object (the C
 		// runtime core, or assembly in the stock library).
 		return
