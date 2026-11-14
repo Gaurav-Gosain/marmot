@@ -16,7 +16,12 @@
 // to get its current element.
 //
 // Maps with 4, 8 or 16 byte plain memory keys and string keys use fast
-// paths for hashing and key comparison. Pure file.
+// paths for hashing and key comparison.
+//
+// An element larger than maxInlineElem bytes is stored outside the table
+// (as gc does): the slot holds a pointer to it, allocated when the key is
+// inserted. Empty slots then cost a pointer, not an element, and growth
+// moves the pointer. Pure file.
 
 package runtime
 
@@ -40,6 +45,9 @@ const (
 	// maxZero is the size of the shared zero value returned by mapaccess1
 	// for missing keys.
 	maxZero = 1024
+
+	// maxInlineElem is the largest element stored in the slot itself.
+	maxInlineElem = 128
 )
 
 var zeroVal [maxZero]byte
@@ -59,7 +67,8 @@ type hmap struct {
 	gcbits     *byte // pointer bitmap of one group, nil to scan conservatively
 	key        *_type
 	elem       *_type
-	elemOff    uintptr // offset of the element in a slot
+	elemOff    uintptr // offset of the element (or of the pointer to it) in a slot
+	indirect   bool    // the slot holds a pointer to the element
 	slotSize   uintptr
 	groupSize  uintptr
 }
@@ -107,12 +116,18 @@ func makemap(t *maptype, hint int) *hmap {
 		// keyMem128 reads the key as two words.
 		kalign = max(kalign, 8)
 	}
-	m.elemOff = alignUp(k.size, ealign)
-	m.slotSize = alignUp(m.elemOff+e.size, max(kalign, ealign))
+	m.indirect = e.size > maxInlineElem
+	if m.indirect {
+		m.elemOff = alignUp(k.size, ptrSize)
+		m.slotSize = alignUp(m.elemOff+ptrSize, max(kalign, ptrSize))
+	} else {
+		m.elemOff = alignUp(k.size, ealign)
+		m.slotSize = alignUp(m.elemOff+e.size, max(kalign, ealign))
+	}
 	m.groupSize = 8 + groupSlots*m.slotSize
-	m.noscan = k.ptrdata == 0 && e.ptrdata == 0
+	m.noscan = k.ptrdata == 0 && e.ptrdata == 0 && !m.indirect
 	if !m.noscan {
-		m.gcbits = groupGCBits(t, m.groupSize, m.slotSize, m.elemOff)
+		m.gcbits = groupGCBits(t, m.groupSize, m.slotSize, m.elemOff, m.indirect)
 	}
 	switch {
 	case k.kind == kindString:
@@ -161,12 +176,12 @@ var (
 // groupGCBits returns the pointer bitmap of one group of map type t (one
 // bit per word, least significant bit first), or nil if the key or element
 // must be scanned conservatively or the layout is not word aligned.
-func groupGCBits(t *maptype, groupSize, slotSize, elemOff uintptr) *byte {
+func groupGCBits(t *maptype, groupSize, slotSize, elemOff uintptr, indirect bool) *byte {
 	k, e := t.key, t.elem
-	if k.ptrdata != 0 && k.gcdata == nil || e.ptrdata != 0 && e.gcdata == nil {
+	if k.ptrdata != 0 && k.gcdata == nil || !indirect && e.ptrdata != 0 && e.gcdata == nil {
 		return nil
 	}
-	if slotSize%ptrSize != 0 || elemOff%ptrSize != 0 && e.ptrdata != 0 {
+	if slotSize%ptrSize != 0 || elemOff%ptrSize != 0 && (e.ptrdata != 0 || indirect) {
 		return nil
 	}
 	lock(&groupBitsLock)
@@ -190,6 +205,10 @@ func groupGCBits(t *maptype, groupSize, slotSize, elemOff uintptr) *byte {
 			}
 		}
 		ebase := (8 + s*slotSize + elemOff) / ptrSize
+		if indirect {
+			set(ebase) // the pointer to the element
+			continue
+		}
 		for w := uintptr(0); w < e.ptrdata/ptrSize; w++ {
 			if *(*byte)(unsafe.Add(unsafe.Pointer(e.gcdata), w/8))&(1<<(w%8)) != 0 {
 				set(ebase + w)
@@ -227,7 +246,28 @@ func (m *hmap) slotKey(grp unsafe.Pointer, s uintptr) unsafe.Pointer {
 }
 
 func (m *hmap) slotElem(grp unsafe.Pointer, s uintptr) unsafe.Pointer {
-	return unsafe.Add(grp, 8+s*m.slotSize+m.elemOff)
+	return m.elemAt(unsafe.Add(grp, 8+s*m.slotSize))
+}
+
+// elemAt returns the element of the full slot that starts at slot.
+func (m *hmap) elemAt(slot unsafe.Pointer) unsafe.Pointer {
+	p := unsafe.Add(slot, m.elemOff)
+	if m.indirect {
+		return *(*unsafe.Pointer)(p)
+	}
+	return p
+}
+
+// newElem returns the element of a slot just claimed for a new key: for an
+// indirect element, a new zeroed one, stored in the slot.
+func (m *hmap) newElem(slot unsafe.Pointer) unsafe.Pointer {
+	p := unsafe.Add(slot, m.elemOff)
+	if m.indirect {
+		e := mallocgc(m.elem.size, m.elem)
+		*(*unsafe.Pointer)(p) = e
+		return e
+	}
+	return p
 }
 
 func setCtrl(grp unsafe.Pointer, s uintptr, b uint8) {
@@ -336,7 +376,7 @@ func (m *hmap) find64(key uint64) unsafe.Pointer {
 		for b := matchH2(ctrl, h2); b != 0; b &= b - 1 {
 			slot := unsafe.Add(grp, 8+firstSlot(b)*m.slotSize)
 			if *(*uint64)(slot) == key {
-				return unsafe.Add(slot, m.elemOff)
+				return m.elemAt(slot)
 			}
 		}
 		if matchEmpty(ctrl) != 0 {
@@ -362,7 +402,7 @@ func (m *hmap) find128(k0, k1 uint64) unsafe.Pointer {
 		for b := matchH2(ctrl, h2); b != 0; b &= b - 1 {
 			slot := (*[2]uint64)(unsafe.Add(grp, 8+firstSlot(b)*m.slotSize))
 			if slot[0] == k0 && slot[1] == k1 {
-				return unsafe.Add(unsafe.Pointer(slot), m.elemOff)
+				return m.elemAt(unsafe.Pointer(slot))
 			}
 		}
 		if matchEmpty(ctrl) != 0 {
@@ -383,7 +423,7 @@ func (m *hmap) find32(key uint32) unsafe.Pointer {
 		for b := matchH2(ctrl, h2); b != 0; b &= b - 1 {
 			slot := unsafe.Add(grp, 8+firstSlot(b)*m.slotSize)
 			if *(*uint32)(slot) == key {
-				return unsafe.Add(slot, m.elemOff)
+				return m.elemAt(slot)
 			}
 		}
 		if matchEmpty(ctrl) != 0 {
@@ -405,7 +445,7 @@ func (m *hmap) findstr(key string) unsafe.Pointer {
 			slot := unsafe.Add(grp, 8+firstSlot(b)*m.slotSize)
 			if k := *(*string)(slot); len(k) == len(key) &&
 				(unsafe.StringData(k) == unsafe.StringData(key) || k == key) {
-				return unsafe.Add(slot, m.elemOff)
+				return m.elemAt(slot)
 			}
 		}
 		if matchEmpty(ctrl) != 0 {
@@ -553,7 +593,7 @@ func mapassign(t *maptype, m *hmap, key unsafe.Pointer) unsafe.Pointer {
 		setCtrl(insGrp, insSlot, uint8(h2))
 		typedmemmove(m.key, m.slotKey(insGrp, insSlot), key)
 		m.count++
-		return m.slotElem(insGrp, insSlot)
+		return m.newElem(m.slotKey(insGrp, insSlot))
 	}
 }
 
@@ -592,7 +632,7 @@ func (m *hmap) assign64(key uint64) unsafe.Pointer {
 			for b := matchH2(ctrl, h2); b != 0; b &= b - 1 {
 				slot := unsafe.Add(grp, 8+firstSlot(b)*m.slotSize)
 				if *(*uint64)(slot) == key {
-					return unsafe.Add(slot, m.elemOff)
+					return m.elemAt(slot)
 				}
 			}
 			if insGrp == nil {
@@ -607,7 +647,7 @@ func (m *hmap) assign64(key uint64) unsafe.Pointer {
 		}
 		if slot := m.insertAt(insGrp, insSlot, h2); slot != nil {
 			*(*uint64)(slot) = key
-			return unsafe.Add(slot, m.elemOff)
+			return m.newElem(slot)
 		}
 		m.grow()
 	}
@@ -630,7 +670,7 @@ func (m *hmap) assign128(k0, k1 uint64) unsafe.Pointer {
 			for b := matchH2(ctrl, h2); b != 0; b &= b - 1 {
 				slot := (*[2]uint64)(unsafe.Add(grp, 8+firstSlot(b)*m.slotSize))
 				if slot[0] == k0 && slot[1] == k1 {
-					return unsafe.Add(unsafe.Pointer(slot), m.elemOff)
+					return m.elemAt(unsafe.Pointer(slot))
 				}
 			}
 			if insGrp == nil {
@@ -645,7 +685,7 @@ func (m *hmap) assign128(k0, k1 uint64) unsafe.Pointer {
 		}
 		if slot := m.insertAt(insGrp, insSlot, h2); slot != nil {
 			*(*[2]uint64)(slot) = [2]uint64{k0, k1}
-			return unsafe.Add(slot, m.elemOff)
+			return m.newElem(slot)
 		}
 		m.grow()
 	}
@@ -668,7 +708,7 @@ func (m *hmap) assign32(key uint32) unsafe.Pointer {
 			for b := matchH2(ctrl, h2); b != 0; b &= b - 1 {
 				slot := unsafe.Add(grp, 8+firstSlot(b)*m.slotSize)
 				if *(*uint32)(slot) == key {
-					return unsafe.Add(slot, m.elemOff)
+					return m.elemAt(slot)
 				}
 			}
 			if insGrp == nil {
@@ -683,7 +723,7 @@ func (m *hmap) assign32(key uint32) unsafe.Pointer {
 		}
 		if slot := m.insertAt(insGrp, insSlot, h2); slot != nil {
 			*(*uint32)(slot) = key
-			return unsafe.Add(slot, m.elemOff)
+			return m.newElem(slot)
 		}
 		m.grow()
 	}
@@ -710,7 +750,7 @@ func (m *hmap) assignstr(key string) unsafe.Pointer {
 					// Store the new key: equal strings may differ in
 					// backing memory, and gc keeps the latest.
 					*k = key
-					return unsafe.Add(slot, m.elemOff)
+					return m.elemAt(slot)
 				}
 			}
 			if insGrp == nil {
@@ -725,7 +765,7 @@ func (m *hmap) assignstr(key string) unsafe.Pointer {
 		}
 		if slot := m.insertAt(insGrp, insSlot, h2); slot != nil {
 			*(*string)(slot) = key
-			return unsafe.Add(slot, m.elemOff)
+			return m.newElem(slot)
 		}
 		m.grow()
 	}
@@ -783,7 +823,11 @@ func (m *hmap) insertNew(k, e unsafe.Pointer, hash uintptr) {
 			s := firstSlot(b)
 			setCtrl(grp, s, uint8(hash&0x7f))
 			typedmemmove(m.key, m.slotKey(grp, s), k)
-			typedmemmove(m.elem, m.slotElem(grp, s), e)
+			if m.indirect {
+				*(*unsafe.Pointer)(unsafe.Add(m.slotKey(grp, s), m.elemOff)) = e // the same element
+			} else {
+				typedmemmove(m.elem, m.slotElem(grp, s), e)
+			}
 			m.growthLeft--
 			return
 		}
