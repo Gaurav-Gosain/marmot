@@ -383,16 +383,14 @@ func (m *moduleGen) emitTypeDesc(sym string, t types.Type) {
 }
 
 // descOwner returns the package whose module defines the descriptor of t,
-// or nil when every module that needs it has its own linkonce copy. In dev
-// builds a package level named type of a package in the program (and the
-// pointer to it) belongs to its package, as in gc: modules would otherwise
-// repeat the descriptors of every type they reach, with method tables and
-// signatures, which dominated MLIR generation. Release builds keep the
-// copies, which LLVM may fold.
+// or nil when every module that needs it has its own linkonce copy. A
+// package level named type of a package in the program (and the pointer to
+// it) belongs to its package, as in gc: modules would otherwise repeat the
+// descriptors of every type they reach, with method tables, their wrappers
+// and signatures. Release builds too: there each module copied each such
+// descriptor 6.2 times on average (tuios), about 280 MB of the 836 MB of
+// MLIR it emitted.
 func (p *Program) descOwner(t types.Type) *ssa.Package {
-	if p.opts.Release {
-		return nil
-	}
 	if pt, ok := t.(*types.Pointer); ok {
 		t = types.Unalias(pt.Elem())
 	}
