@@ -52,7 +52,10 @@
 #include <atomic>
 #if defined(__linux__)
 #include <malloc.h> // malloc_trim
+#elif defined(__APPLE__)
+#include <malloc/malloc.h> // malloc_zone_statistics
 #endif
+#include <ctime>
 #include <chrono>
 #include <functional>
 #include <condition_variable>
@@ -496,6 +499,26 @@ void loadSummary(StringRef text, unsigned idx, ModuleInfo &info) {
 // runtime calls by C name): always a root.
 bool isCName(StringRef qname) {
   return !qname.contains('.') && !qname.contains(':') && !qname.starts_with("llvm.");
+}
+
+// For MARMOT_MEMLOG: the CPU time of this thread, and the bytes malloc
+// has handed out and holds from the system (both 0 where unknown).
+double threadCpuMs() {
+  timespec ts{};
+  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+  return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+std::pair<uint64_t, uint64_t> heapStats() {
+#if defined(__APPLE__)
+  malloc_statistics_t st{};
+  malloc_zone_statistics(nullptr, &st);
+  return {st.size_in_use, st.size_allocated};
+#elif defined(__GLIBC__)
+  struct mallinfo2 mi = mallinfo2();
+  return {mi.uordblks + mi.hblkhd, mi.arena + mi.hblkhd};
+#else
+  return {0, 0};
+#endif
 }
 
 double msSince(std::chrono::steady_clock::time_point t) {
@@ -1413,6 +1436,8 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   std::atomic<uint64_t> parsedBytes{0}; // input text of the modules kept parsed
   std::function<void(unsigned)> releaseHook; // releaseParsed(i, false), set below
   std::vector<char> running(mods.size(), 0); // jobs in flight, under admitMu
+  std::vector<unsigned> parses(mods.size(), 0); // times module i was parsed (memlog)
+  auto logStart = std::chrono::steady_clock::now();
   auto parallel = [&](auto fn) {
     ++phaseNo;
     std::vector<unsigned> pending(order.begin(), order.end());
@@ -1446,7 +1471,10 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           std::string msgs;
           raw_string_ostream es(msgs);
           PhaseTimes t;
+          double jobStart = msSince(logStart), cpu0 = memLog ? threadCpuMs() : 0;
+          unsigned parses0 = parses[i];
           fn(i, es, t);
+          double jobWall = msSince(logStart) - jobStart, jobCpu = memLog ? threadCpuMs() - cpu0 : 0;
           watchdogEnd(jobs[i].in);
           // Every job, hit or miss, gives its kept parse back when the
           // kept parses pass the budget (a module parsed in one phase and
@@ -1456,9 +1484,14 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
             releaseHook(i);
           if (memLog) {
             std::lock_guard<std::mutex> l(admitMu);
-            *memLog << format("memlog phase %u job %u text %.1f mem %llu admitted %.1f kept %.1f\n", phaseNo, i,
-                           n / 1e6, (unsigned long long)(processMemory() >> 20), admitted / 1e6,
-                           parsedBytes.load() / 1e6);
+            auto [inUse, held] = heapStats();
+            *memLog << format("memlog phase %u job %u text %.1f mem %llu admitted %.1f kept %.1f"
+                              " start %.0f wall %.0f cpu %.0f parsed %u parse %.0f mlir %.0f translate %.0f"
+                              " wpo %.0f opt %.0f codegen %.0f write %.0f heap %llu held %llu\n",
+                           phaseNo, i, n / 1e6, (unsigned long long)(processMemory() >> 20), admitted / 1e6,
+                           parsedBytes.load() / 1e6, jobStart, jobWall, jobCpu, parses[i] - parses0,
+                           t.parse, t.mlirPasses, t.translate, t.link, t.opt, t.codegen, t.write,
+                           (unsigned long long)(inUse >> 20), (unsigned long long)(held >> 20));
             memLog->flush(); // the watchdog may end the process
           }
           {
@@ -1478,6 +1511,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       return true;
     auto t0 = std::chrono::steady_clock::now();
     mods[i].parsed = parseFile(jobs[i].in, opts, es);
+    ++parses[i];
     t.parse += msSince(t0);
     if (mods[i].parsed)
       parsedBytes += inputSize[i];
@@ -1927,6 +1961,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           admitWait(gn);
           std::string name = jobs[gp->job].in + "#" + std::to_string(gp->index);
           watchdogBegin(name);
+          double gStart = msSince(logStart), gCpu0 = memLog ? threadCpuMs() : 0;
           std::string msgs;
           raw_string_ostream es(msgs);
           PhaseTimes t;
@@ -1962,9 +1997,13 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           watchdogEnd(name);
           if (memLog) {
             std::lock_guard<std::mutex> l(admitMu);
-            *memLog << format("memlog group %u.%u text %.1f mem %llu admitted %.1f bitcode %.1f\n", gp->job, gp->index,
-                              gn / 1e6, (unsigned long long)(processMemory() >> 20), admitted / 1e6,
-                              gp->bitcode.size() / 1e6);
+            auto [inUse, held] = heapStats();
+            *memLog << format("memlog group %u.%u text %.1f mem %llu admitted %.1f bitcode %.1f start %.0f wall %.0f"
+                              " cpu %.0f opt %.0f codegen %.0f heap %llu held %llu\n",
+                              gp->job, gp->index, gn / 1e6, (unsigned long long)(processMemory() >> 20),
+                              admitted / 1e6, gp->bitcode.size() / 1e6, gStart, msSince(logStart) - gStart,
+                              threadCpuMs() - gCpu0, t.opt, t.codegen, (unsigned long long)(inUse >> 20),
+                              (unsigned long long)(held >> 20));
             memLog->flush();
           }
           admitDone(gn);
@@ -2565,6 +2604,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         admitWait(gn);
         std::string name = jobs[gp->job].in + "#" + std::to_string(gp->index);
         watchdogBegin(name);
+          double gStart = msSince(logStart), gCpu0 = memLog ? threadCpuMs() : 0;
         std::string msgs;
         raw_string_ostream es(msgs);
         PhaseTimes t;
@@ -2596,9 +2636,13 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         watchdogEnd(name);
         if (memLog) {
           std::lock_guard<std::mutex> l(admitMu);
-          *memLog << format("memlog group %u.%u text %.1f mem %llu admitted %.1f bitcode %.1f\n", gp->job, gp->index,
-                            gn / 1e6, (unsigned long long)(processMemory() >> 20), admitted / 1e6,
-                            gp->bitcode.size() / 1e6);
+          auto [inUse, held] = heapStats();
+            *memLog << format("memlog group %u.%u text %.1f mem %llu admitted %.1f bitcode %.1f start %.0f wall %.0f"
+                              " cpu %.0f opt %.0f codegen %.0f heap %llu held %llu\n",
+                              gp->job, gp->index, gn / 1e6, (unsigned long long)(processMemory() >> 20),
+                              admitted / 1e6, gp->bitcode.size() / 1e6, gStart, msSince(logStart) - gStart,
+                              threadCpuMs() - gCpu0, t.opt, t.codegen, (unsigned long long)(inUse >> 20),
+                              (unsigned long long)(held >> 20));
           memLog->flush();
         }
         admitDone(gn);
