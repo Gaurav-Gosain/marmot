@@ -934,6 +934,7 @@ void gc_collect(bool forced) {
   mark_roots();
   if (weak_live) weak_clear();
   bool queued = mark_finalizers();
+  memprof_sweep(is_marked);
   int64_t t2 = os_nanotime();
   sweep_all();
   regions_trim();

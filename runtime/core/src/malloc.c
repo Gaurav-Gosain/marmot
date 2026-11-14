@@ -670,6 +670,7 @@ static void *alloc_slow(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, ui
   }
   if (atomic_load_explicit(&heap_live, memory_order_relaxed) >= next_gc && gc_percent >= 0)
     gc_collect(false);
+  memprof_maybe(p, size, __builtin_frame_address(0));
   return p;
 }
 
@@ -881,6 +882,7 @@ RT_API int32_t rt_heap_ptr_word(void *base, uintptr_t off) {
 RT_API void rt_free(void *ptr, uintptr_t size) {
   uintptr_t p = (uintptr_t)ptr;
   if (p - rt_arena_start >= rt_arena_used - rt_arena_start) return;
+  if (UNLIKELY(memprof_cap)) memprof_free(p);
   mspan *s = rt_pagemap[(p - rt_arena_start) >> PAGE_SHIFT];
   if (!s || s->state != SPAN_INUSE || p < s->base || p >= s->limit) return;
   if (s->cls == 0) {

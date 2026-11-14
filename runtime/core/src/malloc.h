@@ -106,6 +106,11 @@ void span_free(mspan *s);   // heap_lock held
 void central_reset(void);   // heap_lock held
 void central_put(mspan *s); // heap_lock held, swept span with free or full
 void heap_scavenge(uint64_t retain);   // heap_lock held
+// memprof.c: allocation sampling (runtime.MemProfile).
+extern uintptr_t memprof_cap;
+void memprof_maybe(void *p, uintptr_t size, void *fp);
+void memprof_free(uintptr_t obj);
+void memprof_sweep(bool (*marked)(uintptr_t));
 void heap_scavenge_min(uint64_t retain, uintptr_t min);  // heap_lock held
 void gc_collect(bool forced);
 bool gc_has_finalizers(void);
