@@ -136,6 +136,7 @@ type Program struct {
 	mainPath      string                  // import path of the main package
 	globalRead    map[*ssa.Global]bool    // globals read anywhere in the program
 	varLinkname   map[string]bool         // pkgpath.name of variables named in //go:linkname
+	linknamePkg   map[*ssa.Package]bool   // packages with //go:linkname directives (conservativeStack)
 	globalLink    map[*ssa.Global]string  // //go:linkname local target for variables
 	dylibs        map[string]bool         // libraries named by //go:cgo_import_dynamic
 }
@@ -187,6 +188,7 @@ func NewProgram(prog *ssa.Program, pkgs []*ssa.Package, files map[*types.Package
 		linkname:     map[*ssa.Function]string{},
 		dynamic:      map[string]string{},
 		varLinkname:  map[string]bool{},
+		linknamePkg:  map[*ssa.Package]bool{},
 		globalLink:   map[*ssa.Global]string{},
 		dylibs:       map[string]bool{},
 		pragmas:      map[*ssa.Function]pragma{},
@@ -295,6 +297,7 @@ func (p *Program) collect(pkg *ssa.Package) {
 				if !strings.HasPrefix(c.Text, "//go:linkname ") {
 					continue
 				}
+				p.linknamePkg[pkg] = true
 				fs := strings.Fields(c.Text)
 				if len(fs) < 2 {
 					continue
@@ -464,6 +467,9 @@ func (p *Program) applyFacts(pkg *ssa.Package, f *loader.Facts) {
 	for _, d := range f.Dylibs {
 		p.dylibs[d] = true
 	}
+	if len(f.Linknames) > 0 {
+		p.linknamePkg[pkg] = true
+	}
 	for _, ln := range f.Linknames {
 		if ln[1] != "" {
 			p.varLinkname[ln[1]] = true
@@ -574,4 +580,22 @@ func (p *Program) calleeFor(from *ssa.Function, c *ssa.CallCommon) *ssa.Function
 		return nil
 	}
 	return fn
+}
+
+// conservativeStack reports whether pkg's frames must be scanned
+// conservatively even when the backend makes stack maps (MARMOT_GCPTR=1):
+// its code may hold pointers the address spaces do not show (unsafe,
+// which cgo code uses too) or follow another package's conventions
+// (//go:linkname). The module says so with the attribute
+// marmot.conservative_stack.
+func (p *Program) conservativeStack(pkg *ssa.Package) bool {
+	if pkg == nil || p.linknamePkg[pkg] {
+		return pkg != nil
+	}
+	for _, imp := range pkg.Pkg.Imports() {
+		if imp.Path() == "unsafe" {
+			return true
+		}
+	}
+	return false
 }

@@ -280,7 +280,11 @@ func (m *moduleGen) finish(name string) (Module, error) {
 	// Location aliases come first: the parser then resolves each op's
 	// loc(#locN) at once instead of through a forward reference.
 	m.locDefs.writeTo(&out)
-	out.WriteString("module {\n")
+	if optGCPtr && m.p.conservativeStack(m.pkg) {
+		out.WriteString("module attributes {marmot.conservative_stack = true} {\n")
+	} else {
+		out.WriteString("module {\n")
+	}
 	for _, k := range keys {
 		out.WriteString(m.decls[k])
 	}
