@@ -12,12 +12,12 @@ func TestSummarize(t *testing.T) {
 	// A ticker every second from t=0 to 19 s, made by time.NewTicker
 	// (0x1008) called from main.poll (0x2004): the site is main.poll.
 	for i := uint64(0); i < 20; i++ {
-		recs = append(recs, Record{T: 1000 + i*s, Cause: CauseTimer, Goid: 5, PCs: [3]uint64{base + 0x1008, base + 0x2004}, Aux: s})
+		recs = append(recs, Record{T: 1000 + i*s, Cause: CauseTimer, Goid: 5, PCs: []uint64{base + 0x1008, base + 0x2004}, Aux: s})
 	}
 	// A channel readied twice in the window, a GC once, one wakeup in the settle period.
 	recs = append(recs,
-		Record{T: 1000 + 12*s, Cause: CauseReadied, Goid: 7, PCs: [3]uint64{base + 0x3010}},
-		Record{T: 1000 + 13*s, Cause: CauseReadied, Goid: 7, PCs: [3]uint64{base + 0x3010}},
+		Record{T: 1000 + 12*s, Cause: CauseReadied, Goid: 7, PCs: []uint64{base + 0x3010}},
+		Record{T: 1000 + 13*s, Cause: CauseReadied, Goid: 7, PCs: []uint64{base + 0x3010}},
 		Record{T: 1000 + 14*s, Cause: CauseGC},
 		Record{T: 1000 + 2*s, Cause: CauseSignal, Aux: 2},
 	)
@@ -60,7 +60,23 @@ func TestParseErrors(t *testing.T) {
 	if _, _, err := Parse([]byte("nope")); err == nil {
 		t.Error("no header: no error")
 	}
-	if _, _, err := Parse(Encode(Header{Version: 2}, nil)); err == nil {
-		t.Error("version 2: no error")
+	if _, _, err := Parse(Encode(Header{Version: 3}, nil)); err == nil {
+		t.Error("version 3: no error")
+	}
+}
+
+// Version 2 carries its frame count: a user frame below three runtime ones
+// is found.
+func TestVersion2(t *testing.T) {
+	base := uint64(0x1000)
+	recs := []Record{{T: 5, Cause: CauseTimer, PCs: []uint64{base + 0x11, base + 0x21, base + 0x31, base + 0x41}}}
+	h, got, err := Parse(Encode(Header{Version: 2, Base: base, Frames: 8}, recs))
+	if err != nil || h.Frames != 8 || len(got) != 1 || got[0].PCs[3] != base+0x41 {
+		t.Fatalf("parse: %v %+v %+v", err, h, got)
+	}
+	names := map[uint64]string{0x10: "runtime.(*timeTimer).start", 0x20: "time.newTimer", 0x30: "time.NewTicker", 0x40: "main.poll"}
+	r := Summarize(h, got, 0, 0, func(off uint64) Site { return Site{Function: names[off]} })
+	if len(r.Sites) != 1 || r.Sites[0].Function != "main.poll" {
+		t.Errorf("sites %+v", r.Sites)
 	}
 }

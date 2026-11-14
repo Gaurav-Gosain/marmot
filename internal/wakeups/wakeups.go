@@ -3,12 +3,13 @@
 // source site (a timer's creation site, the goroutine that readied a
 // channel receiver), as wakeups per second.
 //
-// Trace format, version 1, little endian: the header "MRMTWAKE", u32
-// version, u32 pid, u64 image base, u64 runtime start (ns, the records'
-// clock); then 48-byte records, one per OS level
+// Trace format, little endian: the header "MRMTWAKE", u32 version, u32
+// pid, u64 image base, u64 runtime start (ns, the records' clock), and in
+// version 2 u32 nframes and 4 bytes of padding (version 1 has 3 frames);
+// then records of 24 + 8*nframes bytes (48 in version 1), one per OS level
 // wakeup (a thread returning from a blocking sleep): u64 t_ns (monotonic),
-// u8 cause, 3 bytes padding, u32 goroutine id, u64 pc[3], u64 aux. The pcs
-// are the three frames above the runtime's hook when the timer was made or
+// u8 cause, 3 bytes padding, u32 goroutine id, u64 pc[nframes], u64 aux.
+// The pcs are the frames above the runtime's hook when the timer was made or
 // the goroutine was readied (0 where the frame chain ends); the site is the
 // first of them outside the runtime, time and sync packages.
 package wakeups
@@ -53,8 +54,8 @@ func CauseName(c uint8) string {
 
 const (
 	magic      = "MRMTWAKE"
-	headerSize = 8 + 4 + 4 + 8 + 8
-	recordSize = 48
+	headerSize = 8 + 4 + 4 + 8 + 8 // version 1; version 2 adds 8
+	maxFrames  = 64
 )
 
 // Header is the trace's header.
@@ -63,6 +64,7 @@ type Header struct {
 	PID     uint32
 	Base    uint64 // the image base at run time
 	Start   uint64 // ns when the runtime started, on the records' clock
+	Frames  int    // pcs per record
 }
 
 // Record is one wakeup.
@@ -70,7 +72,7 @@ type Record struct {
 	T     uint64 // ns, monotonic
 	Cause uint8
 	Goid  uint32
-	PCs   [3]uint64
+	PCs   []uint64
 	Aux   uint64
 }
 
@@ -85,20 +87,38 @@ func Parse(data []byte) (Header, []Record, error) {
 	h.PID = binary.LittleEndian.Uint32(data[12:])
 	h.Base = binary.LittleEndian.Uint64(data[16:])
 	h.Start = binary.LittleEndian.Uint64(data[24:])
-	if h.Version != 1 {
-		return h, nil, fmt.Errorf("wakeup trace version %d (this marmot reads 1)", h.Version)
+	hsize := headerSize
+	switch h.Version {
+	case 1:
+		h.Frames = 3
+	case 2:
+		if len(data) < headerSize+8 {
+			return h, nil, errors.New("wakeup trace header cut short")
+		}
+		h.Frames = int(binary.LittleEndian.Uint32(data[32:]))
+		hsize += 8
+		if h.Frames < 1 || h.Frames > maxFrames {
+			return h, nil, fmt.Errorf("wakeup trace with %d frames per record", h.Frames)
+		}
+	default:
+		return h, nil, fmt.Errorf("wakeup trace version %d (this marmot reads 1 and 2)", h.Version)
 	}
-	body := data[headerSize:]
-	recs := make([]Record, 0, len(body)/recordSize)
-	for len(body) >= recordSize {
-		recs = append(recs, Record{
+	rsize := 24 + 8*h.Frames
+	body := data[hsize:]
+	recs := make([]Record, 0, len(body)/rsize)
+	for len(body) >= rsize {
+		r := Record{
 			T:     binary.LittleEndian.Uint64(body),
 			Cause: body[8],
 			Goid:  binary.LittleEndian.Uint32(body[12:]),
-			PCs:   [3]uint64{binary.LittleEndian.Uint64(body[16:]), binary.LittleEndian.Uint64(body[24:]), binary.LittleEndian.Uint64(body[32:])},
-			Aux:   binary.LittleEndian.Uint64(body[40:]),
-		})
-		body = body[recordSize:]
+			PCs:   make([]uint64, h.Frames),
+			Aux:   binary.LittleEndian.Uint64(body[16+8*h.Frames:]),
+		}
+		for i := range r.PCs {
+			r.PCs[i] = binary.LittleEndian.Uint64(body[16+8*i:])
+		}
+		recs = append(recs, r)
+		body = body[rsize:]
 	}
 	return h, recs, nil
 }
@@ -177,13 +197,14 @@ func Summarize(h Header, recs []Record, settleNs, windowNs uint64, resolve Resol
 		cause uint8
 		site  Site
 	}
-	sites := map[[3]uint64]Site{}
-	siteOf := func(pcs [3]uint64) Site {
-		if s, ok := sites[pcs]; ok {
+	sites := map[string]Site{}
+	siteOf := func(pcs []uint64) Site {
+		k := fmt.Sprint(pcs)
+		if s, ok := sites[k]; ok {
 			return s
 		}
 		s := pickSite(h.Base, pcs, resolve)
-		sites[pcs] = s
+		sites[k] = s
 		return s
 	}
 	bySite := map[key]int{}
@@ -246,7 +267,7 @@ func Summarize(h Header, recs []Record, settleNs, windowNs uint64, resolve Resol
 // pickSite is the first frame outside the runtime, time and sync packages
 // (the runtime cannot tell them apart cheaply when it records), or the
 // first frame that resolves when all are inside them.
-func pickSite(base uint64, pcs [3]uint64, resolve Resolver) Site {
+func pickSite(base uint64, pcs []uint64, resolve Resolver) Site {
 	if resolve == nil {
 		return Site{}
 	}
@@ -285,22 +306,34 @@ func internalFunc(fn string) bool {
 
 // Encode writes a trace: for tests and tools that make one.
 func Encode(h Header, recs []Record) []byte {
-	b := make([]byte, headerSize, headerSize+len(recs)*recordSize)
+	// h.Frames pcs per record (3, the version 1 layout, when 0).
+	frames := h.Frames
+	if frames == 0 {
+		frames = 3
+	}
+	hsize := headerSize
+	if h.Version >= 2 {
+		hsize += 8
+	}
+	b := make([]byte, hsize)
 	copy(b, magic)
 	binary.LittleEndian.PutUint32(b[8:], h.Version)
 	binary.LittleEndian.PutUint32(b[12:], h.PID)
 	binary.LittleEndian.PutUint64(b[16:], h.Base)
 	binary.LittleEndian.PutUint64(b[24:], h.Start)
+	if h.Version >= 2 {
+		binary.LittleEndian.PutUint32(b[32:], uint32(frames))
+	}
 	for _, x := range recs {
-		var r [recordSize]byte
+		r := make([]byte, 24+8*frames)
 		binary.LittleEndian.PutUint64(r[0:], x.T)
 		r[8] = x.Cause
 		binary.LittleEndian.PutUint32(r[12:], x.Goid)
-		for i, pc := range x.PCs {
-			binary.LittleEndian.PutUint64(r[16+8*i:], pc)
+		for i := 0; i < frames && i < len(x.PCs); i++ {
+			binary.LittleEndian.PutUint64(r[16+8*i:], x.PCs[i])
 		}
-		binary.LittleEndian.PutUint64(r[40:], x.Aux)
-		b = append(b, r[:]...)
+		binary.LittleEndian.PutUint64(r[16+8*frames:], x.Aux)
+		b = append(b, r...)
 	}
 	return b
 }
