@@ -404,6 +404,12 @@ intptr_t rt_libcall_f64(void *fn, const uintptr_t *args, double f0, int32_t *err
 // panicking.
 int32_t rt_pcln(const uint8_t **table, intptr_t *len, uintptr_t *base);
 
+// The stack map in pc table t (len bytes, offsets from base; version 4) of
+// a frame suspended at return address pc: its word count, and in *bits its
+// bitmap, bit i set when the word at fp - 8*(i+1) may hold a pointer. 0
+// when there is none (the frame is scanned conservatively).
+uint32_t rt_pcln_stackmap(const uint8_t *t, intptr_t len, uintptr_t base, uintptr_t pc, const uint8_t **bits);
+
 // The type link table (reflect type identity): the start of an array of
 // type descriptor pointers in the binary and, in *n, its length; NULL with
 // *n = 0 when the binary has none. Entries may repeat. Mach-O: section

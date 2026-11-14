@@ -1065,6 +1065,7 @@ void gc_collect(bool forced) {
   void *regs[24];
   m->stop_sp = rt_spill_regs(regs);
   m->stop_hi = m->curg->stack_hi;
+  m->stop_fp = __builtin_frame_address(0);
   uint64_t before = atomic_load(&heap_live);
   mcache_flush_all();
   int64_t t1 = os_nanotime();

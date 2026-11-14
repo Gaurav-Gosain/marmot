@@ -317,6 +317,8 @@ struct rt_m {
   // Stop-the-world state.
   _Atomic int32_t stop_ack;  // set when stopped for GC, with stop_sp valid
   void *stop_sp;             // stack pointer at the stop point
+  void *stop_fp;             // a frame of the call chain to the stop point, NULL when stopped by
+                             // a signal (frames there may be mid-instruction: no stack maps)
   uintptr_t stop_hi;         // top of the stack stop_sp is on
   void *thread;              // pthread_t
   uint64_t fastrand;
@@ -423,7 +425,7 @@ void start_the_world(void);
 // Safepoint for STW: call where it is safe to stop (no runtime locks).
 void rt_safepoint(void);
 // Called by an M that sees gcwaiting set (from a safepoint or signal).
-void sched_stop_self(void *sp, uintptr_t hi);
+void sched_stop_self(void *sp, uintptr_t hi, void *fp);
 void wakep(void);
 // Like rt_go for runtime goroutines: not counted, ignored by deadlock checks.
 // Iterate goroutines and Ms for the GC. World must be stopped.
@@ -499,6 +501,10 @@ void gc_scan_range(uintptr_t lo, uintptr_t hi);
 // Called by the allocator slow path when the heap reaches the trigger.
 void gc_maybe_start(void);
 extern int64_t rt_gcstress;  // collect every N allocations, 0 off
+
+// pcln.c: stack maps of the running binary (pc table version 4).
+bool pcln_has_stackmaps(void);
+uint32_t pcln_stackmap(uintptr_t pc, const uint8_t **bits);
 
 #pragma GCC visibility pop
 

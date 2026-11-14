@@ -681,11 +681,12 @@ static void stop_count(rt_p *p, int site) {
   if (--sched.stopwait == 0) notewakeup(&sched.stopnote);
 }
 
-void sched_stop_self(void *sp, uintptr_t hi) {
+void sched_stop_self(void *sp, uintptr_t hi, void *fp) {
   rt_m *m = getm();
   rt_p *p = m->p;
   m->stop_sp = sp;
   m->stop_hi = hi;
+  m->stop_fp = fp;
   spin_lock(&sched.lock);
   if (!atomic_load(&sched.gcwaiting) || !p || atomic_load(&p->status) != P_RUNNING) {
     spin_unlock(&sched.lock);
@@ -704,7 +705,7 @@ NOINLINE void rt_safepoint(void) {
   if (!m || !m->curg || m->locks > 0) return;
   void *regs[24];
   void *sp = rt_spill_regs(regs);
-  sched_stop_self(sp, m->curg->stack_hi);
+  sched_stop_self(sp, m->curg->stack_hi, __builtin_frame_address(0));
   __asm__ volatile("" ::"r"(regs) : "memory");
 }
 
@@ -929,7 +930,7 @@ top:
     runqput(m->p, g, true);
   }
   if (atomic_load(&sched.gcwaiting)) {
-    sched_stop_self(NULL, 0);
+    sched_stop_self(NULL, 0, NULL);
     goto top;
   }
   {
@@ -2162,6 +2163,37 @@ uint64_t sched_progress(void) {
 
 // ---- GC support ----
 
+// Scan the stack [lo, hi) whose frame chain starts at fp (the frame of the
+// function suspended at return address pc, 0 when not known): a frame
+// suspended at a call with a stack map has only its map's words scanned;
+// the rest of the stack (runtime C frames, frames without a map, words a
+// map does not cover) is scanned conservatively. The chain is followed only
+// while it climbs within [lo, hi).
+static void scan_frames(uintptr_t lo, uintptr_t hi, uintptr_t fp, uintptr_t pc,
+                        void (*scan)(uintptr_t lo, uintptr_t hi)) {
+  uintptr_t cur = lo;
+  for (int i = 0; i < 100000 && !(fp & 7) && fp + 16 <= hi; i++) {
+    if (fp >= cur) {
+      const uint8_t *bits;
+      uint32_t n = pc ? pcln_stackmap(pc, &bits) : 0;
+      if (n) {
+        uintptr_t start = n * 8 > fp - cur ? cur : fp - (uintptr_t)n * 8;
+        if (start > cur) scan(cur, start);
+        for (uint32_t w = 0; w < n; w++) {
+          uintptr_t a = fp - 8 * ((uintptr_t)w + 1);
+          if (a >= cur && (bits[w / 8] >> (w % 8) & 1)) scan(a, a + 8);
+        }
+        cur = fp;  // the frame record (saved fp and return address) holds no heap pointer
+      }
+    }
+    uintptr_t up = ((uintptr_t *)fp)[0];
+    pc = ((uintptr_t *)fp)[1];
+    if (up <= fp) break;
+    fp = up;
+  }
+  scan(cur, hi);
+}
+
 static void scan_g(rt_g *g, void (*scan)(uintptr_t lo, uintptr_t hi)) {
   uint32_t s = atomic_load(&g->status);
   if (s == G_IDLE || s == G_DEAD) {
@@ -2184,7 +2216,26 @@ static void scan_g(rt_g *g, void (*scan)(uintptr_t lo, uintptr_t hi)) {
     lo = (uintptr_t)g->sp;
   }
   if (lo < g->stack_lo || lo > g->stack_hi) rt_throw("gc: goroutine sp outside its stack");
-  scan(lo, g->stack_hi);
+  uintptr_t fp = 0, pc = 0;  // the innermost frame of the chain, and its pc (0: unknown)
+  if (pcln_has_stackmaps()) {
+    if (s == G_RUNNING) {
+      fp = (uintptr_t)g->m->stop_fp;
+    } else if (s == G_SYSCALL) {
+#if RT_ARCH_ARM64
+      fp = (uintptr_t)g->syscallregs[10];
+#elif RT_ARCH_AMD64
+      fp = (uintptr_t)g->syscallregs[1];
+#endif
+    } else {
+#if RT_ARCH_ARM64
+      fp = ((uintptr_t *)g->sp)[10], pc = ((uintptr_t *)g->sp)[11];
+#elif RT_ARCH_AMD64
+      fp = ((uintptr_t *)g->sp)[5], pc = ((uintptr_t *)g->sp)[6];
+#endif
+    }
+  }
+  if (fp) scan_frames(lo, g->stack_hi, fp, pc, scan);
+  else scan(lo, g->stack_hi);
 }
 
 // World stopped.
