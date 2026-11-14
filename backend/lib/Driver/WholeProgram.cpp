@@ -523,6 +523,24 @@ std::pair<uint64_t, uint64_t> heapStats() {
 #endif
 }
 
+// The memory the scheduler counts: the heap malloc has in use (what the
+// jobs hold), not process memory, which also holds what malloc keeps from
+// freed jobs (glibc: 1.95 GB of process memory with 0.82 GB in use, which
+// ran tuios -O 2's groups one at a time for 261 s). Process memory where
+// malloc cannot say. The watchdog still limits process memory.
+uint64_t liveMemory() {
+  uint64_t inUse = heapStats().first;
+  return inUse ? inUse : processMemory();
+}
+
+// Gives what malloc holds from freed memory back to the system after a job
+// (glibc keeps freed arenas; the macOS allocator returns large blocks).
+void releaseFreed() {
+#if defined(__linux__)
+  malloc_trim(0);
+#endif
+}
+
 double msSince(std::chrono::steady_clock::time_point t) {
   return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t)
       .count();
@@ -1430,7 +1448,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   // admission budget and the process memory now, plus its own estimate,
   // stays under 75% of the limit (what the budgets do not count, such as
   // the bitcode and summaries of every module, grows with the program; one
-  // job always runs). Called with admitMu held; mem is processMemory().
+  // job always runs). Called with admitMu held; mem is liveMemory().
   auto fits = [&](uint64_t n, uint64_t mem) {
     if (admitted == 0)
       return true;
@@ -1445,7 +1463,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   };
   auto admitWait = [&](uint64_t n) {
     std::unique_lock<std::mutex> l(admitMu);
-    admitCv.wait(l, [&] { return fits(n, admitted ? processMemory() : 0); });
+    admitCv.wait(l, [&] { return fits(n, admitted ? liveMemory() : 0); });
     admitted += n;
   };
   auto admitDone = [&](uint64_t n) {
@@ -1487,7 +1505,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           {
             std::unique_lock<std::mutex> l(admitMu);
             auto pick = [&] {
-              uint64_t mem = admitted && memLimit ? processMemory() : 0;
+              uint64_t mem = admitted && memLimit ? liveMemory() : 0;
               for (size_t k = 0; k < pending.size(); ++k)
                 if (fits(inputSize[pending[k]], mem))
                   return k;
@@ -1518,6 +1536,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           // cold tuios -O 2 build, 4.4 GB).
           if (releaseHook)
             releaseHook(i);
+          releaseFreed();
           if (memLog) {
             std::lock_guard<std::mutex> l(admitMu);
             auto [inUse, held] = heapStats();
@@ -1570,7 +1589,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     // and analyze: they count at the parse cost too.
     // Also when the process passes 60% of the limit, whatever the estimate.
     if (always || (memLimit && ((parsedBytes.load() + others) * kParseCost > memBudget ||
-                                processMemory() > memLimit / 100 * 60))) {
+                                liveMemory() > memLimit / 100 * 60))) {
       mods[i].parsed = nullptr;
       parsedBytes -= inputSize[i];
     }
@@ -1586,7 +1605,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     {
       std::lock_guard<std::mutex> l(admitMu);
       uint64_t kept = parsedBytes.load(), est = (kept + admitted) * kParseCost;
-      uint64_t mem = processMemory(), soft = memLimit / 100 * 60;
+      uint64_t mem = liveMemory(), soft = memLimit / 100 * 60;
       uint64_t excess = 0;
       if (est > memBudget)
         excess = (est - memBudget) / kParseCost;
@@ -2031,6 +2050,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
               sys::fs::remove(out);
           }
           watchdogEnd(name);
+          releaseFreed();
           if (memLog) {
             std::lock_guard<std::mutex> l(admitMu);
             auto [inUse, held] = heapStats();
@@ -2670,6 +2690,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           }
         }
         watchdogEnd(name);
+        releaseFreed();
         if (memLog) {
           std::lock_guard<std::mutex> l(admitMu);
           auto [inUse, held] = heapStats();
