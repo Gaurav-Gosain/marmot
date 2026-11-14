@@ -679,15 +679,7 @@ private:
   uint64_t saveArea = 0;
   llvm::DenseMap<Operation *, uint64_t> allocaStorage;
   llvm::DenseMap<Block *, uint64_t> blockStart;
-  // The last instruction emitted, when it stored a register to an 8-byte
-  // stack slot (at: the position after it; 0: none). A load right after it
-  // from the same slot into the same register is dropped (not across a
-  // block start: a branch may arrive there).
-  struct {
-    uint64_t at = 0;
-    unsigned reg = 0;
-    uint64_t off = 0;
-  } lastStore;
+
   struct Fixup {
     uint64_t at;
     Block *dest;
@@ -712,7 +704,21 @@ private:
   bool constBits(Value v, uint64_t &bits);
 
   // Instructions.
-  void e(uint32_t w32) { w.emit32(w32); }
+  void e(uint32_t w32) {
+    w.emit32(w32);
+    noteWrites(w32);
+  }
+  // The register cache: cache[r] is the sp offset whose 8 bytes register r
+  // holds (-1: none), so a load of that slot into r is dropped. Every
+  // instruction emitted drops the registers it writes; calls, stores to the
+  // stack other than stAt's, sp changes, block starts and labels inside an
+  // operation drop everything.
+  int64_t cache[32];
+  bool inStAt = false;
+  void flushCache() {
+    for (int64_t &c : cache) c = -1;
+  }
+  void noteWrites(uint32_t w32);
   void mv(unsigned d, unsigned s) {  // a 64-bit move, none to itself
     if (d != s) e(movReg(d, s));
   }
@@ -853,6 +859,51 @@ void FuncGen::layout() {
   frameSize = (frameSize + 15) & ~uint64_t(15);
 }
 
+void FuncGen::noteWrites(uint32_t w) {
+  // Calls: every caller saved register.
+  if ((w & 0xFC000000u) == 0x94000000u || (w & 0xFFFFFC1Fu) == 0xD63F0000u) {
+    flushCache();
+    return;
+  }
+  // Branches and returns write no register.
+  if ((w & 0x7C000000u) == 0x14000000u || (w & 0xFF000010u) == 0x54000000u || (w & 0x7E000000u) == 0x34000000u ||
+      (w & 0xFFFFFC1Fu) == 0xD61F0000u || (w & 0xFFFFFC1Fu) == 0xD65F0000u)
+    return;
+  unsigned rt = w & 31, rn = (w >> 5) & 31;
+  if (((w >> 25) & 5) == 4) {  // loads and stores
+    bool single = ((w >> 28) & 3) == 3, pair = ((w >> 28) & 3) == 2;
+    bool atomic = single && ((w >> 24) & 1) == 0 && ((w >> 21) & 1) == 1 && ((w >> 10) & 3) == 0;
+    bool store = (single && !atomic && ((w >> 22) & 3) == 0) || (pair && ((w >> 22) & 1) == 0);
+    if (store) {
+      // To the stack outside stAt (stp, zeroing, saves): drop everything.
+      // Stores through other registers do not reach value slots, except
+      // the copies and zeroing that address them through x12/x13, which
+      // drop the cache themselves.
+      if (rn == SP && !inStAt) flushCache();
+      bool wb = (pair && ((w >> 23) & 3) != 2) || (single && ((w >> 24) & 1) == 0 && ((w >> 21) & 1) == 0 && ((w >> 10) & 1) == 1);
+      if (wb && rn == SP) flushCache();
+      return;
+    }
+    // A load (or an exclusive or atomic access): the registers it may write.
+    for (unsigned r : {rt, (w >> 10) & 31, (w >> 16) & 31, rn})
+      if (r < 31) cache[r] = -1;
+    if (rn == SP) {
+      bool wb = (pair && ((w >> 23) & 3) != 2) || (single && ((w >> 24) & 1) == 0 && ((w >> 21) & 1) == 0 && ((w >> 10) & 1) == 1);
+      if (wb) flushCache();
+    }
+    return;
+  }
+  // Everything else writes at most Rd (bits 0-4); 31 is sp for add and sub
+  // with an immediate (and for add with an extended register).
+  if (rt == 31) {
+    // Without the S bit, Rd 31 of add/sub immediate or extended is sp.
+    bool s = (w >> 29) & 1;
+    if (!s && (((w >> 24) & 0x1F) == 0x11 || ((w >> 21) & 0xFF) == 0x59)) flushCache();
+    return;
+  }
+  cache[rt] = -1;
+}
+
 void FuncGen::addrOf(unsigned rd, uint64_t off) {
   if (off < 4096) {
     e(addImm(rd, SP, uint32_t(off)));
@@ -867,10 +918,7 @@ void FuncGen::ldSlot(unsigned r, uint64_t off, uint64_t size) { ldAt(r, SP, off,
 void FuncGen::stSlot(unsigned r, uint64_t off, uint64_t size) { stAt(r, SP, off, size); }
 
 void FuncGen::ldAt(unsigned r, unsigned base, uint64_t off, uint64_t size) {
-  // The previous instruction stored r to this very place: r holds it.
-  if (base == SP && size == 8 && lastStore.at == here() && lastStore.at && lastStore.reg == r &&
-      lastStore.off == off)
-    return;
+  if (base == SP && size == 8 && r < 31 && cache[r] == int64_t(off)) return;  // r holds it
   unsigned ls = log2Size(size);
   if (off % size == 0 && (off >> ls) < 4096) {
     e(ldrImm(r, base, uint32_t(off), ls));
@@ -880,18 +928,26 @@ void FuncGen::ldAt(unsigned r, unsigned base, uint64_t off, uint64_t size) {
     stackAddr(RT, base, off);
     e(ldrImm(r, RT, 0, ls));
   }
+  if (base == SP && size == 8 && r < 31) cache[r] = int64_t(off);
 }
 
 void FuncGen::stAt(unsigned r, unsigned base, uint64_t off, uint64_t size) {
   unsigned ls = log2Size(size);
+  inStAt = base == SP;
   if (off % size == 0 && (off >> ls) < 4096) {
     e(strImm(r, base, uint32_t(off), ls));
-    if (base == SP && size == 8 && r != XZR) lastStore = {here(), r, off};
   } else if (off < 256) {
     e(stur(r, base, int32_t(off), ls));
   } else {
     stackAddr(RT, base, off);
     e(strImm(r, RT, 0, ls));
+  }
+  inStAt = false;
+  if (base == SP) {
+    // The slot changed: registers holding what overlapped it no longer do.
+    for (int64_t &c : cache)
+      if (c >= 0 && c < int64_t(off + size) && c + 8 > int64_t(off)) c = -1;
+    if (size == 8 && r < 31) cache[r] = int64_t(off);
   }
 }
 
@@ -934,6 +990,7 @@ void FuncGen::copyBytes(unsigned dstBase, uint64_t dstOff, unsigned srcBase, uin
   };
   unsigned sb = base(RA, srcBase, srcOff);  // x13 first: dstBase is never x13
   unsigned db = base(R4, dstBase, dstOff);
+  if (db != dstBase) flushCache();  // writes slots through x12
   uint64_t i = 0;
   for (; i + 16 <= n && srcOff + i + 8 <= 504 && dstOff + i + 8 <= 504; i += 16) {
     e(ldpOff(X14, X15, sb, int32_t(srcOff + i)));
@@ -1077,7 +1134,7 @@ void FuncGen::saveRestore(bool save) {
 
 void FuncGen::epilogue() {
   saveRestore(false);
-  e(movSp(SP, FP));
+  if (frameSize) e(movSp(SP, FP));  // with no frame, sp is still fp
   e(ldpPost(FP, LR, SP, 16));
   e(ret());
 }
@@ -1539,6 +1596,7 @@ void FuncGen::emitOp(Operation &op) {
         uint64_t at = of(z.getResult()), i = 0;
         unsigned base = SP;
         if (at + 8 > 504 && n >= 32) {  // out of stp's reach: through x12
+          flushCache();
           addrOf(R4, at);
           base = R4;
           at = 0;
@@ -1619,9 +1677,10 @@ void FuncGen::emitOp(Operation &op) {
           uint64_t skip = here();
           e(b(0));
           uint64_t elseAt = here();
+          flushCache();
           copyBytes(SP, of(s.getResult()), SP, of(s.getFalseValue()), sz);
           uint64_t end = here();
-          lastStore.at = 0;  // the true path arrives here too
+          flushCache();  // the true path arrives here too
           auto patch = [&](uint64_t pos, uint32_t word) { std::memcpy(&w.bytes(Sect::Text)[pos], &word, 4); };
           patch(at, cbz(R3, int32_t(elseAt - at)));
           patch(skip, b(int32_t(end - skip)));
@@ -1972,6 +2031,7 @@ void FuncGen::emitOp(Operation &op) {
           edgeMoves(f, c.getFalseDestOperands());
           branchTo(f);
           uint64_t trueAt = here();
+          flushCache();
           int32_t off = int32_t(trueAt - at);
           uint32_t word = flags ? bcond(cc, off) : inv ? cbz(cr, off) : cbnz(cr, off);
           std::memcpy(&w.bytes(Sect::Text)[at], &word, 4);
@@ -1997,6 +2057,7 @@ void FuncGen::emitOp(Operation &op) {
           e(bcond(NE, 0));
           edgeMoves(s.getCaseDestinations()[i], s.getCaseOperands(i));
           branchTo(s.getCaseDestinations()[i]);
+          flushCache();  // the next case starts here
           uint32_t word = bcond(NE, int32_t(here() - at));
           std::memcpy(&w.bytes(Sect::Text)[at], &word, 4);
           i++;
@@ -2413,13 +2474,14 @@ void FuncGen::run() {
     rows.push_back({here() - start, r->second, file});
   };
   row(fn.getLoc());
+  flushCache();
   std::map<std::string, uint64_t> ob;
   uint64_t was = here();
   prologue();
   if (opStatsOn) ob["prologue"] += here() - was;
   for (Block &b : fn.getBody()) {
     blockStart[&b] = here();
-    lastStore.at = 0;
+    flushCache();
     nextBlock = b.getNextNode();
     for (Operation &op : b) {
       row(op.getLoc());
