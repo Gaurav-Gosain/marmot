@@ -737,7 +737,20 @@ void stop_the_world(void) {
     waiting = sched.stopwait > 0;
     spin_unlock(&sched.lock);
   }
-  if (sched.stopwait != 0) rt_throw("stop_the_world: stopwait != 0");
+  if (sched.stopwait != 0) {
+    // The state, for the report: what the count says and each P.
+    rt_print("stop_the_world: stopwait ");
+    rt_printi(sched.stopwait);
+    rt_print(" (waited for ");
+    rt_printi(n);
+    rt_print(" Ps), statuses:");
+    for (int32_t i = 0; i < n; i++) {
+      rt_print(" ");
+      rt_printu(atomic_load(&sched.allp[i]->status));
+    }
+    rt_print("\n");
+    rt_throw("stop_the_world: stopwait != 0");
+  }
   m->locks--;
 }
 
@@ -1483,6 +1496,77 @@ RT_API void rt_gstates(int64_t out[3]) {
     default: break;
     }
   }
+}
+
+// ---- stacks of every goroutine (runtime.Stack(buf, true)) ----
+
+typedef struct {
+  int64_t id;
+  int32_t status;  // G_*
+  int32_t n;       // return addresses in pc
+  uintptr_t pc[64];
+} rt_gstack;
+
+// The return addresses from frame pointer fp up, while fp stays in g's
+// stack; first is a return address known apart (0: none).
+static int32_t gstack_walk(rt_g *g, uintptr_t first, uintptr_t fp, uintptr_t *pc, int32_t max) {
+  int32_t n = 0;
+  if (first) pc[n++] = first;
+  while (n < max && fp >= g->stack_lo && fp + 16 <= g->stack_hi && !(fp & 7)) {
+    uintptr_t up = ((uintptr_t *)fp)[0], ret = ((uintptr_t *)fp)[1];
+    if (!ret) break;
+    pc[n++] = ret;
+    if (up <= fp) break;
+    fp = up;
+  }
+  return n;
+}
+
+// With the world stopped, the stacks of the program's goroutines other
+// than the caller's, up to n into out; returns how many there are. A
+// goroutine running on another M (stopped at a safepoint) is listed without
+// frames.
+RT_API int64_t rt_gstacks(rt_gstack *out, int64_t n) {
+  rt_g *self = getm()->curg;
+  stop_the_world();
+  int64_t k = 0;
+  uint32_t total = __atomic_load_n(&nallg, __ATOMIC_ACQUIRE);
+  for (uint32_t i = 0; i < total && gchunks; i++) {
+    gchunk *c = gchunks[i / GCHUNK];
+    if (!c) break;
+    uint64_t live = atomic_load_explicit(&c->live[(i % GCHUNK) / 64], memory_order_relaxed);
+    if (!(live >> (i % 64) & 1)) continue;
+    rt_g *g = c->g[i % GCHUNK];
+    if (!g || g->system || g == self) continue;
+    uint32_t st = atomic_load(&g->status);
+    if (st == G_IDLE || st == G_DEAD) continue;
+    if (k < n) {
+      rt_gstack *r = &out[k];
+      r->id = g->id;
+      r->status = (int32_t)st;
+      r->n = 0;
+#if !RT_OS_WASI
+      if ((st == G_WAITING || st == G_RUNNABLE) && g->sp) {
+        // The frame rt_ctx_switch saved (arch_*.S).
+        uintptr_t *f = g->sp;
+#if RT_ARCH_ARM64
+        r->n = gstack_walk(g, f[11], f[10], r->pc, 64);
+#else
+        r->n = gstack_walk(g, f[6], f[5], r->pc, 64);
+#endif
+      } else if (st == G_SYSCALL && g->syscallsp) {
+#if RT_ARCH_ARM64
+        r->n = gstack_walk(g, ((uintptr_t *)g->syscallregs)[11], ((uintptr_t *)g->syscallregs)[10], r->pc, 64);
+#else
+        r->n = gstack_walk(g, 0, ((uintptr_t *)g->syscallregs)[1], r->pc, 64);
+#endif
+      }
+#endif
+    }
+    k++;
+  }
+  start_the_world();
+  return k;
 }
 
 RT_API int32_t rt_numcpu(void) { return os_ncpu(); }
