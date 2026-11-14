@@ -9,5 +9,3 @@ run/audit/math_exp_log_bits  # math.Exp(-745.13) returns 0x1, gc 0x0 (value diff
 goroot/cmp@release  # equal strings built at compile time share their bytes (allowed by the spec; gc keeps them apart)
 run/opt/fma_cases@release  # amd64: one NaN result has other bits than gc (marmot computes it on the CPU, gc folds it at compile time); NaN bits are not specified
 run/core/xsys_unix@wasm  # golang.org/x/sys/unix has no wasip1 port (gc cannot build it for wasip1 either)
-run/core/recover_method_expr@native  # native: recover in a method deferred through a method expression returns nil (the method expression thunk is not seen as transparent); passes on wasm
-run/core/recover_generic_helper@native  # native: a helper called by a deferred generic function recovers (gc returns nil); passes on wasm
