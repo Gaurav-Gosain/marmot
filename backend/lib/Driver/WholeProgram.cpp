@@ -598,11 +598,59 @@ bool writeFile(const std::string &path, StringRef data) {
 // Links the bodies of the named functions from other modules into m as
 // available_externally definitions (inlining only; the source module keeps
 // the real definition). imp: source module index -> function names.
+// The bitcode imports read from a module: its bitcode without what no
+// import uses (importBodies drops the same from it before linking): bodies of
+// functions that are not importable and not linkonce or weak, initializers of
+// globals that are not linkonce or weak, and appending globals. Every import
+// read the whole module again, and its constant data took most of that.
+// Declarations stay, even unused ones: the linker merges their visibility
+// and unnamed_addr into the importer's definitions. "" if the bitcode does
+// not load.
+std::string importSource(StringRef bitcode, StringRef name, const StringSet<> &importable) {
+  LLVMContext ctx;
+  auto mOr = getLazyBitcodeModule(MemoryBufferRef(bitcode, name), ctx);
+  if (!mOr) {
+    consumeError(mOr.takeError());
+    return "";
+  }
+  Module &src = **mOr;
+  for (Function &f : src)
+    if (!f.isDeclaration() && !importable.contains(f.getName()) && !f.hasLinkOnceLinkage() &&
+        !f.hasWeakLinkage()) {
+      f.deleteBody();
+      f.setComdat(nullptr);
+      if (f.hasLocalLinkage())
+        f.setLinkage(GlobalValue::ExternalLinkage);
+    }
+  for (GlobalVariable &v : make_early_inc_range(src.globals())) {
+    if (v.hasAppendingLinkage()) {
+      v.eraseFromParent();
+      continue;
+    }
+    if (!v.isDeclaration() && !v.hasLinkOnceLinkage() && !v.hasWeakLinkage()) {
+      v.setInitializer(nullptr);
+      v.setComdat(nullptr);
+      v.setLinkage(GlobalValue::ExternalLinkage);
+    }
+  }
+  if (Error e = src.materializeAll()) {
+    consumeError(std::move(e));
+    return "";
+  }
+  std::string out;
+  raw_string_ostream os(out);
+  WriteBitcodeToFile(src, os);
+  return out;
+}
+
+// source(si) is the bitcode of module si to read (importSource).
 bool importBodies(Module &m, const std::map<unsigned, std::set<std::string>> &imp,
                   std::vector<ModuleInfo> &mods, LLVMContext &ctx, raw_ostream &es,
-                  StringRef in) {
+                  StringRef in, function_ref<StringRef(unsigned)> source) {
+  // One linker for all sources: each new one scanned all of m's types.
+  Linker linker(m);
   for (auto &[si, names] : imp) {
-    auto srcOr = getLazyBitcodeModule(MemoryBufferRef(mods[si].bitcode, mods[si].job.in), ctx);
+    auto srcOr = getLazyBitcodeModule(MemoryBufferRef(source(si), mods[si].job.in), ctx);
     if (!srcOr) {
       es << in << ": " << toString(srcOr.takeError()) << "\n";
       return false;
@@ -630,11 +678,10 @@ bool importBodies(Module &m, const std::map<unsigned, std::set<std::string>> &im
         v.setLinkage(GlobalValue::ExternalLinkage);
       }
     }
-    if (Error e = src->materializeAll()) {
-      es << in << ": " << toString(std::move(e)) << "\n";
-      return false;
-    }
-    if (Linker::linkModules(m, std::move(src), Linker::Flags::LinkOnlyNeeded)) {
+    // The linker reads the bodies it links (the imported functions and the
+    // linkonce/weak definitions they use) from the lazy module; reading all
+    // of them first took most of the import time.
+    if (linker.linkInModule(std::move(src), Linker::Flags::LinkOnlyNeeded)) {
       es << in << ": cross-module import failed\n";
       return false;
     }
@@ -1478,6 +1525,28 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     return ok;
   }
 
+  // The import sources (importSource), made on first use and cached.
+  std::vector<std::string> importSrc(mods.size());
+  std::vector<std::once_flag> importSrcOnce(mods.size());
+  auto source = [&](unsigned si) -> StringRef {
+    std::call_once(importSrcOnce[si], [&] {
+      ModuleInfo &m = mods[si];
+      std::string key = hashHex(m.keyB + "|import-source");
+      if (auto c = cache.get(key, "bc")) {
+        importSrc[si] = std::move(*c);
+        return;
+      }
+      StringSet<> importable;
+      for (const Def &d : m.defs)
+        if (d.importable)
+          importable.insert(d.qname);
+      importSrc[si] = importSource(m.bitcode, m.job.in, importable);
+      if (!importSrc[si].empty())
+        cache.put(key, "bc", importSrc[si]);
+    });
+    return importSrc[si].empty() ? StringRef(mods[si].bitcode) : StringRef(importSrc[si]);
+  };
+
   // Dev mode: every module on its own, plus available_externally copies of
   // small functions from other modules of the same Go package (the frontend
   // splits a package into one module per source file). The object's cache key
@@ -1588,7 +1657,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         es << m.job.in << ": " << (tm ? toString(mOr.takeError()) : err) << "\n";
         return;
       }
-      if (!imports[i].empty() && !importBodies(**mOr, imports[i], mods, ctx, es, m.job.in))
+      if (!imports[i].empty() && !importBodies(**mOr, imports[i], mods, ctx, es, m.job.in, source))
         return;
       // Large module: split into groups, compiled below in parallel.
       if (opts.splitInstrs && opts.emit == Emit::Obj && opts.optLevel != '0') {
@@ -2157,7 +2226,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       }
 
     // Imports.
-    if (!importBodies(*m, imports[i], mods, ctx, es, info.job.in))
+    if (!importBodies(*m, imports[i], mods, ctx, es, info.job.in, source))
       return;
     // Guarded devirtualization of indirect calls (func values, interface
     // methods): when at most two address-taken functions in the program have
