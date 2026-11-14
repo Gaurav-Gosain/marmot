@@ -21,6 +21,24 @@ static bool gc_trace;
 static _Atomic uint64_t num_gc;
 static uint64_t pause_total_ns;
 
+// ---- write barrier (concurrent marking, not on yet) ----
+
+RT_API volatile uint8_t rt_gc_marking;
+
+// Shades both the value overwritten and the one stored (the hybrid
+// barrier): neither can hide from a mark that runs beside the program.
+// Not reached while marking stops the world (rt_gc_marking stays 0).
+RT_API void rt_wb(void **slot, void *new_value) {
+  (void)slot;
+  (void)new_value;
+}
+
+RT_API void rt_wb_range(void *dst, const void *src, uintptr_t n) {
+  (void)dst;
+  (void)src;
+  (void)n;
+}
+
 // ---- registered roots ----
 
 typedef struct {

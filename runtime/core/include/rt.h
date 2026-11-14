@@ -124,6 +124,14 @@ typedef struct rt_memstats {
   uint64_t heap_released;  // part of heap_sys returned to the OS
 } rt_memstats;
 void rt_gc_stats(rt_memstats *out);
+// The write barrier, for concurrent marking. Compiled code checks the flag
+// before a store of a pointer to the heap or a global:
+//   if (rt_gc_marking) rt_wb(slot, new); *slot = new;
+// and calls rt_wb_range before a bulk copy of pointer words over dst. The
+// collector still stops the world to mark, so the flag stays 0 for now.
+extern volatile uint8_t rt_gc_marking;
+void rt_wb(void **slot, void *new_value);
+void rt_wb_range(void *dst, const void *src, uintptr_t n);
 // GOGC style pacing percent. Negative disables collection. Returns the old value.
 int32_t rt_gc_set_percent(int32_t percent);
 
