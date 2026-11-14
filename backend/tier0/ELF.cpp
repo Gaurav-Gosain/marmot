@@ -19,6 +19,10 @@ constexpr uint8_t STB_LOCAL = 0, STB_GLOBAL = 1, STB_WEAK = 2;
 constexpr uint8_t STT_NOTYPE = 0, STT_OBJECT = 1, STT_FUNC = 2;
 constexpr uint8_t STV_HIDDEN = 2;
 constexpr uint16_t SHN_COMMON = 0xfff2;
+// Extended section numbering (one section per function can pass 65280):
+// indices from SHN_LORESERVE on go to SHT_SYMTAB_SHNDX (symbols) and to the
+// null section header (count, string table index).
+constexpr uint32_t SHN_LORESERVE = 0xff00, SHN_XINDEX = 0xffff, SHT_SYMTAB_SHNDX = 18;
 enum : uint32_t {
   R_X86_64_64 = 1,
   R_X86_64_PC32 = 2,
@@ -160,6 +164,8 @@ std::string MachOWriter::serializeELF() const {
   std::vector<uint32_t> finalIdx(syms_.size());
   Buf symtab;
   symtab.b.append(24, '\0');
+  std::vector<uint32_t> xindex(1, 0); // per symbol: its section index when it does not fit st_shndx
+  bool needXindex = false;
   for (unsigned k = 0; k < order.size(); k++) {
     const Sym &s = syms_[order[k]];
     finalIdx[order[k]] = k + 1;
@@ -174,7 +180,12 @@ std::string MachOWriter::serializeELF() const {
       symtab.u64(s.commonSize);
     } else if (s.defined) {
       const Chunk &c = chunkOf(unsigned(s.sect), s.offset);
-      symtab.u16(uint16_t(c.shndx));
+      if (c.shndx >= SHN_LORESERVE) {
+        symtab.u16(uint16_t(SHN_XINDEX));
+        needXindex = true;
+      } else {
+        symtab.u16(uint16_t(c.shndx));
+      }
       symtab.u64(s.offset - c.lo);
       symtab.u64(c.hi - c.lo);
     } else {
@@ -182,6 +193,7 @@ std::string MachOWriter::serializeELF() const {
       symtab.u64(0);
       symtab.u64(0);
     }
+    xindex.push_back(!s.commonSize && s.defined ? uint32_t(chunkOf(unsigned(s.sect), s.offset).shndx) : 0);
   }
 
   // Relocations with explicit addends, one table per chunk. PC-relative
@@ -233,6 +245,17 @@ std::string MachOWriter::serializeELF() const {
   Shdr strh{shstr.add(".strtab"), SHT_STRTAB, 0};
   strh.data = str.s;
   sh.push_back(std::move(strh));
+  if (needXindex) {
+    Shdr xh{shstr.add(".symtab_shndx"), SHT_SYMTAB_SHNDX, 0};
+    xh.link = symtabIndex;
+    xh.align = 4;
+    xh.entsize = 4;
+    Buf xb;
+    for (uint32_t v : xindex)
+      xb.u32(v >= SHN_LORESERVE ? v : 0);
+    xh.data = std::move(xb.b);
+    sh.push_back(std::move(xh));
+  }
   sh.push_back(Shdr{shstr.add(".note.GNU-stack"), SHT_PROGBITS, 0});
   uint32_t shstrName = shstr.add(".shstrtab");
   Shdr shs{shstrName, SHT_STRTAB, 0};
@@ -251,6 +274,12 @@ std::string MachOWriter::serializeELF() const {
   }
   o.align(8);
   uint64_t shoff = o.b.size();
+  // Counts that do not fit the header's 16 bits: in the null section.
+  uint64_t nsect = sh.size(), shstrIdx = sh.size() - 1;  // .shstrtab is last
+  if (nsect >= SHN_LORESERVE)
+    sh[0].size = nsect;
+  if (shstrIdx >= SHN_LORESERVE)
+    sh[0].link = uint32_t(shstrIdx);
   for (const Shdr &h : sh) {
     o.u32(h.name);
     o.u32(h.type);
@@ -277,8 +306,8 @@ std::string MachOWriter::serializeELF() const {
   hd.u16(0);
   hd.u16(0);
   hd.u16(64);
-  hd.u16(uint16_t(sh.size()));
-  hd.u16(uint16_t(sh.size() - 1));  // .shstrtab is last
+  hd.u16(nsect >= SHN_LORESERVE ? 0 : uint16_t(nsect));
+  hd.u16(shstrIdx >= SHN_LORESERVE ? uint16_t(SHN_XINDEX) : uint16_t(shstrIdx));
   std::memcpy(&o.b[0], hd.b.data(), 64);
   return o.b;
 }
