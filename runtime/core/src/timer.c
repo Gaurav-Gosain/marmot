@@ -23,6 +23,7 @@ struct rt_timer {
   uint8_t state;
   uint8_t inl;      // internal timer: fn runs inside timers_check
   _Atomic uint8_t running;  // internal timer: fn executing
+  uint64_t pc[3];           // where it was made (MARMOT_TRACE only)
 };
 
 _Atomic int64_t timer_next_when = INT64_MAX;
@@ -165,15 +166,30 @@ int64_t timers_check(int64_t now) {
   update_next();
   int64_t next = tlen ? theap[0]->when : -1;
   spin_unlock(&tlock);
+  rt_m *m = trace_on() ? getm() : NULL;
   while (ready) {
     rt_timer *t = ready;
     ready = t->next;
     t->next = NULL;
+    if (m) m->wake_next = (trace_why){WAKE_TIMER, 0, {t->pc[0], t->pc[1], t->pc[2]}, 0};
     t->fn(t->arg);
     atomic_store(&t->running, 0);
   }
-  if (wake) rt_ready(timer_g);
+  if (wake) {
+    if (m) m->wake_next = (trace_why){WAKE_TIMER, 0, {0, 0, 0}, 0};
+    rt_ready(timer_g);
+  }
+  if (m) m->wake_next.cause = 0;
   return next;
+}
+
+void timers_due_why(trace_why *w) {
+  *w = (trace_why){WAKE_TIMER, 0, {0, 0, 0}, 0};
+  spin_lock(&tlock);
+  if (tlen) {
+    for (int i = 0; i < 3; i++) w->pc[i] = theap[0]->pc[i];
+  }
+  spin_unlock(&tlock);
 }
 
 int64_t timers_next(void) {
@@ -196,6 +212,7 @@ RT_API void *rt_timer_start(int64_t when, void (*fn)(void *), void *arg) {
   t->fn = fn;
   t->arg = arg;
   t->idx = -1;
+  if (trace_on()) trace_frames(__builtin_frame_address(0), t->pc);
   timer_add(t);
   return t;
 }
@@ -232,6 +249,7 @@ void itimer_start(rt_timer *t, int64_t when, void (*fn)(void *), void *arg) {
   t->when = when;
   t->fn = fn;
   t->arg = arg;
+  if (trace_on()) trace_frames(__builtin_frame_address(0), t->pc);
   timer_add(t);
 }
 
@@ -261,6 +279,7 @@ RT_API void rt_sleep(int64_t ns) {
     g->sleeptimer->arg = g;
   }
   g->sleeptimer->when = os_nanotime() + ns;
+  if (trace_on()) trace_frames(__builtin_frame_address(0), g->sleeptimer->pc);
   rt_park(sleep_park, g);
 }
 

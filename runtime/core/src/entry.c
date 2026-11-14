@@ -85,6 +85,7 @@ static void rt_init(int argc, char **argv, char **envp) {
   g_argv = argv;
   g_envp = envp;
   os_init();
+  trace_init();
   malloc_init();
   sched_init();
   gc_init();

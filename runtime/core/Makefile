@@ -97,6 +97,11 @@ CFLAGS_COMMON := $(TARGET_FLAGS) -std=c11 -Wall -Wextra -Wno-unused-parameter -I
 	-ffunction-sections -fdata-sections -fno-stack-protector -fno-common \
 	-fvisibility=hidden -D_DARWIN_C_SOURCE -D_GNU_SOURCE
 CFLAGS  ?= -O2
+# Frame pointers: the wakeup trace (trace.c) walks the frame chain from
+# runtime functions into the program.
+ifeq ($(WASM),)
+CFLAGS_COMMON += -fno-omit-frame-pointer
+endif
 ALL_CFLAGS := $(CFLAGS_COMMON) $(CFLAGS)
 
 C_SRCS  := $(wildcard src/*.c) $(if $(WASM),,$(wildcard gpu/*.c))

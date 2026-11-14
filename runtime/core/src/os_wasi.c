@@ -55,6 +55,10 @@ WASI(environ_get) int32_t wasi_environ_get(char **env, char *buf);
 // The runtime's page: memory is handed out in these (a wasm page is 64 KiB,
 // too coarse for stacks and tables).
 uintptr_t rt_pagesize = 4096;
+int32_t trace_fd = -1;  // no wakeup trace on WASI
+void trace_init(void) {}
+void trace_frames(void *fp, uint64_t pc[3]) { pc[0] = pc[1] = pc[2] = 0; }
+void trace_wake_record(const trace_why *w) {}
 rt_m *rt_wasi_m;  // the current M (one thread)
 
 void setm(rt_m *m) { rt_wasi_m = m; }

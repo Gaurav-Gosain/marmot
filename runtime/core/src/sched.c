@@ -564,6 +564,10 @@ static void startm(rt_p *p, bool spinning) {
   if (m) {
     m->spinning = spinning;
     m->nextp = p;
+    if (trace_on()) {
+      rt_m *me = getm();
+      m->wake = me && me->wake_next.cause ? me->wake_next : (trace_why){WAKE_SCHED, 0, {0, 0, 0}, 0};
+    }
     spin_unlock(&sched.lock);
     notewakeup(&m->park);
     return;
@@ -1024,7 +1028,14 @@ stop:
           goto top;
         }
       }
-      if (atomic_load(&netpoll_waiters) > 0 && !atomic_load(&sched.gcwaiting)) netpoll_h(timeout);
+      if (atomic_load(&netpoll_waiters) > 0 && !atomic_load(&sched.gcwaiting)) {
+        int32_t n = netpoll_h(timeout);
+        if (trace_on()) {
+          trace_why w = {WAKE_NETPOLL, 0, {0, 0, 0}, (uint64_t)n};
+          if (n <= 0 && timeout >= 0) timers_due_why(&w);  // the timeout: the next timer
+          trace_wake_record(&w);
+        }
+      }
       atomic_store(&netpoll_blocked, 0);
       spin_lock(&sched.lock);
       rt_p *p = NULL;
@@ -1061,12 +1072,23 @@ stop:
     mput(m);
     checkdead();
     spin_unlock(&sched.lock);
+    bool timedout = false;
     if (!notetsleep(&m->park, timeout)) {
       spin_lock(&sched.lock);
       bool pending = !m->idle;  // a waker already took us off the list
       if (m->idle) mremove(m);
       spin_unlock(&sched.lock);
-      if (pending) notesleep(&m->park);
+      if (pending)
+        notesleep(&m->park);
+      else
+        timedout = true;
+    }
+    if (trace_on()) {
+      trace_why w = m->wake;
+      if (timedout) timers_due_why(&w);
+      else if (!w.cause) w.cause = WAKE_OTHER;
+      trace_wake_record(&w);
+      m->wake.cause = 0;
     }
     if (m->nextp) {
       rt_p *p = m->nextp;
@@ -1389,6 +1411,11 @@ RT_API void rt_ready(rt_g *g) {
     rt_throw("rt_ready: goroutine is not waiting");
   group_wake(g);
   rt_m *m = getm();
+  bool why = m && trace_on() && m->wake_next.cause == 0;  // a timer may have set it
+  if (why) {
+    m->wake_next = (trace_why){WAKE_READY, (uint32_t)g->id, {0, 0, 0}, 0};
+    trace_frames(__builtin_frame_address(0), m->wake_next.pc);
+  }
   if (m) m->locks++;
   rt_p *p = m ? m->p : NULL;
   if (p && atomic_load(&p->status) == P_RUNNING && p->m == m) {
@@ -1400,6 +1427,7 @@ RT_API void rt_ready(rt_g *g) {
   }
   if (m) m->locks--;
   wakep();
+  if (why) m->wake_next.cause = 0;
 }
 
 RT_API void rt_goexit(void) {
@@ -1819,6 +1847,8 @@ static void sysmon(void *arg) {
       }
     }
     os_futex_wait(&sysmon_wake, w, ns);
+    if (trace_on() && (ns < 0 || ns >= 1000000))
+      trace_wake_record(&(trace_why){WAKE_SCHED, 0, {0, 0, 0}, (uint64_t)(atomic_load(&sysmon_wake) != w)});
     if (idle_gc && atomic_load(&sysmon_wake) == w && sysmon_nothing()) {
       atomic_store(&sysmon_sleeping, 0);
       gc_idle_start();
