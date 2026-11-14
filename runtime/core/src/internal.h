@@ -321,6 +321,7 @@ struct rt_m {
   void *stop_fp;             // a frame of the call chain to the stop point, NULL when stopped by
                              // a signal (frames there may be mid-instruction: no stack maps)
   uintptr_t stop_hi;         // top of the stack stop_sp is on
+  struct wbuf *wbq;          // objects the write barrier shaded, not yet handed to the mark
   void *thread;              // pthread_t
   uint64_t fastrand;
   uintptr_t sigstack;        // alternate signal stack

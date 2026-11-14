@@ -21,23 +21,13 @@ static int gc_trace;  // MARMOT_GCTRACE: 1 a line per cycle, 2 also the heap by 
 static _Atomic uint64_t num_gc;
 static uint64_t pause_total_ns;
 
-// ---- write barrier (concurrent marking, not on yet) ----
-
+// Set while marking runs beside the program (MARMOT_GC_CONC=1), from the
+// first stop of a cycle to the second: pointer stores call rt_wb and new
+// objects are allocated black.
 RT_API volatile uint8_t rt_gc_marking;
-
-// Shades both the value overwritten and the one stored (the hybrid
-// barrier): neither can hide from a mark that runs beside the program.
-// Not reached while marking stops the world (rt_gc_marking stays 0).
-RT_API void rt_wb(void **slot, void *new_value) {
-  (void)slot;
-  (void)new_value;
-}
-
-RT_API void rt_wb_range(void *dst, const void *src, uintptr_t n) {
-  (void)dst;
-  (void)src;
-  (void)n;
-}
+static int gc_conc;              // MARMOT_GC_CONC=1
+static _Atomic int32_t gc_cycle; // a concurrent cycle is between its two stops
+uint64_t gc_conc_cycles;         // cycles that marked beside the program (tests)
 
 // ---- registered roots ----
 
@@ -328,10 +318,14 @@ static void wbuf_put_empty(wbuf *b) {
 }
 
 // Find the object containing p. Returns its span and index, or NULL.
+// The state is read with acquire: a span published while marking runs
+// beside the program has its fields and bits set before it.
 NO_SANITIZE INLINE mspan *find_object(uintptr_t p, uintptr_t *idxp) {
   if (p - rt_arena_start >= rt_arena_used - rt_arena_start) return NULL;
   mspan *s = rt_pagemap[(p - rt_arena_start) >> PAGE_SHIFT];
-  if (!s || s->state != SPAN_INUSE || p < s->base || p >= s->limit) return NULL;
+  if (!s || __atomic_load_n(&s->state, __ATOMIC_ACQUIRE) != SPAN_INUSE || p < s->base ||
+      p >= s->limit)
+    return NULL;
   uintptr_t idx = s->cls ? (uintptr_t)(((uint64_t)(p - s->base) * s->divmul) >> 32) : 0;
   if (idx >= s->nelems) return NULL;
   if (!((s->allocbits[idx / 64] >> (idx % 64)) & 1)) return NULL;  // free slot
@@ -349,6 +343,73 @@ NO_SANITIZE INLINE void mark_ptr(gcw *w, uintptr_t p) {
   if (__atomic_fetch_or(mw, bit, __ATOMIC_RELAXED) & bit) return;
   w->marked_bytes += s->elemsize;
   if (s->kind != RT_ALLOC_NOSCAN) gcw_push(w, s->base + idx * s->elemsize);
+}
+
+// ---- write barrier ----
+
+// Mark p's object gray from a goroutine: into the M's queue, which goes to
+// the shared list when full and at the second stop.
+NO_SANITIZE static void shade(uintptr_t p) {
+  uintptr_t idx;
+  mspan *s = find_object(p, &idx);
+  if (!s) return;
+  uint64_t bit = 1ull << (idx % 64);
+  uint64_t *mw = &s->markbits[idx / 64];
+  if (__atomic_load_n(mw, __ATOMIC_RELAXED) & bit) return;
+  if (__atomic_fetch_or(mw, bit, __ATOMIC_RELAXED) & bit) return;
+  if (s->kind == RT_ALLOC_NOSCAN) return;
+  rt_m *m = getm();
+  m->locks++;  // the queue belongs to the M: no switch while it is updated
+  wbuf *b = m->wbq;
+  if (!b) {
+    b = wbuf_get_empty();
+    m->wbq = b;
+  }
+  b->obj[b->n++] = s->base + idx * s->elemsize;
+  if (b->n == WBUF_N) {
+    m->wbq = NULL;
+    wbuf_put_full(b);
+  }
+  m->locks--;
+}
+
+// Shades both the value overwritten and the one stored (the hybrid
+// barrier): neither can hide from a mark that runs beside the program.
+RT_API void rt_wb(void **slot, void *new_value) {
+  if (!rt_gc_marking) return;
+  shade(*(uintptr_t *)slot);
+  shade((uintptr_t)new_value);
+}
+
+// Before a copy of n bytes of pointer words from src over dst. Every word
+// is shaded; words that are not pointers find no object.
+RT_API void rt_wb_range(void *dst, const void *src, uintptr_t n) {
+  if (!rt_gc_marking) return;
+  const uintptr_t *d = dst, *q = src;
+  for (uintptr_t i = 0; i < n / WORDSZ; i++) {
+    shade(d[i]);
+    if (q) shade(q[i]);
+  }
+}
+
+void gc_mark_new(void *p) {
+  uintptr_t idx;
+  mspan *s = find_object((uintptr_t)p, &idx);
+  if (s) __atomic_fetch_or(&s->markbits[idx / 64], 1ull << (idx % 64), __ATOMIC_RELAXED);
+}
+
+// World stopped: hand every M's queue to the shared list.
+static void wb_flush_all(void) {
+  for (rt_m *m = sched.allm; m; m = m->alllink) {
+    wbuf *b = m->wbq;
+    if (!b) continue;
+    m->wbq = NULL;
+    if (b->n) {
+      wbuf_put_full(b);
+    } else {
+      wbuf_put_empty(b);
+    }
+  }
 }
 
 NO_SANITIZE static void scan_range_w(gcw *w, uintptr_t lo, uintptr_t hi) {
@@ -623,6 +684,7 @@ static void drain_parallel(gcw *w) {
 static void drain_serial(gcw *w) {
   uintptr_t pf[8];
   uint32_t ph = 0, pn = 0;
+  for (;;) {
   while (w->len > 0 || pn > 0) {
     if (w->len > 0 && pn < 8) {
       uintptr_t o = w->stk[--w->len];
@@ -636,6 +698,14 @@ static void drain_serial(gcw *w) {
     pn--;
     scan_object(w, o);
     w->nscan++;
+  }
+  // Barrier queues handed over while marking ran beside the program.
+  wbuf *b = wbuf_get_full();
+  if (!b) return;
+  while (w->cap < w->len + b->n) gcw_grow(w);
+  __builtin_memcpy(w->stk + w->len, b->obj, b->n * sizeof(uintptr_t));
+  w->len += b->n;
+  wbuf_put_empty(b);
   }
 }
 
@@ -826,8 +896,12 @@ RT_API void rt_gc_weak_unregister(uintptr_t *slot) {
 // The collector stops the world, so a load outside a collection is safe as
 // is: the value then sits in a register or on the stack, which the next
 // collection scans.
+// While marking runs beside the program the object is shaded: a strong
+// pointer made from a weak one must keep the object alive this cycle.
 RT_API void *rt_gc_weak_load(uintptr_t *slot) {
-  return (void *)__atomic_load_n(slot, __ATOMIC_ACQUIRE);
+  uintptr_t p = __atomic_load_n(slot, __ATOMIC_ACQUIRE);
+  if (UNLIKELY(rt_gc_marking) && p) shade(p);
+  return (void *)p;
 }
 
 static bool is_marked(uintptr_t p);
@@ -853,7 +927,8 @@ static void weak_clear(void) {
 
 static void scan_data_segment(void *lo, void *hi) { gc_scan_range((uintptr_t)lo, (uintptr_t)hi); }
 
-static void mark_roots(void) {
+// Every root into worker 0's stack; mark_parallel drains it.
+static void scan_roots(void) {
   gcw *w = &workers[0];
   os_data_segments(scan_data_segment);
   for (int32_t i = 0; i < nroots; i++) gc_scan_range(roots[i].lo, roots[i].hi);
@@ -863,6 +938,10 @@ static void mark_roots(void) {
   regions_scan_roots(gc_scan_range);
   for (uintptr_t i = 0; i < finqlen; i++) mark_ptr(w, finq[i].obj);
   if (UNLIKELY(rt_poison)) poison_gc(set_marked);
+}
+
+static void mark_roots(void) {
+  scan_roots();
   mark_parallel();
 }
 
@@ -1115,7 +1194,8 @@ NOINLINE static void gc_print_classes(void) {
 }
 
 NOINLINE static void gc_print_trace(uint64_t before, uint64_t live, int64_t t0, int64_t t1,
-                                  int64_t t2, int64_t t3, int64_t t4) {
+                                  int64_t t2, int64_t t3, int64_t t4, int64_t pause1,
+                                  int64_t tconc) {
   rt_print("gc ");
   rt_printu(atomic_load(&num_gc));
   rt_print(": ");
@@ -1124,7 +1204,15 @@ NOINLINE static void gc_print_trace(uint64_t before, uint64_t live, int64_t t0, 
   rt_printu(live >> 10);
   rt_print(" KiB, goal ");
   rt_printu(next_gc >> 10);
-  rt_print(" KiB, stw ");
+  rt_print(" KiB, ");
+  if (tconc) {
+    rt_print("first stop ");
+    rt_printu((uint64_t)pause1 / 1000);
+    rt_print(" us, concurrent mark ");
+    rt_printu((uint64_t)tconc / 1000);
+    rt_print(" us, ");
+  }
+  rt_print("stw ");
   rt_printu((uint64_t)(t1 - t0) / 1000);
   rt_print(" us, mark ");
   rt_printu((uint64_t)(t2 - t1) / 1000);
@@ -1147,6 +1235,19 @@ NOINLINE static void gc_print_trace(uint64_t before, uint64_t live, int64_t t0, 
   rt_print(" KiB\n");
   }
 
+// The heap goal from the live heap. A concurrent cycle starts when a
+// quarter of the growth to the goal is left, so marking can finish before
+// allocation reaches the goal and waits.
+static void set_goal(uint64_t live) {
+  if (gc_percent < 0) {
+    next_gc = gc_trigger = UINT64_MAX;
+    return;
+  }
+  uint64_t goal = live + live * (uint64_t)gc_percent / 100;
+  next_gc = goal < (4 << 20) ? (4 << 20) : goal;
+  gc_trigger = gc_conc ? live + (next_gc - live) * 3 / 4 : next_gc;
+}
+
 void gc_collect(bool forced) {
 #if !RT_OS_WASI
   // sysmon starts the idle collection; a program that never starts a
@@ -1154,8 +1255,19 @@ void gc_collect(bool forced) {
   sysmon_start();
 #endif
   uint64_t gen = atomic_load(&num_gc);
-  rt_lock(&gc_mu);
-  if (!forced && (atomic_load(&num_gc) != gen || atomic_load(&heap_live) < next_gc)) {
+  // A cycle marking beside the program is under way: allocation goes on
+  // until the goal, then waits for the cycle on gc_mu.
+  if (!forced && atomic_load(&gc_cycle) && atomic_load(&heap_live) < next_gc) return;
+  if (gc_conc) {
+    // gc_mu blocks the thread: a waiter keeps no P, or the collector could
+    // find none free when it comes back from its concurrent mark.
+    rt_entersyscall();
+    rt_lock(&gc_mu);
+    rt_exitsyscall();
+  } else {
+    rt_lock(&gc_mu);
+  }
+  if (!forced && (atomic_load(&num_gc) != gen || atomic_load(&heap_live) < gc_trigger)) {
     rt_unlock(&gc_mu);
     return;
   }
@@ -1170,20 +1282,54 @@ void gc_collect(bool forced) {
   // Settled before the world stops: the first look at the pc table may ask
   // the loader, whose lock a thread stopped inside dlopen can hold.
   pcln_has_stackmaps();
+  void *regs[24];
+  rt_m *m;
+  uint64_t before = 0;
+  int64_t pause1 = 0, tconc = 0;
+  bool conc = gc_conc && !rt_poison && gc_trace < 3;
+  if (conc) {
+    // First stop: roots into the mark stack, the barrier on. Marking then
+    // runs beside the program, this goroutine off its P as in a syscall.
+    int64_t c0 = os_nanotime();
+    stop_the_world();
+    m = getm();
+    m->stop_sp = rt_spill_regs(regs);
+    m->stop_hi = m->curg->stack_hi;
+    m->stop_fp = __builtin_frame_address(0);
+    before = atomic_load(&heap_live);
+    mcache_flush_all();
+    __atomic_store_n(&rt_gc_marking, 1, __ATOMIC_SEQ_CST);
+    atomic_store(&gc_cycle, 1);
+    scan_roots();
+    start_the_world();
+    int64_t c1 = os_nanotime();
+    pause1 = c1 - c0;
+    rt_entersyscall();
+    mark_parallel();
+    rt_exitsyscall();
+    tconc = os_nanotime() - c1;
+    gc_conc_cycles++;
+  }
+  // The (second) stop: everything marked from all roots again, which
+  // finds what changed in root memory while marking ran beside the program.
   int64_t t0 = os_nanotime();
   stop_the_world();
-  rt_m *m = getm();
-  void *regs[24];
+  m = getm();
   m->stop_sp = rt_spill_regs(regs);
   m->stop_hi = m->curg->stack_hi;
   m->stop_fp = __builtin_frame_address(0);
-  uint64_t before = atomic_load(&heap_live);
-  mcache_flush_all();
+  if (!conc) before = atomic_load(&heap_live);
+  mcache_flush_all();  // while marking is on, objects allocated since the first stop are black
+  if (conc) wb_flush_all();
   int64_t t1 = os_nanotime();
   mark_roots();
   if (UNLIKELY(gc_verify)) verify_mark();
   if (weak_live) weak_clear();
   bool queued = mark_finalizers();
+  if (conc) {
+    __atomic_store_n(&rt_gc_marking, 0, __ATOMIC_SEQ_CST);
+    atomic_store(&gc_cycle, 0);
+  }
   memprof_sweep(is_marked);
   int64_t t2 = os_nanotime();
   sweep_all();
@@ -1192,12 +1338,7 @@ void gc_collect(bool forced) {
   uint64_t live = atomic_load(&heap_live);
   last_live = live;
   atomic_store(&gc_alloc_mark, atomic_load(&stat_total_alloc));
-  if (gc_percent >= 0) {
-    uint64_t goal = live + live * (uint64_t)gc_percent / 100;
-    next_gc = goal < (4 << 20) ? (4 << 20) : goal;
-  } else {
-    next_gc = UINT64_MAX;
-  }
+  set_goal(live);
   for (int32_t i = 0; i <= gc_nhelpers; i++) {
     gcw *w = &workers[i];
     if (w->cap > (1 << 20)) {  // drop a large mark stack
@@ -1208,8 +1349,8 @@ void gc_collect(bool forced) {
   }
   atomic_fetch_add(&num_gc, 1);
   int64_t t4 = os_nanotime();
-  pause_total_ns += (uint64_t)(t4 - t0);
-  if (UNLIKELY(gc_trace)) gc_print_trace(before, live, t0, t1, t2, t3, t4);
+  pause_total_ns += (uint64_t)(t4 - t0 + pause1);
+  if (UNLIKELY(gc_trace)) gc_print_trace(before, live, t0, t1, t2, t3, t4, pause1, tconc);
   if (UNLIKELY(gc_trace >= 2)) gc_print_classes();
   if (UNLIKELY(gc_trace >= 3)) print_roots();
   bool wake = false;
@@ -1259,13 +1400,7 @@ RT_API int32_t rt_gc_set_percent(int32_t percent) {
   rt_lock(&gc_mu);
   int32_t old = gc_percent;
   gc_percent = percent < 0 ? -1 : percent;
-  if (gc_percent < 0) {
-    next_gc = UINT64_MAX;
-  } else {
-    uint64_t live = atomic_load(&heap_live);
-    uint64_t goal = live + live * (uint64_t)gc_percent / 100;
-    next_gc = goal < (4 << 20) ? (4 << 20) : goal;
-  }
+  set_goal(atomic_load(&heap_live));
   rt_unlock(&gc_mu);
   return old;
 }
@@ -1275,7 +1410,15 @@ void gc_init(void) {
   gc_trace = t && *t >= '1' && *t <= '9' ? *t - '0' : 0;
   const char *v = rt_getenv("MARMOT_GC_VERIFY");
   gc_verify = v && *v == '1';
-  if (gc_percent < 0) next_gc = UINT64_MAX;
+#if !RT_OS_WASI
+  const char *c = rt_getenv("MARMOT_GC_CONC");
+  gc_conc = c && *c == '1';
+#endif
+  if (gc_percent < 0) {
+    next_gc = gc_trigger = UINT64_MAX;
+  } else if (gc_conc) {
+    gc_trigger = next_gc - next_gc / 4;
+  }
 }
 
 // Debug helper for tests: describe the heap object containing p.

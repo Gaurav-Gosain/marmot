@@ -33,6 +33,7 @@ _Atomic uint64_t heap_live;
 uint64_t heap_sys, heap_released;
 _Atomic uint64_t stat_mallocs, stat_total_alloc, stat_frees;
 uint64_t next_gc = 4 << 20;
+uint64_t gc_trigger = 4 << 20;  // heap_live that starts a cycle (next_gc unless marking is concurrent)
 int32_t gc_percent = 100;
 int64_t rt_gcstress;
 static _Atomic int64_t gcstress_count;
@@ -281,7 +282,9 @@ static mspan *page_alloc(uintptr_t npages) {
     arena_grow(npages);
   }
   freelist_remove(s);
-  s->state = SPAN_INUSE;
+  // Published as SPAN_INUSE by the caller once its fields and bits are set:
+  // a concurrent mark reads spans without the heap lock.
+  s->state = SPAN_DEAD;
   if (s->npages > npages) {
     mspan *rest = fixalloc_alloc(&span_alloc);
     rest->base = s->base + npages * PAGE_SIZE;
@@ -384,6 +387,7 @@ static mspan *span_new_small(uint32_t cls, uint32_t kind) {
   s->markbits = bits_new(nw);
   s->freeindex = 0;
   s->divmul = (uint32_t)(0xffffffffu / (uint32_t)s->elemsize + 1);
+  __atomic_store_n(&s->state, SPAN_INUSE, __ATOMIC_RELEASE);
   return s;
 }
 
@@ -484,8 +488,16 @@ static void mcache_release(mspan *s) {
   atomic_fetch_add(&stat_total_alloc, (uint64_t)used * s->elemsize);
   atomic_fetch_sub(&heap_live, (uint64_t)left * s->elemsize);
   // Fold the cache's progress into allocbits: everything below freeindex
-  // is allocated.
+  // is allocated. While marking runs beside the program, the objects handed
+  // out since the span was cached are allocated black.
   uint32_t fi = s->freeindex;
+  if (rt_gc_marking) {
+    for (uint32_t w = 0; w * 64 < fi; w++) {
+      uint64_t upto = fi - w * 64 >= 64 ? ~0ull : (1ull << (fi - w * 64)) - 1;
+      uint64_t fresh = upto & ~s->allocbits[w];
+      if (fresh) __atomic_fetch_or(&s->markbits[w], fresh, __ATOMIC_RELAXED);
+    }
+  }
   for (uint32_t w = 0; w < fi / 64; w++) s->allocbits[w] = ~0ull;
   if (fi % 64) s->allocbits[fi / 64] |= (1ull << (fi % 64)) - 1;
   uint32_t nw = (s->nelems + 63) / 64;
@@ -599,12 +611,14 @@ static void *alloc_large(uintptr_t size, uint32_t kind, const uint8_t *ptrmap,
   s->allocbits = bits_new(1);
   s->markbits = bits_new(1);
   s->allocbits[0] = 1;
+  if (rt_gc_marking) s->markbits[0] = 1;  // allocated black
   s->freeindex = 1;
   if (kind == RT_ALLOC_PRECISE) {
     s->ptrmap = ptrmap;
     s->ptrelem = elemsize;
     s->ptrcount = size / elemsize;
   }
+  __atomic_store_n(&s->state, SPAN_INUSE, __ATOMIC_RELEASE);
   bool dirty = s->needzero;
   s->needzero = 0;
   spin_unlock(&heap_lock);
@@ -668,7 +682,7 @@ static void *alloc_slow(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, ui
     }
     m->locks--;
   }
-  if (atomic_load_explicit(&heap_live, memory_order_relaxed) >= next_gc && gc_percent >= 0)
+  if (atomic_load_explicit(&heap_live, memory_order_relaxed) >= gc_trigger && gc_percent >= 0)
     gc_collect(false);
   memprof_maybe(p, size, __builtin_frame_address(0));
   return p;
@@ -700,6 +714,7 @@ RT_API void *rt_alloc_nozero(uintptr_t size) {
     void *fr = ent->freed;
     if (UNLIKELY(fr != NULL)) {
       ent->freed = *(void **)fr;
+      if (UNLIKELY(rt_gc_marking)) gc_mark_new(fr);
       m->mcache->nreuse++;
       m->mcache->reuse_bytes += rt_class_size[cls];
       m->locks--;
@@ -754,6 +769,7 @@ RT_API void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uint
     if (UNLIKELY(fr != NULL)) {
       // An object returned with rt_free: reuse it.
       ent->freed = *(void **)fr;
+      if (UNLIKELY(rt_gc_marking)) gc_mark_new(fr);
       uintptr_t p = (uintptr_t)fr, es = rt_class_size[cls];
       m->mcache->nreuse++;
       m->mcache->reuse_bytes += es;
@@ -812,6 +828,7 @@ void malloc_init(void) {
   first->cls = 0;
   first->nelems = 0;
   first->elemsize = PAGE_SIZE;
+  first->state = SPAN_INUSE;
   allspans_remove(first);  // never swept, never freed
   spin_unlock(&heap_lock);
   bool ok;
@@ -888,6 +905,8 @@ RT_API void rt_free(void *ptr, uintptr_t size) {
   if (!s || s->state != SPAN_INUSE || p < s->base || p >= s->limit) return;
   if (s->cls == 0) {
     if (p != s->base) return;
+    // A concurrent mark may be reading this span's bits; the sweep frees it.
+    if (rt_gc_marking) return;
     spin_lock(&heap_lock);
     if (UNLIKELY(rt_poison) && s->state == SPAN_INUSE && !s->poisoned && s->allocbits[0]) {
       poison_free_large(s);

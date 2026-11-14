@@ -101,6 +101,7 @@ extern _Atomic uint64_t heap_live;
 extern uint64_t heap_sys, heap_released;
 extern _Atomic uint64_t stat_mallocs, stat_total_alloc, stat_frees;
 extern uint64_t next_gc;
+extern uint64_t gc_trigger;
 extern int32_t gc_percent;
 void span_free(mspan *s);   // heap_lock held
 void central_reset(void);   // heap_lock held
@@ -113,6 +114,7 @@ void memprof_free(uintptr_t obj);
 void memprof_sweep(bool (*marked)(uintptr_t));
 void heap_scavenge_min(uint64_t retain, uintptr_t min);  // heap_lock held
 void gc_collect(bool forced);
+void gc_mark_new(void *p);  // an object reused while marking runs: allocated black
 bool gc_has_finalizers(void);
 
 INLINE uintptr_t popcount64(uint64_t x) { return (uintptr_t)__builtin_popcountll(x); }
