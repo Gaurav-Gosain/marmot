@@ -56,6 +56,13 @@ func (b *build) buildStamp(goos, goarch string) string {
 	fileSig(h, filepath.Join(b.cfg.Root, "build", "bin", "marmot-pcln"))
 	fileSig(h, b.rtLib("librtcore.a"))
 	fileSig(h, b.rtLib("rtcore.bc"))
+	// Tier 1: the runner touches its epoch file when it has cached new -O2
+	// objects, so the next build links them instead of returning the tier0
+	// executable of the build before (steady state: 57 MB instead of 157 MB
+	// for tuios on linux/amd64).
+	if b.tier1() {
+		fileSig(h, filepath.Join(b.tier1Spool(), "epoch"))
+	}
 	for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_NO_BACKEND", "MARMOT_DIALECT", "MARMOT_KEEP_SYMBOLS", "MARMOT_LINKMAP", "MARMOT_WPO", "MARMOT_SPEC", "MARMOT_BACKEND_FLAGS", "MARMOT_PCLN_VERSION", "MARMOT_ESCAPE_ROUNDS", "GOAMD64"} {
 		fmt.Fprintf(h, "%s=%s\n", k, os.Getenv(k))
 	}

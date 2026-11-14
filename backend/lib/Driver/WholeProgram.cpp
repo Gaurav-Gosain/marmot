@@ -1257,6 +1257,7 @@ bool runTier1(const CompileOptions &opts, const std::string &cacheDir, raw_ostre
     textBudget = std::strtoull(e, nullptr, 10) << 20;
   textBudget = textBudget ? textBudget / 32 : UINT64_MAX;
   std::atomic<bool> ok{true};
+  std::atomic<unsigned> stored{0}; // objects cached this round
   std::mutex mu; // errs, the cache and the admission count
   std::condition_variable cv;
   // Jobs run on every core (the process runs at idle priority, so only on
@@ -1326,6 +1327,7 @@ bool runTier1(const CompileOptions &opts, const std::string &cacheDir, raw_ostre
         if (opts.pclnFragments)
           cache.put(k, "pcln", text);
         cache.put(k, "o", obj);
+        ++stored;
       } else {
         ok = false;
         errs << "marmot-backend: tier1: " << in << ": " << (tm ? msgs : err) << "\n";
@@ -1333,6 +1335,14 @@ bool runTier1(const CompileOptions &opts, const std::string &cacheDir, raw_ostre
     }
     cv.notify_all();
     drop();
+  };
+  // The driver hashes the epoch file into a build's stamp: after a round
+  // that cached objects, the next build links them (and does not return
+  // the tier0 executable of the build before).
+  auto touchEpoch = [&] {
+    SmallString<256> epoch(opts.tier1Spool);
+    sys::path::append(epoch, "epoch");
+    writeFile(epoch.str().str(), std::to_string(std::chrono::system_clock::now().time_since_epoch().count()));
   };
   // Newest first: the module edited last is the one the next build needs.
   // Entries that arrive while this runs are taken in the next round.
@@ -1349,6 +1359,8 @@ bool runTier1(const CompileOptions &opts, const std::string &cacheDir, raw_ostre
           compileOne(keys[i]);
       });
     pool.wait();
+    if (stored.exchange(0))
+      touchEpoch();
   }
   return ok;
 }
