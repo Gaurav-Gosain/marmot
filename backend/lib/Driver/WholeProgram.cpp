@@ -1383,6 +1383,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   }
   unsigned phaseNo = 0;
   std::atomic<uint64_t> parsedBytes{0}; // input text of the modules kept parsed
+  std::function<void(unsigned)> releaseHook; // releaseParsed(i, false), set below
   auto parallel = [&](auto fn) {
     ++phaseNo;
     std::vector<unsigned> pending(order.begin(), order.end());
@@ -1416,6 +1417,12 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           PhaseTimes t;
           fn(i, es, t);
           watchdogEnd(jobs[i].in);
+          // Every job, hit or miss, gives its kept parse back when the
+          // kept parses pass the budget (a module parsed in one phase and
+          // cached in the next ones stayed parsed: 548 MB of text on a
+          // cold tuios -O 2 build, 4.4 GB).
+          if (releaseHook)
+            releaseHook(i);
           if (memLog) {
             std::lock_guard<std::mutex> l(admitMu);
             *memLog << format("memlog phase %u job %u text %.1f mem %llu admitted %.1f kept %.1f\n", phaseNo, i,
@@ -1464,6 +1471,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       parsedBytes -= inputSize[i];
     }
   };
+  releaseHook = [&](unsigned i) { releaseParsed(i, false); };
   auto moduleOp = [&](unsigned i) {
     return mlir::ModuleOp::getFromOpaquePointer(parsedModuleOp(*mods[i].parsed));
   };
