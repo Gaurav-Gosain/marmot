@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
 	"github.com/Gaurav-Gosain/marmot/internal/pprof"
@@ -20,6 +21,10 @@ type profFlags struct {
 	sample, list *string
 	tree         *bool
 	minPct       *float64
+	wakeups      *bool
+	settle       *time.Duration
+	window       *time.Duration
+	trace        *string
 	output       outputFlags
 }
 
@@ -31,6 +36,10 @@ func newProfFlags() (*flag.FlagSet, *profFlags) {
 	f.list = fs.String("list", "", "show the source of functions matching this regexp, each line with its cost")
 	f.tree = fs.Bool("tree", false, "show the call tree (callers above callees) instead of the top list")
 	f.minPct = fs.Float64("min", 1, "leave out tree nodes below this percentage of the total")
+	f.wakeups = fs.Bool("wakeups", false, "run a marmot-built PROGRAM [arguments] idle and report what wakes it, per second, by cause and source site")
+	f.settle = fs.Duration("settle", 10*time.Second, "with -wakeups: time left out at the start")
+	f.window = fs.Duration("window", 60*time.Second, "with -wakeups: the time measured after the settle time")
+	f.trace = fs.String("trace", "", "with -wakeups: read this trace (MARMOT_TRACE=wakeups=FILE) instead of running PROGRAM")
 	f.output = addOutputFlags(fs)
 	return fs, f
 }
@@ -43,6 +52,9 @@ func cmdProf(args []string) int {
 	fs.SetOutput(io.Discard)
 	if err := fs.Parse(args); err != nil {
 		return usageError("prof", err)
+	}
+	if *pf.wakeups {
+		return profWakeups(pf, fs.Args())
 	}
 	rep := pf.output.reporter("prof")
 	if fs.NArg() != 1 {

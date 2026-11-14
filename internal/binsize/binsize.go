@@ -553,3 +553,20 @@ func (b *Binary) applyCOrigins(t []byte) {
 		}
 	}
 }
+
+// Locate names the function at pc offset off (from the image base) and its
+// source line from the pc table; ok is false outside every function.
+func (b *Binary) Locate(off uint64) (fn Func, file string, line int, ok bool) {
+	i := sort.Search(len(b.Funcs), func(i int) bool { return b.Funcs[i].Start > off }) - 1
+	if i < 0 || off >= b.Funcs[i].Start+b.Funcs[i].Size {
+		return Func{}, "", 0, false
+	}
+	fn = b.Funcs[i]
+	for _, r := range b.Lines(fn) {
+		if r.Off > off {
+			break
+		}
+		file, line = r.File, r.Line
+	}
+	return fn, file, line, true
+}
