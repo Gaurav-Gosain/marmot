@@ -28,6 +28,14 @@ RT_API volatile uint8_t rt_gc_marking;
 static int gc_conc;              // MARMOT_GC_CONC=1
 static _Atomic int32_t gc_cycle; // a concurrent cycle is between its two stops
 uint64_t gc_conc_cycles;         // cycles that marked beside the program (tests)
+// Pacer state (set_goal).
+static uint64_t pace_mark_alloc;  // average bytes allocated during a concurrent mark
+static uint64_t pace_last_alloc;  // bytes allocated during the last concurrent mark
+static int32_t pace_idle, pace_procs;  // idle Ps and GOMAXPROCS before the last first stop
+static int64_t pace_last_end;     // end of the last cycle
+static bool pace_adapt = true;
+static int32_t pace_percent;      // the percent the last goal used
+uint64_t gc_pace_waits;           // allocations that reached the goal during a mark (tests, trace)
 
 // ---- registered roots ----
 
@@ -1024,9 +1032,14 @@ static void verify_report(mspan *s, uint32_t k) {
   rt_printx(s->base);
   uintptr_t at = 0, ref = verify_referrer(obj, s->elemsize, &at);
   if (ref) {
+    mspan *rs = rt_pagemap[(ref - rt_arena_start) >> PAGE_SHIFT];
     rt_print(" from object ");
     rt_printx(ref);
-    rt_print(" word +");
+    rt_print(" (size=");
+    rt_printu(rs->elemsize);
+    rt_print(" kind=");
+    rt_printu(rs->kind);
+    rt_print(") word +");
     rt_printu(at - ref);
   } else {
     rt_print(" from a root");
@@ -1204,6 +1217,16 @@ NOINLINE static void gc_print_trace(uint64_t before, uint64_t live, int64_t t0, 
   rt_printu(live >> 10);
   rt_print(" KiB, goal ");
   rt_printu(next_gc >> 10);
+  if (tconc) {
+    rt_print(" KiB (GOGC ");
+    rt_printu((uint64_t)pace_percent);
+    rt_print("), trigger ");
+    rt_printu(gc_trigger >> 10);
+    rt_print(" KiB, allocated during mark ");
+    rt_printu(pace_last_alloc >> 10);
+    rt_print(" KiB, waits ");
+    rt_printu(__atomic_load_n(&gc_pace_waits, __ATOMIC_RELAXED));
+  }
   rt_print(" KiB, ");
   if (tconc) {
     rt_print("first stop ");
@@ -1238,14 +1261,39 @@ NOINLINE static void gc_print_trace(uint64_t before, uint64_t live, int64_t t0, 
 // The heap goal from the live heap. A concurrent cycle starts when a
 // quarter of the growth to the goal is left, so marking can finish before
 // allocation reaches the goal and waits.
+//
+// Pacer (concurrent cycles): the trigger leaves room for twice what the
+// program allocated during recent marks (the larger of the last mark and a
+// moving average), between a quarter and seven eighths of the growth. The
+// goal adapts under load: when cycles come close together (under 100 ms
+// apart) and the last cycle found at least a quarter of the Ps idle, the
+// mark costs the program little, so the goal comes down to half the
+// growth, but not under GOGC=50 (MARMOT_GC_ADAPT=0 turns this off).
+
 static void set_goal(uint64_t live) {
   if (gc_percent < 0) {
     next_gc = gc_trigger = UINT64_MAX;
     return;
   }
-  uint64_t goal = live + live * (uint64_t)gc_percent / 100;
+  int32_t pct = gc_percent;
+  if (gc_conc && pace_adapt && pct > 50 && pace_procs > 0 && pace_idle * 4 >= pace_procs &&
+      pace_last_end && os_nanotime() - pace_last_end < 100000000) {
+    pct /= 2;
+    if (pct < 50) pct = 50;
+  }
+  pace_percent = pct;
+  uint64_t goal = live + live * (uint64_t)pct / 100;
   next_gc = goal < (4 << 20) ? (4 << 20) : goal;
-  gc_trigger = gc_conc ? live + (next_gc - live) * 3 / 4 : next_gc;
+  if (!gc_conc) {
+    gc_trigger = next_gc;
+    return;
+  }
+  uint64_t growth = next_gc - live, room = 2 * (pace_mark_alloc > pace_last_alloc ? pace_mark_alloc : pace_last_alloc);
+  uint64_t lo = growth / 4, hi = growth - growth / 8;
+  uint64_t at = growth > room ? growth - room : 0;
+  if (at < lo) at = lo;
+  if (at > hi) at = hi;
+  gc_trigger = live + at;
 }
 
 void gc_collect(bool forced) {
@@ -1257,7 +1305,10 @@ void gc_collect(bool forced) {
   uint64_t gen = atomic_load(&num_gc);
   // A cycle marking beside the program is under way: allocation goes on
   // until the goal, then waits for the cycle on gc_mu.
-  if (!forced && atomic_load(&gc_cycle) && atomic_load(&heap_live) < next_gc) return;
+  if (!forced && atomic_load(&gc_cycle)) {
+    if (atomic_load(&heap_live) < next_gc) return;
+    __atomic_fetch_add(&gc_pace_waits, 1, __ATOMIC_RELAXED);
+  }
   if (gc_conc) {
     // gc_mu blocks the thread: a waiter keeps no P, or the collector could
     // find none free when it comes back from its concurrent mark.
@@ -1287,7 +1338,10 @@ void gc_collect(bool forced) {
   uint64_t before = 0;
   int64_t pause1 = 0, tconc = 0;
   bool conc = gc_conc && !rt_poison && gc_trace < 3;
+  uint64_t mark_live0 = 0;
   if (conc) {
+    pace_idle = atomic_load(&sched.npidle);
+    pace_procs = atomic_load(&sched.nprocs);
     // First stop: roots into the mark stack, the barrier on. Marking then
     // runs beside the program, this goroutine off its P as in a syscall.
     int64_t c0 = os_nanotime();
@@ -1298,6 +1352,7 @@ void gc_collect(bool forced) {
     m->stop_fp = __builtin_frame_address(0);
     before = atomic_load(&heap_live);
     mcache_flush_all();
+    mark_live0 = atomic_load(&heap_live);
     __atomic_store_n(&rt_gc_marking, 1, __ATOMIC_SEQ_CST);
     atomic_store(&gc_cycle, 1);
     scan_roots();
@@ -1320,7 +1375,13 @@ void gc_collect(bool forced) {
   m->stop_fp = __builtin_frame_address(0);
   if (!conc) before = atomic_load(&heap_live);
   mcache_flush_all();  // while marking is on, objects allocated since the first stop are black
-  if (conc) wb_flush_all();
+  if (conc) {
+    wb_flush_all();
+    uint64_t now = atomic_load(&heap_live);
+    uint64_t a = now > mark_live0 ? now - mark_live0 : 0;
+    pace_mark_alloc = pace_mark_alloc ? (pace_mark_alloc * 3 + a) / 4 : a;
+    pace_last_alloc = a;
+  }
   int64_t t1 = os_nanotime();
   mark_roots();
   if (UNLIKELY(gc_verify)) verify_mark();
@@ -1339,6 +1400,7 @@ void gc_collect(bool forced) {
   last_live = live;
   atomic_store(&gc_alloc_mark, atomic_load(&stat_total_alloc));
   set_goal(live);
+  pace_last_end = os_nanotime();
   for (int32_t i = 0; i <= gc_nhelpers; i++) {
     gcw *w = &workers[i];
     if (w->cap > (1 << 20)) {  // drop a large mark stack
@@ -1414,6 +1476,8 @@ void gc_init(void) {
   const char *c = rt_getenv("MARMOT_GC_CONC");
   gc_conc = c && *c == '1';
 #endif
+  const char *a = rt_getenv("MARMOT_GC_ADAPT");
+  pace_adapt = !(a && *a == '0');
   if (gc_percent < 0) {
     next_gc = gc_trigger = UINT64_MAX;
   } else if (gc_conc) {

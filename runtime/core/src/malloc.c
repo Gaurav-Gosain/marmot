@@ -622,7 +622,11 @@ static void *alloc_large(uintptr_t size, uint32_t kind, const uint8_t *ptrmap,
   bool dirty = s->needzero;
   s->needzero = 0;
   spin_unlock(&heap_lock);
-  if (dirty && zero) __builtin_memset((void *)s->base, 0, size);
+  // A scanned object is cleared up to its span's end: the tail past size is
+  // scanned too, and a stale pointer there would keep garbage alive (and
+  // hide from a concurrent mark, which does not scan objects allocated
+  // during it).
+  if (dirty && zero) __builtin_memset((void *)s->base, 0, kind == RT_ALLOC_NOSCAN ? size : s->elemsize);
   if (dirty && !zero) s->needzero = 1;  // not cleared here: the next owner of these pages must
   atomic_fetch_add(&heap_live, s->elemsize);
   atomic_fetch_add(&stat_mallocs, 1);
