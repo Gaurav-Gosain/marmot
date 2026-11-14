@@ -707,6 +707,10 @@ private:
   void copyBytes(unsigned dstBase, uint64_t dstOff, unsigned srcBase, uint64_t srcOff, uint64_t n);
   void memLoad(unsigned rt, unsigned base, uint64_t size);
   void memStore(unsigned rt, unsigned base, uint64_t size);
+  // Load or store at [base + off] (base a register or sp), in one
+  // instruction when the offset fits.
+  void ldAt(unsigned rt, unsigned base, uint64_t off, uint64_t size);
+  void stAt(unsigned rt, unsigned base, uint64_t off, uint64_t size);
 
   // Values.
   uint64_t of(Value v);
@@ -748,6 +752,7 @@ private:
   void jumpIf(bool flags, Cond cc, unsigned reg, bool sense, Block *dest);
   void prologue();
   void epilogue();
+  void saveRestore(bool save);
 };
 
 void FuncGen::layout() {
@@ -773,6 +778,13 @@ void FuncGen::layout() {
       for (Value r : op.getResults()) {
         uint64_t bits;
         if (home.count(r) || constBits(r, bits) || fusedCmp.count(&op)) continue;
+        // An insertvalue whose aggregate has no other use updates it in
+        // place: chains that build a struct field by field copy nothing.
+        if (auto ins = dyn_cast<LL::InsertValueOp>(op); ins && ins.getContainer().hasOneUse())
+          if (auto it = slot.find(ins.getContainer()); it != slot.end()) {
+            slot[r] = it->second;
+            continue;
+          }
         uint64_t sz = sizeOf(r.getType());
         slot[r] = alloc(sz < 8 ? 8 : sz, std::max<uint64_t>(8, alignOf(r.getType())));
       }
@@ -807,24 +819,31 @@ void FuncGen::addrOf(unsigned rd, uint64_t off) {
   }
 }
 
-void FuncGen::ldSlot(unsigned r, uint64_t off, uint64_t size) {
+void FuncGen::ldSlot(unsigned r, uint64_t off, uint64_t size) { ldAt(r, SP, off, size); }
+void FuncGen::stSlot(unsigned r, uint64_t off, uint64_t size) { stAt(r, SP, off, size); }
+
+void FuncGen::ldAt(unsigned r, unsigned base, uint64_t off, uint64_t size) {
   unsigned ls = log2Size(size);
   if (off % size == 0 && (off >> ls) < 4096) {
-    e(ldrImm(r, SP, uint32_t(off), ls));
-    return;
+    e(ldrImm(r, base, uint32_t(off), ls));
+  } else if (off < 256) {
+    e(ldur(r, base, int32_t(off), ls));
+  } else {
+    stackAddr(RT, base, off);
+    e(ldrImm(r, RT, 0, ls));
   }
-  addrOf(RT, off);
-  e(ldrImm(r, RT, 0, ls));
 }
 
-void FuncGen::stSlot(unsigned r, uint64_t off, uint64_t size) {
+void FuncGen::stAt(unsigned r, unsigned base, uint64_t off, uint64_t size) {
   unsigned ls = log2Size(size);
   if (off % size == 0 && (off >> ls) < 4096) {
-    e(strImm(r, SP, uint32_t(off), ls));
-    return;
+    e(strImm(r, base, uint32_t(off), ls));
+  } else if (off < 256) {
+    e(stur(r, base, int32_t(off), ls));
+  } else {
+    stackAddr(RT, base, off);
+    e(strImm(r, RT, 0, ls));
   }
-  addrOf(RT, off);
-  e(strImm(r, RT, 0, ls));
 }
 
 void FuncGen::movImm(unsigned rd, uint64_t v) {
@@ -843,35 +862,36 @@ void FuncGen::movImm(unsigned rd, uint64_t v) {
 }
 
 // Copies n bytes from [srcBase + srcOff] to [dstBase + dstOff] (bases are
-// registers, sp allowed) through x14, with both addresses in x12 and x13
-// first so every access uses a small aligned offset.
+// registers, sp allowed) through x14 and x15: 16 bytes per ldp/stp, then 8,
+// 4, 2, 1. An address is used as base + offset when every access fits the
+// instructions' offsets, else it is made in x13 (source) or x12 (target).
 void FuncGen::copyBytes(unsigned dstBase, uint64_t dstOff, unsigned srcBase, uint64_t srcOff, uint64_t n) {
-  auto base = [&](unsigned out, unsigned reg, uint64_t off) {
+  constexpr unsigned X14 = 14, X15 = 15;
+  if (n > 32760) unsupported("aggregate copy over 32 KiB");
+  auto base = [&](unsigned out, unsigned reg, uint64_t &off) -> unsigned {
+    if (off % 8 == 0 && off + n <= 32760) return reg;
     if (reg == SP) {
       addrOf(out, off);
-      return;
-    }
-    if (off == 0) {
-      e(movReg(out, reg));
     } else if (off < 4096) {
       e(addImm(out, reg, uint32_t(off)));
     } else {
       movImm(out, off);
       e(addReg(out, out, reg));
     }
+    off = 0;
+    return out;
   };
-  base(RA, srcBase, srcOff);  // x13 first: dstBase may be x13 only if it is RA, never the case
-  base(R4, dstBase, dstOff);
+  unsigned sb = base(RA, srcBase, srcOff);  // x13 first: dstBase is never x13
+  unsigned db = base(R4, dstBase, dstOff);
   uint64_t i = 0;
-  for (; i + 8 <= n; i += 8) {
-    e(ldrImm(14, RA, uint32_t(i), 3));
-    e(strImm(14, R4, uint32_t(i), 3));
+  for (; i + 16 <= n && srcOff + i + 8 <= 504 && dstOff + i + 8 <= 504; i += 16) {
+    e(ldpOff(X14, X15, sb, int32_t(srcOff + i)));
+    e(stpOff(X14, X15, db, int32_t(dstOff + i)));
   }
-  for (uint64_t sz = 4; sz >= 1; sz /= 2)
+  for (uint64_t sz = 8; sz >= 1; sz /= 2)
     for (; i + sz <= n; i += sz) {
-      unsigned ls = log2Size(sz);
-      e(ldrImm(14, RA, uint32_t(i), ls));
-      e(strImm(14, R4, uint32_t(i), ls));
+      ldAt(X14, sb, srcOff + i, sz);
+      stAt(X14, db, dstOff + i, sz);
     }
 }
 
@@ -948,15 +968,7 @@ void FuncGen::prologue() {
       if (frameSize & 0xFFF) e(subImm(SP, SP, uint32_t(frameSize & 0xFFF)));
     }
   }
-  // Callee saved registers that hold values.
-  {
-    uint64_t at = saveArea;
-    for (unsigned r = 19; r <= 28; r++)
-      if (calleeUsed >> r & 1) {
-        stSlot(r, at, 8);
-        at += 8;
-      }
-  }
+  saveRestore(true);
   // Incoming arguments, split as LLVM splits them, into the entry block's
   // argument slots. Stack arguments start at the caller's sp, fp + 16.
   if (sret) stSlot(X8, sretSlot, 8);
@@ -964,27 +976,29 @@ void FuncGen::prologue() {
   uint64_t stackSize = 0;
   for (const ArgLoc &l : assignArgs(TypeRange(fn.getFunctionType().getParams()), stackSize)) {
     BlockArgument a = params[l.arg];
+    unsigned r = R1;
     if (l.reg < 0) {
-      stackAddr(R2, FP, 16 + l.stack);
-      memLoad(R1, R2, sizeOf(l.t));
+      ldAt(R1, FP, 16 + l.stack, sizeOf(l.t));
     } else if (l.fp) {
       e(fmovToGp(R1, unsigned(l.reg), l.t.isF64()));
       if (l.t.isF32()) e(uxtw(R1, R1));
+    } else if (intWidth(l.t) >= 64) {
+      r = unsigned(l.reg);  // as it is: no other bits to clear
     } else {
       e(movReg(R1, unsigned(l.reg)));
     }
-    if (!l.fp) normalize(R1, l.t);  // an i1's other bits are undefined
-    if (isAggregate(a.getType())) {
-      addrOf(R2, of(a) + l.off);
-      memStore(R1, R2, sizeOf(l.t));
-    } else {
-      putRaw(R1, a);
-    }
+    if (!l.fp) normalize(r, l.t);  // an i1's other bits are undefined
+    if (isAggregate(a.getType()))
+      stAt(r, SP, of(a) + l.off, sizeOf(l.t));
+    else
+      putRaw(r, a);
   }
 }
 
 void FuncGen::stackAddr(unsigned rd, unsigned base, uint64_t off) {
-  if (off < 4096) {
+  if (base == SP) {
+    addrOf(rd, off);
+  } else if (off < 4096) {
     e(addImm(rd, base, uint32_t(off)));
   } else {
     movImm(rd, off);
@@ -992,13 +1006,26 @@ void FuncGen::stackAddr(unsigned rd, unsigned base, uint64_t off) {
   }
 }
 
-void FuncGen::epilogue() {
-  uint64_t at = saveArea;
+// The callee saved registers that hold values, saved (or restored) two at a
+// time where the offset allows.
+void FuncGen::saveRestore(bool save) {
+  std::vector<unsigned> regs;
   for (unsigned r = 19; r <= 28; r++)
-    if (calleeUsed >> r & 1) {
-      ldSlot(r, at, 8);
-      at += 8;
-    }
+    if (calleeUsed >> r & 1) regs.push_back(r);
+  uint64_t at = saveArea;
+  size_t i = 0;
+  for (; i + 2 <= regs.size() && at + 8 <= 504; i += 2, at += 16)
+    e(save ? stpOff(regs[i], regs[i + 1], SP, int32_t(at)) : ldpOff(regs[i], regs[i + 1], SP, int32_t(at)));
+  for (; i < regs.size(); i++, at += 8) {
+    if (save)
+      stSlot(regs[i], at, 8);
+    else
+      ldSlot(regs[i], at, 8);
+  }
+}
+
+void FuncGen::epilogue() {
+  saveRestore(false);
   e(movSp(SP, FP));
   e(ldpPost(FP, LR, SP, 16));
   e(ret());
@@ -1059,8 +1086,7 @@ void FuncGen::emitCall(LL::CallOp call) {
   auto load = [&](unsigned r, const ArgLoc &l) {
     Value v = args[l.arg];
     if (isAggregate(v.getType())) {
-      addrOf(R2, of(v) + l.off);
-      memLoad(r, R2, sizeOf(l.t));
+      ldAt(r, SP, of(v) + l.off, sizeOf(l.t));
     } else if (mg.signExtArg(call, l.arg)) {
       getSigned(r, v);
     } else {
@@ -1074,8 +1100,7 @@ void FuncGen::emitCall(LL::CallOp call) {
     if (l.reg >= 0) {
       e(fmovFromGp(unsigned(l.reg), R1, l.t.isF64()));
     } else {
-      addrOf(R2, l.stack);
-      memStore(R1, R2, sizeOf(l.t));
+      stAt(R1, SP, l.stack, sizeOf(l.t));
     }
   }
   // Indirect callee next (into x17, not an argument register).
@@ -1119,16 +1144,17 @@ void FuncGen::emitCall(LL::CallOp call) {
     if (isFloat(t)) {
       e(fmovToGp(R1, nfp++, t.isF64()));
       if (t.isF32()) e(uxtw(R1, R1));
+    } else if (intWidth(t) >= 64) {
+      stAt(ngp++, SP, of(r) + off, sizeOf(t));  // an aggregate: the register as it is
+      continue;
     } else {
       e(movReg(R1, ngp++));
       normalize(R1, t);
     }
-    if (isAggregate(r.getType())) {
-      addrOf(R2, of(r) + off);
-      memStore(R1, R2, sizeOf(t));
-    } else {
+    if (isAggregate(r.getType()))
+      stAt(R1, SP, of(r) + off, sizeOf(t));
+    else
       putRaw(R1, r);
-    }
   }
 }
 
@@ -1145,8 +1171,11 @@ void FuncGen::emitReturn(LL::ReturnOp ret) {
     for (auto [off, t] : parts) {
       if (isFloat(t) ? nfp >= 8 : ngp >= 8) unsupported("result returned in memory");
       if (isAggregate(v.getType())) {
-        addrOf(R2, of(v) + off);
-        memLoad(R1, R2, sizeOf(t));
+        if (!isFloat(t)) {
+          ldAt(ngp++, SP, of(v) + off, sizeOf(t));
+          continue;
+        }
+        ldAt(R1, SP, of(v) + off, sizeOf(t));
       } else if (ModuleGen::signExtResult(fn)) {
         getSigned(R1, v);
       } else {
@@ -1331,7 +1360,9 @@ void FuncGen::emitOp(Operation &op) {
         if (!isAggregate(t) && sizeOf(t) <= 8) return;  // made at each use
         uint64_t n = sizeOf(t);
         n = std::max<uint64_t>((n + 7) & ~uint64_t(7), 8);
-        for (uint64_t i = 0; i < n; i += 8) stSlot(XZR, of(z.getResult()) + i, 8);
+        uint64_t at = of(z.getResult()), i = 0;
+        for (; i + 16 <= n && at + i + 8 <= 504; i += 16) e(stpOff(XZR, XZR, SP, int32_t(at + i)));
+        for (; i < n; i += 8) stSlot(XZR, at + i, 8);
       })
       .Case<LL::AddressOfOp>([&](auto a) {
         std::string name = machoName(a.getGlobalName());
@@ -1518,33 +1549,34 @@ void FuncGen::emitOp(Operation &op) {
       })
       .Case<LL::LoadOp>([&](auto l) {
         Type t = l.getType();
-        if (unsigned ar = src(l.getAddr(), R2); ar != R2) e(movReg(R2, ar));
+        unsigned ar = src(l.getAddr(), R2);
         if (isAggregate(t)) {
-          copyBytes(SP, of(l.getResult()), R2, 0, sizeOf(t));
+          copyBytes(SP, of(l.getResult()), ar, 0, sizeOf(t));
           return;
         }
         uint64_t sz = sizeOf(t);
         unsigned d = dst(l.getResult(), R1);
         if (l.getOrdering() != LL::AtomicOrdering::not_atomic)
-          e(ldar(d, R2, log2Size(sz)));
+          e(ldar(d, ar, log2Size(sz)));
         else
-          memLoad(d, R2, sz);
+          memLoad(d, ar, sz);
         if (intWidth(t) == 1) e(ubfx0(d, d, 1));
         putRaw(d, l.getResult());
       })
       .Case<LL::StoreOp>([&](auto s) {
         Type t = s.getValue().getType();
-        if (unsigned ar = src(s.getAddr(), R2); ar != R2) e(movReg(R2, ar));
+        unsigned ar = src(s.getAddr(), R2);
         if (isAggregate(t)) {
-          copyBytes(R2, 0, SP, of(s.getValue()), sizeOf(t));
+          copyBytes(ar, 0, SP, of(s.getValue()), sizeOf(t));
           return;
         }
-        unsigned v = src(s.getValue(), R1);
+        uint64_t bits;
+        unsigned v = constBits(s.getValue(), bits) && bits == 0 ? XZR : src(s.getValue(), R1);
         uint64_t sz = sizeOf(t);
         if (s.getOrdering() != LL::AtomicOrdering::not_atomic)
-          e(stlr(v, R2, log2Size(sz)));
+          e(stlr(v, ar, log2Size(sz)));
         else
-          memStore(v, R2, sz);
+          memStore(v, ar, sz);
       })
       .Case<LL::AllocaOp>([&](auto a) {
         unsigned d = dst(a.getResult(), R1);
@@ -1613,23 +1645,22 @@ void FuncGen::emitOp(Operation &op) {
           copyBytes(SP, of(x.getResult()), SP, src, std::max<uint64_t>((sizeOf(t) + 7) & ~uint64_t(7), 8));
           return;
         }
-        addrOf(R2, src);
-        memLoad(R1, R2, sizeOf(t));
-        putRaw(R1, x.getResult());
+        unsigned d = dst(x.getResult(), R1);
+        ldAt(d, SP, src, sizeOf(t));
+        putRaw(d, x.getResult());
       })
       .Case<LL::InsertValueOp>([&](auto ins) {
         Type at = ins.getType();
         uint64_t sz = std::max<uint64_t>((sizeOf(at) + 7) & ~uint64_t(7), 8);
-        copyBytes(SP, of(ins.getResult()), SP, of(ins.getContainer()), sz);
+        if (of(ins.getResult()) != of(ins.getContainer()))  // else updated in place (layout)
+          copyBytes(SP, of(ins.getResult()), SP, of(ins.getContainer()), sz);
         auto [off, t] = elementAt(at, ins.getPosition());
         uint64_t dst = of(ins.getResult()) + off;
         if (isAggregate(t)) {
           copyBytes(SP, dst, SP, of(ins.getValue()), sizeOf(t));
           return;
         }
-        get(R1, ins.getValue());
-        addrOf(R2, dst);
-        memStore(R1, R2, sizeOf(t));
+        stAt(src(ins.getValue(), R1), SP, dst, sizeOf(t));
       })
       .Case<LL::CallOp>([&](auto c) { emitCall(c); })
       .Case<LL::MemcpyOp, LL::MemmoveOp>([&](auto m) {
@@ -1690,14 +1721,12 @@ void FuncGen::emitOp(Operation &op) {
         // Result {old, success}.
         uint64_t res = of(x.getResult());
         auto st = cast<LL::LLVMStructType>(x.getType());
-        addrOf(RA, res + fieldOffset(st, 0));
-        memStore(R1, RA, sizeOf(t));
+        stAt(R1, SP, res + fieldOffset(st, 0), sizeOf(t));
         normalize(R1, t);
         normalize(R4, t);
         e(cmpReg(R1, R4));
         e(cset(R1, EQ));
-        addrOf(RA, res + fieldOffset(st, 1));
-        memStore(R1, RA, 1);
+        stAt(R1, SP, res + fieldOffset(st, 1), 1);
       })
       .Case<LL::FenceOp>([&](auto) { e(dmbIsh()); })
       .Case<LL::UnreachableOp>([&](auto) { e(brk(1)); })
