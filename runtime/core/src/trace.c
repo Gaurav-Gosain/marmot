@@ -1,13 +1,15 @@
 // trace.c: MARMOT_TRACE=wakeups=PATH, a record of every time an M wakes
 // from a blocking sleep, for `marmot prof -wakeups`.
 //
-// PATH gets a 32-byte header ("MRMTWAKE", u32 version 1, u32 pid, u64 the
-// image's load address, u64 os_nanotime at start) and then one 48-byte
-// record per wakeup, little endian: u64 time (os_nanotime), u8 cause, 3
-// bytes of padding, u32 the goroutine made runnable (0: none), u64 pc[3],
-// u64 aux. pc are the three frames above the runtime function where the
-// cause began (a timer made, a goroutine readied), from the frame pointer
-// chain, 0 where it ends. Each record is one write with O_APPEND, so a
+// PATH gets a 40-byte header ("MRMTWAKE", u32 version 2, u32 pid, u64 the
+// image's load address, u64 os_nanotime at start, u32 nframes, u32 0) and
+// then one record per wakeup, little endian: u64 time (os_nanotime), u8
+// cause, 3 bytes of padding, u32 the goroutine made runnable (0: none),
+// u64 pc[nframes], u64 aux. pc are the frames above the runtime function
+// where the cause began (a timer made, a goroutine readied), from the
+// frame pointer chain, 0 where it ends; a timer keeps the frames of where
+// the program made it, also when it re-arms itself from the timer
+// goroutine. Each record is one write with O_APPEND, so a
 // crash keeps the records written so far. Unset, the hooks cost one load
 // and a branch.
 
@@ -55,12 +57,13 @@ void trace_init(void) {
     rt_print("marmot: MARMOT_TRACE: cannot open the trace file\n");
     return;
   }
-  uint8_t h[32];
+  uint8_t h[40] = {0};
   __builtin_memcpy(h, "MRMTWAKE", 8);
-  put32(h + 8, 1);
+  put32(h + 8, 2);
   put32(h + 12, (uint32_t)getpid());
   put64(h + 16, image_base());
   put64(h + 24, (uint64_t)os_nanotime());
+  put32(h + 32, TRACE_FRAMES);
   if (write(fd, h, sizeof h) != (ssize_t)sizeof h) {
     close(fd);
     return;
@@ -68,11 +71,11 @@ void trace_init(void) {
   trace_fd = fd;
 }
 
-// The three frames above the caller of the function that calls this one:
-// fp is that function's frame (__builtin_frame_address(0)).
-NOINLINE void trace_frames(void *fp, uint64_t pc[3]) {
+// The frames above the function that calls this one: fp is that
+// function's frame (__builtin_frame_address(0)).
+NOINLINE void trace_frames(void *fp, uint64_t pc[TRACE_FRAMES]) {
   uintptr_t f = (uintptr_t)fp;
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < TRACE_FRAMES; i++) {
     pc[i] = 0;
     if (!f || (f & 7)) continue;
     uintptr_t next = ((uintptr_t *)f)[0];
@@ -86,12 +89,12 @@ NOINLINE void trace_frames(void *fp, uint64_t pc[3]) {
 }
 
 void trace_wake_record(const trace_why *w) {
-  uint8_t r[48] = {0};
+  uint8_t r[16 + 8 * TRACE_FRAMES + 8] = {0};
   put64(r, (uint64_t)os_nanotime());
   r[8] = w->cause;
   put32(r + 12, w->goid);
-  for (int i = 0; i < 3; i++) put64(r + 16 + 8 * i, w->pc[i]);
-  put64(r + 40, w->aux);
+  for (int i = 0; i < TRACE_FRAMES; i++) put64(r + 16 + 8 * i, w->pc[i]);
+  put64(r + 16 + 8 * TRACE_FRAMES, w->aux);
   ssize_t n = write(trace_fd, r, sizeof r);
   (void)n;
 }

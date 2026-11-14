@@ -485,7 +485,6 @@ static void acquirep(rt_m *m, rt_p *p) {
   m->mcache = p->mcache;
   __atomic_store_n(&p->m, m, __ATOMIC_RELAXED);  // stop_the_world reads it without sched.lock
   atomic_store(&p->status, P_RUNNING);
-  sysmon_resume();
 }
 
 static rt_p *releasep(rt_m *m) {
@@ -566,7 +565,12 @@ static void startm(rt_p *p, bool spinning) {
     m->nextp = p;
     if (trace_on()) {
       rt_m *me = getm();
-      m->wake = me && me->wake_next.cause ? me->wake_next : (trace_why){WAKE_SCHED, 0, {0, 0, 0}, 0};
+      if (me && me->wake_next.cause) {
+        m->wake = me->wake_next;
+      } else {
+        m->wake = (trace_why){.cause = WAKE_SCHED, .aux = 2};  // 2: an M started by the scheduler
+        trace_frames(__builtin_frame_address(0), m->wake.pc);
+      }
     }
     spin_unlock(&sched.lock);
     notewakeup(&m->park);
@@ -640,7 +644,11 @@ void sched_timer_added(int64_t when) {
     notewakeup(&tm->park);
     return;
   }
-  bool none = tm == NULL;
+  // No M waits for timers. When this M is parking its goroutine with
+  // nothing else to run, it goes idle next and waits for this timer
+  // itself: starting another M for it would cost a wakeup per timer.
+  rt_m *me = getm();
+  bool none = tm == NULL && !(me && me->in_park && me->p && runqempty(me->p) && sched.runqsize == 0);
   spin_unlock(&sched.lock);
   if (none) wakep();
 }
@@ -1031,7 +1039,7 @@ stop:
       if (atomic_load(&netpoll_waiters) > 0 && !atomic_load(&sched.gcwaiting)) {
         int32_t n = netpoll_h(timeout);
         if (trace_on()) {
-          trace_why w = {WAKE_NETPOLL, 0, {0, 0, 0}, (uint64_t)n};
+          trace_why w = {.cause = WAKE_NETPOLL, .aux = (uint64_t)n};
           if (n <= 0 && timeout >= 0) timers_due_why(&w);  // the timeout: the next timer
           trace_wake_record(&w);
         }
@@ -1170,7 +1178,9 @@ static void sched_req(rt_m *m, rt_g *g) {
         // count never reaches 0 for a goroutine that is already runnable.
         if (grp && durable) atomic_store_explicit(&g->durable, true, memory_order_release);
         atomic_store_explicit(&g->status, G_WAITING, memory_order_release);
+        m->in_park = true;
         if (f) f(arg);
+        m->in_park = false;
         if (grp && durable) group_leave_running(grp);
         break;
       }
@@ -1413,8 +1423,12 @@ RT_API void rt_ready(rt_g *g) {
   rt_m *m = getm();
   bool why = m && trace_on() && m->wake_next.cause == 0;  // a timer may have set it
   if (why) {
-    m->wake_next = (trace_why){WAKE_READY, (uint32_t)g->id, {0, 0, 0}, 0};
-    trace_frames(__builtin_frame_address(0), m->wake_next.pc);
+    const uint64_t *tf = timer_firing_frames();
+    m->wake_next = (trace_why){.cause = tf ? WAKE_TIMER : WAKE_READY, .goid = (uint32_t)g->id};
+    if (tf)
+      __builtin_memcpy(m->wake_next.pc, tf, sizeof m->wake_next.pc);
+    else
+      trace_frames(__builtin_frame_address(0), m->wake_next.pc);
   }
   if (m) m->locks++;
   rt_p *p = m ? m->p : NULL;
@@ -1426,7 +1440,9 @@ RT_API void rt_ready(rt_g *g) {
     spin_unlock(&sched.lock);
   }
   if (m) m->locks--;
-  wakep();
+  // Readied by a timer this M runs from the scheduler: this M runs it next,
+  // another M started for it would find nothing.
+  if (!m || !m->in_timers) wakep();
   if (why) m->wake_next.cause = 0;
 }
 
@@ -1528,6 +1544,7 @@ RT_API void rt_entersyscall(void) {
   // starts meanwhile still sees P_RUNNING at first, finds P_SYSCALL on its
   // next round (every 50 us) and takes the P then; nothing waits on us.
   atomic_store_explicit(&p->status, P_SYSCALL, memory_order_release);
+  sysmon_resume();  // a sleeping sysmon hands this P off if the call blocks
   if (atomic_load_explicit(&sched.gcwaiting, memory_order_relaxed)) {
     spin_lock(&sched.lock);
     uint32_t s = P_SYSCALL;
@@ -1797,8 +1814,9 @@ void sysmon_kick(void) {
   os_futex_wake(&sysmon_wake, false);
 }
 
-// Set while sysmon sleeps with nothing to watch; the first P to start
-// running wakes it (acquirep).
+// Set while sysmon sleeps with nothing to watch; the first system call
+// wakes it (rt_entersyscall): handing off a P stuck in a call is its job.
+// Running goroutines check timers and the poller when they schedule.
 static _Atomic uint32_t sysmon_sleeping;
 
 static void sysmon_resume(void) {
@@ -1823,19 +1841,16 @@ static void sysmon(void *arg) {
   for (;;) {
     uint32_t w = atomic_load(&sysmon_wake);
     int64_t ns = (int64_t)delay * 1000;
-    // Idle for a while and nothing to watch: sleep until a P runs again, a
-    // signal arrives or a timer no M waits for is due. sysmon_sleeping is
+    // Idle for a while and nothing to watch: sleep until a system call
+    // starts or a signal arrives. sysmon_sleeping is
     // set before the check, and acquirep reads it after it took its P.
     bool idle_gc = false;  // sleeping to start the idle collection
     if (idle > 50 && sysmon_nothing()) {
       atomic_store(&sysmon_sleeping, 1);
       if (sysmon_nothing()) {
-        int64_t next = atomic_load(&timer_next_when);
+        // No timer deadline: with every P idle, an idle M always waits for
+        // the next timer (the timer M, or the poller's timeout).
         ns = -1;
-        if (next != INT64_MAX && sched.timer_m == NULL) {
-          ns = next - os_nanotime();
-          if (ns < 0) ns = 0;
-        }
         // Allocated since the last collection: collect once after a second
         // of idleness, and return the memory.
         if (gc_idle_wanted() && (ns < 0 || ns > 1000000000)) {
@@ -1848,7 +1863,7 @@ static void sysmon(void *arg) {
     }
     os_futex_wait(&sysmon_wake, w, ns);
     if (trace_on() && (ns < 0 || ns >= 1000000))
-      trace_wake_record(&(trace_why){WAKE_SCHED, 0, {0, 0, 0}, (uint64_t)(atomic_load(&sysmon_wake) != w)});
+      trace_wake_record(&(trace_why){.cause = WAKE_SCHED, .aux = (uint64_t)(atomic_load(&sysmon_wake) != w)});
     if (idle_gc && atomic_load(&sysmon_wake) == w && sysmon_nothing()) {
       atomic_store(&sysmon_sleeping, 0);
       gc_idle_start();

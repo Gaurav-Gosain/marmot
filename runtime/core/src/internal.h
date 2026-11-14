@@ -69,15 +69,20 @@ typedef struct rt_timer rt_timer;
 
 enum { WAKE_TIMER = 1, WAKE_READY, WAKE_NETPOLL, WAKE_GC, WAKE_SIGNAL, WAKE_SCHED, WAKE_OTHER };
 // Why an M woke: a cause, the goroutine made runnable, where it began.
+#define TRACE_FRAMES 8
 typedef struct trace_why {
   uint8_t cause;
   uint32_t goid;
-  uint64_t pc[3];
+  uint64_t pc[TRACE_FRAMES];
   uint64_t aux;
 } trace_why;
 extern int32_t trace_fd;  // -1: tracing off
 void trace_init(void);
-void trace_frames(void *fp, uint64_t pc[3]);
+void trace_frames(void *fp, uint64_t pc[TRACE_FRAMES]);
+// While a timer's function runs on the timer goroutine, the frames where
+// that timer was made (else NULL): a ticker's re-arm and a goroutine its
+// send readies point at the program's timer, not at the timer goroutine.
+const uint64_t *timer_firing_frames(void);
 void trace_wake_record(const trace_why *w);
 static inline bool trace_on(void) { return __builtin_expect(trace_fd >= 0, 0); }
 // The timer due first (its creation frames), for a wakeup by timeout.
@@ -275,6 +280,8 @@ struct rt_m {
   trace_why wake;           // why this M was woken (set by the waker, MARMOT_TRACE)
   trace_why wake_next;      // why the M this thread wakes next is woken
   bool spinning;            // looking for work
+  bool in_timers;           // running timer functions (timers_check)
+  bool in_park;             // running a parking goroutine's unlock function
   bool idle;                // on the idle M list
   note park;
   // Scheduling request from curg.

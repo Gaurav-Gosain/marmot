@@ -23,7 +23,7 @@ struct rt_timer {
   uint8_t state;
   uint8_t inl;      // internal timer: fn runs inside timers_check
   _Atomic uint8_t running;  // internal timer: fn executing
-  uint64_t pc[3];           // where it was made (MARMOT_TRACE only)
+  uint64_t pc[TRACE_FRAMES];  // where it was made (MARMOT_TRACE only)
 };
 
 _Atomic int64_t timer_next_when = INT64_MAX;
@@ -117,6 +117,15 @@ static void timer_add(rt_timer *t) {
 
 static void tlock_unlock(void *unused) { spin_unlock(&tlock); }
 
+// The frames of the timer whose function timerproc runs (MARMOT_TRACE).
+static uint64_t firing_pc[TRACE_FRAMES];
+static bool firing;
+
+const uint64_t *timer_firing_frames(void) {
+  rt_m *m = getm();
+  return firing && m && m->curg == timer_g ? firing_pc : NULL;
+}
+
 static void timerproc(void *unused) {
   for (;;) {
     spin_lock(&tlock);
@@ -132,8 +141,11 @@ static void timerproc(void *unused) {
     t->state = T_DONE;
     void (*fn)(void *) = t->fn;
     void *arg = t->arg;
+    if (trace_on()) __builtin_memcpy(firing_pc, t->pc, sizeof firing_pc);
     spin_unlock(&tlock);
+    firing = trace_on();
     fn(arg);
+    firing = false;
   }
 }
 
@@ -167,28 +179,32 @@ int64_t timers_check(int64_t now) {
   int64_t next = tlen ? theap[0]->when : -1;
   spin_unlock(&tlock);
   rt_m *m = trace_on() ? getm() : NULL;
+  rt_m *me = getm();
+  if (me) me->in_timers = true;
   while (ready) {
     rt_timer *t = ready;
     ready = t->next;
     t->next = NULL;
-    if (m) m->wake_next = (trace_why){WAKE_TIMER, 0, {t->pc[0], t->pc[1], t->pc[2]}, 0};
+    if (m) {
+      m->wake_next = (trace_why){.cause = WAKE_TIMER};
+      __builtin_memcpy(m->wake_next.pc, t->pc, sizeof t->pc);
+    }
     t->fn(t->arg);
     atomic_store(&t->running, 0);
   }
   if (wake) {
-    if (m) m->wake_next = (trace_why){WAKE_TIMER, 0, {0, 0, 0}, 0};
+    if (m) m->wake_next = (trace_why){.cause = WAKE_TIMER};
     rt_ready(timer_g);
   }
+  if (me) me->in_timers = false;
   if (m) m->wake_next.cause = 0;
   return next;
 }
 
 void timers_due_why(trace_why *w) {
-  *w = (trace_why){WAKE_TIMER, 0, {0, 0, 0}, 0};
+  *w = (trace_why){.cause = WAKE_TIMER};
   spin_lock(&tlock);
-  if (tlen) {
-    for (int i = 0; i < 3; i++) w->pc[i] = theap[0]->pc[i];
-  }
+  if (tlen) __builtin_memcpy(w->pc, theap[0]->pc, sizeof w->pc);
   spin_unlock(&tlock);
 }
 
@@ -212,7 +228,13 @@ RT_API void *rt_timer_start(int64_t when, void (*fn)(void *), void *arg) {
   t->fn = fn;
   t->arg = arg;
   t->idx = -1;
-  if (trace_on()) trace_frames(__builtin_frame_address(0), t->pc);
+  if (trace_on()) {
+    const uint64_t *tf = timer_firing_frames();  // re-armed from a timer: its frames
+    if (tf)
+      __builtin_memcpy(t->pc, tf, sizeof t->pc);
+    else
+      trace_frames(__builtin_frame_address(0), t->pc);
+  }
   timer_add(t);
   return t;
 }
