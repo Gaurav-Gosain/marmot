@@ -864,7 +864,14 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback) 
   std::vector<std::string> out(k);
   for (unsigned g = 0; g < k; ++g) {
     ValueToValueMapTy vmap;
+    // The appending arrays (llvm.used, llvm.compiler.used, llvm.global_ctors)
+    // go whole to group 0, beside every linkonce copy: by its name's hash a
+    // used list landed in another group, where it is dropped below, and the
+    // linkonce_odr functions only it kept (thunks the front end lists there)
+    // were deleted from every group.
     std::unique_ptr<Module> part = CloneModule(m, vmap, [&](const GlobalValue *gv) {
+      if (auto *v = dyn_cast<GlobalVariable>(gv); v && v->hasAppendingLinkage())
+        return g == 0;
       return copyable(*gv) || groupOf(*gv) == g || imports[g].contains(gv);
     });
     for (const GlobalValue *gv : imports[g])
