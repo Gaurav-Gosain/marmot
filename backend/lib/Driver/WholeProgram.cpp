@@ -1364,7 +1364,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   // bytes of text fit, and give them back.
   // A job of n bytes of text fits when the jobs in flight and it fit the
   // admission budget and the process memory now, plus its own estimate,
-  // stays under 85% of the limit (what the budgets do not count, such as
+  // stays under 75% of the limit (what the budgets do not count, such as
   // the bitcode and summaries of every module, grows with the program; one
   // job always runs). Called with admitMu held; mem is processMemory().
   auto fits = [&](uint64_t n, uint64_t mem) {
@@ -1377,7 +1377,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       return false;
     // The jobs in flight count at their whole estimate: one admitted just
     // before has not grown yet (two jobs started together passed 3 GB).
-    return !memLimit || mem + (admitted + n) * jobCost <= memLimit / 100 * 85;
+    return !memLimit || mem + (admitted + n) * jobCost <= memLimit / 100 * 75;
   };
   auto admitWait = [&](uint64_t n) {
     std::unique_lock<std::mutex> l(admitMu);
