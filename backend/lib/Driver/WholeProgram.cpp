@@ -1334,11 +1334,11 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
                      [&](unsigned a, unsigned b) { return inputSize[a] > inputSize[b]; });
   }
   // Memory follows input text: a module of tuios with 31 MB of text peaked
-  // at 927 MB compiling alone at -O 2 (30 times), and a parse alone takes
-  // about 6 times its text. The two budgets below keep their estimate
+  // at 927 MB compiling alone at -O 2 (30 times), and a 58 MB module took
+  // 703 MB parsed with its Go passes run (12 times). The two budgets below keep their estimate
   // under two thirds of MARMOT_MAX_MEM_MB (0: no limit; four fifths
   // peaked at 3.5 GB on a cold -O 2 build of tuios).
-  constexpr uint64_t kCompileCost = 30, kParseCost = 6;
+  constexpr uint64_t kCompileCost = 30, kParseCost = 12;
   uint64_t memLimit = 3072ull << 20;
   if (const char *e = std::getenv("MARMOT_MAX_MEM_MB"))
     memLimit = std::strtoull(e, nullptr, 10) << 20;
