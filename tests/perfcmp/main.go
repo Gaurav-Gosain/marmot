@@ -37,8 +37,8 @@ var (
 	flModes = flag.String("modes", "dev,release", "build modes: dev, O2, release")
 	flRuns  = flag.Int("runs", 7, "runs per program and side")
 	flProgs = flag.String("programs", "", "comma separated programs (default: hello, the bench subset, sketch, tuios)")
-	flTuios = flag.String("tuios", ".work/lead/tuios-src", "tuios source tree (holds sketch/ too)")
-	flWork  = flag.String("work", "", "directory for the binaries (default a new one under .work/perfcmp)")
+	flTuios = flag.String("tuios", envOr("MARMOT_TUIOS_SRC", ".work/lead/tuios-src"), "tuios source tree (holds sketch/ too; default $MARMOT_TUIOS_SRC)")
+	flWork  = flag.String("work", "", "the binaries go in a new directory inside this one (default .work/perfcmp)")
 	flKeep  = flag.Bool("keep", false, "keep the binaries")
 	flWait  = flag.Duration("wait", 2*time.Hour, "how long to wait for the timing lock and a load below half the CPUs before giving up (0: no wait, no lock)")
 )
@@ -75,12 +75,15 @@ func main() {
 	check(err)
 	sides := []side{{"A", abs(*flA), fields(*flAEnv)}, {"B", abs(*flB), fields(*flBEnv)}}
 	progs := programs(repo)
-	work := *flWork
-	if work == "" {
-		check(os.MkdirAll(filepath.Join(repo, ".work", "perfcmp"), 0o755))
-		work, err = os.MkdirTemp(filepath.Join(repo, ".work", "perfcmp"), "run-")
-		check(err)
+	// A -work directory is the caller's: the binaries go in a new directory inside it, and
+	// only that one is removed.
+	parent := *flWork
+	if parent == "" {
+		parent = filepath.Join(repo, ".work", "perfcmp")
 	}
+	check(os.MkdirAll(parent, 0o755))
+	work, err := os.MkdirTemp(parent, "run-")
+	check(err)
 	if !*flKeep {
 		defer os.RemoveAll(work)
 	}
@@ -189,6 +192,8 @@ func programs(repo string) []program {
 	}
 	if _, err := os.Stat(filepath.Join(tu, "cmd", "tuios")); err == nil {
 		all = append(all, program{name: "tuios", dir: tu, pkg: "./cmd/tuios", args: []string{"--version"}, kind: "startup"})
+	} else {
+		fmt.Fprintf(os.Stderr, "perfcmp: no tuios tree at %s: sketch and tuios are left out (set -tuios or MARMOT_TUIOS_SRC)\n", tu)
 	}
 	if *flProgs == "" {
 		return all
@@ -310,6 +315,13 @@ func ms(d time.Duration) string { return fmt.Sprintf("%.1fms", float64(d)/1e6) }
 func mb(n int64) string         { return fmt.Sprintf("%.1fM", float64(n)/(1<<20)) }
 
 func fields(s string) []string { return strings.Fields(s) }
+
+func envOr(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}
 
 func abs(p string) string {
 	a, err := filepath.Abs(p)
