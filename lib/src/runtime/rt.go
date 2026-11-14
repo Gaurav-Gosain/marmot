@@ -145,6 +145,9 @@ func rt_sleep(ns int64)
 //go:linkname rt_timer_start rt_timer_start
 func rt_timer_start(when int64, fn unsafe.Pointer, arg unsafe.Pointer) unsafe.Pointer
 
+//go:linkname rt_timer_reset rt_timer_reset
+func rt_timer_reset(h unsafe.Pointer, when int64, fn unsafe.Pointer, arg unsafe.Pointer, seq uintptr) unsafe.Pointer
+
 //go:linkname rt_timer_stop rt_timer_stop
 func rt_timer_stop(timer unsafe.Pointer) int32
 

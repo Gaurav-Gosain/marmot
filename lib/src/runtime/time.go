@@ -54,22 +54,15 @@ type timeTimer struct {
 	period int64 // > 0 for tickers
 	f      func(arg any, seq uintptr, delta int64)
 	arg    any
-	seq    uintptr // incremented on every stop and reset
-	handle unsafe.Pointer
-	ch     *hchan // the timer channel, nil for AfterFunc timers
+	seq    uintptr        // incremented on every stop and reset
+	handle unsafe.Pointer // the C core timer while armed, else nil
+	ct     unsafe.Pointer // the C core timer kept for the next arming (reset allocates nothing)
+	ch     *hchan         // the timer channel, nil for AfterFunc timers
 	// bubble is the testing/synctest bubble the timer was made in; its
 	// pending firing is an entry of the bubble's fake clock, not a C core
 	// timer.
 	bubble        *bubble
 	bubblePending bool
-}
-
-// timerToken is the argument of one rt_timer_start: the timer and the seq
-// value it was started with, so that late firings of stopped timers are
-// ignored.
-type timerToken struct {
-	t   *timeTimer
-	seq uintptr
 }
 
 //go:linkname time_newTimer time.newTimer
@@ -97,8 +90,10 @@ func (t *timeTimer) start(when, period int64) {
 		unlock(&b.mu)
 		return
 	}
-	tok := &timerToken{t: t, seq: t.seq}
-	t.handle = rt_timer_start(when, lazyPC(&timerFirePC, timerFireCode), unsafe.Pointer(tok))
+	// The C core passes the seq of this arming back to timerFire, so a late
+	// firing of an earlier arming is ignored.
+	t.ct = rt_timer_reset(t.ct, when, lazyPC(&timerFirePC, timerFireCode), unsafe.Pointer(t), t.seq)
+	t.handle = t.ct
 }
 
 func timerFireCode() unsafe.Pointer {
@@ -130,12 +125,12 @@ func (t *timeTimer) stop() bool {
 	return pending
 }
 
-// timerFire runs on a C core system goroutine when a timer expires.
-func timerFire(p unsafe.Pointer) {
-	tok := (*timerToken)(p)
-	t := tok.t
+// timerFire runs on a C core system goroutine when a timer expires, with
+// the seq of the arming that fired.
+func timerFire(p unsafe.Pointer, armed uintptr) {
+	t := (*timeTimer)(p)
 	lock(&t.mu)
-	if tok.seq != t.seq || t.handle == nil {
+	if armed != t.seq || t.handle == nil {
 		unlock(&t.mu)
 		return
 	}
