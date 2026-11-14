@@ -435,7 +435,15 @@ NO_SANITIZE static void scan_range_roots(gcw *w, uintptr_t lo, uintptr_t hi) {
 }
 
 static void print_roots(void) {
-  rt_print("  top roots (bytes marked first from each):\n");
+  rt_print("  top roots (bytes marked first from each");
+  const uint8_t *tab;
+  intptr_t tlen;
+  uintptr_t base;
+  if (rt_pcln(&tab, &tlen, &base)) {
+    rt_print("; image base ");  // for atos -l / addr2line on the pcs
+    rt_printx(base);
+  }
+  rt_print("):\n");
   for (int n = 0; n < 20; n++) {
     int k = -1;
     for (int i = 0; i < 20; i++)
