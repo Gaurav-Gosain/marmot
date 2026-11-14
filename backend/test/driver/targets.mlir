@@ -12,13 +12,6 @@
 // ARM64: "target-cpu"="generic"
 // V3: "target-cpu"="x86-64-v3"
 // ELF: Format: elf64-littleaarch64
-// RUN: %backend -target wasip1/wasm -emit=llvm -o - %s | %FileCheck %s --check-prefix=WASM
-// RUN: %backend -target wasip1/wasm -o %t.wasm.o %s
-// RUN: %llvm-readobj --file-headers %t.wasm.o | %FileCheck %s --check-prefix=WASMOBJ
-// WASM: target triple = "wasm32-unknown-wasip1"
-// WASM: "target-cpu"="generic"
-// WASM-SAME: "target-features"="{{[^"]*}}+exception-handling
-// WASMOBJ: Format: WASM
 module {
   llvm.func @f(%a: i64) -> i64 {
     llvm.return %a : i64

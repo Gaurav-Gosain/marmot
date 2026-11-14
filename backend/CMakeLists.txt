@@ -23,6 +23,15 @@ if(NOT LLVM_ENABLE_EH)
   add_compile_options(-fno-exceptions)
 endif()
 
+# The wasm32 target (-target wasip1/wasm) only when this LLVM has it.
+if("WebAssembly" IN_LIST LLVM_TARGETS_TO_BUILD)
+  add_compile_definitions(MARMOT_HAVE_WASM=1)
+  set(MARMOT_WASM_LIBS LLVMWebAssemblyCodeGen LLVMWebAssemblyAsmParser LLVMWebAssemblyDesc LLVMWebAssemblyInfo)
+else()
+  message(STATUS "LLVM has no WebAssembly target: -target wasip1/wasm is not supported by this build")
+  set(MARMOT_WASM_LIBS)
+endif()
+
 # MARMOT_STATIC=ON links the static component libraries instead of the shared
 # libLLVM/libMLIR. Slower to link, but the binary has no dylib dependencies.
 option(MARMOT_STATIC "Link LLVM and MLIR statically" OFF)
@@ -33,7 +42,7 @@ if(MARMOT_STATIC)
     MLIRTransforms MLIRIR MLIRSupport
     LLVMAArch64CodeGen LLVMAArch64AsmParser LLVMAArch64Desc LLVMAArch64Info
     LLVMX86CodeGen LLVMX86AsmParser LLVMX86Desc LLVMX86Info
-    LLVMWebAssemblyCodeGen LLVMWebAssemblyAsmParser LLVMWebAssemblyDesc LLVMWebAssemblyInfo
+    ${MARMOT_WASM_LIBS}
     LLVMPasses LLVMLinker LLVMIRReader LLVMBitReader LLVMBitWriter LLVMipo
     LLVMTarget LLVMCodeGen LLVMMC LLVMSupport)
 else()

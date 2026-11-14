@@ -23,11 +23,13 @@ void LLVMInitializeX86Target();
 void LLVMInitializeX86TargetMC();
 void LLVMInitializeX86AsmPrinter();
 void LLVMInitializeX86AsmParser();
+#if MARMOT_HAVE_WASM
 void LLVMInitializeWebAssemblyTargetInfo();
 void LLVMInitializeWebAssemblyTarget();
 void LLVMInitializeWebAssemblyTargetMC();
 void LLVMInitializeWebAssemblyAsmPrinter();
 void LLVMInitializeWebAssemblyAsmParser();
+#endif
 }
 
 namespace marmot {
@@ -54,6 +56,7 @@ bool initTargetFor(const llvm::Triple &triple, std::string &err) {
     });
     return true;
   case llvm::Triple::wasm32:
+#if MARMOT_HAVE_WASM
     std::call_once(wasmOnce, [] {
       LLVMInitializeWebAssemblyTargetInfo();
       LLVMInitializeWebAssemblyTarget();
@@ -62,6 +65,11 @@ bool initTargetFor(const llvm::Triple &triple, std::string &err) {
       LLVMInitializeWebAssemblyAsmParser();
     });
     return true;
+#else
+    (void)wasmOnce;
+    err = "this marmot-backend was built with an LLVM without the WebAssembly target: -target wasip1/wasm needs one (LLVM_TARGETS_TO_BUILD with WebAssembly)";
+    return false;
+#endif
   default:
     err = "unsupported target architecture: " + triple.getArchName().str();
     return false;

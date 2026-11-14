@@ -95,10 +95,28 @@ def run_lines(path):
     return lines
 
 
+_wasm = None
+
+
+def have_wasm():
+    global _wasm
+    if _wasm is None:
+        try:
+            out = subprocess.run([os.path.join(BIN, "llvm-config"), "--targets-built"],
+                                 capture_output=True, text=True).stdout
+            _wasm = "WebAssembly" in out.split()
+        except OSError:
+            _wasm = False
+    return _wasm
+
+
 def run_test(path):
     src = open(path).read()
     m = re.search(r"//\s*UNSUPPORTED:\s*(.*)", src)
     if m and platform.machine() in [a.strip() for a in m.group(1).split(",")]:
+        return path, "SKIP", ""
+    # REQUIRES: wasm skips a test when this LLVM has no WebAssembly target.
+    if re.search(r"//\s*REQUIRES:\s*wasm", src) and not have_wasm():
         return path, "SKIP", ""
     rel = os.path.relpath(path, os.path.join(ROOT, "backend", "test"))
     tmp = os.path.join(WORK, rel)
