@@ -146,7 +146,7 @@ func (f *fuzzer) runProgram(src string) (checked, failed int) {
 	}
 	if *flSweep {
 		for _, p := range f.pkgs {
-			for _, m := range []mutation{mutBody, mutAddFunc} {
+			for _, m := range []mutation{mutBody, mutEscape, mutUnescape, mutAddFunc} {
 				if f.failures >= *flMax {
 					break
 				}
@@ -335,7 +335,7 @@ func (f *fuzzer) restore(s saved) {
 // the edit, or report false when they find nothing to change.
 type mutation func(f *fuzzer, p *pkg) (string, bool)
 
-var mutations = []mutation{mutLiteral, mutBody, mutAddFunc, mutRemoveFunc, mutAddInstance, mutRemoveInstance, mutMethod, mutField, mutMove, mutConst}
+var mutations = []mutation{mutLiteral, mutBody, mutAddFunc, mutRemoveFunc, mutAddInstance, mutRemoveInstance, mutMethod, mutField, mutMove, mutConst, mutEscape, mutUnescape}
 
 func (f *fuzzer) pickFile(p *pkg) (string, *token.FileSet, *ast.File, bool) {
 	file := p.files[f.r.Intn(len(p.files))]
@@ -416,6 +416,111 @@ func mutBody(f *fuzzer, p *pkg) (string, bool) {
 	stmt := &ast.AssignStmt{Lhs: []ast.Expr{ast.NewIdent("_")}, Tok: token.ASSIGN, Rhs: []ast.Expr{&ast.BasicLit{Kind: token.INT, Value: "0"}}}
 	fd.Body.List = append([]ast.Stmt{stmt}, fd.Body.List...)
 	return fmt.Sprintf("body line in %s (%s)", fd.Name.Name, rel(f, file)), write(file, fset, af)
+}
+
+// escSink is the package variable mutEscape stores parameters in.
+const escSink = "zzEscSink"
+
+// pointerParam reports whether a parameter of type t can carry a pointer
+// whose escape tag a store can flip.
+func pointerParam(t ast.Expr) bool {
+	switch x := t.(type) {
+	case *ast.StarExpr, *ast.MapType, *ast.ChanType, *ast.FuncType, *ast.InterfaceType:
+		return true
+	case *ast.ArrayType:
+		return x.Len == nil
+	case *ast.Ident:
+		return x.Name == "any" || x.Name == "error" || x.Name == "string"
+	}
+	return false
+}
+
+// mutEscape flips an escape tag with a body edit: a parameter that may not
+// escape is stored in a package variable, so importers of the package
+// (whose code depends on the tag) must rebuild while its API stays the
+// same.
+func mutEscape(f *fuzzer, p *pkg) (string, bool) {
+	file, fset, af, ok := f.pickFile(p)
+	if !ok {
+		return "", false
+	}
+	type cand struct {
+		fd   *ast.FuncDecl
+		name string
+	}
+	var cs []cand
+	for _, fd := range funcs(af) {
+		if fd.Type.TypeParams != nil || fd.Recv != nil && len(fd.Recv.List) > 0 && hasTypeParams(fd.Recv.List[0].Type) {
+			continue
+		}
+		for _, fl := range fd.Type.Params.List {
+			if !pointerParam(fl.Type) {
+				continue
+			}
+			for _, n := range fl.Names {
+				if n.Name != "_" {
+					cs = append(cs, cand{fd, n.Name})
+				}
+			}
+		}
+	}
+	if len(cs) == 0 {
+		return "", false
+	}
+	c := cs[f.r.Intn(len(cs))]
+	stmt := &ast.AssignStmt{Lhs: []ast.Expr{ast.NewIdent(escSink)}, Tok: token.ASSIGN,
+		Rhs: []ast.Expr{&ast.CallExpr{Fun: ast.NewIdent("any"), Args: []ast.Expr{ast.NewIdent(c.name)}}}}
+	c.fd.Body.List = append([]ast.Stmt{stmt}, c.fd.Body.List...)
+	if !f.hasSink(p) {
+		af.Decls = append(af.Decls, &ast.GenDecl{Tok: token.VAR, Specs: []ast.Spec{&ast.ValueSpec{
+			Names: []*ast.Ident{ast.NewIdent(escSink)}, Type: ast.NewIdent("any")}}})
+	}
+	return fmt.Sprintf("escape %s of %s (%s)", c.name, c.fd.Name.Name, rel(f, file)), write(file, fset, af)
+}
+
+// mutUnescape undoes a store mutEscape added: the tag flips back.
+func mutUnescape(f *fuzzer, p *pkg) (string, bool) {
+	for _, file := range p.files {
+		fset := token.NewFileSet()
+		af, err := parser.ParseFile(fset, file, nil, parser.ParseComments)
+		if err != nil {
+			continue
+		}
+		for _, fd := range funcs(af) {
+			for i, st := range fd.Body.List {
+				as, ok := st.(*ast.AssignStmt)
+				if !ok || len(as.Lhs) != 1 {
+					continue
+				}
+				if id, ok := as.Lhs[0].(*ast.Ident); ok && id.Name == escSink {
+					fd.Body.List = append(fd.Body.List[:i:i], fd.Body.List[i+1:]...)
+					return fmt.Sprintf("unescape in %s (%s)", fd.Name.Name, rel(f, file)), write(file, fset, af)
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+// hasSink reports whether a file of p declares the escape sink.
+func (f *fuzzer) hasSink(p *pkg) bool {
+	for _, file := range p.files {
+		if data, err := os.ReadFile(file); err == nil && bytes.Contains(data, []byte("var "+escSink+" any")) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTypeParams(t ast.Expr) bool {
+	if s, ok := t.(*ast.StarExpr); ok {
+		t = s.X
+	}
+	switch t.(type) {
+	case *ast.IndexExpr, *ast.IndexListExpr:
+		return true
+	}
+	return false
 }
 
 func (f *fuzzer) appendDecl(p *pkg, src string) (string, bool) {
