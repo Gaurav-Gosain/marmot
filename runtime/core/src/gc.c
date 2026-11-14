@@ -961,7 +961,17 @@ static void scan_data_segment(void *lo, void *hi) { gc_scan_range((uintptr_t)lo,
 static void cards_clear(void) {
   if (!rt_card_table) return;
   uintptr_t a = rt_arena_start >> RT_CARD_SHIFT, b = (rt_arena_used + (1u << RT_CARD_SHIFT) - 1) >> RT_CARD_SHIFT;
-  __builtin_memset(rt_card_table + a, 0xff, b - a);
+  if (b - a > RT_CARD_MASK) {  // a heap over 64 GiB covers the whole table
+    __builtin_memset(rt_card_table, 0xff, RT_CARD_MASK + 1);
+    return;
+  }
+  uintptr_t lo = a & RT_CARD_MASK, hi = b & RT_CARD_MASK;
+  if (lo <= hi) {
+    __builtin_memset(rt_card_table + lo, 0xff, hi - lo);
+  } else {
+    __builtin_memset(rt_card_table + lo, 0xff, RT_CARD_MASK + 1 - lo);
+    __builtin_memset(rt_card_table, 0xff, hi);
+  }
 }
 
 // The pointer words in [lo, hi) of marked objects, into the mark: the
@@ -1009,7 +1019,7 @@ static void scan_dirty_cards(void) {
   gcw *w = &workers[0];
   uintptr_t a = rt_arena_start >> RT_CARD_SHIFT, b = (rt_arena_used + (1u << RT_CARD_SHIFT) - 1) >> RT_CARD_SHIFT;
   for (uintptr_t i = a; i < b; i++) {
-    if (rt_card_table[i]) continue;
+    if (rt_card_table[i & RT_CARD_MASK]) continue;
     cards_scanned++;
     uintptr_t lo = i << RT_CARD_SHIFT, hi = lo + ((uintptr_t)1 << RT_CARD_SHIFT);
     if (lo < rt_arena_start) lo = rt_arena_start;

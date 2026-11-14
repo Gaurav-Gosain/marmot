@@ -20,7 +20,7 @@ static waitgroup wg;
 
 static inline void st(void *slot, void *v) {
   *(void **)slot = v;
-  rt_card_table[(uintptr_t)slot >> RT_CARD_SHIFT] = 0;
+  rt_card_table[((uintptr_t)slot >> RT_CARD_SHIFT) & RT_CARD_MASK] = 0;
 }
 
 static void worker(void *arg) {

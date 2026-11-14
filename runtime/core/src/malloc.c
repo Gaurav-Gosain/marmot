@@ -159,12 +159,13 @@ static void arena_init(void) {
 uint8_t *rt_card_table;  // hidden (rt.h)
 static uintptr_t card_table_size;
 
+// 128 MiB reserved, a tenth of a millisecond less at startup and exit than
+// a table for the whole address space (the cost of a reservation grows
+// with its size on darwin).
 static void cards_init(void) {
 #if !RT_OS_WASI
-  for (int bits = 48; bits >= 47 && !rt_card_table; bits--) {
-    card_table_size = ((uintptr_t)1 << bits) >> RT_CARD_SHIFT;
-    rt_card_table = os_reserve(card_table_size);
-  }
+  card_table_size = RT_CARD_MASK + 1;
+  rt_card_table = os_reserve(card_table_size);
   if (!rt_card_table) card_table_size = 0;
 #endif
 }
@@ -172,10 +173,11 @@ static void cards_init(void) {
 // Commit the card pages for [lo, lo+n) (the heap's, ahead of its stores).
 static void cards_commit(uintptr_t lo, uintptr_t n) {
   if (!rt_card_table || !n) return;
-  uintptr_t ps = rt_pagesize;
-  uintptr_t a = ((lo >> RT_CARD_SHIFT) & ~(ps - 1)), b = (((lo + n - 1) >> RT_CARD_SHIFT) + ps) & ~(ps - 1);
-  if (b > card_table_size) b = card_table_size;
-  if (a < b) os_commit(rt_card_table + a, b - a);
+  uintptr_t ps = rt_pagesize, step = ps << RT_CARD_SHIFT;  // address bytes per card page
+  for (uintptr_t a = lo & ~(step - 1); a < lo + n; a += step) {
+    uintptr_t off = ((a >> RT_CARD_SHIFT) & RT_CARD_MASK) & ~(ps - 1);
+    os_commit(rt_card_table + off, ps);
+  }
 }
 
 // From the fault handler: a card store to a page not committed yet (a
@@ -191,7 +193,7 @@ bool card_fault(uintptr_t addr) {
 RT_API RT_PRESERVE_ALL void rt_card_range(void *dst, uintptr_t n) {
   if (!rt_card_table || !n) return;
   uintptr_t a = (uintptr_t)dst >> RT_CARD_SHIFT, b = ((uintptr_t)dst + n - 1) >> RT_CARD_SHIFT;
-  for (uintptr_t i = a; i <= b; i++) rt_card_table[i] = 0;
+  for (uintptr_t i = a; i <= b; i++) rt_card_table[i & RT_CARD_MASK] = 0;
 }
 
 static void meta_commit(uintptr_t upto) {
