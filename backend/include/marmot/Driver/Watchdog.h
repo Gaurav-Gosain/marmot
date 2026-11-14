@@ -15,6 +15,10 @@ namespace marmot {
 // of 0 turns that check off.
 void startWatchdog();
 
+// The memory the process uses now, as the watchdog counts it (resident
+// and swapped on Linux, the physical footprint on macOS); 0 if unknown.
+uint64_t processMemory();
+
 // --serve: the time limit counts from the start of a request; idle time
 // between requests does not count.
 void watchdogRequest(bool active);

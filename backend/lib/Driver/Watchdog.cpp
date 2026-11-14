@@ -142,4 +142,6 @@ void startWatchdog() {
   }).detach();
 }
 
+uint64_t processMemory() { return memoryInUse(); }
+
 } // namespace marmot
