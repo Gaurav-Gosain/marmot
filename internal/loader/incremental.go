@@ -394,13 +394,20 @@ func (st *incrState) importFromCache(p *packages.Package, key string) (*types.Pa
 func (st *incrState) parseFiles(p *packages.Package) ([]*ast.File, error) {
 	files := make([]*ast.File, len(p.CompiledGoFiles))
 	errs := make([]error, len(files))
+	// Other packages' loads add their embed and asm helpers to st.overlay
+	// under st.mu (loadOne): read this package's entries under it too.
+	srcs := make([]any, len(files))
+	st.mu.Lock()
+	for i, name := range p.CompiledGoFiles {
+		if data, ok := st.overlay[name]; ok {
+			srcs[i] = data
+		}
+	}
+	st.mu.Unlock()
 	var wg sync.WaitGroup
 	for i, name := range p.CompiledGoFiles {
 		wg.Go(func() {
-			var src any
-			if data, ok := st.overlay[name]; ok {
-				src = data
-			}
+			src := srcs[i]
 			files[i], errs[i] = parser.ParseFile(st.fset, name, src, parser.AllErrors|parser.ParseComments|parser.SkipObjectResolution)
 		})
 	}
