@@ -273,6 +273,8 @@ struct rt_p {
   rt_g *_Atomic runq[RUNQ_SIZE];  // relaxed atomics: stealers read slots racily
   mcache *mcache;
   _Atomic uint32_t syscalltick;  // incremented on each syscall entry
+  uint32_t stop_gen;   // the stop the world (worldgen + 1) that counted this P stopped
+  uint8_t stop_site;   // where (stop_count)
   uint32_t sysmon_tick;          // last tick seen by sysmon
   int64_t sysmon_when;
   _Atomic uint32_t schedtick;

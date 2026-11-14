@@ -479,6 +479,7 @@ static rt_m *mget(void) {
 }
 
 static void sysmon_resume(void);
+static void stop_count(rt_p *p, int site);
 
 static void acquirep(rt_m *m, rt_p *p) {
   m->p = p;
@@ -613,7 +614,7 @@ static void handoffp(rt_p *p) {
   if (atomic_load(&sched.gcwaiting)) {
     atomic_store(&p->status, P_GCSTOP);
     p->m = NULL;
-    if (--sched.stopwait == 0) notewakeup(&sched.stopnote);
+    stop_count(p, 7);
     spin_unlock(&sched.lock);
     return;
   }
@@ -660,6 +661,26 @@ void sched_timer_added(int64_t when) {
 
 // ---- stop the world ----
 
+// The stop the world in progress counts p stopped (sched.lock held). Each
+// P is counted once per stop: a second count would wake the stopper with
+// another P still running, so it throws here with both places.
+static void stop_count(rt_p *p, int site) {
+  uint32_t gen = atomic_load(&sched.worldgen) + 1;
+  if (p->stop_gen == gen) {
+    rt_print("stop the world counted P ");
+    rt_printi(p->id);
+    rt_print(" twice: at ");
+    rt_printi(p->stop_site);
+    rt_print(" and ");
+    rt_printi(site);
+    rt_print(" (1 own P, 2 first syscall pass, 3 idle list, 4 waiting pass, 5 stop self, 6 syscall entry, 7 handoff, 8 retired P)\n");
+    rt_throw("stop the world: a P counted twice");
+  }
+  p->stop_gen = gen;
+  p->stop_site = (uint8_t)site;
+  if (--sched.stopwait == 0) notewakeup(&sched.stopnote);
+}
+
 void sched_stop_self(void *sp, uintptr_t hi) {
   rt_m *m = getm();
   rt_p *p = m->p;
@@ -672,7 +693,7 @@ void sched_stop_self(void *sp, uintptr_t hi) {
   }
   atomic_store(&p->status, P_GCSTOP);
   uint32_t gen = atomic_load(&sched.worldgen);
-  if (--sched.stopwait == 0) notewakeup(&sched.stopnote);
+  stop_count(p, 5);
   spin_unlock(&sched.lock);
   while (atomic_load(&sched.worldgen) == gen) os_futex_wait(&sched.worldgen, gen, -1);
 }
@@ -700,20 +721,20 @@ void stop_the_world(void) {
   sched.stopwait = wait;
   atomic_store(&sched.gcwaiting, 1);
   atomic_store(&m->p->status, P_GCSTOP);
-  sched.stopwait--;
+  stop_count(m->p, 1);
   for (int32_t i = 0; i < n; i++) {
     rt_p *p = sched.allp[i];
     uint32_t s = P_SYSCALL;
     if (atomic_compare_exchange_strong(&p->status, &s, P_GCSTOP)) {
       p->m = NULL;
       atomic_fetch_add(&p->syscalltick, 1);
-      sched.stopwait--;
+      stop_count(p, 2);
     }
   }
   rt_p *p;
   while ((p = pidleget()) != NULL) {
     atomic_store(&p->status, P_GCSTOP);
-    sched.stopwait--;
+    stop_count(p, 3);
   }
   bool waiting = sched.stopwait > 0;
   spin_unlock(&sched.lock);
@@ -726,7 +747,7 @@ void stop_the_world(void) {
       if (atomic_compare_exchange_strong(&q->status, &s, P_GCSTOP)) {
         q->m = NULL;
         atomic_fetch_add(&q->syscalltick, 1);
-        sched.stopwait--;
+        stop_count(q, 4);
       } else if (s == P_RUNNING) {
         // q->m is written by an M leaving a syscall without sched.lock; a
         // stale value only delays the signal to the next round.
@@ -921,7 +942,7 @@ top:
       atomic_store(&p->status, P_DEAD);
       // A stop the world that began after our gcwaiting check counted
       // this P as running.
-      if (atomic_load(&sched.gcwaiting) && --sched.stopwait == 0) notewakeup(&sched.stopnote);
+      if (atomic_load(&sched.gcwaiting)) stop_count(p, 8);
       spin_unlock(&sched.lock);
       if (m->spinning) {
         m->spinning = false;
@@ -1647,7 +1668,7 @@ RT_API void rt_entersyscall(void) {
     if (atomic_load(&sched.gcwaiting) &&
         atomic_compare_exchange_strong(&p->status, &s, P_GCSTOP)) {
       p->m = NULL;
-      if (--sched.stopwait == 0) notewakeup(&sched.stopnote);
+      stop_count(p, 6);
     }
     spin_unlock(&sched.lock);
   }
