@@ -6,6 +6,8 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -94,7 +96,8 @@ func puregoEdits(p *packages.Package, f *ast.File) ([]embedEditAt, error) {
 	return puregoCallEdits(p, f), nil
 }
 
-// puregoPatch replaces old by new in a purego file, n times.
+// puregoPatch replaces old by new in a purego file, n times; a negative n
+// means -n times or none (code that only some versions have).
 type puregoPatch struct {
 	old, new string
 	n        int
@@ -122,15 +125,20 @@ var puregoPatches = map[string][]puregoPatch{
 			"func RegisterFunc(fptr any, cfn uintptr) { registerFunc(fptr, cfn, nil) }\n\nfunc registerFunc(fptr any, cfn uintptr, marmotAdapter MarmotAdapter) {\n", 1},
 		{"reflect.MakeFunc(ty, ", "marmotMakeFunc(ty, marmotAdapter, ", 1},
 	},
-	"syscall_unix.go": {
-		{"//go:linkname __callbackasm callbackasm\n", "", 1},
-		{"func callbackasmAddr(i int) uintptr {\n", "func callbackasmAddrGC(i int) uintptr {\n", 1},
-	},
+	// The callbacks: syscall_unix.go from v0.11, syscall_sysv.go before.
+	"syscall_unix.go": puregoCallbackPatches,
+	"syscall_sysv.go": puregoCallbackPatches,
 	"go_runtime.go": {
 		{"//go:linkname runtime_cgocall runtime.cgocall\nfunc runtime_cgocall(fn uintptr, arg unsafe.Pointer) int32 // from runtime/sys_libc.go\n",
 			"func runtime_cgocall(fn uintptr, arg unsafe.Pointer) int32 { marmot_syscall(arg); return 0 }\n\n//go:linkname marmot_syscall rt_purego_syscall\nfunc marmot_syscall(arg unsafe.Pointer)\n", 1},
-		{"//go:linkname runtime_goarmsoftfp runtime.goarmsoftfp\n", "", 1},
+		// v0.11 on: arm's soft float flag.
+		{"//go:linkname runtime_goarmsoftfp runtime.goarmsoftfp\n", "", -1},
 	},
+}
+
+var puregoCallbackPatches = []puregoPatch{
+	{"//go:linkname __callbackasm callbackasm\n", "", 1},
+	{"func callbackasmAddr(i int) uintptr {\n", "func callbackasmAddrGC(i int) uintptr {\n", 1},
 }
 
 // puregoFileEdits returns the edits of a purego file: patches, or for
@@ -145,7 +153,7 @@ func puregoFileEdits(base, src string) ([]embedEditAt, error) {
 	}
 	out := src
 	for _, pt := range ps {
-		if c := strings.Count(out, pt.old); c != pt.n {
+		if c := strings.Count(out, pt.old); c != pt.n && !(pt.n < 0 && (c == 0 || c == -pt.n)) {
 			return nil, fmt.Errorf("%s/%s: marmot's purego edits do not match this version (%q found %d times, want %d)", puregoPath, base, strings.TrimSpace(pt.old), c, pt.n)
 		}
 		out = strings.ReplaceAll(out, pt.old, pt.new)
@@ -236,9 +244,25 @@ func RegisterLibFuncMarmot(fptr any, handle uintptr, name string, adapter Marmot
 	registerFunc(fptr, sym, adapter)
 }
 
+// marmotAdapters are the adapters of the function types used as type
+// arguments, for calls whose pointer has a type parameter's type.
+var marmotAdapters map[reflect.Type]MarmotAdapter
+
+// MarmotRegisterAdapter records the adapter of *p's function type.
+func MarmotRegisterAdapter(p any, adapter MarmotAdapter) bool {
+	if marmotAdapters == nil {
+		marmotAdapters = map[reflect.Type]MarmotAdapter{}
+	}
+	marmotAdapters[reflect.TypeOf(p).Elem()] = adapter
+	return true
+}
+
 func marmotMakeFunc(ty reflect.Type, adapter MarmotAdapter, impl MarmotImpl) reflect.Value {
 	if adapter == nil {
-		panic("purego: RegisterFunc of " + ty.String() + ": marmot has no reflect.MakeFunc, so it builds the function where RegisterFunc or RegisterLibFunc is called with a pointer to a func variable; this call passes the pointer in an interface or a type parameter")
+		adapter = marmotAdapters[ty]
+	}
+	if adapter == nil {
+		panic("purego: RegisterFunc of " + ty.String() + ": marmot has no reflect.MakeFunc, so it builds the function where RegisterFunc or RegisterLibFunc is called with a pointer to a func variable, or for the function types used as type arguments of generic code that calls purego; this call passes the pointer in an interface")
 	}
 	return adapter(impl)
 }
@@ -251,7 +275,14 @@ func marmotMakeFunc(ty reflect.Type, adapter MarmotAdapter, impl MarmotImpl) ref
 //	-> zz_marmot_purego.RegisterLibFuncMarmot(&puts, libc, "puts", zz_marmot_purego_fn1)
 //
 // with zz_marmot_purego_fn1 the adapter of puts's type, at the end of the
-// file, and the imports it needs on the package clause line.
+// file, and the imports it needs on the package clause line. A call in
+// generic code, whose pointer has a type parameter's type, stays; instead
+// every function type used in f as a type argument of a generic of a
+// package that imports purego gets its adapter registered by type
+// (MarmotRegisterAdapter), which purego looks up for such a call:
+//
+//	getFunc[MachHostSelfFunc](lib, "mach_host_self")
+//	-> var _ = zz_marmot_purego.MarmotRegisterAdapter((*MachHostSelfFunc)(nil), zz_marmot_purego_fn2)
 func puregoCallEdits(p *packages.Package, f *ast.File) []embedEditAt {
 	if p.TypesInfo == nil || p.Types == nil {
 		return nil
@@ -328,9 +359,57 @@ func puregoCallEdits(p *packages.Package, f *ast.File) []embedEditAt {
 			embedEditAt{pos: p.Fset.Position(call.Args[len(call.Args)-1].End()).Offset, text: ", " + name})
 		return true
 	})
-	if len(edits) == 0 {
+	var regs []string
+	// In source order, so the adapters' names are the same every build.
+	var ids []*ast.Ident
+	for id := range p.TypesInfo.Instances {
+		if id.Pos() >= f.Pos() && id.Pos() < f.End() {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i].Pos() < ids[j].Pos() })
+	for _, id := range ids {
+		inst := p.TypesInfo.Instances[id]
+		obj := p.TypesInfo.Uses[id]
+		if obj == nil || obj.Pkg() == nil || !importsPurego(obj.Pkg(), p.Types) {
+			continue
+		}
+		for i := range inst.TypeArgs.Len() {
+			t := inst.TypeArgs.At(i)
+			sig, ok := t.Underlying().(*types.Signature)
+			if !ok || !nameable(t, p) {
+				continue
+			}
+			saved := len(importOrder)
+			tstr := types.TypeString(t, qual)
+			missing := false
+			for _, path := range importOrder[saved:] {
+				if _, ok := p.Imports[path]; !ok {
+					missing = true
+				}
+			}
+			if missing {
+				for _, q := range importOrder[saved:] {
+					delete(imports, q)
+				}
+				importOrder = importOrder[:saved]
+				continue
+			}
+			name, ok := adapters[tstr]
+			if !ok {
+				name = fmt.Sprintf("%s%d", puregoAdapter, len(adapters)+1)
+				adapters[tstr] = name
+				adapterSrc = append(adapterSrc, puregoAdapterSrc(name, tstr, sig, qual))
+			}
+			regs = append(regs, fmt.Sprintf("var _ = %s.MarmotRegisterAdapter((*%s)(nil), %s)\n", puregoAlias, tstr, name))
+		}
+	}
+	if len(edits) == 0 && len(regs) == 0 {
 		return nil
 	}
+	sort.Strings(regs)
+	regs = slices.Compact(regs)
+	adapterSrc = append(adapterSrc, regs...)
 	imp := "; import (" + puregoAlias + " \"" + puregoPath + "\""
 	for _, path := range importOrder {
 		imp += "; " + imports[path] + " \"" + path + "\""
@@ -340,6 +419,20 @@ func puregoCallEdits(p *packages.Package, f *ast.File) []embedEditAt {
 		embedEditAt{pos: p.Fset.Position(f.Name.End()).Offset, text: imp},
 		embedEditAt{pos: p.Fset.Position(f.FileEnd).Offset, text: "\n" + strings.Join(adapterSrc, "\n")})
 	return edits
+}
+
+// importsPurego reports whether pkg (the package of a generic) imports
+// purego: self is the package being edited, which does.
+func importsPurego(pkg, self *types.Package) bool {
+	if pkg == self {
+		return true
+	}
+	for _, q := range pkg.Imports() {
+		if q.Path() == puregoPath {
+			return true
+		}
+	}
+	return false
 }
 
 // nameable reports whether t can be written in a file of p: no type

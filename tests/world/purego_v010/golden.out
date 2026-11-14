@@ -1,0 +1,5 @@
+strlen: 6 2
+abs: 42
+toupper: PUREGO
+labs: 7
+qsort: [-8 -3 0 2 5 7 9] true

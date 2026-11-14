@@ -113,3 +113,38 @@ func TestPuregoVersions(t *testing.T) {
 		t.Errorf("an unedited file: %v %v", e, err)
 	}
 }
+
+// Every patched file of every purego release in the module cache takes
+// the edits (v0.10.x keeps the callbacks in syscall_sysv.go and has no
+// goarmsoftfp; v0.11.x moved them to syscall_unix.go).
+func TestPuregoPatchesAllVersions(t *testing.T) {
+	out, err := exec.Command("go", "env", "GOMODCACHE").Output()
+	if err != nil {
+		t.Skip(err)
+	}
+	seen := 0
+	for _, v := range []string{"v0.10.0", "v0.10.2", "v0.11.1", "v0.11.3"} {
+		dir := filepath.Join(strings.TrimSpace(string(out)), "github.com", "ebitengine", "purego@"+v)
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		seen++
+		files := 0
+		for base := range puregoPatches {
+			src, err := os.ReadFile(filepath.Join(dir, base))
+			if err != nil {
+				continue
+			}
+			files++
+			if _, err := puregoFileEdits(base, string(src)); err != nil {
+				t.Errorf("%s: %v", v, err)
+			}
+		}
+		if files != 4 {
+			t.Errorf("%s: %d patched files, want 4 (dlfcn, func, go_runtime and one callback file)", v, files)
+		}
+	}
+	if seen == 0 {
+		t.Skip("no purego in the module cache")
+	}
+}

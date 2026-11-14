@@ -21,7 +21,8 @@ gc's pointer passing check. A call to C is a direct native call. Cross compiling
 needs the target's C headers (`marmot sysroot add`). See [cgo](usage.md#cgo).
 
 purego works (v0.10.x and v0.11.x): `Dlopen`, `RegisterLibFunc` and `RegisterFunc` with a
-function pointer type known at compile time, `SyscallN` and `NewCallback`. See
+function pointer type known at compile time or a type argument of generic code, `SyscallN` and
+`NewCallback`. See
 [purego](usage.md#purego).
 
 Not supported: plugins and the race detector.

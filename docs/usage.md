@@ -329,7 +329,10 @@ purego's own code, so a call behaves as with gc.
 `RegisterFunc` and `RegisterLibFunc` need the function pointer's type at compile time:
 `purego.RegisterLibFunc(&puts, lib, "puts")` with `var puts func(string) int32`, or a field of
 a struct of such functions. marmot has no `reflect.MakeFunc`, so it builds the function where
-the call is. A pointer passed in an interface or a type parameter panics with an explanation.
+the call is. In generic code whose pointer has a type parameter's type (gopsutil's
+`dlFunc[T]`), marmot builds the function for every function type used as a type argument of a
+generic from a package that imports purego, and purego finds it by type. A pointer passed in an
+interface panics with an explanation.
 Other purego versions are a build error naming the supported ones.
 
 ## Bindings from C headers
