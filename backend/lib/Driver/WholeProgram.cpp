@@ -1369,7 +1369,9 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       return true;
     if (admitted + n > admitBudget)
       return false;
-    return !memLimit || mem + n * kCompileCost <= memLimit / 100 * 85;
+    // The jobs in flight count at their whole estimate: one admitted just
+    // before has not grown yet (two jobs started together passed 3 GB).
+    return !memLimit || mem + (admitted + n) * kCompileCost <= memLimit / 100 * 85;
   };
   auto admitWait = [&](uint64_t n) {
     std::unique_lock<std::mutex> l(admitMu);
