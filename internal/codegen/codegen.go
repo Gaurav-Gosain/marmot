@@ -81,15 +81,16 @@ func (e *Error) Error() string {
 // Program holds whole-program state shared by all module generators.
 // After NewProgram it is read only, so modules can be generated in parallel.
 type Program struct {
-	opts    Options
-	allocMu sync.Mutex // serializes writes to opts.AllocReport
-	prog    *ssa.Program
-	fset    *token.FileSet
-	runtime *ssa.Package
-	pkgs    []*ssa.Package
-	pkgOf   map[*types.Package]*ssa.Package // the packages of pkgs
-	files   map[*types.Package][]*ast.File
-	infos   map[*types.Package]*types.Info
+	importTags map[*ssa.Package]EscTags // escape tags of every package (esctags.go)
+	opts       Options
+	allocMu    sync.Mutex // serializes writes to opts.AllocReport
+	prog       *ssa.Program
+	fset       *token.FileSet
+	runtime    *ssa.Package
+	pkgs       []*ssa.Package
+	pkgOf      map[*types.Package]*ssa.Package // the packages of pkgs
+	files      map[*types.Package][]*ast.File
+	infos      map[*types.Package]*types.Info
 
 	owner map[*ssa.Function]*ssa.Package // functions emitted as strong definitions
 	byPkg map[*ssa.Package][]*ssa.Function

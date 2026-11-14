@@ -46,6 +46,7 @@ type funcGen struct {
 	reuseNow          bool
 	appendElems       map[*ssa.Slice][]ssa.Value // append(s, a, b): elements by varargs slice
 	litCopy           map[*ssa.Alloc]string      // constant literal objects: their image (litcopy.go)
+	curInstr          ssa.Instruction            // the instruction being emitted (tempFor)
 	mapLits           map[*ssa.MapUpdate]*mapLit // constant map literals: the loop at their last update (maplit.go)
 	appendMake        map[*ssa.MakeSlice]bool    // append(s, make([]T, n)...): no temporary
 	skipInstr         map[ssa.Instruction]bool   // instructions folded into others
@@ -536,6 +537,9 @@ func (f *funcGen) funcValue(fn *ssa.Function) string {
 // ---- instructions ----
 
 func (f *funcGen) instr(instr ssa.Instruction) {
+	prev := f.curInstr
+	f.curInstr = instr
+	defer func() { f.curInstr = prev }()
 	switch v := instr.(type) {
 	case *ssa.DebugRef:
 	case *ssa.Phi:

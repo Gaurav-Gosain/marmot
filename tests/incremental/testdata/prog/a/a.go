@@ -41,6 +41,17 @@ func Keep(p *int) int {
 	return *p
 }
 
+// Stash keeps p (the "unescapes" edit stops that).
+func Stash(p *int) int {
+	sink = p
+	return *p
+}
+
+// Pass returns nil (the "returns" edit returns p: its result then carries it).
+func Pass(p *int) *int {
+	return nil
+}
+
 // MayPanic returns i.
 func MayPanic(i int) int {
 	return i

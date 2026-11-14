@@ -8,6 +8,8 @@ import (
 	"incrtest/a"
 )
 
+var kept *int
+
 // Run exercises a's API, generics and summaries.
 func Run() (s string) {
 	defer func() {
@@ -17,6 +19,9 @@ func Run() (s string) {
 	}()
 	x := 5
 	n := a.Keep(&x)
+	y, z := 2, 3
+	_ = a.Stash(&y)
+	kept = a.Pass(&z)
 	var bx a.Box
 	bx.Push(1)
 	bx.Push(2)

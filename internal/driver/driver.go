@@ -108,6 +108,8 @@ type build struct {
 	incr       bool // packages without a cached module are loaded from source, the others from export data
 	noIncr     bool
 	keyMu      sync.Mutex
+	escHash    map[string]string // package path -> its escape tags' hash (esctags.go), when tags are on
+	tagKeys    []string          // per package: the escape tags of its imports its module is built against
 	keyMemo    map[string]string // srcKey by package path
 	keyBase    string
 	progFlags  string // incremental builds: program flags the module keys assume
@@ -337,6 +339,7 @@ func (b *build) run1() (string, error) {
 		n++
 	}
 	mods := make([]codegen.Module, n)
+	b.escapeTags(lp, cg, pkgs)
 	pkgKeys := b.packageKeys(lp, cg, pkgs)
 	if b.canStream() {
 		st, err := b.startStream(n)
@@ -412,9 +415,18 @@ func (b *build) run1() (string, error) {
 		return "", err
 	}
 	skipped := 0
+	b.tagKeys = b.moduleTagKeys(lp, pkgs)
 	for i := range pkgs {
 		if cacheable(i) {
-			if paths, ok := b.cachedParts(pkgKeys[i]); ok {
+			paths, ok := b.cachedParts(pkgKeys[i])
+			if ok && !b.tagsMatch(i, pkgKeys[i]) {
+				// Built against other escape tags of its imports: stale. A
+				// package loaded without its body is then loaded from
+				// source by the retry (checkIncremental).
+				b.dropModule(pkgKeys[i])
+				ok = false
+			}
+			if ok {
 				mods[i] = codegen.Module{Name: pkgs[i].Pkg.Path(), Path: paths[0]}
 				if b.stream != nil {
 					b.stream.send(i, paths[0], pkgKeys[i]+"-"+moduleTextVersion)
@@ -513,6 +525,7 @@ func (b *build) spill(i int, m *codegen.Module, cacheable bool, keys []string) e
 	}
 	if cacheable {
 		if p := b.saveModule(keys[i], m.Text); p != "" {
+			b.saveTagKey(i, keys[i])
 			m.Path, m.Text = p, ""
 			if b.stream != nil {
 				b.stream.send(i, p, keys[i]+"-"+moduleTextVersion)

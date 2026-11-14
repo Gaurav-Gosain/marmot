@@ -28,6 +28,8 @@ import (
 //	MARMOT_BYVALUE       closures capture settled variables by value
 //	MARMOT_STACKBOX      interface boxes on the stack when the interface value
 //	                     does not escape
+//	MARMOT_LOOPTEMP      copies of big values made in a loop in a frame slot
+//	                     when the copy dies within its iteration (bigval.go)
 //
 // Other transforms where a wrong analysis changes behavior, same
 // switches and default:
@@ -59,6 +61,7 @@ var (
 	optStackConv    = lifetimeOn("MARMOT_STACKCONV")
 	optByValue      = lifetimeOn("MARMOT_BYVALUE")
 	optStackBox     = lifetimeOn("MARMOT_STACKBOX")
+	optLoopTemp     = lifetimeOn("MARMOT_LOOPTEMP")
 	optMapFuse      = lifetimeOn("MARMOT_MAPFUSE")
 	optAppendMake   = lifetimeOn("MARMOT_APPENDMAKE")
 	optDeferElide   = lifetimeOn("MARMOT_DEFERELIDE")
@@ -67,7 +70,7 @@ var (
 
 // LifetimeEnv lists the switch variables (for cache keys).
 var LifetimeEnv = []string{"MARMOT_LIFETIME", "MARMOT_REUSE", "MARMOT_REGIONS", "MARMOT_FRAME_REGIONS",
-	"MARMOT_ALLOCSINK", "MARMOT_ESCAPE_SUMMARY", "MARMOT_XPKG_ESCAPE", "MARMOT_ESCAPE_EXT", "MARMOT_STACKCONV", "MARMOT_BYVALUE", "MARMOT_STACKBOX",
+	"MARMOT_ALLOCSINK", "MARMOT_ESCAPE_SUMMARY", "MARMOT_XPKG_ESCAPE", "MARMOT_ESCAPE_EXT", "MARMOT_STACKCONV", "MARMOT_BYVALUE", "MARMOT_STACKBOX", "MARMOT_LOOPTEMP",
 	"MARMOT_MAPFUSE", "MARMOT_APPENDMAKE", "MARMOT_DEFERELIDE", "MARMOT_DEADINIT", "MARMOT_EVALORDER", "MARMOT_NO_EVALORDER"}
 
 // LifetimeSummary describes which lifetime transforms are on.

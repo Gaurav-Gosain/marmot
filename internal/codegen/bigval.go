@@ -3,6 +3,8 @@ package codegen
 import (
 	"go/types"
 
+	"golang.org/x/tools/go/ssa"
+
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
 )
 
@@ -16,14 +18,50 @@ import (
 const maxStackVar = 64 << 10
 
 // tempFor returns memory for a copy of a big value of type t: a stack slot,
-// or a heap object when the copy is made in a loop (a stack slot would be
-// reused while an older copy is still live) or is very large.
+// or a heap object when the copy is very large or is made in a loop and may
+// still be live when the next iteration makes the next copy in the same
+// slot. tuios: eventHub.publish copied a subscriber's filter to the heap
+// on every iteration (70 MB of a 50 MB flood).
 func (f *funcGen) tempFor(t types.Type) string {
 	size := f.m.p.opts.Sizes.Sizeof(t)
-	if size > maxStackVar || (f.curBlock != nil && inLoop(f.curBlock)) {
+	if size > maxStackVar {
 		return f.newObject(t)
 	}
+	if f.curBlock != nil && inLoop(f.curBlock) {
+		v, ok := f.curInstr.(ssa.Value)
+		if !optLoopTemp || !ok || !f.iterationLocal(v, map[ssa.Value]bool{}) {
+			return f.newObject(t)
+		}
+	}
 	return f.alloca(f.tm.memType(t), f.m.p.opts.Sizes.Alignof(t))
+}
+
+// iterationLocal reports whether the big value v (a pointer to its copy)
+// dies within the loop iteration that makes it: an SSA value defined in a
+// loop body reaches the next iteration only through a phi, and a deferred
+// call or goroutine may run after the slot is reused. Big values derived
+// from v (fields, elements, extracts, type changes) point into v's copy.
+// Stores, sends, boxes and returns copy the contents.
+func (f *funcGen) iterationLocal(v ssa.Value, seen map[ssa.Value]bool) bool {
+	if seen[v] {
+		return true
+	}
+	seen[v] = true
+	refs := v.Referrers()
+	if refs == nil {
+		return false
+	}
+	for _, r := range *refs {
+		switch x := r.(type) {
+		case *ssa.Phi, *ssa.Go, *ssa.Defer:
+			return false
+		case *ssa.Field, *ssa.Index, *ssa.Extract, *ssa.ChangeType:
+			if d := x.(ssa.Value); f.tm.isBig(d.Type()) && !f.iterationLocal(d, seen) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // escapeBig makes a big value safe to return: a copy on the heap.

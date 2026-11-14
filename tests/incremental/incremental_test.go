@@ -43,6 +43,11 @@ var edits = []struct {
 	// recovering.
 	{"panics", "", "func MayPanic(i int) int {\n", "func MayPanic(i int) int {\n\tif i < 0 {\n\t\tpanic(\"neg\")\n\t}\n", "recovered: neg"},
 	{"escapes", "", "func Keep(p *int) int {\n", "func Keep(p *int) int {\n\tsink = p\n", base},
+	// Escape tags flip the other ways (with the escape summaries on, an
+	// importer's stack allocations follow them): a parameter stops escaping,
+	// or starts leaving through the result, which the importer keeps.
+	{"unescapes", "", "func Stash(p *int) int {\n\tsink = p\n", "func Stash(p *int) int {\n", base},
+	{"returns", "", "func Pass(p *int) *int {\n\treturn nil\n", "func Pass(p *int) *int {\n\treturn p\n", base},
 	{"recovers", "", "func Recov() (r int) {\n\treturn 1\n", "func Recov() (r int) {\n\tdefer func() {\n\t\tif recover() != nil {\n\t\t\tr = 2\n\t\t}\n\t}()\n\tpanic(\"x\")\n", "5 2 [3 6 9] 7 {4 y} -1 2"},
 	// Generic code compiled into importers: an exported generic function, a
 	// promoted method of an unexported generic type, an unexported helper

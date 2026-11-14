@@ -298,7 +298,26 @@ func (p *Program) callLeaksF(c *ssa.CallCommon, v ssa.Value, res ssa.Value, seen
 			from = res.Parent()
 		}
 		if !p.sameUnit(from, fn) {
-			return true // another package's function: unknown in separate compilation
+			// Another package's function: its escape tag (esctags.go), or
+			// unknown in separate compilation.
+			t, ok := p.importTag(fn)
+			if !ok || !summaryAllowed(v, fn) || (!optEscapeExt && fn.Signature.Variadic()) {
+				return true
+			}
+			toResult := false
+			for i, a := range c.Args {
+				if a != v || t&(1<<i) == 0 {
+					continue
+				}
+				if res == nil || !optEscapeExt || t&(1<<(32+i)) == 0 {
+					return true
+				}
+				toResult = true
+			}
+			if toResult {
+				return p.escapesF(res, seen, noPhi, ret)
+			}
+			return false
 		}
 		if !optEscapeExt && fn.Signature.Variadic() {
 			return true
