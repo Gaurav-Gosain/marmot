@@ -1352,6 +1352,9 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   // all at once (tuios: 19 modules of about 30 MB of text in one package).
   // Kept parses give way to them (releaseParsed).
   uint64_t admitBudget = memLimit ? memBudget / kCompileCost : UINT64_MAX;
+  // What a job of the current phase costs per byte of text: parse and
+  // analysis before translation, a compile from translation on.
+  uint64_t jobCost = kParseCost;
   if (const char *e = std::getenv("MARMOT_ADMIT_MB"))
     admitBudget = std::strtoull(e, nullptr, 10) << 20;
   std::mutex admitMu;
@@ -1367,11 +1370,14 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   auto fits = [&](uint64_t n, uint64_t mem) {
     if (admitted == 0)
       return true;
-    if (admitted + n > admitBudget)
+    // The text in flight: the budget at the current phase's cost (or
+    // MARMOT_ADMIT_MB).
+    uint64_t limit = std::getenv("MARMOT_ADMIT_MB") || !memLimit ? admitBudget : memBudget / jobCost;
+    if (admitted + n > limit)
       return false;
     // The jobs in flight count at their whole estimate: one admitted just
     // before has not grown yet (two jobs started together passed 3 GB).
-    return !memLimit || mem + (admitted + n) * kCompileCost <= memLimit / 100 * 85;
+    return !memLimit || mem + (admitted + n) * jobCost <= memLimit / 100 * 85;
   };
   auto admitWait = [&](uint64_t n) {
     std::unique_lock<std::mutex> l(admitMu);
@@ -1661,6 +1667,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   }
 
   // Phase 1c: go passes, lowering, translation, summary, bitcode (cached).
+  jobCost = kCompileCost;
   parallel([&](unsigned i, raw_ostream &es, PhaseTimes &t) {
     ModuleInfo &m = mods[i];
     m.declTable = restrictTable(table, m);
