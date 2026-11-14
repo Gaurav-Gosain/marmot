@@ -895,6 +895,114 @@ static bool mark_finalizers(void) {
   return queued;
 }
 
+// ---- verify mode (MARMOT_GC_VERIFY=1) ----
+//
+// After the mark and before weak pointers and finalizers, the mark bits are
+// saved and the heap is marked again from the roots with the world stopped.
+// An object marked now but not before was reachable and would have been
+// freed: with concurrent marking that is a store the write barrier missed.
+// Each such object is printed with a heap word that points into it, then
+// the collector stops the program. The two marks are merged either way.
+static int gc_verify;
+static uintptr_t verify_drop;    // tests: unmark this object after the mark
+static bool verify_expect_miss;  // tests: report misses without stopping
+uint64_t gc_verify_missed;       // objects found unmarked, over all cycles
+
+void gc_verify_drop(void *p, bool expect_miss) {
+  verify_drop = (uintptr_t)p;
+  verify_expect_miss = expect_miss;
+}
+
+// A marked heap object with a word pointing into [obj, obj+size), or 0.
+NO_SANITIZE static uintptr_t verify_referrer(uintptr_t obj, uintptr_t size, uintptr_t *at) {
+  for (int32_t i = 0; i < nallspans; i++) {
+    mspan *s = allspans[i];
+    if (s->kind == RT_ALLOC_NOSCAN) continue;
+    for (uint32_t k = 0; k < s->nelems; k++) {
+      if (!((s->markbits[k / 64] >> (k % 64)) & 1)) continue;
+      uintptr_t o = s->base + (uintptr_t)k * s->elemsize;
+      for (uintptr_t w = o; w + WORDSZ <= o + s->elemsize; w += WORDSZ) {
+        uintptr_t v = *(uintptr_t *)w;
+        if (v - obj < size && o != obj) {
+          *at = w;
+          return o;
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+static void verify_report(mspan *s, uint32_t k) {
+  uintptr_t obj = s->base + (uintptr_t)k * s->elemsize;
+  rt_print("gc verify: missed object ");
+  rt_printx(obj);
+  rt_print(" size=");
+  rt_printu(s->elemsize);
+  rt_print(" kind=");
+  rt_printu(s->kind);
+  rt_print(" span=");
+  rt_printx(s->base);
+  uintptr_t at = 0, ref = verify_referrer(obj, s->elemsize, &at);
+  if (ref) {
+    rt_print(" from object ");
+    rt_printx(ref);
+    rt_print(" word +");
+    rt_printu(at - ref);
+  } else {
+    rt_print(" from a root");
+  }
+  rt_print("\n");
+}
+
+static void verify_mark(void) {
+  if (verify_drop) {
+    uintptr_t idx;
+    mspan *s = find_object(verify_drop, &idx);
+    if (s) s->markbits[idx / 64] &= ~(1ull << (idx % 64));
+    verify_drop = 0;
+  }
+  uintptr_t nw = 0;
+  for (int32_t i = 0; i < nallspans; i++) nw += (allspans[i]->nelems + 63) / 64;
+  if (!nw) return;
+  uint64_t *saved = os_map(nw * 8);
+  uint64_t *q = saved;
+  for (int32_t i = 0; i < nallspans; i++) {
+    mspan *s = allspans[i];
+    uint32_t n = (s->nelems + 63) / 64;
+    __builtin_memcpy(q, s->markbits, n * 8);
+    __builtin_memset(s->markbits, 0, n * 8);
+    q += n;
+  }
+  mark_roots();
+  uint64_t missed = 0;
+  q = saved;
+  for (int32_t i = 0; i < nallspans; i++) {
+    mspan *s = allspans[i];
+    uint32_t n = (s->nelems + 63) / 64;
+    for (uint32_t w = 0; w < n; w++) {
+      uint64_t miss = s->markbits[w] & ~q[w];
+      while (miss) {
+        uint32_t b = (uint32_t)__builtin_ctzll(miss);
+        miss &= miss - 1;
+        if (missed++ < 8) verify_report(s, w * 64 + b);
+      }
+    }
+    q += n;
+  }
+  // Merged after all reports, so the referrer search reads the fresh mark.
+  q = saved;
+  for (int32_t i = 0; i < nallspans; i++) {
+    mspan *s = allspans[i];
+    uint32_t n = (s->nelems + 63) / 64;
+    for (uint32_t w = 0; w < n; w++) s->markbits[w] |= q[w];
+    q += n;
+  }
+  os_unmap(saved, nw * 8);
+  gc_verify_missed += missed;
+  if (missed && !verify_expect_miss) rt_throw("gc verify: reachable objects were left unmarked");
+}
+
 // ---- sweeping ----
 
 // Sweeping runs in two passes. The parallel pass turns mark bits into
@@ -1073,6 +1181,7 @@ void gc_collect(bool forced) {
   mcache_flush_all();
   int64_t t1 = os_nanotime();
   mark_roots();
+  if (UNLIKELY(gc_verify)) verify_mark();
   if (weak_live) weak_clear();
   bool queued = mark_finalizers();
   memprof_sweep(is_marked);
@@ -1164,6 +1273,8 @@ RT_API int32_t rt_gc_set_percent(int32_t percent) {
 void gc_init(void) {
   const char *t = rt_getenv("MARMOT_GCTRACE");
   gc_trace = t && *t >= '1' && *t <= '9' ? *t - '0' : 0;
+  const char *v = rt_getenv("MARMOT_GC_VERIFY");
+  gc_verify = v && *v == '1';
   if (gc_percent < 0) next_gc = UINT64_MAX;
 }
 
