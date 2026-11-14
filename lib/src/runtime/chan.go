@@ -99,7 +99,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool) bool {
 		if !block {
 			return false
 		}
-		goparkForever()
+		goparkForever(waitReasonChanSendNilChan)
 		throw("unreachable")
 	}
 	if c.dataqsiz != 0 {
@@ -134,7 +134,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool) bool {
 	mysg.c = c
 	gp.param = nil
 	c.sendq.enqueue(mysg)
-	goparkunlockDurable(&c.lock)
+	goparkunlockDurable(&c.lock, waitReasonChanSend)
 
 	closed := !mysg.success
 	gp.param = nil
@@ -237,7 +237,7 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 		if !block {
 			return
 		}
-		goparkForever()
+		goparkForever(waitReasonChanReceiveNilChan)
 		throw("unreachable")
 	}
 	if c.dataqsiz != 0 {
@@ -272,7 +272,7 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 	mysg.c = c
 	gp.param = nil
 	c.recvq.enqueue(mysg)
-	goparkunlockDurable(&c.lock)
+	goparkunlockDurable(&c.lock, waitReasonChanReceive)
 
 	success := mysg.success
 	gp.param = nil

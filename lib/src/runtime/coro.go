@@ -56,7 +56,7 @@ func coroswitch(c *coro) {
 		unlock(&c.lock)
 		atomicXadd32(&corosUnstarted, -1)
 		rt_go(lazyPC(&corostartPC, corostartCode), unsafe.Pointer(c))
-		goparkForever()
+		goparkForever(waitReasonCoroutine)
 		return
 	}
 	next := c.other

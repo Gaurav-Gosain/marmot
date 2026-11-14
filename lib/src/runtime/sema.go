@@ -68,9 +68,9 @@ func semacquire1(addr *uint32, lifo bool) {
 		root.tail = s
 	}
 	if getg().parkDurable {
-		goparkunlockDurable(&root.lock)
+		goparkunlockDurable(&root.lock, waitReasonSemacquire)
 	} else {
-		goparkunlock(&root.lock)
+		goparkunlock(&root.lock, waitReasonSemacquire)
 	}
 	// semrelease handed the unit to this waiter.
 	releaseSudog(gp, s)
@@ -143,7 +143,7 @@ func notifyListWait(l *notifyList, t uint32) {
 		l.tail.next = s
 	}
 	l.tail = s
-	goparkunlockDurable(&l.lock)
+	goparkunlockDurable(&l.lock, waitReasonSyncCondWait)
 	releaseSudog(gp, s)
 }
 

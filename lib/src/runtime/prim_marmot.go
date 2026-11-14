@@ -206,14 +206,16 @@ func lazyPC(pc *unsafe.Pointer, f func() unsafe.Pointer) unsafe.Pointer {
 
 // goparkunlock parks the current goroutine and unlocks l once it is off
 // its stack, so a waker that takes l cannot miss the park.
-func goparkunlock(l *mutex) {
+func goparkunlock(l *mutex, reason waitReason) {
+	rt_set_waitreason(uint32(reason))
 	rt_park(parkunlockPC, unsafe.Pointer(l))
 }
 
 // goparkunlockDurable is goparkunlock for blocking that testing/synctest
 // counts as durable (channels, sync.Cond, WaitGroup.Wait, sleeps) when the
 // goroutine is in a bubble.
-func goparkunlockDurable(l *mutex) {
+func goparkunlockDurable(l *mutex, reason waitReason) {
+	rt_set_waitreason(uint32(reason))
 	if getg().bubble != nil {
 		rt_park_durable(parkunlockPC, unsafe.Pointer(l))
 		return
@@ -224,6 +226,7 @@ func goparkunlockDurable(l *mutex) {
 // goparkselect parks the current goroutine and unlocks the channels of its
 // select (gp.waiting) once it is off its stack.
 func goparkselect(gp *g) {
+	rt_set_waitreason(uint32(waitReasonSelect))
 	if gp.bubble != nil {
 		rt_park_durable(selparkcommitPC, unsafe.Pointer(gp))
 		return
@@ -233,7 +236,8 @@ func goparkselect(gp *g) {
 
 // goparkForever parks the current goroutine with nothing that will ever
 // wake it (select {}, nil channel operations).
-func goparkForever() {
+func goparkForever(reason waitReason) {
+	rt_set_waitreason(uint32(reason))
 	rt_park(nil, nil)
 }
 
@@ -282,3 +286,42 @@ func procyield(n int32) { rt_procyield(n) }
 // canSpin reports whether spin round i (from 0) is worthwhile: more than
 // one thread runs goroutines and others are busy (gc's sync_runtime_canSpin).
 func canSpin(i int) bool { return rt_can_spin(int32(i)) != 0 }
+
+//go:linkname rt_set_waitreason rt_set_waitreason
+func rt_set_waitreason(r uint32)
+
+// waitReason is why a goroutine waits, as runtime.Stack names it (the
+// numbers are the C core's WAIT_*).
+type waitReason uint8
+
+const (
+	waitReasonZero waitReason = iota
+	waitReasonChanReceive
+	waitReasonChanSend
+	waitReasonSelect
+	waitReasonSelectNoCases
+	waitReasonChanReceiveNilChan
+	waitReasonChanSendNilChan
+	waitReasonSleep
+	waitReasonSemacquire
+	waitReasonSyncCondWait
+	waitReasonIOWait
+	waitReasonCoroutine
+	waitReasonSynctestWait
+)
+
+var waitReasonNames = [...]string{
+	waitReasonZero:               "waiting",
+	waitReasonChanReceive:        "chan receive",
+	waitReasonChanSend:           "chan send",
+	waitReasonSelect:             "select",
+	waitReasonSelectNoCases:      "select (no cases)",
+	waitReasonChanReceiveNilChan: "chan receive (nil chan)",
+	waitReasonChanSendNilChan:    "chan send (nil chan)",
+	waitReasonSleep:              "sleep",
+	waitReasonSemacquire:         "semacquire",
+	waitReasonSyncCondWait:       "sync.Cond.Wait",
+	waitReasonIOWait:             "IO wait",
+	waitReasonCoroutine:          "coroutine",
+	waitReasonSynctestWait:       "synctest.Wait",
+}

@@ -252,7 +252,7 @@ func bubbleSleep(b *bubble, ns int64) {
 	gp := getg()
 	lock(&b.mu)
 	b.addTimer(bubbleTimer{when: b.now + ns, sleeper: gp})
-	goparkunlockDurable(&b.mu)
+	goparkunlockDurable(&b.mu, waitReasonSynctestWait)
 }
 
 //go:linkname synctest_Wait internal/synctest.Wait
@@ -268,7 +268,7 @@ func synctest_Wait() {
 		panic(plainError("synctest.Wait called by multiple goroutines in the same bubble"))
 	}
 	b.waiter = gp
-	goparkunlockDurable(&b.mu)
+	goparkunlockDurable(&b.mu, waitReasonSynctestWait)
 }
 
 //go:linkname synctest_IsInBubble internal/synctest.IsInBubble

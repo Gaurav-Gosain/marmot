@@ -174,7 +174,7 @@ func selectgo(cases *scase, ncases int, block bool) (chosen int, recvOK bool) {
 			return -1, false
 		}
 		// select {} or only nil channels: block forever.
-		goparkForever()
+		goparkForever(waitReasonSelectNoCases)
 		throw("unreachable")
 	}
 

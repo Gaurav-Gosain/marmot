@@ -219,7 +219,7 @@ func chansendBuf(c *hchan, ep unsafe.Pointer, block bool) bool {
 			}
 			return true
 		}
-		goparkunlockDurable(&c.lock)
+		goparkunlockDurable(&c.lock, waitReasonChanSend)
 		gp.param = nil
 		releaseSudog(gp, sg)
 	}
@@ -274,7 +274,7 @@ func chanrecvBuf(c *hchan, ep unsafe.Pointer, block bool) (selected, received bo
 			releaseSudog(gp, sg)
 			continue
 		}
-		goparkunlockDurable(&c.lock)
+		goparkunlockDurable(&c.lock, waitReasonChanReceive)
 		gp.param = nil
 		releaseSudog(gp, sg)
 	}

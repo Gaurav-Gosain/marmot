@@ -361,7 +361,7 @@ func Stack(buf []byte, all bool) int {
 		}
 		for i := range gs[:m] {
 			g := &gs[i]
-			n += copy(buf[n:], "\ngoroutine "+itoa(g.id)+" ["+gstatusName(g.status)+"]:\n")
+			n += copy(buf[n:], "\ngoroutine "+itoa(g.id)+" ["+gstatusName(g.status&0xff, uint8(g.status>>8))+"]:\n")
 			n += stackFrames(buf[n:], g.pc[:g.n])
 		}
 	}
@@ -396,13 +396,16 @@ type gstackRec struct {
 func rt_gstacks(out unsafe.Pointer, n int) int
 
 // gstatusName is the bracketed state Stack prints for a goroutine.
-func gstatusName(s int32) string {
+func gstatusName(s int32, reason uint8) string {
 	switch s {
 	case 1:
 		return "runnable"
 	case 2:
 		return "running"
 	case 3:
+		if int(reason) < len(waitReasonNames) {
+			return waitReasonNames[reason]
+		}
 		return "waiting"
 	case 4:
 		return "syscall"
