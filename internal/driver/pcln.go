@@ -43,15 +43,21 @@ func (b *build) pclnArgs(tbl string) []string {
 	return append([]string{"-o", tbl}, b.pclnVersionArgs()...)
 }
 
+// The table names functions as gc does (marmot-pcln), with the main
+// package as main: receivers of wrappers name it by its import path.
 func (b *build) pclnVersionArgs() []string {
+	var a []string
+	if b.mainPkg != "" {
+		a = append(a, "-main-pkg="+b.mainPkg)
+	}
 	v := os.Getenv("MARMOT_PCLN_VERSION")
 	if v == "" && pclnV3 {
 		v = "3"
 	}
 	if v != "" {
-		return []string{"-table-version=" + v}
+		a = append(a, "-table-version="+v)
 	}
-	return nil
+	return a
 }
 
 // fullTrace: every call site keeps its own inlined frames (LLVM does not

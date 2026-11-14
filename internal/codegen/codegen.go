@@ -397,6 +397,9 @@ func (p *Program) SetTypesInfo(infos map[*types.Package]*types.Info) {
 	p.collectFMABlocks()
 }
 
+// MainPath returns the import path of the main package, or "".
+func (p *Program) MainPath() string { return p.mainPath }
+
 // Package returns the SSA packages to compile, in dependency order.
 func (p *Program) Packages() []*ssa.Package { return p.pkgs }
 

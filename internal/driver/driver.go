@@ -99,6 +99,7 @@ type build struct {
 	goos       string // target
 	goarch     string
 	testDir    string            // directory of the package under test
+	mainPkg    string            // import path of the main package (pc table names)
 	dylibs     []string          // from //go:cgo_import_dynamic
 	cgoObjs    []string          // objects of the C side of cgo packages
 	cgoLDFLAGS []string          // #cgo LDFLAGS of the cgo packages
@@ -323,6 +324,7 @@ func (b *build) run1() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	b.mainPkg = cg.MainPath()
 	infos := map[*types.Package]*types.Info{}
 	for _, p := range lp.All {
 		infos[p.Types] = p.TypesInfo

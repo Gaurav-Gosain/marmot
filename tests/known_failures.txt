@@ -8,4 +8,3 @@ run/audit/evalorder_gaps  # map index evaluation order differs from gc
 run/audit/math_exp_log_bits  # math.Exp(-745.13) returns 0x1, gc 0x0 (value difference, not a NaN payload)
 goroot/cmp@release  # equal strings built at compile time share their bytes (allowed by the spec; gc keeps them apart)
 run/opt/fma_cases@release  # amd64: one NaN result has other bits than gc (marmot computes it on the CPU, gc folds it at compile time); NaN bits are not specified
-run/std/runtime/func_names  # FuncForPC names are marmot symbols (main.adder$1, main.plain$fv), not gc names (main.adder.func1, main.plain)

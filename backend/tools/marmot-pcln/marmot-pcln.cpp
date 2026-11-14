@@ -58,10 +58,135 @@ static cl::opt<bool> stripLocals("strip-locals",
                                  cl::desc("With -patch: also drop the local symbols (as ld -x)"));
 static cl::opt<std::string> binaryOpt("binary",
                                       cl::desc("With -frags -o: the linked binary"));
+static cl::opt<bool> namesOnly("names", cl::desc("Print the table name of each symbol read "
+                                                 "from stdin, one per line (tests)"));
 
 namespace {
 
-std::string renameMain(const std::string &name) {
+// closing returns the index of the bracket that closes the one at s[i] ('['
+// or '('), or npos.
+size_t closing(const std::string &s, size_t i) {
+  int d = 0;
+  for (size_t j = i; j < s.size(); j++) {
+    char c = s[j];
+    if (c == '[' || c == '(')
+      d++;
+    else if ((c == ']' || c == ')') && --d == 0)
+      return j;
+  }
+  return std::string::npos;
+}
+
+// gcName turns a function symbol into the name gc gives the function, which
+// runtime.FuncForPC, tracebacks and profiles show (tools match these names):
+//   main.plain$fv                       main.plain (a func value wrapper is
+//                                       named for the wrapped function)
+//   main.adder$1, main.f$1$2            main.adder.func1, main.f.func1.func2
+//   main.Gen$1[int], main.Gen[int]      main.Gen[...].func1, main.Gen[...]
+//   (*p.T).Get$bound, (p.T).Val$bound   p.(*T).Get-fm, p.T.Val-fm
+//   (*p.T).Get$thunk$fv                 p.(*T).Get (method expression)
+//   main.init#1                         main.init.0
+// and drops the @pkg suffix of wrappers of unexported methods. Other
+// names, the C runtime's among them, are unchanged.
+std::string gcName(const std::string &sym) {
+  if (sym.find_first_of("$#[(@") == std::string::npos)
+    return sym;
+  std::string s = sym;
+  // The @pkg suffix: the first '@' outside brackets.
+  for (size_t i = 0, d = 0; i < s.size(); i++) {
+    char c = s[i];
+    if (c == '[' || c == '(')
+      d++;
+    else if (c == ']' || c == ')')
+      d--;
+    else if (c == '@' && d == 0) {
+      s.resize(i);
+      break;
+    }
+  }
+  // Wrapper names start with the receiver type: (*p.T[A]).M.
+  if (s[0] == '(') {
+    size_t c = closing(s, 0);
+    if (c == std::string::npos)
+      return sym;
+    std::string in = s.substr(1, c - 1);
+    bool star = !in.empty() && in[0] == '*';
+    if (star)
+      in.erase(0, 1);
+    size_t lb = in.find('[');
+    std::string base = in.substr(0, lb);
+    size_t dot = base.rfind('.');
+    if (dot == std::string::npos || base.find_first_of("{ ") != std::string::npos)
+      return sym;
+    std::string tn = base.substr(dot + 1) + (lb == std::string::npos ? "" : "[...]");
+    s = base.substr(0, dot) + "." + (star ? "(*" + tn + ")" : tn) + s.substr(c + 1);
+  }
+  // The package path ends at the first '.' after its last '/'.
+  size_t p0 = s.find_first_of("([$");
+  size_t slash = s.rfind('/', p0);
+  size_t dot = s.find('.', slash == std::string::npos ? 0 : slash + 1);
+  if (dot == std::string::npos || dot > p0)
+    return sym;
+  std::string base = s.substr(0, dot + 1), clos;
+  bool fm = false, generic = false;
+  size_t i = dot + 1;
+  auto flush = [&] {
+    base += clos;
+    clos.clear();
+  };
+  while (i < s.size()) {
+    char c = s[i];
+    if (c == '(' || c == '[') {
+      size_t e = closing(s, i);
+      if (e == std::string::npos)
+        return sym;
+      if (c == '(') {
+        // A receiver: its type arguments print as [...].
+        std::string r = s.substr(i, e + 1 - i);
+        size_t lb = r.find('[');
+        if (lb != std::string::npos) {
+          size_t re = closing(r, lb);
+          if (re == std::string::npos)
+            return sym;
+          r = r.substr(0, lb) + "[...]" + r.substr(re + 1);
+          generic = true;
+        }
+        flush();
+        base += r;
+      } else if (!generic) {
+        // Type arguments go after the function, before its closures.
+        base += "[...]";
+        generic = true;
+      }
+      i = e + 1;
+    } else if (c == '$') {
+      size_t e = s.find_first_of(".$[(", i + 1);
+      std::string w = s.substr(i + 1, e == std::string::npos ? std::string::npos : e - i - 1);
+      if (!w.empty() && std::all_of(w.begin(), w.end(), ::isdigit))
+        clos += ".func" + w;
+      else if (w == "bound")
+        fm = true;
+      else if (w != "fv" && w != "thunk" && w != "ifn" && w != "tfn")
+        clos += "$" + w;
+      i = e == std::string::npos ? s.size() : e;
+    } else {
+      size_t e = s.find_first_of("([$", i);
+      std::string w = s.substr(i, e == std::string::npos ? std::string::npos : e - i);
+      flush();
+      // init#N: the Nth init function is init.N-1.
+      size_t h = w.find("init#");
+      if (h != std::string::npos && (h == 0 || w[h - 1] == '.') &&
+          std::all_of(w.begin() + h + 5, w.end(), ::isdigit) && h + 5 < w.size())
+        w = w.substr(0, h) + "init." + std::to_string(std::stoul(w.substr(h + 5)) - 1);
+      base += w;
+      i = e == std::string::npos ? s.size() : e;
+    }
+  }
+  return base + clos + (fm ? "-fm" : "");
+}
+
+std::string renameMain(const std::string &sym) {
+  std::string name = gcName(sym);
   if (mainPkg.empty() || mainPkg == "main")
     return name;
   std::string from = mainPkg + ".", out;
@@ -287,6 +412,16 @@ int main(int argc, char **argv) {
   cl::ParseCommandLineOptions(argc, argv, "marmot pc table builder\n");
   if (const char *v = getenv("MARMOT_PCLN_VERSION"); v && !version.getNumOccurrences())
     version = atoi(v);
+  if (namesOnly) {
+    auto in = MemoryBuffer::getSTDIN();
+    if (!in)
+      return fail("stdin: " + in.getError().message());
+    SmallVector<StringRef, 0> lines;
+    (*in)->getBuffer().split(lines, '\n', -1, false);
+    for (StringRef l : lines)
+      outs() << renameMain(l.str()) << "\n";
+    return 0;
+  }
   if (!fragsList.empty())
     return fromFragments();
   if (input.empty() || output.empty())
