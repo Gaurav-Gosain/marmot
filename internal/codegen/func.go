@@ -55,6 +55,8 @@ type funcGen struct {
 	wbFlag            string                     // the marking flag loaded since the last call in this block (wb.go)
 	cardBase          string                     // the card table, loaded in the entry block (wb.go)
 	cardSkip          bool                       // the value being stored points at no heap object (wb.go)
+	cardDone          map[string]bool            // small objects whose card was marked since the last call (wb.go)
+	cardRoot          string                     // the small object the store being emitted writes into, or "" (wb.go)
 	mapLits           map[*ssa.MapUpdate]*mapLit // constant map literals: the loop at their last update (maplit.go)
 	appendMake        map[*ssa.MakeSlice]bool    // append(s, make([]T, n)...): no temporary
 	skipInstr         map[ssa.Instruction]bool   // instructions folded into others
@@ -304,7 +306,7 @@ func (f *funcGen) blockHeader(b *ssa.BasicBlock, entry bool) {
 	} else {
 		fmt.Fprintf(f.b, "  %s:\n", f.blkName[b])
 	}
-	f.fresh, f.wbFlag = nil, ""
+	f.fresh, f.wbFlag, f.cardDone = nil, "", nil
 }
 
 // ---- emission helpers ----
@@ -321,7 +323,7 @@ func (f *funcGen) newBlock() string {
 
 func (f *funcGen) emit(format string, args ...any) {
 	if optWB && strings.HasPrefix(format, "llvm.call") {
-		f.fresh, f.wbFlag = nil, ""
+		f.fresh, f.wbFlag, f.cardDone = nil, "", nil
 	}
 	f.b.WriteString("    ")
 	fmt.Fprintf(f.b, format, args...)
@@ -332,7 +334,7 @@ func (f *funcGen) emit(format string, args ...any) {
 // op emits "%v = text" and returns %v.
 func (f *funcGen) op(format string, args ...any) string {
 	if optWB && strings.HasPrefix(format, "llvm.call") {
-		f.fresh, f.wbFlag = nil, ""
+		f.fresh, f.wbFlag, f.cardDone = nil, "", nil
 	}
 	v := f.newVal()
 	f.b.WriteString("    ")
@@ -630,8 +632,13 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 		}
 		f.forceUnsafe = f.m.p.localPun[v.Addr]
 		f.cardSkip = f.m.cards() && staticValue(v.Val)
+		if f.m.cards() {
+			if r := f.smallRoot(v.Addr); r != nil {
+				f.cardRoot = f.value(r)
+			}
+		}
 		f.store(f.value(v.Val), addr, v.Val.Type(), f.volatile[v.Addr])
-		f.forceUnsafe, f.cardSkip = false, false
+		f.forceUnsafe, f.cardSkip, f.cardRoot = false, false, ""
 	case *ssa.Extract:
 		tt := f.tm.valType(v.Tuple.Type())
 		f.vals[v] = f.extractRaw(f.value(v.Tuple), tt, v.Index)

@@ -34,6 +34,12 @@ var wbMode = os.Getenv("MARMOT_WB")
 
 var optWB = wbMode == "1" || wbMode == "cards"
 
+// smallObject is the largest object the collector rescans whole when a
+// card it overlaps is dirty (runtime/core 1134f480: size classes up to
+// 32 KiB); a larger one is rescanned per card, so a store into it marks
+// the cards of its words.
+const smallObject = 32 << 10
+
 // cards reports whether this module marks cards instead of calling rt_wb.
 func (m *moduleGen) cards() bool { return wbMode == "cards" && m.p.opts.GOARCH != "wasm" }
 
@@ -286,6 +292,19 @@ func (m *moduleGen) wbWord() string {
 // writes (before the store: the collector clears cards only while the
 // world is stopped, so the order does not matter).
 func (f *funcGen) cardStore(p string, t types.Type, mt string) {
+	if r := f.cardRoot; r != "" {
+		// A store into a small object: one mark (on any card it overlaps)
+		// serves every store into it until the next call.
+		if f.cardDone[r] {
+			return
+		}
+		if f.cardDone == nil {
+			f.cardDone = map[string]bool{}
+		}
+		f.cardDone[r] = true
+		f.card(p)
+		return
+	}
 	switch {
 	case mt == tP && !f.tm.isBig(t), mt == tString, mt == tSlice:
 		f.card(p)
@@ -330,4 +349,28 @@ func staticValue(v ssa.Value) bool {
 		return len(x.FreeVars) == 0
 	}
 	return false
+}
+
+// smallRoot returns the object addr points into, by field and array
+// element addresses, when its type is at most smallObject; else nil.
+func (f *funcGen) smallRoot(addr ssa.Value) ssa.Value {
+	for {
+		switch x := addr.(type) {
+		case *ssa.FieldAddr:
+			addr = x.X
+			continue
+		case *ssa.IndexAddr:
+			if _, ok := x.X.Type().Underlying().(*types.Pointer); ok {
+				addr = x.X // an element of an array behind a pointer
+				continue
+			}
+			return nil // a slice element: the backing array's size is unknown
+		}
+		break
+	}
+	pt, ok := addr.Type().Underlying().(*types.Pointer)
+	if !ok || f.m.p.opts.Sizes.Sizeof(pt.Elem()) > smallObject {
+		return nil
+	}
+	return addr
 }
