@@ -675,6 +675,18 @@ private:
   llvm::DenseSet<Operation *> lazyLoad;        // aggregate loads read field by field from memory at each use
   llvm::DenseMap<Operation *, uint64_t> foldGep;  // constant offset GEPs folded into their loads and stores
   Block *nextBlock = nullptr;                  // the block emitted after the current one
+  // Nil checks of a pointer already checked on the only path in: the
+  // cond_br decided (its taken block), and blocks no live edge reaches.
+  llvm::DenseMap<Operation *, Block *> decidedBr;
+  // Aggregates built by an insertvalue chain of 8-byte scalars that only a
+  // call uses (a string literal {ptr, len}): never made in a slot, the call
+  // puts each field in its argument register (absent fields are zero).
+  llvm::DenseMap<Value, std::map<uint64_t, Value>> lazyAgg;
+  llvm::DenseSet<Operation *> lazyChainOps;
+  void findLazyAggArgs();
+  void addressOf(unsigned d, LL::AddressOfOp a);  // d = the global's address
+  llvm::DenseSet<Block *> deadBlock;
+  void findDecidedNilChecks();
   uint32_t calleeUsed = 0;                     // bit r: xr is a home, saved in the prologue
   uint64_t saveArea = 0;
   llvm::DenseMap<Operation *, uint64_t> allocaStorage;
@@ -1272,6 +1284,13 @@ void FuncGen::emitCall(LL::CallOp call) {
   std::vector<ArgLoc> locs = assignArgs(args.getTypes(), stackSize);
   auto load = [&](unsigned r, const ArgLoc &l) {
     Value v = args[l.arg];
+    if (auto la = lazyAgg.find(v); la != lazyAgg.end()) {
+      auto f = la->second.find(l.off);
+      if (f == la->second.end()) e(movz(r, 0, 0));
+      else if (auto ao = f->second.getDefiningOp<LL::AddressOfOp>()) addressOf(r, ao);
+      else get(r, f->second);
+      return;
+    }
     if (auto lv = v.getDefiningOp<LL::LoadOp>(); lv && lazyLoad.count(lv)) {
       uint64_t ao;
       unsigned ar = addrReg(lv.getAddr(), R2, ao);
@@ -1306,7 +1325,7 @@ void FuncGen::emitCall(LL::CallOp call) {
       const ArgLoc &m = locs[i + 1];
       Value v = args[l.arg];
       if (m.arg == l.arg && m.reg == l.reg + 1 && !m.fp && m.off == l.off + 8 && sizeOf(l.t) == 8 &&
-          sizeOf(m.t) == 8 && isAggregate(v.getType())) {
+          sizeOf(m.t) == 8 && isAggregate(v.getType()) && !lazyAgg.count(v)) {
         unsigned base = SP;
         uint64_t off = 0;
         if (auto lv = v.getDefiningOp<LL::LoadOp>(); lv && lazyLoad.count(lv)) {
@@ -1647,6 +1666,7 @@ void FuncGen::emitOp(Operation &op) {
       .Case<LL::ZeroOp, LL::UndefOp, LL::PoisonOp>([&](auto z) {
         Type t = z.getType();
         if (!isAggregate(t) && sizeOf(t) <= 8) return;  // made at each use
+        if (lazyChainOps.count(z.getOperation())) return;  // made at the call
         if (!isa<LL::ZeroOp>(z.getOperation())) return;  // undef: any bits (as LLVM)
         if (storedZero(z.getResult())) return;  // each store writes the zeros
         uint64_t n = sizeOf(t);
@@ -1663,22 +1683,9 @@ void FuncGen::emitOp(Operation &op) {
         for (; i < n; i += 8) stAt(XZR, base, at + i, 8);
       })
       .Case<LL::AddressOfOp>([&](auto a) {
-        std::string name = machoName(a.getGlobalName());
-        unsigned sym = w.symbol(name);
+        if (lazyChainOps.count(a.getOperation())) return;  // made at the call
         unsigned d = dst(a.getResult(), R1);
-        uint64_t at = here();
-        e(adrp(d));
-        if (mg.isDefinedData(a.getGlobalName())) {
-          w.reloc(Sect::Text, at, Reloc::Page21, sym);
-          at = here();
-          e(addImm(d, d, 0));
-          w.reloc(Sect::Text, at, Reloc::PageOff12, sym);
-        } else {
-          w.reloc(Sect::Text, at, Reloc::GotPage21, sym);
-          at = here();
-          e(ldrImm(d, d, 0, 3));
-          w.reloc(Sect::Text, at, Reloc::GotPageOff12, sym);
-        }
+        addressOf(d, a);
         putRaw(d, a.getResult());
       })
       .Case<LL::AddOp>([&](auto) { bin([](unsigned d, unsigned n, unsigned m) { return addReg(d, n, m); }); })
@@ -1963,6 +1970,7 @@ void FuncGen::emitOp(Operation &op) {
         putRaw(d, x.getResult());
       })
       .Case<LL::InsertValueOp>([&](auto ins) {
+        if (lazyChainOps.count(ins.getOperation())) return;  // made at the call
         Type at = ins.getType();
         uint64_t sz = std::max<uint64_t>((sizeOf(at) + 7) & ~uint64_t(7), 8);
         if (of(ins.getResult()) != of(ins.getContainer()))  // else updated in place (layout)
@@ -2050,6 +2058,11 @@ void FuncGen::emitOp(Operation &op) {
         if (br_.getDest() != nextBlock) branchTo(br_.getDest());
       })
       .Case<LL::CondBrOp>([&](auto c) {
+        if (auto d = decidedBr.find(c.getOperation()); d != decidedBr.end()) {
+          // A nil check of a pointer known to be non-nil here.
+          if (d->second != nextBlock) branchTo(d->second);
+          return;
+        }
         bool flags = false, inv = false;  // inv: the condition holds when cr is zero
         Cond cc = AL;
         unsigned cr = 0;
@@ -2449,6 +2462,126 @@ static std::mutex opBytesMu;
 static std::map<std::string, uint64_t> opBytesAll;
 static const bool opStatsOn = getenv("TIER0_OPSTATS") != nullptr;
 
+void FuncGen::addressOf(unsigned d, LL::AddressOfOp a) {
+  std::string name = machoName(a.getGlobalName());
+  unsigned sym = w.symbol(name);
+  uint64_t at = here();
+  e(adrp(d));
+  if (mg.isDefinedData(a.getGlobalName())) {
+    w.reloc(Sect::Text, at, Reloc::Page21, sym);
+    at = here();
+    e(addImm(d, d, 0));
+    w.reloc(Sect::Text, at, Reloc::PageOff12, sym);
+  } else {
+    w.reloc(Sect::Text, at, Reloc::GotPage21, sym);
+    at = here();
+    e(ldrImm(d, d, 0, 3));
+    w.reloc(Sect::Text, at, Reloc::GotPageOff12, sym);
+  }
+}
+
+void FuncGen::findLazyAggArgs() {
+  fn.walk([&](LL::CallOp call) {
+    if (call.getVarCalleeType()) return;
+    for (Value v : call.getArgOperands()) {
+      if (!isAggregate(v.getType()) || !v.hasOneUse() || !v.getDefiningOp<LL::InsertValueOp>()) continue;
+      std::vector<std::pair<uint64_t, Type>> parts;
+      flatten(v.getType(), 0, parts);
+      if (!llvm::all_of(parts, [&](auto &pt) { return !isFloat(pt.second) && sizeOf(pt.second) == 8 && pt.first % 8 == 0; }))
+        continue;
+      std::map<uint64_t, Value> fields;
+      std::vector<Operation *> ops;
+      Value cur = v;
+      bool ok = true;
+      while (auto ins = cur.getDefiningOp<LL::InsertValueOp>()) {
+        if (!ins->hasOneUse() || ins.getPosition().size() != 1) { ok = false; break; }
+        auto [off, t] = elementAt(ins.getType(), ins.getPosition());
+        if (isAggregate(t) || isFloat(t) || sizeOf(t) != 8) { ok = false; break; }
+        // Only values the call can make again: constants, and addresses of
+        // globals used only here (another value's register or slot may be
+        // reused between the insertvalue, its last use, and the call).
+        Value fv = ins.getValue();
+        uint64_t bits;
+        if (auto ao = fv.getDefiningOp<LL::AddressOfOp>(); ao && fv.hasOneUse()) {
+          ops.push_back(ao);
+        } else if (!constBits(fv, bits)) {
+          ok = false;
+          break;
+        }
+        fields.try_emplace(off, fv);  // the last insert of a field wins
+        ops.push_back(ins);
+        cur = ins.getContainer();
+      }
+      Operation *base = cur.getDefiningOp();
+      if (!ok || !base || !isa<LL::UndefOp, LL::ZeroOp, LL::PoisonOp>(base) || !base->hasOneUse()) continue;
+      ops.push_back(base);
+      lazyAgg[v] = std::move(fields);
+      lazyChainOps.insert(ops.begin(), ops.end());
+    }
+  });
+}
+
+void FuncGen::findDecidedNilChecks() {
+  // The pointers known non-nil on entry to a block, through chains of
+  // single-predecessor blocks from the non-nil side of a nil check.
+  llvm::DenseMap<Block *, llvm::SmallVector<Value, 4>> nonNull;
+  auto nilCheck = [&](Operation *t, Value &p, bool &eq) {
+    auto cb = dyn_cast_or_null<LL::CondBrOp>(t);
+    if (!cb || !cb.getTrueDestOperands().empty() || !cb.getFalseDestOperands().empty()) return false;
+    auto ic = cb.getCondition().getDefiningOp<LL::ICmpOp>();
+    uint64_t bits;
+    if (!ic || !fusedCmp.count(ic) || !isa<LLVM::LLVMPointerType>(ic.getLhs().getType()) ||
+        !constBits(ic.getRhs(), bits) || bits != 0)
+      return false;
+    auto pr = ic.getPredicate();
+    if (pr != LL::ICmpPredicate::eq && pr != LL::ICmpPredicate::ne) return false;
+    p = ic.getLhs();
+    eq = pr == LL::ICmpPredicate::eq;
+    return true;
+  };
+  for (Block &b : fn.getBody()) {
+    Block *pb = b.getSinglePredecessor();
+    if (!pb) continue;
+    llvm::SmallVector<Value, 4> facts;
+    if (auto it = nonNull.find(pb); it != nonNull.end()) facts = it->second;
+    Value p;
+    bool eq;
+    if (nilCheck(pb->getTerminator(), p, eq)) {
+      auto cb = cast<LL::CondBrOp>(pb->getTerminator());
+      Block *nonNil = eq ? cb.getFalseDest() : cb.getTrueDest();
+      if (nonNil == &b && cb.getTrueDest() != cb.getFalseDest() && !llvm::is_contained(facts, p)) facts.push_back(p);
+    }
+    if (!facts.empty()) nonNull[&b] = std::move(facts);
+  }
+  for (Block &b : fn.getBody()) {
+    Value p;
+    bool eq;
+    if (!nilCheck(b.getTerminator(), p, eq)) continue;
+    auto it = nonNull.find(&b);
+    if (it == nonNull.end() || !llvm::is_contained(it->second, p)) continue;
+    auto cb = cast<LL::CondBrOp>(b.getTerminator());
+    decidedBr[cb.getOperation()] = eq ? cb.getFalseDest() : cb.getTrueDest();
+  }
+  if (decidedBr.empty()) return;
+  // Blocks that only decided branches (or dead blocks) reach.
+  for (bool changed = true; changed;) {
+    changed = false;
+    for (Block &b : fn.getBody()) {
+      if (b.isEntryBlock() || deadBlock.count(&b) || b.hasNoPredecessors()) continue;
+      bool live = false;
+      for (Block *pb : b.getPredecessors()) {
+        if (deadBlock.count(pb)) continue;
+        auto d = decidedBr.find(pb->getTerminator());
+        if (d == decidedBr.end() || d->second == &b) live = true;
+      }
+      if (!live) {
+        deadBlock.insert(&b);
+        changed = true;
+      }
+    }
+  }
+}
+
 void FuncGen::run() {
   if (fn.isVarArg()) unsupported("variadic function");
   mg.checkFunction(fn);
@@ -2465,6 +2598,8 @@ void FuncGen::run() {
       if (auto ld = tr.getArg().getDefiningOp<LL::LoadOp>(); ld && ld.getType().isInteger(8))
         fusedCmp.insert(tr.getOperation());
   });
+  findDecidedNilChecks();
+  findLazyAggArgs();
   // A GEP with constant indices whose every use is the address of a plain
   // (not atomic) load or store folds into them as an offset.
   fn.walk([&](LL::GEPOp g) {
@@ -2545,9 +2680,11 @@ void FuncGen::run() {
   prologue();
   if (opStatsOn) ob["prologue"] += here() - was;
   for (Block &b : fn.getBody()) {
+    if (deadBlock.count(&b)) continue;
     blockStart[&b] = here();
     flushCache();
     nextBlock = b.getNextNode();
+    while (nextBlock && deadBlock.count(nextBlock)) nextBlock = nextBlock->getNextNode();
     for (Operation &op : b) {
       row(op.getLoc());
       was = here();
