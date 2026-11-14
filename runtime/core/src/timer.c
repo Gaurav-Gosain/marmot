@@ -23,8 +23,19 @@ struct rt_timer {
   uint8_t state;
   uint8_t inl;      // internal timer: fn runs inside timers_check
   _Atomic uint8_t running;  // internal timer: fn executing
-  uint64_t pc[TRACE_FRAMES];  // where it was made (MARMOT_TRACE only)
+  uint8_t seqcall;          // fn is void (*)(void *arg, uintptr_t seq) (rt_timer_reset)
+  uintptr_t seq;            // passed to a seqcall fn, as it was when the timer fired
+  uint64_t *pc;             // where it was made (MARMOT_TRACE only, TRACE_FRAMES words)
 };
+
+// The frames of t's creation, recorded while tracing.
+static void timer_frames(rt_timer *t, void *fp) {
+  if (!t->pc) t->pc = persistent_alloc(8 * TRACE_FRAMES, 8);
+  trace_frames(fp, t->pc);
+}
+
+static const uint64_t no_frames[TRACE_FRAMES];
+static const uint64_t *frames_of(rt_timer *t) { return t->pc ? t->pc : no_frames; }
 
 _Atomic int64_t timer_next_when = INT64_MAX;
 
@@ -143,10 +154,15 @@ static void timerproc(void *unused) {
     t->state = T_DONE;
     void (*fn)(void *) = t->fn;
     void *arg = t->arg;
-    if (trace_on()) __builtin_memcpy(firing_pc, t->pc, sizeof firing_pc);
+    uintptr_t seq = t->seq;
+    bool seqcall = t->seqcall;
+    if (trace_on()) __builtin_memcpy(firing_pc, frames_of(t), sizeof firing_pc);
     spin_unlock(&tlock);
     firing = trace_on();
-    fn(arg);
+    if (seqcall)
+      ((void (*)(void *, uintptr_t))(void *)fn)(arg, seq);
+    else
+      fn(arg);
     firing = false;
   }
 }
@@ -189,7 +205,7 @@ int64_t timers_check(int64_t now) {
     t->next = NULL;
     if (m) {
       m->wake_next = (trace_why){.cause = WAKE_TIMER};
-      __builtin_memcpy(m->wake_next.pc, t->pc, sizeof t->pc);
+      __builtin_memcpy(m->wake_next.pc, frames_of(t), sizeof m->wake_next.pc);
     }
     t->fn(t->arg);
     atomic_store(&t->running, 0);
@@ -206,7 +222,7 @@ int64_t timers_check(int64_t now) {
 void timers_due_why(trace_why *w) {
   *w = (trace_why){.cause = WAKE_TIMER};
   spin_lock(&tlock);
-  if (tlen) __builtin_memcpy(w->pc, theap[0]->pc, sizeof w->pc);
+  if (tlen) __builtin_memcpy(w->pc, frames_of(theap[0]), sizeof w->pc);
   spin_unlock(&tlock);
 }
 
@@ -232,10 +248,59 @@ RT_API void *rt_timer_start(int64_t when, void (*fn)(void *), void *arg) {
   t->idx = -1;
   if (trace_on()) {
     const uint64_t *tf = timer_firing_frames();  // re-armed from a timer: its frames
-    if (tf)
-      __builtin_memcpy(t->pc, tf, sizeof t->pc);
-    else
-      trace_frames(__builtin_frame_address(0), t->pc);
+    if (tf) {
+      if (!t->pc) t->pc = persistent_alloc(8 * TRACE_FRAMES, 8);
+      __builtin_memcpy(t->pc, tf, 8 * TRACE_FRAMES);
+    } else {
+      timer_frames(t, __builtin_frame_address(0));
+    }
+  }
+  timer_add(t);
+  return t;
+}
+
+// Arms timer h again (or a new one when h is NULL or still queued to fire)
+// for when, calling fn(arg, seq) on the timer goroutine; returns the timer
+// armed. A timer that is pending is moved, one that fired is reused: a
+// reset allocates nothing. seq is passed as it is when the timer fires, so
+// the caller can tell a late firing of an earlier arming.
+RT_API void *rt_timer_reset(void *h, int64_t when, void (*fn)(void *, uintptr_t), void *arg, uintptr_t seq) {
+  rt_timer *t = h;
+  if (t) {
+    spin_lock(&tlock);
+    if (t->state == T_PENDING) {
+      heap_remove(t);
+      update_next();
+    } else if (t->state == T_FIRED) {
+      t = NULL;  // still in the fire queue: it fires as armed before
+    }
+    if (t) t->state = T_STOPPED;
+    spin_unlock(&tlock);
+  }
+  if (!t) {
+    t = rt_timer_start(when, (void (*)(void *))(void *)fn, arg);  // armed: stop it to set the rest
+    spin_lock(&tlock);
+    if (t->state == T_PENDING) {
+      heap_remove(t);
+      update_next();
+    }
+    t->state = T_STOPPED;
+    spin_unlock(&tlock);
+  }
+  t->when = when;
+  t->fn = (void (*)(void *))(void *)fn;
+  t->arg = arg;
+  t->seq = seq;
+  t->seqcall = 1;
+  t->idx = -1;
+  if (trace_on()) {
+    const uint64_t *tf = timer_firing_frames();
+    if (tf) {
+      if (!t->pc) t->pc = persistent_alloc(8 * TRACE_FRAMES, 8);
+      __builtin_memcpy(t->pc, tf, 8 * TRACE_FRAMES);
+    } else {
+      timer_frames(t, __builtin_frame_address(0));
+    }
   }
   timer_add(t);
   return t;
@@ -273,7 +338,7 @@ void itimer_start(rt_timer *t, int64_t when, void (*fn)(void *), void *arg) {
   t->when = when;
   t->fn = fn;
   t->arg = arg;
-  if (trace_on()) trace_frames(__builtin_frame_address(0), t->pc);
+  if (trace_on()) timer_frames(t, __builtin_frame_address(0));
   timer_add(t);
 }
 
@@ -303,7 +368,7 @@ RT_API void rt_sleep(int64_t ns) {
     g->sleeptimer->arg = g;
   }
   g->sleeptimer->when = os_nanotime() + ns;
-  if (trace_on()) trace_frames(__builtin_frame_address(0), g->sleeptimer->pc);
+  if (trace_on()) timer_frames(g->sleeptimer, __builtin_frame_address(0));
   g->waitreason = WAIT_SLEEP;
   rt_park(sleep_park, g);
 }

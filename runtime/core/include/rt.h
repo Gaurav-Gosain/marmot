@@ -339,6 +339,10 @@ void rt_sleep(int64_t ns);
 // handle is a heap object too and keeps arg alive while it is reachable.
 void *rt_timer_start(int64_t when, void (*fn)(void *), void *arg);
 int32_t rt_timer_stop(void *timer);
+// Re-arms timer h (NULL: a new one) for when, calling fn(arg, seq) with seq
+// as it was armed; returns the timer armed. Allocates nothing when h is
+// pending or has fired (a timer still queued to fire is replaced).
+void *rt_timer_reset(void *h, int64_t when, void (*fn)(void *, uintptr_t), void *arg, uintptr_t seq);
 
 // ---- Raw I/O ----
 
