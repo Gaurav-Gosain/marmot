@@ -226,9 +226,6 @@ type dlInfo struct {
 	saddr uintptr
 }
 
-//go:linkname libc_dladdr dladdr
-func libc_dladdr(addr uintptr, info *dlInfo) int32
-
 // cSymbol names a code address outside the pc table that lies in a shared
 // library (a C library function such as memmove) from the dynamic linker's
 // symbol tables, or returns "". Addresses in the executable itself get no

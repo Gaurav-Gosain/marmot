@@ -38,6 +38,9 @@ func (f *funcGen) call(c *ssa.CallCommon, instr ssa.Instruction) string {
 			if r, ok := f.intrinsic(fn, args); ok {
 				return r
 			}
+			if f.deferThunk || f.wrapClaim != "" {
+				f.passDeferCallee(f.addressOf(f.m.funcRef(fn)))
+			}
 			return f.directCall(fn, args)
 		}
 	}
@@ -46,6 +49,7 @@ func (f *funcGen) call(c *ssa.CallCommon, instr ssa.Instruction) string {
 	fv := f.value(c.Value)
 	f.nilCheck(fv)
 	code := f.markAddr(f.op("llvm.load %s {alignment = 8 : i64} : %s -> !llvm.ptr", fv, f.pty(fv)))
+	f.passDeferCallee(code)
 	sig := c.Signature()
 	params, ret := f.m.sigTypes(sig, true)
 	args := make([]string, 0, len(c.Args)+1)
@@ -99,6 +103,7 @@ func (f *funcGen) invoke(c *ssa.CallCommon) string {
 	idx := ifaceMethodIndex(it, c.Method)
 	slot := f.gepByte(tab, f.m.p.itabFun(idx))
 	code := f.markAddr(f.op("llvm.load %s "+f.ptrAlign()+" : %s -> !llvm.ptr", slot, f.pty(slot)))
+	f.passDeferCallee(code)
 	sig := c.Method.Type().(*types.Signature)
 	params, ret := f.m.sigTypes(stripRecv(sig), false)
 	params = append([]string{tP}, params...)
@@ -255,6 +260,13 @@ func (f *funcGen) builtin(b *ssa.Builtin, args []ssa.Value, instr ssa.Instructio
 			// defer recover(): recover is the deferred function itself, not
 			// called by one, so it returns nil and stops nothing (spec).
 			return f.zero(f.tm.valType(types.NewInterfaceType(nil, nil)))
+		}
+		if f.m.p.opts.GOARCH == "wasm" {
+			tok := f.recoverTok
+			if tok == "" {
+				tok = f.constInt(2, mlir.I64)
+			}
+			return f.rtcall("gorecover", tok)
 		}
 		return f.rtcall("gorecover", f.frameAddr())
 	case "ssa:deferstack":
@@ -491,6 +503,7 @@ func (f *funcGen) devirtualize(c *ssa.CallCommon) (string, bool) {
 		f.emit("llvm.cond_br %s, %s, %s", hit, yes, no)
 		fmt.Fprintf(f.b, "  %s:\n", yes)
 		sigText := fmt.Sprintf("(%s) -> %s", strings.Join(params, ", "), retOrVoid(ret))
+		f.passDeferCallee(f.addressOf(target))
 		if ret == "" {
 			f.emit("llvm.call %s(%s) : %s", mlir.Symbol(target), strings.Join(args, ", "), sigText)
 			f.emit("llvm.br %s", done)
@@ -506,6 +519,7 @@ func (f *funcGen) devirtualize(c *ssa.CallCommon) (string, bool) {
 	idx := ifaceMethodIndex(it, c.Method)
 	slot := f.gepByte(tab, f.m.p.itabFun(idx))
 	code := f.markAddr(f.op("llvm.load %s "+f.ptrAlign()+" : %s -> !llvm.ptr", slot, f.pty(slot)))
+	f.passDeferCallee(code)
 	r := f.indirectCall(code, args, params, ret)
 	if ret == "" {
 		f.emit("llvm.br %s", done)

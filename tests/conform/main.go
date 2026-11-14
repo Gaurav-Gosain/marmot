@@ -165,6 +165,9 @@ func main() {
 			defer func() { <-sem }()
 			results[i] = runOne(snapRoot, testsDir, work, marmot, j.test, j.cfg)
 			results[i].Known = known[j.test] || (j.cfg.label != "" && known[j.test+"@"+j.cfg.label])
+			if _, arch, ok := strings.Cut(*flTarget, "/"); ok && known[j.test+"@"+arch] {
+				results[i].Known = true // NAME@wasm: expected on that target
+			}
 		}()
 	}
 	wg.Wait()
@@ -869,9 +872,21 @@ func tier1Off() []string {
 // that exists: gc's own results differ by architecture where the spec
 // leaves them open (gc fuses x*y+z into FMA on arm64, not with GOAMD64=v1).
 func golden(base, ext string) string {
+	// A -target build checks against its architecture's golden first
+	// (NAME.out.wasm: sizes of pointers differ there).
+	if _, arch, ok := strings.Cut(*flTarget, "/"); ok {
+		if t := base + ext + "." + arch; fileExists(t) {
+			return t
+		}
+	}
 	a := base + ext + "." + runtime.GOARCH
 	if _, err := os.Stat(a); err == nil {
 		return a
 	}
 	return base + ext
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }

@@ -804,7 +804,7 @@ func (v Value) methodValue(name string) Value {
 			if tfn == nil {
 				panic("reflect: method " + name + " of " + e.Type.String() + " is not callable through reflect (no wrapper emitted)")
 			}
-			obj := (*[2]unsafe.Pointer)(mallocConservative(2 * unsafe.Sizeof(uintptr(0))))
+			obj := (*[2]unsafe.Pointer)(mallocConservative(2 * unsafe.Sizeof(unsafe.Pointer(nil))))
 			obj[0] = tfn
 			obj[1] = e.Data
 			return Value{m.Mtyp, unsafe.Pointer(obj), v.flag.ro() | flag(Func)}

@@ -90,7 +90,7 @@ func (u *UncommonType) Tfn(i int) unsafe.Pointer {
 	if u.Tfns == nil {
 		return nil
 	}
-	return *(*unsafe.Pointer)(unsafe.Add(unsafe.Pointer(u.Tfns), uintptr(i)*unsafe.Sizeof(uintptr(0))))
+	return *(*unsafe.Pointer)(unsafe.Add(unsafe.Pointer(u.Tfns), uintptr(i)*unsafe.Sizeof(unsafe.Pointer(nil))))
 }
 
 // Method is runtime.method.
@@ -303,7 +303,7 @@ func (f *StructField) Embedded() bool { return f.OffsetEmbed&1 != 0 }
 
 // Param returns parameter (i < InCount) or result (InCount + j) i.
 func (ft *FuncType) Param(i int) *Type {
-	return *(**Type)(unsafe.Add(unsafe.Pointer(ft.Params), uintptr(i)*unsafe.Sizeof(uintptr(0))))
+	return *(**Type)(unsafe.Add(unsafe.Pointer(ft.Params), uintptr(i)*unsafe.Sizeof(unsafe.Pointer(nil))))
 }
 
 // IsExported reports whether a method or field name is exported. Unexported

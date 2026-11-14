@@ -256,6 +256,7 @@ func (m *moduleGen) thunk(parent *funcGen, c *ssa.CallCommon, caps []ssa.Value, 
 	t.ctx = "%ctx"
 	t.noinlineCalls = true
 	t.deferThunk = true
+	t.selfSym = sym
 	mt := m.tm.memType(st)
 	for i, x := range caps {
 		p := t.gep(t.ctx, mt, 0, i+1)

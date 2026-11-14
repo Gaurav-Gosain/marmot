@@ -1,0 +1,9 @@
+M recovered a 1
+M recovered b 2
+M recovered b2 1
+G recovered c 3
+G recovered c2 s
+M recovered d 1
+P recovered d2
+helper got nil: true
+neg helper outer caught neg

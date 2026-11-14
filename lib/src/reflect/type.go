@@ -691,7 +691,7 @@ func ptrTo(t *rtabi.Type) *rtabi.Type {
 		return &pi.(*rtabi.PtrType).Type
 	}
 	pp := new(rtabi.PtrType)
-	pp.Size_ = unsafe.Sizeof(uintptr(0))
+	pp.Size_ = unsafe.Sizeof(unsafe.Pointer(nil))
 	pp.PtrBytes = pp.Size_
 	pp.GCData = &pointerGCData
 	pp.Str = "*" + t.Str

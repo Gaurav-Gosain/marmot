@@ -63,6 +63,9 @@ type funcGen struct {
 	sunkDone          map[ssa.Instruction]bool
 	wrapOld           string                         // recoverWrapEnter result (recoverwrap.go)
 	deferThunk        bool                           // emitting a defer thunk: a builtin call here is the deferred call itself
+	recoverTok        string                         // wasm: 1 when the function was called directly by a deferred call, else 2 (wasmRecoverToken)
+	wrapClaim         string                         // wasm: in a compiler wrapper, i1 true when the deferred call invoked it (wasmClaim)
+	selfSym           string                         // a defer thunk's or open defer runner's own symbol (wasm recover token)
 	constOperands     bool                           // the binary op being emitted has two constant operands
 	fuseLookup        map[*ssa.Lookup]*ssa.MapUpdate // map read-modify-write pairs (mapfuse.go)
 	fuseSlot          map[*ssa.MapUpdate]string
@@ -183,6 +186,12 @@ func (f *funcGen) gen(sym string, shared bool) {
 			p := f.gep(f.ctx, st, 0, i+1)
 			f.vals[fv] = f.load(p, fvt[i])
 		}
+	}
+
+	if f.m.p.opts.GOARCH == "wasm" && callsRecover(fn) {
+		f.recoverTok = f.wasmRecoverToken(sym)
+	} else if f.m.p.opts.GOARCH == "wasm" && forwardsToRecover(fn) {
+		f.wrapClaim = f.wasmClaim(sym)
 	}
 
 	f.findAppendElems()

@@ -627,6 +627,16 @@ func (m *moduleGen) ifaceFunc(t types.Type, sel *types.Selection) string {
 	} else {
 		b.WriteString(" attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n")
 	}
+	if g := m.p.wasmDeferCalleeVar(); g != nil && callsRecover(fn) {
+		// wasm recover token: invoked by a deferred call (the token names
+		// this wrapper), it passes the token on to the method.
+		fmt.Fprintf(&b, "    %%tokg = llvm.mlir.addressof %s : !llvm.ptr\n", mlir.Symbol(m.globalRef(g)))
+		fmt.Fprintf(&b, "    %%tok = llvm.load %%tokg {alignment = 8 : i64} : !llvm.ptr -> i64\n")
+		fmt.Fprintf(&b, "    %%tself = llvm.mlir.addressof %s : !llvm.ptr\n    %%tselfi = llvm.ptrtoint %%tself : !llvm.ptr to i64\n", mlir.Symbol(wsym))
+		fmt.Fprintf(&b, "    %%ttgt = llvm.mlir.addressof %s : !llvm.ptr\n    %%ttgti = llvm.ptrtoint %%ttgt : !llvm.ptr to i64\n", mlir.Symbol(target))
+		fmt.Fprintf(&b, "    %%tclaim = llvm.icmp \"eq\" %%tok, %%tselfi : i64\n    %%tnew = llvm.select %%tclaim, %%ttgti, %%tok : i1, i64\n")
+		fmt.Fprintf(&b, "    llvm.store %%tnew, %%tokg {alignment = 8 : i64} : i64, !llvm.ptr\n")
+	}
 	recvT := params[0]
 	src, srcT := "%a0", tP
 	if isDirectIface(t) {

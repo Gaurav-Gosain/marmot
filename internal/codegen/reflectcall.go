@@ -85,7 +85,13 @@ func (m *moduleGen) callAdapter(sig *types.Signature) string {
 		f.store(v, f.gep("%res", rmt, 0, j), t)
 	}
 	f.emit("llvm.return")
-	head := fmt.Sprintf("  llvm.func linkonce_odr %s(%%fv: %s, %%args: %s, %%res: %s) attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n", mlir.Symbol(sym), tP, tP, tP)
+	// reflect calls the adapter as a func value (callAdapter): wasm checks
+	// the signature, so it takes the trailing closure parameter (unused).
+	unused := ""
+	if m.p.opts.GOARCH == "wasm" {
+		unused = ", %unused: " + tP
+	}
+	head := fmt.Sprintf("  llvm.func linkonce_odr %s(%%fv: %s, %%args: %s, %%res: %s%s) attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n", mlir.Symbol(sym), tP, tP, tP, unused)
 	m.defs.WriteString(f.finishAdapter(head))
 	return sym
 }
