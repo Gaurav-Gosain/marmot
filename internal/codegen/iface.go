@@ -51,6 +51,11 @@ func (f *funcGen) makeInterface(v *ssa.MakeInterface) {
 		data = f.boxValue(v.X)
 	}
 	f.vals[v] = f.build(tIface, tw, data)
+	// A data word just allocated or static makes the interface value need
+	// no card when stored (wb.go).
+	if optWB && (f.fresh[data] || f.addr0[data] && !f.stack0[data]) {
+		f.markFresh(f.vals[v])
+	}
 }
 
 // boxValue returns the interface data word for value x.

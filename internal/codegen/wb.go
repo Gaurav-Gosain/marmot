@@ -129,7 +129,7 @@ func (f *funcGen) wbStore(v, p string, t types.Type) {
 	if f.m.cards() {
 		// A pointer to an object allocated since the last call needs no card
 		// either: allocated while marking runs, it is already marked.
-		if !f.cardSkip && !(mt == tP && f.fresh[v]) {
+		if !f.cardSkip && !f.fresh[v] {
 			f.cardStore(p, t, mt)
 		}
 		return

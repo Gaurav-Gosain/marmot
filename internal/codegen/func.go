@@ -970,7 +970,22 @@ func (f *funcGen) rtcall(name string, args ...string) string {
 	if fn == nil {
 		f.fail(token.NoPos, "runtime function %s is missing from lib/src/runtime", name)
 	}
-	return f.directCall(fn, args)
+	r := f.directCall(fn, args)
+	if optWB && allocResult[name] {
+		// Its result was allocated during the call: like newobject's, a
+		// store of it needs no card (wb.go).
+		f.markFresh(r)
+	}
+	return r
+}
+
+// allocResult names the runtime calls whose result (pointer, string or
+// slice) points at memory the call allocated.
+var allocResult = map[string]bool{
+	"newobject": true, "makeslice": true, "makemap": true, "makemap_small": true, "makechan": true,
+	"growslice": true, "convT16": true, "convT32": true, "convT64": true, "convTstring": true, "convTslice": true,
+	"concatstring2": true, "concatstring3": true, "concatstring4": true, "concatstring5": true, "concatstrings": true,
+	"slicebytetostring": true, "slicerunetostring": true, "intstring": true, "stringtoslicebyte": true, "stringtoslicerune": true,
 }
 
 // directCall calls fn with the given register arguments.
