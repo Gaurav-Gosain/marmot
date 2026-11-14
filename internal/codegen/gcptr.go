@@ -91,3 +91,12 @@ func (f *funcGen) gcArgs(args []string) []string {
 	}
 	return out
 }
+
+// asVal returns v, a register value of LLVM type vt, as a Go value: cast
+// when vt is the GC pointer type.
+func (f *funcGen) asVal(v, vt string) string {
+	if vt == tP {
+		return f.gcv(v)
+	}
+	return v
+}
