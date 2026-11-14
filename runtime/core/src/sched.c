@@ -1548,10 +1548,10 @@ static int32_t gstack_walk(rt_g *g, uintptr_t first, uintptr_t fp, uintptr_t *pc
 // than the caller's, up to n into out; returns how many there are. A
 // goroutine running on another M (stopped at a safepoint) is listed without
 // frames.
-RT_API int64_t rt_gstacks(rt_gstack *out, int64_t n) {
+RT_API intptr_t rt_gstacks(rt_gstack *out, intptr_t n) {
   rt_g *self = getm()->curg;
   stop_the_world();
-  int64_t k = 0;
+  intptr_t k = 0;
   uint32_t total = __atomic_load_n(&nallg, __ATOMIC_ACQUIRE);
   for (uint32_t i = 0; i < total && gchunks; i++) {
     gchunk *c = gchunks[i / GCHUNK];
