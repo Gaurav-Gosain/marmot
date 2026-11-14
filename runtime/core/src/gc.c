@@ -366,6 +366,7 @@ typedef struct {
   uintptr_t pc;     // the frame owning the word (a stack root), 0: unknown
   uintptr_t off;    // from the stack's top
   intptr_t spoff;   // from the saved sp of a stopped goroutine, -1: none
+  uintptr_t fpoff;  // below the owning frame's fp, 0: unknown
 } root_rec;
 static root_rec top_roots[20];
 #if RT_ARCH_ARM64
@@ -381,7 +382,8 @@ void gc_root_goroutine(rt_g *g) { root_g = g; }
 // The frame owning stack word a of g: the function whose frame pointer is
 // the first above a; its pc is the return address saved in the record
 // below it (the callee's), found from the saved context's frame chain.
-static NOINLINE uintptr_t owner_pc(rt_g *g, uintptr_t a) {
+static NOINLINE uintptr_t owner_pc(rt_g *g, uintptr_t a, uintptr_t *ofp) {
+  *ofp = 0;
   if (!g) return 0;
   rt_m *me = getm();
   uintptr_t fp, pc;
@@ -401,7 +403,10 @@ static NOINLINE uintptr_t owner_pc(rt_g *g, uintptr_t a) {
 #endif
 walk:
   for (int i = 0; i < 256 && fp >= g->stack_lo && fp + 16 <= g->stack_hi; i++) {
-    if (a < fp) return pc;
+    if (a < fp) {
+      *ofp = fp;
+      return pc;
+    }
     pc = ((uintptr_t *)fp)[1];
     uintptr_t up = ((uintptr_t *)fp)[0];
     if (up <= fp) break;
@@ -422,9 +427,11 @@ NO_SANITIZE static void scan_range_roots(gcw *w, uintptr_t lo, uintptr_t hi) {
     for (int i = 1; i < 20; i++)
       if (top_roots[i].bytes < top_roots[k].bytes) k = i;
     if (got > top_roots[k].bytes) {
-      root_rec r = {p, got, root_g ? root_g->id : 0, 0, 0, -1};
+      root_rec r = {p, got, root_g ? root_g->id : 0, 0, 0, -1, 0};
       if (root_g) {
-        r.pc = owner_pc(root_g, p);
+        uintptr_t ofp;
+        r.pc = owner_pc(root_g, p, &ofp);
+        if (ofp) r.fpoff = ofp - p;
         r.off = root_g->stack_hi - p;
         uintptr_t sp = (uintptr_t)root_g->sp;
         if (sp && p >= sp && atomic_load(&root_g->status) != G_RUNNING) r.spoff = (intptr_t)(p - sp);
@@ -462,6 +469,10 @@ static void print_roots(void) {
       rt_printu(r.off);
       rt_print(" frame pc ");
       rt_printx(r.pc);
+      if (r.fpoff) {
+        rt_print(" fp-");
+        rt_printu(r.fpoff);
+      }
       if (r.spoff >= 0 && r.spoff < CTX_BYTES) {
         rt_print(" (saved context +");  // callee-saved registers at the switch
         rt_printu((uint64_t)r.spoff);
