@@ -45,7 +45,7 @@ func (f *funcGen) call(c *ssa.CallCommon, instr ssa.Instruction) string {
 	// trailing hidden argument.
 	fv := f.value(c.Value)
 	f.nilCheck(fv)
-	code := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", fv)
+	code := f.markAddr(f.op("llvm.load %s {alignment = 8 : i64} : %s -> !llvm.ptr", fv, f.pty(fv)))
 	sig := c.Signature()
 	params, ret := f.m.sigTypes(sig, true)
 	args := make([]string, 0, len(c.Args)+1)
@@ -62,6 +62,7 @@ func (f *funcGen) indirectCall(code string, args, params []string, ret string) s
 	if f.noinlineCalls {
 		attr = " {no_inline}"
 	}
+	args = f.gcArgs(args)
 	if ret == "" {
 		f.emit("llvm.call %s(%s)%s : %s", code, strings.Join(args, ", "), attr, t)
 		return ""
@@ -97,10 +98,10 @@ func (f *funcGen) invoke(c *ssa.CallCommon) string {
 	it := c.Value.Type().Underlying().(*types.Interface)
 	idx := ifaceMethodIndex(it, c.Method)
 	slot := f.gepByte(tab, int64(24+8*idx))
-	code := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", slot)
+	code := f.markAddr(f.op("llvm.load %s {alignment = 8 : i64} : %s -> !llvm.ptr", slot, f.pty(slot)))
 	sig := c.Method.Type().(*types.Signature)
 	params, ret := f.m.sigTypes(stripRecv(sig), false)
-	params = append([]string{mlir.Ptr}, params...)
+	params = append([]string{tP}, params...)
 	args := []string{data}
 	for _, a := range c.Args {
 		args = append(args, f.value(a))
@@ -128,7 +129,7 @@ func (m *moduleGen) funcValueSym(fn *ssa.Function) string {
 		fmt.Fprintf(&b, "%%a%d: %s, ", i, t)
 		args = append(args, fmt.Sprintf("%%a%d", i))
 	}
-	b.WriteString("%ctx: !llvm.ptr)")
+	b.WriteString("%ctx: " + tP + ")")
 	if ret != "" {
 		b.WriteString(" -> " + ret)
 	}
@@ -173,7 +174,7 @@ func (f *funcGen) makeClosure(v *ssa.MakeClosure) {
 		// The closure does not escape: build it in the frame.
 		mt := f.tm.memType(st)
 		obj := f.alloca(mt, 8)
-		f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr", f.addressOf(sym), obj)
+		f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, %s", f.addressOf(sym), obj, f.pty(obj))
 		for i := range v.Bindings {
 			f.store(bvals[i], f.gep(obj, mt, 0, i+1), btypes[i])
 		}
@@ -199,7 +200,7 @@ func (f *funcGen) makeClosure(v *ssa.MakeClosure) {
 	obj := f.newObject(st)
 	mt := f.tm.memType(st)
 	code := f.addressOf(sym)
-	f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr", code, obj)
+	f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, %s", code, obj, f.pty(obj))
 	for i := range v.Bindings {
 		p := f.gep(obj, mt, 0, i+1)
 		f.store(bvals[i], p, btypes[i])
@@ -255,7 +256,7 @@ func (f *funcGen) builtin(b *ssa.Builtin, args []ssa.Value, instr ssa.Instructio
 			// called by one, so it returns nil and stops nothing (spec).
 			return f.zero(f.tm.valType(types.NewInterfaceType(nil, nil)))
 		}
-		fp := f.op("llvm.call_intrinsic \"llvm.frameaddress.p0\"(%s) : (i32) -> !llvm.ptr", f.constInt(0, mlir.I32))
+		fp := f.markAddr(f.op("llvm.call_intrinsic \"llvm.frameaddress.p0\"(%s) : (i32) -> !llvm.ptr", f.constInt(0, mlir.I32)))
 		return f.rtcall("gorecover", f.op("llvm.ptrtoint %s : !llvm.ptr to i64", fp))
 	case "ssa:deferstack":
 		f.setjmp()
@@ -280,7 +281,7 @@ func (f *funcGen) builtin(b *ssa.Builtin, args []ssa.Value, instr ssa.Instructio
 	case "Add": // unsafe.Add
 		p := f.value(args[0])
 		n := f.toInt64(f.value(args[1]), args[1].Type())
-		return f.op("llvm.getelementptr %s[%s] : (!llvm.ptr, i64) -> !llvm.ptr, i8", p, n)
+		return f.derived(p, f.op("llvm.getelementptr %s[%s] : (%s, i64) -> %s, i8", p, n, f.pty(p), f.pty(p)))
 	case "StringData", "SliceData":
 		x := f.value(args[0])
 		return f.extractRaw(x, f.tm.valType(args[0].Type()), 0)
@@ -472,7 +473,7 @@ func (f *funcGen) devirtualize(c *ssa.CallCommon) (string, bool) {
 	data := f.extractRaw(x, tIface, 1)
 	sig := c.Method.Type().(*types.Signature)
 	params, ret := f.m.sigTypes(stripRecv(sig), false)
-	params = append([]string{mlir.Ptr}, params...)
+	params = append([]string{tP}, params...)
 	args := []string{data}
 	for _, a := range c.Args {
 		args = append(args, f.value(a))
@@ -486,7 +487,7 @@ func (f *funcGen) devirtualize(c *ssa.CallCommon) (string, bool) {
 		}
 		target := f.m.ifaceFunc(t, sel)
 		want := f.addressOf(f.m.itabSym(t, iface))
-		hit := f.op("llvm.icmp \"eq\" %s, %s : !llvm.ptr", tab, want)
+		hit := f.op("llvm.icmp \"eq\" %s, %s : %s", f.gcv(tab), f.gcv(want), tP)
 		yes, no := f.newBlock(), f.newBlock()
 		f.emit("llvm.cond_br %s, %s, %s", hit, yes, no)
 		fmt.Fprintf(f.b, "  %s:\n", yes)
@@ -505,7 +506,7 @@ func (f *funcGen) devirtualize(c *ssa.CallCommon) (string, bool) {
 	it := iface.Underlying().(*types.Interface)
 	idx := ifaceMethodIndex(it, c.Method)
 	slot := f.gepByte(tab, int64(24+8*idx))
-	code := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", slot)
+	code := f.markAddr(f.op("llvm.load %s {alignment = 8 : i64} : %s -> !llvm.ptr", slot, f.pty(slot)))
 	r := f.indirectCall(code, args, params, ret)
 	if ret == "" {
 		f.emit("llvm.br %s", done)

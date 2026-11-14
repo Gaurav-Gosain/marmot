@@ -74,7 +74,7 @@ func (m *moduleGen) callAdapter(sig *types.Signature) string {
 		args = append(args, f.load(f.gep("%args", pmt, 0, i), t))
 	}
 	args = append(args, "%fv")
-	code := f.op("llvm.load %%fv {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr")
+	code := f.markAddr(f.op("llvm.load %%fv {alignment = 8 : i64} : %s -> !llvm.ptr", tP))
 	r := f.indirectCall(code, args, params, ret)
 	for j := 0; j < sig.Results().Len(); j++ {
 		t := sig.Results().At(j).Type()
@@ -85,7 +85,7 @@ func (m *moduleGen) callAdapter(sig *types.Signature) string {
 		f.store(v, f.gep("%res", rmt, 0, j), t)
 	}
 	f.emit("llvm.return")
-	head := fmt.Sprintf("  llvm.func linkonce_odr %s(%%fv: !llvm.ptr, %%args: !llvm.ptr, %%res: !llvm.ptr) attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n", mlir.Symbol(sym))
+	head := fmt.Sprintf("  llvm.func linkonce_odr %s(%%fv: %s, %%args: %s, %%res: %s) attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n", mlir.Symbol(sym), tP, tP, tP)
 	m.defs.WriteString(f.finishAdapter(head))
 	return sym
 }
@@ -102,7 +102,8 @@ func (m *moduleGen) methodValueWrapper(ifn string, method *types.Func) string {
 	sig := stripRecv(method.Type().(*types.Signature))
 	params, ret := m.sigTypes(sig, false)
 	f := m.newAdapterGen()
-	recv := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", f.gepByte("%ctx", 8))
+	at1 := f.gepByte("%ctx", 8)
+	recv := f.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", at1, f.pty(at1), tP)
 	var head strings.Builder
 	fmt.Fprintf(&head, "  llvm.func linkonce_odr %s(", mlir.Symbol(sym))
 	args := []string{recv}
@@ -110,13 +111,13 @@ func (m *moduleGen) methodValueWrapper(ifn string, method *types.Func) string {
 		fmt.Fprintf(&head, "%%a%d: %s, ", i, t)
 		args = append(args, fmt.Sprintf("%%a%d", i))
 	}
-	head.WriteString("%ctx: !llvm.ptr)")
+	head.WriteString("%ctx: " + tP + ")")
 	if ret != "" {
 		head.WriteString(" -> " + ret)
 	}
 	head.WriteString(" attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n")
 	code := f.addressOf(ifn)
-	r := f.indirectCall(code, args, append([]string{mlir.Ptr}, params...), ret)
+	r := f.indirectCall(code, args, append([]string{tP}, params...), ret)
 	if ret == "" {
 		f.emit("llvm.return")
 	} else {

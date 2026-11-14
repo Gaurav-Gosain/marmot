@@ -592,7 +592,7 @@ func (m *moduleGen) ifaceFunc(t types.Type, sel *types.Selection) string {
 	if fn == nil {
 		return ""
 	}
-	if m.tm.valType(t) == mlir.Ptr {
+	if m.tm.valType(t) == tP {
 		return m.funcRef(fn)
 	}
 	// The data word points at a boxed value (or, for direct single field
@@ -605,7 +605,7 @@ func (m *moduleGen) ifaceFunc(t types.Type, sel *types.Selection) string {
 	m.defined[wsym] = true
 	params, ret := m.signature(fn)
 	var b strings.Builder
-	fmt.Fprintf(&b, "  llvm.func linkonce_odr %s(%%a0: !llvm.ptr", mlir.Symbol(wsym))
+	fmt.Fprintf(&b, "  llvm.func linkonce_odr %s(%%a0: %s", mlir.Symbol(wsym), tP)
 	for i := 1; i < len(params); i++ {
 		fmt.Fprintf(&b, ", %%a%d: %s", i, params[i])
 	}
@@ -626,20 +626,20 @@ func (m *moduleGen) ifaceFunc(t types.Type, sel *types.Selection) string {
 		b.WriteString(" attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n")
 	}
 	recvT := params[0]
-	src := "%a0"
+	src, srcT := "%a0", tP
 	if isDirectIface(t) {
 		fmt.Fprintf(&b, "    %%one = llvm.mlir.constant(1 : i64) : i64\n")
 		fmt.Fprintf(&b, "    %%slot = llvm.alloca %%one x !llvm.ptr : (i64) -> !llvm.ptr\n")
-		fmt.Fprintf(&b, "    llvm.store %%a0, %%slot : !llvm.ptr, !llvm.ptr\n")
-		src = "%slot"
+		fmt.Fprintf(&b, "    llvm.store %%a0, %%slot : %s, !llvm.ptr\n", tP)
+		src, srcT = "%slot", mlir.Ptr
 	}
 	if m.tm.isBig(t) {
 		// Big receivers are passed by pointer to the immutable boxed copy.
-		fmt.Fprintf(&b, "    %%recv = llvm.bitcast %s : !llvm.ptr to !llvm.ptr\n", src)
+		fmt.Fprintf(&b, "    %%recv = llvm.bitcast %s : %s to %s\n", src, srcT, srcT)
 	} else if isBool(t) {
-		fmt.Fprintf(&b, "    %%r8 = llvm.load %s : !llvm.ptr -> i8\n    %%recv = llvm.trunc %%r8 : i8 to i1\n", src)
+		fmt.Fprintf(&b, "    %%r8 = llvm.load %s : %s -> i8\n    %%recv = llvm.trunc %%r8 : i8 to i1\n", src, srcT)
 	} else {
-		fmt.Fprintf(&b, "    %%recv = llvm.load %s : !llvm.ptr -> %s\n", src, recvT)
+		fmt.Fprintf(&b, "    %%recv = llvm.load %s : %s -> %s\n", src, srcT, recvT)
 	}
 	args := []string{"%recv"}
 	for i := 1; i < len(params); i++ {

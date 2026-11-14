@@ -58,8 +58,8 @@ func (f *funcGen) stackConvert(v *ssa.Convert) bool {
 	yes, no, join := f.newBlock(), f.newBlock(), f.newBlock()
 	f.emit("llvm.cond_br %s, %s, %s", small, yes, no)
 	f.b.WriteString("  " + yes + ":\n")
-	f.emit("\"llvm.intr.memmove\"(%s, %s, %s) <{isVolatile = false}> : (!llvm.ptr, !llvm.ptr, i64) -> ()", buf, src, n)
-	f.emit("llvm.br %s(%s : !llvm.ptr)", join, buf)
+	f.emit("\"llvm.intr.memmove\"(%s, %s, %s) <{isVolatile = false}> : (%s, %s, i64) -> ()", buf, src, n, f.pty(buf), f.pty(src))
+	f.emit("llvm.br %s(%s : %s)", join, f.gcv(buf), tP)
 	f.b.WriteString("  " + no + ":\n")
 	var heap string
 	if toBytes {
@@ -67,9 +67,9 @@ func (f *funcGen) stackConvert(v *ssa.Convert) bool {
 	} else {
 		heap = f.extractRaw(f.rtcall("slicebytetostring", x), tString, 0)
 	}
-	f.emit("llvm.br %s(%s : !llvm.ptr)", join, heap)
+	f.emit("llvm.br %s(%s : %s)", join, heap, tP)
 	p := f.newVal()
-	f.b.WriteString("  " + join + "(" + p + ": !llvm.ptr):\n")
+	f.b.WriteString("  " + join + "(" + p + ": " + tP + "):\n")
 	if toBytes {
 		f.vals[v] = f.build(tSlice, p, n, n)
 	} else {
@@ -102,12 +102,12 @@ func (f *funcGen) stackMakeSlice(v *ssa.MakeSlice, l, c string) bool {
 	f.emit("llvm.cond_br %s, %s, %s", ok, yes, no)
 	f.b.WriteString("  " + yes + ":\n")
 	f.memset(buf, tmpBufSize)
-	f.emit("llvm.br %s(%s : !llvm.ptr)", join, buf)
+	f.emit("llvm.br %s(%s : %s)", join, f.gcv(buf), tP)
 	f.b.WriteString("  " + no + ":\n")
 	hp := f.rtcall("makeslice", f.typeDesc(st.Elem()), l, c)
-	f.emit("llvm.br %s(%s : !llvm.ptr)", join, hp)
+	f.emit("llvm.br %s(%s : %s)", join, hp, tP)
 	p := f.newVal()
-	f.b.WriteString("  " + join + "(" + p + ": !llvm.ptr):\n")
+	f.b.WriteString("  " + join + "(" + p + ": " + tP + "):\n")
 	f.vals[v] = f.build(tSlice, p, l, c)
 	return true
 }

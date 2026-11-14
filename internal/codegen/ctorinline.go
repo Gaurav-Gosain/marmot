@@ -165,7 +165,7 @@ func (f *funcGen) inlineCtor(v *ssa.Call, c *closureCtor) string {
 	f.reportAlloc(v, "closure", st, "stack")
 	mt := f.tm.memType(st)
 	obj := f.alloca(mt, 8)
-	f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr", f.addressOf(sym), obj)
+	f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, %s", f.addressOf(sym), obj, f.pty(obj))
 	for i := range c.mc.Bindings {
 		f.store(bvals[i], f.gep(obj, mt, 0, i+1), btypes[i])
 	}

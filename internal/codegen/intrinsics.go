@@ -47,7 +47,7 @@ func (f *funcGen) intrinsic(fn *ssa.Function, args []string) (res string, ok boo
 		return "", false
 	}
 	if fn.Pkg.Pkg.Path() == "runtime" && fn.Name() == "getcallerfp" {
-		fp := f.op("llvm.call_intrinsic \"llvm.frameaddress.p0\"(%s) : (i32) -> !llvm.ptr", f.constInt(0, "i32"))
+		fp := f.markAddr(f.op("llvm.call_intrinsic \"llvm.frameaddress.p0\"(%s) : (i32) -> !llvm.ptr", f.constInt(0, "i32")))
 		return f.op("llvm.ptrtoint %s : !llvm.ptr to i64", fp), true
 	}
 	if fn.Pkg.Pkg.Path() == "internal/abi" && (fn.Name() == "FuncPCABI0" || fn.Name() == "FuncPCABIInternal") {
@@ -62,18 +62,21 @@ func (f *funcGen) intrinsic(fn *ssa.Function, args []string) (res string, ok boo
 	}
 	t := op.typ
 	if t == "ptr" {
-		t = "!llvm.ptr"
+		t = tP
+	}
+	if optGCPtr {
+		args = f.gcArgs(args)
 	}
 	align := map[string]int{"i8": 1, "i32": 4, "i64": 8, "ptr": 8}[op.typ]
 	switch op.kind {
 	case "load":
-		return f.op("llvm.load %s atomic seq_cst {alignment = %d : i64} : !llvm.ptr -> %s", args[0], align, t), true
+		return f.op("llvm.load %s atomic seq_cst {alignment = %d : i64} : %s -> %s", args[0], align, f.pty(args[0]), t), true
 	case "store":
-		f.emit("llvm.store %s, %s atomic seq_cst {alignment = %d : i64} : %s, !llvm.ptr", args[1], args[0], align, t)
+		f.emit("llvm.store %s, %s atomic seq_cst {alignment = %d : i64} : %s, %s", args[1], args[0], align, t, f.pty(args[0]))
 		return "", true
 	case "rmw":
 		name := op.rmw
-		old := f.op("llvm.atomicrmw %s %s, %s seq_cst : !llvm.ptr, %s", name, args[0], args[1], t)
+		old := f.op("llvm.atomicrmw %s %s, %s seq_cst : %s, %s", name, args[0], args[1], f.pty(args[0]), t)
 		switch op.ret {
 		case "old":
 			return old, true
@@ -82,8 +85,8 @@ func (f *funcGen) intrinsic(fn *ssa.Function, args []string) (res string, ok boo
 		}
 		return "", true
 	case "cas":
-		pair := f.op("llvm.cmpxchg %s, %s, %s seq_cst seq_cst : !llvm.ptr, %s", args[0], args[1], args[2], t)
-		return f.op("llvm.extractvalue %s[1] : !llvm.struct<(%s, i1)>", pair, map[string]string{"i8": "i8", "i32": "i32", "i64": "i64", "ptr": "ptr"}[op.typ]), true
+		pair := f.op("llvm.cmpxchg %s, %s, %s seq_cst seq_cst : %s, %s", args[0], args[1], args[2], f.pty(args[0]), t)
+		return f.op("llvm.extractvalue %s[1] : !llvm.struct<(%s, i1)>", pair, mlir.Inner(t)), true
 	}
 	return "", false
 }
@@ -112,7 +115,7 @@ func (f *funcGen) funcPC() string {
 	// Dynamic func value: load the code pointer from the closure.
 	x := f.value(arg)
 	fv := f.extractRaw(x, tIface, 1)
-	code := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", fv)
+	code := f.op("llvm.load %s {alignment = 8 : i64} : %s -> !llvm.ptr", fv, f.pty(fv))
 	return f.op("llvm.ptrtoint %s : !llvm.ptr to i64", code)
 }
 

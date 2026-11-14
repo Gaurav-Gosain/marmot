@@ -63,6 +63,6 @@ func wrapsRecover(fn *ssa.Function, seen map[*ssa.Function]bool) bool {
 // recoverWrapEnter emits the registration at the wrapper's entry and
 // returns the saved value for recoverWrapExit.
 func (f *funcGen) recoverWrapEnter() string {
-	fp := f.op("llvm.call_intrinsic \"llvm.frameaddress.p0\"(%s) : (i32) -> !llvm.ptr", f.constInt(0, mlir.I32))
+	fp := f.markAddr(f.op("llvm.call_intrinsic \"llvm.frameaddress.p0\"(%s) : (i32) -> !llvm.ptr", f.constInt(0, mlir.I32)))
 	return f.rtcall("recoverWrapEnter", f.op("llvm.ptrtoint %s : !llvm.ptr to i64", fp))
 }

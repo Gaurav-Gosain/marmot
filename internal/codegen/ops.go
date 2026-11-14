@@ -122,7 +122,7 @@ func (f *funcGen) and(a, b string) string { return f.op("llvm.and %s, %s : i1", 
 func (f *funcGen) cmpNil(op token.Token, x string, t types.Type) string {
 	vt := f.tm.valType(t)
 	p := x
-	if vt != mlir.Ptr {
+	if vt != tP {
 		p = f.extractRaw(x, vt, 0)
 	}
 	n := f.null()
@@ -130,7 +130,7 @@ func (f *funcGen) cmpNil(op token.Token, x string, t types.Type) string {
 	if op == token.NEQ {
 		pred = "ne"
 	}
-	return f.op("llvm.icmp %q %s, %s : !llvm.ptr", pred, p, n)
+	return f.op("llvm.icmp %q %s, %s : %s", pred, f.gcv(p), n, tP)
 }
 
 // equal returns x == y for comparable type t, as i1.
@@ -149,10 +149,13 @@ func (f *funcGen) equal(x, y string, t types.Type) string {
 		case u.Info()&types.IsString != 0:
 			return f.stringEqual(x, y)
 		default:
+			if vt == tP {
+				x, y = f.gcv(x), f.gcv(y)
+			}
 			return f.op("llvm.icmp \"eq\" %s, %s : %s", x, y, vt)
 		}
 	case *types.Pointer, *types.Chan, *types.Map, *types.Signature:
-		return f.op("llvm.icmp \"eq\" %s, %s : !llvm.ptr", x, y)
+		return f.op("llvm.icmp \"eq\" %s, %s : %s", f.gcv(x), f.gcv(y), tP)
 	case *types.Interface:
 		if u.NumMethods() == 0 {
 			return f.rtcall("efaceeq", x, y)
@@ -543,10 +546,10 @@ func (f *funcGen) convert(x string, from, to types.Type) string {
 			return f.rtcall("stringtoslicebyte", x)
 		}
 	case isUnsafePointer(from) && isInteger(to):
-		return f.op("llvm.ptrtoint %s : !llvm.ptr to %s", x, tt)
+		return f.op("llvm.ptrtoint %s : %s to %s", x, f.pty(x), tt)
 	case isInteger(from) && isUnsafePointer(to):
-		return f.op("llvm.inttoptr %s : %s to !llvm.ptr", x, ft)
-	case ft == mlir.Ptr && tt == mlir.Ptr:
+		return f.op("llvm.inttoptr %s : %s to %s", x, ft, tP)
+	case ft == tP && tt == tP:
 		return x
 	}
 	f.fail(token.NoPos, "unsupported conversion from %v to %v", from, to)

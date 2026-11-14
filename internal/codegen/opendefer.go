@@ -149,15 +149,17 @@ func (f *funcGen) setupOpenDefers() {
 	od.slotMT = f.tm.memType(od.slotT)
 	od.slots = f.alloca(od.slotMT, 8)
 	od.rec = f.alloca(tDefer, 8)
-	od.clo = f.alloca(mlir.Struct(mlir.Ptr, mlir.Ptr, mlir.Ptr), 8)
-	od.gslot = f.alloca(mlir.Ptr, 8)
+	od.clo = f.alloca(mlir.Struct(mlir.Ptr, tP, tP), 8)
+	od.gslot = f.alloca(tP, 8)
 	od.noRec = !f.m.p.deferRecordNeeded(f.fn, od)
 	od.runner = f.m.openDeferRunner(f, od)
-	f.emit("llvm.store %s, %s {alignment = 8 : i64} : i8, !llvm.ptr", f.constInt(0, mlir.I8), od.slots)
+	f.emit("llvm.store %s, %s {alignment = 8 : i64} : i8, %s", f.constInt(0, mlir.I8), od.slots, f.pty(od.slots))
 	code := f.addressOf(od.runner)
-	f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr", code, od.clo)
-	f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr", od.slots, f.gepByte(od.clo, 8))
-	f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr", od.rec, f.gepByte(od.clo, 16))
+	f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, %s", code, od.clo, f.pty(od.clo))
+	at1 := f.gepByte(od.clo, 8)
+	f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", f.gcv(od.slots), at1, tP, f.pty(at1))
+	at2 := f.gepByte(od.clo, 16)
+	f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", f.gcv(od.rec), at2, tP, f.pty(at2))
 }
 
 // openDefer saves the call of defer v and sets its bit; the first defer
@@ -168,9 +170,9 @@ func (f *funcGen) openDefer(v *ssa.Defer) {
 	for i, c := range od.caps[k] {
 		f.store(f.value(c), f.gep(od.slots, od.slotMT, 0, od.firstF[k]+i), c.Type())
 	}
-	old := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> i8", od.slots)
+	old := f.op("llvm.load %s {alignment = 8 : i64} : %s -> i8", od.slots, f.pty(od.slots))
 	nw := f.op("llvm.or %s, %s : i8", old, f.constInt(int64(1)<<k, mlir.I8))
-	f.emit("llvm.store %s, %s {alignment = 8 : i64} : i8, !llvm.ptr", nw, od.slots)
+	f.emit("llvm.store %s, %s {alignment = 8 : i64} : i8, %s", nw, od.slots, f.pty(od.slots))
 	if od.noRec {
 		return
 	}
@@ -184,15 +186,15 @@ func (f *funcGen) openDefer(v *ssa.Defer) {
 		// Inline deferpush; the g is saved for the pop (a frame never
 		// changes goroutines).
 		gp := f.directCall(getg, nil)
-		f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr", gp, od.gslot)
+		f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", f.gcv(gp), od.gslot, tP, f.pty(od.gslot))
 		slot := f.gepByte(gp, off)
-		link := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", slot)
+		link := f.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", slot, f.pty(slot), tP)
 		agg := f.build(tDefer, link, od.clo, od.slots, f.constInt(0, mlir.I8), f.constInt(0, mlir.I8))
-		f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, !llvm.ptr", agg, od.rec, tDefer)
-		f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr", od.rec, slot)
+		f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", agg, od.rec, tDefer, f.pty(od.rec))
+		f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", f.gcv(od.rec), slot, tP, f.pty(slot))
 	} else {
 		agg := f.build(tDefer, f.null(), od.clo, od.slots, f.constInt(0, mlir.I8), f.constInt(0, mlir.I8))
-		f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, !llvm.ptr", agg, od.rec, tDefer)
+		f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", agg, od.rec, tDefer, f.pty(od.rec))
 		f.rtcall("deferpush", od.rec)
 	}
 	f.emit("llvm.br %s", cont)
@@ -205,7 +207,7 @@ func (f *funcGen) openDefer(v *ssa.Defer) {
 // (inlinable). Others are run from the slot block, guarded by their bit.
 func (f *funcGen) openRunDefers() {
 	od := f.open
-	bits := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> i8", od.slots)
+	bits := f.op("llvm.load %s {alignment = 8 : i64} : %s -> i8", od.slots, f.pty(od.slots))
 	any := f.op("llvm.icmp \"ne\" %s, %s : i8", bits, f.constInt(0, mlir.I8))
 	run, cont := f.newBlock(), f.newBlock()
 	f.emit("llvm.cond_br %s, %s, %s", any, run, cont)
@@ -213,11 +215,11 @@ func (f *funcGen) openRunDefers() {
 	mt := od.slotMT
 	for k, d := range slices.Backward(od.defers) {
 
-		b := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> i8", od.slots)
+		b := f.op("llvm.load %s {alignment = 8 : i64} : %s -> i8", od.slots, f.pty(od.slots))
 		bit := f.constInt(int64(1)<<k, mlir.I8)
 		cleared := f.op("llvm.and %s, %s : i8", b, f.constInt(^(int64(1)<<k)&0xff, mlir.I8))
 		if f.curBlock != nil && d.Block().Dominates(f.curBlock) {
-			f.emit("llvm.store %s, %s {alignment = 8 : i64} : i8, !llvm.ptr", cleared, od.slots)
+			f.emit("llvm.store %s, %s {alignment = 8 : i64} : i8, %s", cleared, od.slots, f.pty(od.slots))
 			f.call(&d.Call, d)
 			continue
 		}
@@ -226,7 +228,7 @@ func (f *funcGen) openRunDefers() {
 		yes, next := f.newBlock(), f.newBlock()
 		f.emit("llvm.cond_br %s, %s, %s", has, yes, next)
 		fmt.Fprintf(f.b, "  %s:\n", yes)
-		f.emit("llvm.store %s, %s {alignment = 8 : i64} : i8, !llvm.ptr", cleared, od.slots)
+		f.emit("llvm.store %s, %s {alignment = 8 : i64} : i8, %s", cleared, od.slots, f.pty(od.slots))
 		saved := map[ssa.Value]string{}
 		for i, c := range od.caps[k] {
 			saved[c] = f.vals[c]
@@ -261,15 +263,15 @@ func (f *funcGen) popDeferRecord(od *openDefers) {
 		f.rtcall("deferreturn", od.slots)
 		return
 	}
-	gp := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", od.gslot)
+	gp := f.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", od.gslot, f.pty(od.gslot), tP)
 	slot := f.gepByte(gp, off)
-	top := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", slot)
-	mine := f.op("llvm.icmp \"eq\" %s, %s : !llvm.ptr", top, od.rec)
+	top := f.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", slot, f.pty(slot), tP)
+	mine := f.op("llvm.icmp \"eq\" %s, %s : %s", top, f.gcv(od.rec), tP)
 	fast, slow, done := f.newBlock(), f.newBlock(), f.newBlock()
 	f.emit("llvm.cond_br %s weights([2000, 1]), %s, %s", mine, fast, slow)
 	fmt.Fprintf(f.b, "  %s:\n", fast)
-	link := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", od.rec)
-	f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr", link, slot)
+	link := f.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", od.rec, f.pty(od.rec), tP)
+	f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", f.gcv(link), slot, tP, f.pty(slot))
 	f.emit("llvm.br %s", done)
 	fmt.Fprintf(f.b, "  %s:\n", slow)
 	f.rtcall("deferreturn", od.slots)
@@ -288,14 +290,16 @@ func (m *moduleGen) openDeferRunner(parent *funcGen, od *openDefers) string {
 	m.defined[sym] = true
 	t := &funcGen{m: m, fn: parent.fn, tm: m.tm, vals: map[ssa.Value]string{}, blkName: map[*ssa.BasicBlock]string{}, deferThunk: true}
 	m.initBufs(t)
-	slots := t.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", t.gepByte("%ctx", 8))
-	rec := t.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", t.gepByte("%ctx", 16))
+	at3 := t.gepByte("%ctx", 8)
+	slots := t.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", at3, t.pty(at3), tP)
+	at4 := t.gepByte("%ctx", 16)
+	rec := t.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", at4, t.pty(at4), tP)
 	mt := m.tm.memType(od.slotT)
 	off, haveOff := m.p.gDeferOffset()
 	getg := m.p.runtimeFunc("getg")
 	for k, d := range slices.Backward(od.defers) {
 
-		bits := t.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> i8", slots)
+		bits := t.op("llvm.load %s {alignment = 8 : i64} : %s -> i8", slots, t.pty(slots))
 		bit := t.constInt(int64(1)<<k, mlir.I8)
 		set := t.op("llvm.and %s, %s : i8", bits, bit)
 		has := t.op("llvm.icmp \"ne\" %s, %s : i8", set, t.constInt(0, mlir.I8))
@@ -303,7 +307,7 @@ func (m *moduleGen) openDeferRunner(parent *funcGen, od *openDefers) string {
 		t.emit("llvm.cond_br %s, %s, %s", has, yes, next)
 		fmt.Fprintf(t.b, "  %s:\n", yes)
 		cleared := t.op("llvm.and %s, %s : i8", bits, t.constInt(^(int64(1)<<k)&0xff, mlir.I8))
-		t.emit("llvm.store %s, %s {alignment = 8 : i64} : i8, !llvm.ptr", cleared, slots)
+		t.emit("llvm.store %s, %s {alignment = 8 : i64} : i8, %s", cleared, slots, t.pty(slots))
 		if k > 0 {
 			more := t.op("llvm.icmp \"ne\" %s, %s : i8", cleared, t.constInt(0, mlir.I8))
 			push, run := t.newBlock(), t.newBlock()
@@ -313,12 +317,12 @@ func (m *moduleGen) openDeferRunner(parent *funcGen, od *openDefers) string {
 			if haveOff && getg != nil {
 				gp := t.directCall(getg, nil)
 				gslot := t.gepByte(gp, off)
-				link := t.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", gslot)
+				link := t.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", gslot, t.pty(gslot), tP)
 				agg = t.op("llvm.insertvalue %s, %s[0] : %s", link, agg, tDefer)
-				t.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, !llvm.ptr", agg, rec, tDefer)
-				t.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr", rec, gslot)
+				t.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", agg, rec, tDefer, t.pty(rec))
+				t.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", t.gcv(rec), gslot, tP, t.pty(gslot))
 			} else {
-				t.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, !llvm.ptr", agg, rec, tDefer)
+				t.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", agg, rec, tDefer, t.pty(rec))
 				t.rtcall("deferpush", rec)
 			}
 			t.emit("llvm.br %s", run)
@@ -333,7 +337,7 @@ func (m *moduleGen) openDeferRunner(parent *funcGen, od *openDefers) string {
 		fmt.Fprintf(t.b, "  %s:\n", next)
 	}
 	t.emit("llvm.return")
-	fmt.Fprintf(&m.defs, "  llvm.func internal %s(%%ctx: !llvm.ptr) attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n", mlir.Symbol(sym))
+	fmt.Fprintf(&m.defs, "  llvm.func internal %s(%%ctx: %s) attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n", mlir.Symbol(sym), tP)
 	t.flushBufs(&m.defs)
 	m.defs.WriteString("  }\n")
 	return sym

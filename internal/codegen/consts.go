@@ -89,14 +89,14 @@ func (m *moduleGen) constGlobal(sym, linkage string, constant bool, c cv) {
 	}
 	var init []byte
 	if init = appendInit(init, c); init == nil {
-		fmt.Fprintf(b, "  llvm.mlir.global %s %s%s() {addr_space = 0 : i32} : %s {\n", linkage, k, mlir.Symbol(sym), c.typ)
+		fmt.Fprintf(b, "  llvm.mlir.global %s %s%s() {addr_space = 0 : i32} : %s {\n", linkage, k, mlir.Symbol(sym), mlir.Data(c.typ))
 		n := 0
 		v := writeCV(b, &n, c)
-		fmt.Fprintf(b, "    llvm.return %s : %s\n  }\n", v, c.typ)
+		fmt.Fprintf(b, "    llvm.return %s : %s\n  }\n", v, mlir.Data(c.typ))
 		return
 	}
 	fmt.Fprintf(b, "  llvm.mlir.global %s %s%s() {addr_space = 0 : i32, go.init = %s} : %s\n",
-		linkage, k, mlir.Symbol(sym), mlir.Quote(string(init)), c.typ)
+		linkage, k, mlir.Symbol(sym), mlir.Quote(string(init)), mlir.Data(c.typ))
 }
 
 // appendInit appends c in the go.init form, which the backend expands into
@@ -180,7 +180,7 @@ func writeCV(b cvWriter, n *int, c cv) string {
 		return v
 	case cvZero:
 		v := name()
-		fmt.Fprintf(b, "    %s = llvm.mlir.zero : %s\n", v, c.typ)
+		fmt.Fprintf(b, "    %s = llvm.mlir.zero : %s\n", v, mlir.Data(c.typ))
 		return v
 	case cvAddr:
 		v := name()
@@ -192,10 +192,10 @@ func writeCV(b cvWriter, n *int, c cv) string {
 			vals[i] = writeCV(b, n, e)
 		}
 		agg := name()
-		fmt.Fprintf(b, "    %s = llvm.mlir.undef : %s\n", agg, c.typ)
+		fmt.Fprintf(b, "    %s = llvm.mlir.undef : %s\n", agg, mlir.Data(c.typ))
 		for i, v := range vals {
 			next := name()
-			fmt.Fprintf(b, "    %s = llvm.insertvalue %s, %s[%d] : %s\n", next, v, agg, i, c.typ)
+			fmt.Fprintf(b, "    %s = llvm.insertvalue %s, %s[%d] : %s\n", next, v, agg, i, mlir.Data(c.typ))
 			agg = next
 		}
 		return agg

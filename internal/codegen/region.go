@@ -332,16 +332,16 @@ func confinedTo(p *Program, c *ssa.Call, b *ssa.BasicBlock, start int) (ssa.Inst
 }
 
 func (m *moduleGen) declareRegionAPI() {
-	m.declareRaw("rt_region_new", nil, mlir.Ptr, "")
-	m.declareRaw("rt_region_new_noscan", nil, mlir.Ptr, "")
-	m.declareRaw("rt_region_alloc", []string{mlir.Ptr, mlir.I64}, mlir.Ptr, "")
-	m.declareRaw("rt_region_free", []string{mlir.Ptr}, "", "")
+	m.declareRaw("rt_region_new", nil, tP, "")
+	m.declareRaw("rt_region_new_noscan", nil, tP, "")
+	m.declareRaw("rt_region_alloc", []string{tP, mlir.I64}, tP, "")
+	m.declareRaw("rt_region_free", []string{tP}, "", "")
 }
 
 // regionCall emits a call that uses the region clone of its callee.
 func (f *funcGen) regionCall(c *ssa.CallCommon, pl *regionPlan) string {
 	f.m.declareRegionAPI()
-	pl.r = f.op("llvm.call @rt_region_new() : () -> !llvm.ptr")
+	pl.r = f.op("llvm.call @rt_region_new() : () -> %s", tP)
 	return f.callRegionClone(c, pl.callee, pl.r)
 }
 
@@ -349,7 +349,7 @@ func (f *funcGen) regionCall(c *ssa.CallCommon, pl *regionPlan) string {
 func (f *funcGen) callRegionClone(c *ssa.CallCommon, fn *ssa.Function, r string) string {
 	sym := f.m.regionClone(fn)
 	params, ret := f.m.signature(fn)
-	params = append(params, mlir.Ptr)
+	params = append(params, tP)
 	args := make([]string, 0, len(c.Args)+1)
 	for _, a := range c.Args {
 		args = append(args, f.value(a))

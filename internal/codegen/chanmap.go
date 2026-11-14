@@ -55,11 +55,11 @@ func (f *funcGen) zeroSlot(t types.Type) string {
 		f.memset(p, f.m.p.opts.Sizes.Sizeof(t))
 		return p
 	}
-	f.emit("llvm.store %s, %s {alignment = %d : i64} : %s, !llvm.ptr", f.zero(mt), p, a, mt)
+	f.emit("llvm.store %s, %s {alignment = %d : i64} : %s, %s", f.zero(mt), p, a, mt, f.pty(p))
 	return p
 }
 
-var tScase = mlir.Struct(mlir.Ptr, mlir.Ptr, mlir.I8)
+var tScase = mlir.Struct(tP, tP, mlir.I8)
 
 func (f *funcGen) selectStmt(v *ssa.Select) {
 	n := len(v.States)
@@ -87,7 +87,7 @@ func (f *funcGen) selectStmt(v *ssa.Select) {
 		}
 		sc := f.build(tScase, c, elem, f.constInt(send, mlir.I8))
 		p := f.gep(cases, mlir.Array(int64(n), tScase), 0, i)
-		f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, !llvm.ptr", sc, p, tScase)
+		f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", sc, p, tScase, f.pty(p))
 	}
 	r := f.rtcall("selectgo", cases, f.constInt(int64(n), mlir.I64), blocking)
 	rt := f.selectRet()
@@ -144,7 +144,7 @@ func (f *funcGen) lookup(v *ssa.Lookup) {
 		desc := f.typeDesc(v.X.Type())
 		if v.CommaOk {
 			r := f.rtcall("mapaccess2_fast"+fk, append([]string{desc, x}, kv...)...)
-			rt := mlir.Struct(mlir.Ptr, mlir.I1)
+			rt := mlir.Struct(tP, mlir.I1)
 			val := f.load(f.extractRaw(r, rt, 0), mt.Elem())
 			f.vals[v] = f.build(f.tm.valType(v.Type()), val, f.extractRaw(r, rt, 1))
 			return
@@ -156,7 +156,7 @@ func (f *funcGen) lookup(v *ssa.Lookup) {
 	desc := f.typeDesc(v.X.Type())
 	if v.CommaOk {
 		r := f.rtcall("mapaccess2", desc, x, key)
-		rt := mlir.Struct(mlir.Ptr, mlir.I1)
+		rt := mlir.Struct(tP, mlir.I1)
 		p := f.extractRaw(r, rt, 0)
 		ok := f.extractRaw(r, rt, 1)
 		val := f.load(p, mt.Elem())
@@ -219,7 +219,7 @@ func (f *funcGen) clear(x ssa.Value) {
 		n := f.extractRaw(s, tSlice, 1)
 		size := f.op("llvm.mul %s, %s : i64", n, f.constInt(f.m.p.opts.Sizes.Sizeof(u.Elem()), mlir.I64))
 		zero := f.constInt(0, mlir.I8)
-		f.emit("\"llvm.intr.memset\"(%s, %s, %s) <{isVolatile = false}> : (!llvm.ptr, i8, i64) -> ()", p, zero, size)
+		f.emit("\"llvm.intr.memset\"(%s, %s, %s) <{isVolatile = false}> : (%s, i8, i64) -> ()", p, zero, size, f.pty(p))
 	default:
 		f.fail(x.Pos(), "clear of %v", x.Type())
 	}
@@ -235,7 +235,7 @@ func (f *funcGen) rangeStmt(v *ssa.Range) {
 	case *types.Basic:
 		st := mlir.Struct(tString, mlir.I64)
 		slot := f.alloca(st, 8)
-		f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, !llvm.ptr", f.build(st, x, f.constInt(0, mlir.I64)), slot, st)
+		f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", f.build(st, x, f.constInt(0, mlir.I64)), slot, st, f.pty(slot))
 		f.vals[v] = slot
 	case *types.Map:
 		ht := f.hiterType()
@@ -264,7 +264,7 @@ func (f *funcGen) next(v *ssa.Next) {
 		st := mlir.Struct(tString, mlir.I64)
 		s := f.load(f.gep(it, st, 0, 0), types.Typ[types.String])
 		ip := f.gep(it, st, 0, 1)
-		i := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> i64", ip)
+		i := f.op("llvm.load %s {alignment = 8 : i64} : %s -> i64", ip, f.pty(ip))
 		n := f.extractRaw(s, tString, 1)
 		more := f.op("llvm.icmp \"slt\" %s, %s : i64", i, n)
 		body, done := f.newBlock(), f.newBlock()
@@ -274,7 +274,7 @@ func (f *funcGen) next(v *ssa.Next) {
 		// ASCII fast path.
 		p := f.extractRaw(s, tString, 0)
 		bp := f.gepDyn(p, mlir.I8, i)
-		c := f.op("llvm.load %s : !llvm.ptr -> i8", bp)
+		c := f.op("llvm.load %s : %s -> i8", bp, f.pty(bp))
 		ascii := f.op("llvm.icmp \"ult\" %s, %s : i8", c, f.constInt(0x80, mlir.I8))
 		fast, slow, join := f.newBlock(), f.newBlock(), f.newBlock()
 		f.emit("llvm.cond_br %s, %s, %s", ascii, fast, slow)
@@ -288,7 +288,7 @@ func (f *funcGen) next(v *ssa.Next) {
 		f.emit("llvm.br %s(%s, %s : i32, i64)", join, f.extractRaw(dr, drt, 0), f.extractRaw(dr, drt, 1))
 		r, nx := f.newVal(), f.newVal()
 		fmt.Fprintf(f.b, "  %s(%s: i32, %s: i64):\n", join, r, nx)
-		f.emit("llvm.store %s, %s {alignment = 8 : i64} : i64, !llvm.ptr", nx, ip)
+		f.emit("llvm.store %s, %s {alignment = 8 : i64} : i64, %s", nx, ip, f.pty(ip))
 		tr := f.op("llvm.mlir.constant(true) : i1")
 		rtt := v.Type().(*types.Tuple)
 		ki, ri := i, r
@@ -325,13 +325,15 @@ func (f *funcGen) next(v *ssa.Next) {
 		f.fail(v.Pos(), "runtime.hiter needs key and elem fields")
 	}
 	hmt := f.tm.memType(ht)
-	kp := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", f.gep(it, hmt, 0, keyIdx))
-	more := f.op("llvm.icmp \"ne\" %s, %s : !llvm.ptr", kp, f.null())
+	at1 := f.gep(it, hmt, 0, keyIdx)
+	kp := f.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", at1, f.pty(at1), tP)
+	more := f.op("llvm.icmp \"ne\" %s, %s : %s", kp, f.null(), tP)
 	body, done := f.newBlock(), f.newBlock()
 	zero := f.zeroOf(v.Type())
 	f.emit("llvm.cond_br %s, %s, %s(%s : %s)", more, body, done, zero, rt)
 	fmt.Fprintf(f.b, "  %s:\n", body)
-	ep := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", f.gep(it, hmt, 0, elemIdx))
+	at2 := f.gep(it, hmt, 0, elemIdx)
+	ep := f.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", at2, f.pty(at2), tP)
 	rtt := v.Type().(*types.Tuple)
 	var k, e string
 	if isInvalid(rtt.At(1).Type()) {
@@ -368,9 +370,9 @@ func (f *funcGen) fastMapKey(kt types.Type, k ssa.Value) (string, []string) {
 	if f.plain128(kt) && f.m.p.runtimeFunc("mapaccess1_fast128") != nil {
 		// Two words, passed by value (k0, k1 uint64).
 		p := f.spill(f.value(k), kt)
-		k0 := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> i64", p)
-		p1 := f.op("llvm.getelementptr %s[8] : (!llvm.ptr) -> !llvm.ptr, i8", p)
-		k1 := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> i64", p1)
+		k0 := f.op("llvm.load %s {alignment = 8 : i64} : %s -> i64", p, f.pty(p))
+		p1 := f.derived(p, f.op("llvm.getelementptr %s[8] : (%s) -> %s, i8", p, f.pty(p), f.pty(p)))
+		k1 := f.op("llvm.load %s {alignment = 8 : i64} : %s -> i64", p1, f.pty(p1))
 		return "128", []string{k0, k1}
 	}
 	kv := f.value(k)
@@ -384,10 +386,10 @@ func (f *funcGen) fastMapKey(kt types.Type, k ssa.Value) (string, []string) {
 		case types.String:
 			return "str", []string{kv}
 		case types.UnsafePointer:
-			return "64", []string{f.op("llvm.ptrtoint %s : !llvm.ptr to i64", kv)}
+			return "64", []string{f.op("llvm.ptrtoint %s : %s to i64", kv, f.pty(kv))}
 		}
 	case *types.Pointer, *types.Chan:
-		return "64", []string{f.op("llvm.ptrtoint %s : !llvm.ptr to i64", kv)}
+		return "64", []string{f.op("llvm.ptrtoint %s : %s to i64", kv, f.pty(kv))}
 	}
 	return "", nil
 }

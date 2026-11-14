@@ -6,7 +6,6 @@ import (
 	"maps"
 	"os"
 
-	"github.com/Gaurav-Gosain/marmot/internal/mlir"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -519,25 +518,25 @@ func (f *funcGen) findFrameRegionCalls() {
 	}
 	if len(f.frameCalls) > 0 {
 		f.m.declareRegionAPI()
-		f.frameSlot = f.alloca(mlir.Ptr, 8)
-		f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr", f.null(), f.frameSlot)
+		f.frameSlot = f.alloca(tP, 8)
+		f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", f.gcv(f.null()), f.frameSlot, tP, f.pty(f.frameSlot))
 	}
 }
 
 // frameRegion returns the frame region, creating it on first use.
 func (f *funcGen) frameRegion() string {
-	r := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", f.frameSlot)
-	isNull := f.op("llvm.icmp \"eq\" %s, %s : !llvm.ptr", r, f.null())
+	r := f.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", f.frameSlot, f.pty(f.frameSlot), tP)
+	isNull := f.op("llvm.icmp \"eq\" %s, %s : %s", r, f.null(), tP)
 	mk, done := f.newBlock(), f.newBlock()
-	f.emit("llvm.cond_br %s weights([1, 1000]), %s, %s(%s : !llvm.ptr)", isNull, mk, done, r)
+	f.emit("llvm.cond_br %s weights([1, 1000]), %s, %s(%s : %s)", isNull, mk, done, r, tP)
 	f.b.WriteString("  " + mk + ":\n")
 	// No heap pointers are ever stored in a frame region (regionParam), so
 	// the collector need not scan it.
-	nr := f.op("llvm.call @rt_region_new_noscan() : () -> !llvm.ptr")
-	f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr", nr, f.frameSlot)
-	f.emit("llvm.br %s(%s : !llvm.ptr)", done, nr)
+	nr := f.op("llvm.call @rt_region_new_noscan() : () -> %s", tP)
+	f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", f.gcv(nr), f.frameSlot, tP, f.pty(f.frameSlot))
+	f.emit("llvm.br %s(%s : %s)", done, nr, tP)
 	res := f.newVal()
-	f.b.WriteString("  " + done + "(" + res + ": !llvm.ptr):\n")
+	f.b.WriteString("  " + done + "(" + res + ": " + tP + "):\n")
 	return res
 }
 
@@ -546,12 +545,12 @@ func (f *funcGen) freeFrameRegion() {
 	if f.frameSlot == "" {
 		return
 	}
-	r := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", f.frameSlot)
-	nn := f.op("llvm.icmp \"ne\" %s, %s : !llvm.ptr", r, f.null())
+	r := f.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", f.frameSlot, f.pty(f.frameSlot), tP)
+	nn := f.op("llvm.icmp \"ne\" %s, %s : %s", r, f.null(), tP)
 	fr, done := f.newBlock(), f.newBlock()
 	f.emit("llvm.cond_br %s, %s, %s", nn, fr, done)
 	f.b.WriteString("  " + fr + ":\n")
-	f.emit("llvm.call @rt_region_free(%s) : (!llvm.ptr) -> ()", r)
+	f.emit("llvm.call @rt_region_free(%s) : (%s) -> ()", r, tP)
 	f.emit("llvm.br %s", done)
 	f.b.WriteString("  " + done + ":\n")
 }

@@ -9,9 +9,9 @@ import (
 
 // Types used for Go values.
 var (
-	tString = mlir.Struct(mlir.Ptr, mlir.I64)
-	tSlice  = mlir.Struct(mlir.Ptr, mlir.I64, mlir.I64)
-	tIface  = mlir.Struct(mlir.Ptr, mlir.Ptr)
+	tString = mlir.Struct(tP, mlir.I64)
+	tSlice  = mlir.Struct(tP, mlir.I64, mlir.I64)
+	tIface  = mlir.Struct(tP, tP)
 )
 
 // typeMapper maps Go types to LLVM types. Safe for use by one goroutine.
@@ -53,7 +53,7 @@ func (m *typeMapper) valType(t types.Type) string {
 		}
 	case *types.Struct, *types.Array:
 		if m.isBig(t) {
-			s = mlir.Ptr
+			s = tP
 		} else {
 			s = m.memType(t)
 		}
@@ -110,14 +110,14 @@ func (m *typeMapper) memType(t types.Type) string {
 		case types.String, types.UntypedString:
 			s = tString
 		case types.UnsafePointer, types.UntypedNil:
-			s = mlir.Ptr
+			s = tP
 		case types.Invalid:
 			s = mlir.I8 // unused range key or value
 		default:
 			panic(fmt.Sprintf("memType: unexpected basic type %v", u))
 		}
 	case *types.Pointer, *types.Map, *types.Chan, *types.Signature:
-		s = mlir.Ptr
+		s = tP
 	case *types.Slice:
 		s = tSlice
 	case *types.Interface:

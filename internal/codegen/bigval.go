@@ -76,13 +76,13 @@ func (f *funcGen) escapeBig(v string, t types.Type) string {
 
 func (f *funcGen) memmove(dst, src string, n int64) {
 	size := f.constInt(n, mlir.I64)
-	f.emit("\"llvm.intr.memmove\"(%s, %s, %s) <{isVolatile = false}> : (!llvm.ptr, !llvm.ptr, i64) -> ()", dst, src, size)
+	f.emit("\"llvm.intr.memmove\"(%s, %s, %s) <{isVolatile = false}> : (%s, %s, i64) -> ()", dst, src, size, f.pty(dst), f.pty(src))
 }
 
 func (f *funcGen) memset(dst string, n int64) {
 	size := f.constInt(n, mlir.I64)
 	zero := f.constInt(0, mlir.I8)
-	f.emit("\"llvm.intr.memset\"(%s, %s, %s) <{isVolatile = false}> : (!llvm.ptr, i8, i64) -> ()", dst, zero, size)
+	f.emit("\"llvm.intr.memset\"(%s, %s, %s) <{isVolatile = false}> : (%s, i8, i64) -> ()", dst, zero, size, f.pty(dst))
 }
 
 // zeroOf returns the zero value of Go type t in register form.

@@ -100,7 +100,7 @@ func (f *funcGen) index(v *ssa.Index) {
 		p := f.extractRaw(x, tString, 0)
 		n := f.extractRaw(x, tString, 1)
 		bp := f.elemAddr(p, n, -1, types.Typ[types.Uint8], v.Index)
-		f.vals[v] = f.op("llvm.load %s : !llvm.ptr -> i8", bp)
+		f.vals[v] = f.op("llvm.load %s : %s -> i8", bp, f.pty(bp))
 	case *types.Array:
 		at := f.tm.memType(v.X.Type())
 		if f.tm.isBig(v.X.Type()) {
@@ -230,7 +230,7 @@ func (f *funcGen) slice(v *ssa.Slice) {
 	} else {
 		empty = f.op("llvm.icmp \"eq\" %s, %s : i64", newCap, z)
 	}
-	ptr := f.op("llvm.select %s, %s, %s : i1, !llvm.ptr", empty, base, adv)
+	ptr := f.op("llvm.select %s, %s, %s : i1, %s", empty, f.gcv(base), f.gcv(adv), tP)
 	if isStr {
 		f.vals[v] = f.makeString(ptr, newLen)
 		return
@@ -372,7 +372,7 @@ func (f *funcGen) append(sv, tv ssa.Value) string {
 	newLen := f.op("llvm.add %s, %s : i64", l, tl)
 	grow := f.op("llvm.icmp \"ugt\" %s, %s : i64", newLen, c)
 	growB, done := f.newBlock(), f.newBlock()
-	f.emit("llvm.cond_br %s weights([1, 100]), %s, %s(%s, %s : !llvm.ptr, i64)", grow, growB, done, p, c)
+	f.emit("llvm.cond_br %s weights([1, 100]), %s, %s(%s, %s : %s, i64)", grow, growB, done, f.gcv(p), c, tP)
 	saved := f.b
 	f.b = &f.cold
 	f.b.WriteString("  " + growB + ":\n")
@@ -382,13 +382,13 @@ func (f *funcGen) append(sv, tv ssa.Value) string {
 	}
 	gp := f.extractRaw(g, tSlice, 0)
 	gc := f.extractRaw(g, tSlice, 2)
-	f.emit("llvm.br %s(%s, %s : !llvm.ptr, i64)", done, gp, gc)
+	f.emit("llvm.br %s(%s, %s : "+tP+", i64)", done, gp, gc)
 	f.b = saved
 	np, nc := f.newVal(), f.newVal()
-	f.b.WriteString("  " + done + "(" + np + ": !llvm.ptr, " + nc + ": i64):\n")
+	f.b.WriteString("  " + done + "(" + np + ": " + tP + ", " + nc + ": i64):\n")
 	dst := f.gepDyn(np, f.tm.memType(et), l)
 	size := f.op("llvm.mul %s, %s : i64", tl, f.constInt(es, mlir.I64))
-	f.emit("\"llvm.intr.memmove\"(%s, %s, %s) <{isVolatile = false}> : (!llvm.ptr, !llvm.ptr, i64) -> ()", dst, tp, size)
+	f.emit("\"llvm.intr.memmove\"(%s, %s, %s) <{isVolatile = false}> : (%s, %s, i64) -> ()", dst, tp, size, f.pty(dst), f.pty(tp))
 	return f.build(tSlice, np, newLen, nc)
 }
 
@@ -409,7 +409,7 @@ func (f *funcGen) appendValues(sv ssa.Value, elems []ssa.Value) string {
 	newLen := f.op("llvm.add %s, %s : i64", l, f.constInt(int64(len(elems)), mlir.I64))
 	grow := f.op("llvm.icmp \"ugt\" %s, %s : i64", newLen, c)
 	growB, done := f.newBlock(), f.newBlock()
-	f.emit("llvm.cond_br %s weights([1, 100]), %s, %s(%s, %s : !llvm.ptr, i64)", grow, growB, done, p, c)
+	f.emit("llvm.cond_br %s weights([1, 100]), %s, %s(%s, %s : %s, i64)", grow, growB, done, f.gcv(p), c, tP)
 	saved := f.b
 	f.b = &f.cold
 	f.b.WriteString("  " + growB + ":\n")
@@ -417,10 +417,10 @@ func (f *funcGen) appendValues(sv ssa.Value, elems []ssa.Value) string {
 	if f.reuseNow {
 		f.freeOldArray(p, c, et)
 	}
-	f.emit("llvm.br %s(%s, %s : !llvm.ptr, i64)", done, f.extractRaw(g, tSlice, 0), f.extractRaw(g, tSlice, 2))
+	f.emit("llvm.br %s(%s, %s : "+tP+", i64)", done, f.extractRaw(g, tSlice, 0), f.extractRaw(g, tSlice, 2))
 	f.b = saved
 	np, nc := f.newVal(), f.newVal()
-	f.b.WriteString("  " + done + "(" + np + ": !llvm.ptr, " + nc + ": i64):\n")
+	f.b.WriteString("  " + done + "(" + np + ": " + tP + ", " + nc + ": i64):\n")
 	mt := f.tm.memType(et)
 	for i, v := range vals {
 		idx := l
@@ -492,17 +492,17 @@ func (f *funcGen) appendZeros(sv, nv ssa.Value) string {
 	newLen := f.op("llvm.add %s, %s : i64", l, n)
 	grow := f.op("llvm.icmp \"ugt\" %s, %s : i64", newLen, c)
 	growB, done := f.newBlock(), f.newBlock()
-	f.emit("llvm.cond_br %s weights([1, 100]), %s, %s(%s, %s : !llvm.ptr, i64)", grow, growB, done, p, c)
+	f.emit("llvm.cond_br %s weights([1, 100]), %s, %s(%s, %s : %s, i64)", grow, growB, done, f.gcv(p), c, tP)
 	f.b.WriteString("  " + growB + ":\n")
 	g := f.rtcall("growslice", f.typeDesc(et), p, l, c, newLen)
-	f.emit("llvm.br %s(%s, %s : !llvm.ptr, i64)", done, f.extractRaw(g, tSlice, 0), f.extractRaw(g, tSlice, 2))
+	f.emit("llvm.br %s(%s, %s : "+tP+", i64)", done, f.extractRaw(g, tSlice, 0), f.extractRaw(g, tSlice, 2))
 	np, nc := f.newVal(), f.newVal()
-	f.b.WriteString("  " + done + "(" + np + ": !llvm.ptr, " + nc + ": i64):\n")
+	f.b.WriteString("  " + done + "(" + np + ": " + tP + ", " + nc + ": i64):\n")
 	if es > 0 {
 		dst := f.gepDyn(np, f.tm.memType(et), l)
 		size := f.op("llvm.mul %s, %s : i64", n, f.constInt(es, mlir.I64))
 		zero := f.constInt(0, mlir.I8)
-		f.emit("\"llvm.intr.memset\"(%s, %s, %s) <{isVolatile = false}> : (!llvm.ptr, i8, i64) -> ()", dst, zero, size)
+		f.emit("\"llvm.intr.memset\"(%s, %s, %s) <{isVolatile = false}> : (%s, i8, i64) -> ()", dst, zero, size, f.pty(dst))
 	}
 	return f.build(tSlice, np, newLen, nc)
 }

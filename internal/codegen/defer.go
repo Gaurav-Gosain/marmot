@@ -19,7 +19,7 @@ import (
 const jmpbufWords = 32
 
 var (
-	tDefer      = mlir.Struct(mlir.Ptr, mlir.Ptr, mlir.Ptr, mlir.I8, mlir.I8) // link, fn, frame, wrapped, rangefunc
+	tDefer      = mlir.Struct(tP, tP, tP, mlir.I8, mlir.I8) // link, fn, frame, wrapped, rangefunc
 	tDeferFrame = mlir.Array(jmpbufWords, mlir.I64)
 )
 
@@ -71,8 +71,8 @@ func (f *funcGen) setupFrame() {
 // (and where the defer stack is taken), so every value of the entry block,
 // in particular the named result slots, dominates the Recover block.
 func (f *funcGen) setjmp() {
-	f.m.declareRaw("rt_setjmp", []string{mlir.Ptr}, mlir.I32, `passthrough = ["returns_twice"]`)
-	r := f.op("llvm.call @rt_setjmp(%s) : (!llvm.ptr) -> i32", f.frame)
+	f.m.declareRaw("rt_setjmp", []string{tP}, mlir.I32, `passthrough = ["returns_twice"]`)
+	r := f.op("llvm.call @rt_setjmp(%s) : (%s) -> i32", f.gcv(f.frame), tP)
 	z := f.constInt(0, mlir.I32)
 	nz := f.op("llvm.icmp \"ne\" %s, %s : i32", r, z)
 	cont := f.newBlock()
@@ -162,7 +162,7 @@ func (f *funcGen) deferStmt(v *ssa.Defer) {
 		rf = 1 // a range-over-func body deferring to the enclosing function
 	}
 	agg := f.build(tDefer, f.null(), fv, frame, f.constInt(w, mlir.I8), f.constInt(rf, mlir.I8))
-	f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, !llvm.ptr", agg, rec, tDefer)
+	f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", agg, rec, tDefer, f.pty(rec))
 	f.rtcall("deferpush", rec)
 }
 
@@ -225,7 +225,7 @@ func (f *funcGen) callClosure(c *ssa.CallCommon, isDefer bool) (fv string, wrapp
 	obj := f.newObject(st)
 	mt := f.tm.memType(st)
 	code := f.addressOf(sym)
-	f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr", code, obj)
+	f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, %s", code, obj, f.pty(obj))
 	for i, x := range caps {
 		p := f.gep(obj, mt, 0, i+1)
 		f.store(f.value(x), p, x.Type())
@@ -257,7 +257,7 @@ func (m *moduleGen) thunk(parent *funcGen, c *ssa.CallCommon, caps []ssa.Value, 
 	}
 	t.call(c, nil)
 	t.emit("llvm.return")
-	fmt.Fprintf(&m.defs, "  llvm.func internal %s(%%ctx: !llvm.ptr) attributes {no_unwind, no_inline, passthrough = [[\"disable-tail-calls\", \"true\"], [\"frame-pointer\", \"all\"], \"nooutline\"]} {\n", mlir.Symbol(sym))
+	fmt.Fprintf(&m.defs, "  llvm.func internal %s(%%ctx: %s) attributes {no_unwind, no_inline, passthrough = [[\"disable-tail-calls\", \"true\"], [\"frame-pointer\", \"all\"], \"nooutline\"]} {\n", mlir.Symbol(sym), tP)
 	t.flushBufs(&m.defs)
 	m.defs.WriteString("  }\n")
 	return sym

@@ -113,22 +113,22 @@ func (f *funcGen) scalarBox(x ssa.Value, t types.Type) string {
 
 // toDataWord converts a pointer-shaped value to its ptr representation.
 func (f *funcGen) toDataWord(v string, t types.Type) string {
-	if f.tm.valType(t) == mlir.Ptr {
+	if f.tm.valType(t) == tP {
 		return v
 	}
 	// Single element struct or array holding a pointer.
 	slot := f.spill(v, t)
-	return f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", slot)
+	return f.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", slot, f.pty(slot), tP)
 }
 
 // fromDataWord converts an interface data word to a value of type t.
 func (f *funcGen) fromDataWord(data string, t types.Type) string {
 	if isDirectIface(t) {
-		if f.tm.valType(t) == mlir.Ptr {
+		if f.tm.valType(t) == tP {
 			return data
 		}
-		slot := f.alloca(mlir.Ptr, 8)
-		f.emit("llvm.store %s, %s {alignment = 8 : i64} : !llvm.ptr, !llvm.ptr", data, slot)
+		slot := f.alloca(tP, 8)
+		f.emit("llvm.store %s, %s {alignment = 8 : i64} : %s, %s", f.gcv(data), slot, tP, f.pty(slot))
 		return f.load(slot, t)
 	}
 	if f.m.p.opts.Sizes.Sizeof(t) == 0 {
@@ -214,15 +214,15 @@ func (f *funcGen) dynType(x string, xt types.Type) string {
 	}
 	// itab.typ, or nil for a nil interface.
 	n := f.null()
-	isNil := f.op("llvm.icmp \"eq\" %s, %s : !llvm.ptr", w, n)
+	isNil := f.op("llvm.icmp \"eq\" %s, %s : %s", w, n, tP)
 	nb, done := f.newBlock(), f.newBlock()
-	f.emit("llvm.cond_br %s, %s(%s : !llvm.ptr), %s", isNil, done, n, nb)
+	f.emit("llvm.cond_br %s, %s(%s : %s), %s", isNil, done, n, tP, nb)
 	fmt.Fprintf(f.b, "  %s:\n", nb)
 	tp := f.gepByte(w, 8)
-	t := f.op("llvm.load %s {alignment = 8 : i64} : !llvm.ptr -> !llvm.ptr", tp)
-	f.emit("llvm.br %s(%s : !llvm.ptr)", done, t)
+	t := f.op("llvm.load %s {alignment = 8 : i64} : %s -> %s", tp, f.pty(tp), tP)
+	f.emit("llvm.br %s(%s : %s)", done, t, tP)
 	r := f.newVal()
-	fmt.Fprintf(f.b, "  %s(%s: !llvm.ptr):\n", done, r)
+	fmt.Fprintf(f.b, "  %s(%s: %s):\n", done, r, tP)
 	return r
 }
 
@@ -231,7 +231,7 @@ func (f *funcGen) typeAssert(v *ssa.TypeAssert) {
 		// x/tools' nil check before an interface method value (s.M with
 		// s nil): gc panics with a nil pointer dereference there.
 		x := f.value(v.X)
-		isNil := f.op("llvm.icmp \"eq\" %s, %s : !llvm.ptr", f.extractRaw(x, tIface, 0), f.null())
+		isNil := f.op("llvm.icmp \"eq\" %s, %s : %s", f.extractRaw(x, tIface, 0), f.null(), tP)
 		bad, ok := f.newBlock(), f.newBlock()
 		f.emit("llvm.cond_br %s weights([1, 1000]), %s, %s", isNil, bad, ok)
 		f.b.WriteString("  " + bad + ":\n")
@@ -256,7 +256,7 @@ func (f *funcGen) typeAssert(v *ssa.TypeAssert) {
 		if isEmptyInterface(at) {
 			tw = typ
 			n := f.null()
-			ok = f.op("llvm.icmp \"ne\" %s, %s : !llvm.ptr", typ, n)
+			ok = f.op("llvm.icmp \"ne\" %s, %s : %s", f.gcv(typ), n, tP)
 			if !v.CommaOk {
 				f.branchCold(f.not(ok), func() {
 					f.rtcall("assertE2I", f.typeDesc(at), typ) // panics for nil
@@ -266,7 +266,7 @@ func (f *funcGen) typeAssert(v *ssa.TypeAssert) {
 		} else if v.CommaOk {
 			tw = f.rtcall("assertE2I2", f.typeDesc(at), typ)
 			n := f.null()
-			ok = f.op("llvm.icmp \"ne\" %s, %s : !llvm.ptr", tw, n)
+			ok = f.op("llvm.icmp \"ne\" %s, %s : %s", f.gcv(tw), n, tP)
 		} else {
 			tw = f.rtcall("assertE2I", f.typeDesc(at), typ)
 		}
@@ -275,8 +275,8 @@ func (f *funcGen) typeAssert(v *ssa.TypeAssert) {
 			return
 		}
 		z := f.null()
-		d := f.op("llvm.select %s, %s, %s : i1, !llvm.ptr", ok, data, z)
-		tw = f.op("llvm.select %s, %s, %s : i1, !llvm.ptr", ok, tw, z)
+		d := f.op("llvm.select %s, %s, %s : i1, %s", ok, f.gcv(data), z, tP)
+		tw = f.op("llvm.select %s, %s, %s : i1, %s", ok, f.gcv(tw), z, tP)
 		res := f.build(tIface, tw, d)
 		f.vals[v] = f.build(f.tm.valType(v.Type()), res, ok)
 		return
@@ -287,7 +287,7 @@ func (f *funcGen) typeAssert(v *ssa.TypeAssert) {
 	// Itabs built at run time differ from compiler emitted ones, so compare
 	// the dynamic type, not the itab.
 	dyn := f.dynType(x, xt)
-	ok = f.op("llvm.icmp \"eq\" %s, %s : !llvm.ptr", dyn, want)
+	ok = f.op("llvm.icmp \"eq\" %s, %s : %s", f.gcv(dyn), f.gcv(want), tP)
 	if !v.CommaOk {
 		f.branchCold(f.not(ok), func() {
 			f.rtcall("panicTypeAssert", dyn, want, f.typeDesc(xt))
@@ -320,14 +320,14 @@ func (f *funcGen) changeInterface(v *ssa.ChangeInterface) {
 	// Non-empty target: look up the itab, nil stays nil.
 	typ := f.dynType(x, v.X.Type())
 	n := f.null()
-	isNil := f.op("llvm.icmp \"eq\" %s, %s : !llvm.ptr", typ, n)
+	isNil := f.op("llvm.icmp \"eq\" %s, %s : %s", f.gcv(typ), n, tP)
 	nb, done := f.newBlock(), f.newBlock()
-	f.emit("llvm.cond_br %s, %s(%s : !llvm.ptr), %s", isNil, done, n, nb)
+	f.emit("llvm.cond_br %s, %s(%s : %s), %s", isNil, done, n, tP, nb)
 	fmt.Fprintf(f.b, "  %s:\n", nb)
 	tab := f.rtcall("assertE2I", f.typeDesc(to), typ)
-	f.emit("llvm.br %s(%s : !llvm.ptr)", done, tab)
+	f.emit("llvm.br %s(%s : %s)", done, tab, tP)
 	r := f.newVal()
-	fmt.Fprintf(f.b, "  %s(%s: !llvm.ptr):\n", done, r)
+	fmt.Fprintf(f.b, "  %s(%s: %s):\n", done, r, tP)
 	f.vals[v] = f.build(tIface, r, f.extractRaw(x, tIface, 1))
 }
 

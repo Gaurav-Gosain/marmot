@@ -254,7 +254,7 @@ func (f *funcGen) freeOldArray(p, c string, elem types.Type) {
 	if es == 0 {
 		return
 	}
-	f.m.declareRaw("rt_free", []string{mlir.Ptr, mlir.I64}, "", "")
+	f.m.declareRaw("rt_free", []string{tP, mlir.I64}, "", "")
 	size := f.op("llvm.mul %s, %s : i64", c, f.constInt(es, mlir.I64))
 	// Only small size classes: freeing a large array returns its pages,
 	// and the next allocation would fault them in again.
@@ -262,7 +262,7 @@ func (f *funcGen) freeOldArray(p, c string, elem types.Type) {
 	yes, no := f.newBlock(), f.newBlock()
 	f.emit("llvm.cond_br %s, %s, %s", small, yes, no)
 	f.b.WriteString("  " + yes + ":\n")
-	f.emit("llvm.call @rt_free(%s, %s) : (!llvm.ptr, i64) -> ()", p, size)
+	f.emit("llvm.call @rt_free(%s, %s) : (%s, i64) -> ()", f.gcv(p), size, tP)
 	f.emit("llvm.br %s", no)
 	f.b.WriteString("  " + no + ":\n")
 }

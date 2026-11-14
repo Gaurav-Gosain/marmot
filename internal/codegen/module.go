@@ -387,7 +387,7 @@ func (m *moduleGen) signature(fn *ssa.Function) ([]string, string) {
 		params = append(params, m.tm.valType(v.Type()))
 	}
 	if len(fn.FreeVars) > 0 {
-		params = append(params, mlir.Ptr)
+		params = append(params, tP)
 	}
 	return params, m.tm.valType(sig.Results())
 }
@@ -403,7 +403,7 @@ func (m *moduleGen) sigTypes(sig *types.Signature, closure bool) ([]string, stri
 		params = append(params, m.tm.valType(v.Type()))
 	}
 	if closure {
-		params = append(params, mlir.Ptr)
+		params = append(params, tP)
 	}
 	return params, m.tm.valType(sig.Results())
 }
@@ -497,7 +497,7 @@ func (m *moduleGen) global(g *ssa.Global) {
 		linkage = "common"
 	}
 	fmt.Fprintf(&m.defs, "  llvm.mlir.global %s %s() {addr_space = 0 : i32} : %s {\n    %%0 = llvm.mlir.zero : %s\n    llvm.return %%0 : %s\n  }\n",
-		linkage, mlir.Symbol(sym), t, t, t)
+		linkage, mlir.Symbol(sym), mlir.Data(t), mlir.Data(t), mlir.Data(t))
 }
 
 func (m *moduleGen) globalSym(g *ssa.Global) string {

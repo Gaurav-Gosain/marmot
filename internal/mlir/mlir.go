@@ -12,15 +12,18 @@ import (
 
 // Common types, spelled as they appear inside and outside llvm dialect types.
 const (
-	Ptr  = "!llvm.ptr"
-	I1   = "i1"
-	I8   = "i8"
-	I16  = "i16"
-	I32  = "i32"
-	I64  = "i64"
-	F32  = "f32"
-	F64  = "f64"
-	Void = ""
+	Ptr = "!llvm.ptr"
+	// GCPtr is a pointer the garbage collector traces (address space 1):
+	// statepoint lowering finds the GC pointers live at a call by it.
+	GCPtr = "!llvm.ptr<1>"
+	I1    = "i1"
+	I8    = "i8"
+	I16   = "i16"
+	I32   = "i32"
+	I64   = "i64"
+	F32   = "f32"
+	F64   = "f64"
+	Void  = ""
 )
 
 // Struct returns a literal struct type.
@@ -45,11 +48,19 @@ func Array(n int64, elem string) string {
 // Inner returns the spelling of t inside another llvm dialect type.
 // MLIR accepts both forms there, the short one keeps text small.
 func Inner(t string) string {
-	if t == Ptr {
+	switch t {
+	case Ptr:
 		return "ptr"
+	case GCPtr:
+		return "ptr<1>"
 	}
 	return t
 }
+
+// Data returns t with GC pointers as plain pointers: the type of static
+// data (global initializers), which holds addresses the collector does not
+// move or need to see as roots.
+func Data(t string) string { return strings.ReplaceAll(t, "ptr<1>", "ptr") }
 
 // Symbol quotes a symbol name for use after '@'.
 func Symbol(name string) string {

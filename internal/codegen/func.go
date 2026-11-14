@@ -47,6 +47,9 @@ type funcGen struct {
 	appendElems       map[*ssa.Slice][]ssa.Value // append(s, a, b): elements by varargs slice
 	litCopy           map[*ssa.Alloc]string      // constant literal objects: their image (litcopy.go)
 	curInstr          ssa.Instruction            // the instruction being emitted (tempFor)
+	addr0             map[string]bool            // values that are addresses in address space 0 (gcptr.go)
+	slot0             map[string]bool            // the stack slots among them
+	slotCast          map[string]string          // stack slot -> its cast to a GC pointer
 	mapLits           map[*ssa.MapUpdate]*mapLit // constant map literals: the loop at their last update (maplit.go)
 	appendMake        map[*ssa.MakeSlice]bool    // append(s, make([]T, n)...): no temporary
 	skipInstr         map[ssa.Instruction]bool   // instructions folded into others
@@ -111,7 +114,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 	fn := f.fn
 	params, ret := f.m.signature(fn)
 	if f.region != "" {
-		params = append(params, mlir.Ptr)
+		params = append(params, tP)
 	}
 	var head strings.Builder
 	head.WriteString("  llvm.func ")
@@ -245,7 +248,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 			f.curPos = instr.Pos()
 			f.instr(instr)
 			for _, pl := range f.regionFree[instr] {
-				f.emit("llvm.call @rt_region_free(%s) : (!llvm.ptr) -> ()", pl.r)
+				f.emit("llvm.call @rt_region_free(%s) : (%s) -> ()", f.gcv(pl.r), tP)
 			}
 		}
 	}
@@ -323,12 +326,12 @@ func (f *funcGen) zero(t string) string {
 	return f.op("llvm.mlir.zero : %s", t)
 }
 
-func (f *funcGen) null() string { return f.zero(mlir.Ptr) }
+func (f *funcGen) null() string { return f.zero(tP) }
 
 func (f *funcGen) undef(t string) string { return f.op("llvm.mlir.undef : %s", t) }
 
 func (f *funcGen) addressOf(sym string) string {
-	return f.op("llvm.mlir.addressof %s : !llvm.ptr", mlir.Symbol(sym))
+	return f.markAddr(f.op("llvm.mlir.addressof %s : !llvm.ptr", mlir.Symbol(sym)))
 }
 
 // gep computes &base.(st)[0].idx... with constant indices.
@@ -337,12 +340,12 @@ func (f *funcGen) gep(base, st string, idx ...int) string {
 	for _, i := range idx {
 		s = append(s, fmt.Sprint(i))
 	}
-	return f.op("llvm.getelementptr inbounds %s[%s] : (!llvm.ptr) -> !llvm.ptr, %s", base, strings.Join(s, ", "), st)
+	return f.derived(base, f.op("llvm.getelementptr inbounds %s[%s] : (%s) -> %s, %s", base, strings.Join(s, ", "), f.pty(base), f.pty(base), st))
 }
 
 // gepDyn computes base + i*sizeof(elem) for a dynamic i64 index.
 func (f *funcGen) gepDyn(base, elem, i string) string {
-	return f.op("llvm.getelementptr inbounds %s[%s] : (!llvm.ptr, i64) -> !llvm.ptr, %s", base, i, elem)
+	return f.derived(base, f.op("llvm.getelementptr inbounds %s[%s] : (%s, i64) -> %s, %s", base, i, f.pty(base), f.pty(base), elem))
 }
 
 // gepByte computes base + off bytes.
@@ -350,7 +353,7 @@ func (f *funcGen) gepByte(base string, off int64) string {
 	if off == 0 {
 		return base
 	}
-	return f.op("llvm.getelementptr inbounds %s[%d] : (!llvm.ptr) -> !llvm.ptr, i8", base, off)
+	return f.derived(base, f.op("llvm.getelementptr inbounds %s[%d] : (%s) -> %s, i8", base, off, f.pty(base), f.pty(base)))
 }
 
 // load reads a Go value of type t from p and returns it in register form.
@@ -365,7 +368,7 @@ func (f *funcGen) load(p string, t types.Type, volatile ...bool) string {
 	if len(volatile) > 0 && volatile[0] {
 		vol = "volatile "
 	}
-	v := f.op("llvm.load %s%s {alignment = %d : i64%s} : !llvm.ptr -> %s", vol, p, f.m.p.opts.Sizes.Alignof(t), f.unsafeAttr(t), mt)
+	v := f.op("llvm.load %s%s {alignment = %d : i64%s} : %s -> %s", vol, p, f.m.p.opts.Sizes.Alignof(t), f.unsafeAttr(t), f.pty(p), mt)
 	if isBool(t) {
 		return f.op("llvm.trunc %s : i8 to i1", v)
 	}
@@ -386,7 +389,10 @@ func (f *funcGen) store(v, p string, t types.Type, volatile ...bool) {
 	if len(volatile) > 0 && volatile[0] {
 		vol = "volatile "
 	}
-	f.emit("llvm.store %s%s, %s {alignment = %d : i64%s} : %s, !llvm.ptr", vol, v, p, f.m.p.opts.Sizes.Alignof(t), f.unsafeAttr(t), mt)
+	if mt == tP {
+		v = f.gcv(v)
+	}
+	f.emit("llvm.store %s%s, %s {alignment = %d : i64%s} : %s, %s", vol, v, p, f.m.p.opts.Sizes.Alignof(t), f.unsafeAttr(t), mt, f.pty(p))
 }
 
 // extract reads field i of an aggregate register value of LLVM type at,
@@ -407,7 +413,7 @@ func (f *funcGen) extractRaw(agg, at string, i int) string {
 func (f *funcGen) build(at string, vs ...string) string {
 	agg := f.undef(at)
 	for i, v := range vs {
-		agg = f.op("llvm.insertvalue %s, %s[%d] : %s", v, agg, i, at)
+		agg = f.op("llvm.insertvalue %s, %s[%d] : %s", f.gcv(v), agg, i, at)
 	}
 	return agg
 }
@@ -420,6 +426,13 @@ func (f *funcGen) alloca(t string, align int64) string {
 	one := f.newVal()
 	fmt.Fprintf(&f.pro, "    %s = llvm.mlir.constant(1 : i64) : i64\n", one)
 	fmt.Fprintf(&f.pro, "    %s = llvm.alloca %s x %s {alignment = %d : i64} : (i64) -> !llvm.ptr\n", v, one, t, align)
+	if optGCPtr {
+		f.markAddr(v)
+		if f.slot0 == nil {
+			f.slot0 = map[string]bool{}
+		}
+		f.slot0[v] = true
+	}
 	return v
 }
 
@@ -519,7 +532,7 @@ func (f *funcGen) constant(c constant.Value, t types.Type) string {
 			// uintptr constant converted to unsafe.Pointer.
 			i, _ := constant.Uint64Val(constant.ToInt(c))
 			n := f.constInt(int64(i), mlir.I64)
-			return f.op("llvm.inttoptr %s : i64 to !llvm.ptr", n)
+			return f.op("llvm.inttoptr %s : i64 to %s", n, tP)
 		}
 	}
 	f.fail(token.NoPos, "unsupported constant %v of type %v", c, t)
@@ -702,7 +715,7 @@ func (f *funcGen) succ(b *ssa.BasicBlock, i int) string {
 		if !ok {
 			break
 		}
-		args = append(args, f.value(phi.Edges[predIdx]))
+		args = append(args, f.gcv(f.value(phi.Edges[predIdx])))
 		types = append(types, f.tm.valType(phi.Type()))
 	}
 	if len(args) == 0 {
@@ -726,7 +739,7 @@ func (f *funcGen) ret(r *ssa.Return) {
 		f.emit("llvm.return")
 	case 1:
 		v := f.escapeBig(f.value(r.Results[0]), r.Results[0].Type())
-		f.emit("llvm.return %s : %s", v, f.tm.valType(r.Results[0].Type()))
+		f.emit("llvm.return %s : %s", f.gcv(v), f.tm.valType(r.Results[0].Type()))
 	default:
 		rt := f.tm.valType(f.fn.Signature.Results())
 		vs := make([]string, len(r.Results))
@@ -752,7 +765,7 @@ func (f *funcGen) nilCheck(p string) {
 		return
 	}
 	n := f.null()
-	c := f.op("llvm.icmp \"eq\" %s, %s : !llvm.ptr", p, n)
+	c := f.op("llvm.icmp \"eq\" %s, %s : %s", f.gcv(p), n, tP)
 	f.branchCold(c, func() {
 		f.rtcall("panicnil")
 		f.emit("llvm.unreachable")
@@ -793,7 +806,7 @@ func (f *funcGen) allocObj(v *ssa.Alloc) {
 			f.vals[v] = f.addressOf(f.m.zeroBase())
 			return
 		}
-		f.vals[v] = f.op("llvm.call @rt_region_alloc(%s, %s) : (!llvm.ptr, i64) -> !llvm.ptr", f.region, f.constInt(size, mlir.I64))
+		f.vals[v] = f.op("llvm.call @rt_region_alloc(%s, %s) : (%s, i64) -> %s", f.gcv(f.region), f.constInt(size, mlir.I64), tP, tP)
 		return
 	}
 	if v.Heap && !f.stackOK[v] {
@@ -821,7 +834,7 @@ func (f *funcGen) allocObj(v *ssa.Alloc) {
 	if f.volatile[v] {
 		vol = "volatile "
 	}
-	f.emit("llvm.store %s%s, %s {alignment = %d : i64} : %s, !llvm.ptr", vol, z, p, f.m.p.opts.Sizes.Alignof(et), mt)
+	f.emit("llvm.store %s%s, %s {alignment = %d : i64} : %s, %s", vol, z, p, f.m.p.opts.Sizes.Alignof(et), mt, f.pty(p))
 	f.vals[v] = p
 }
 
@@ -929,6 +942,7 @@ func (f *funcGen) directCall(fn *ssa.Function, args []string) string {
 		f.fail(token.NoPos, "internal error: call to %s with %d args, want %d", sym, len(args), len(params))
 	}
 	sig := fmt.Sprintf("(%s) -> %s", strings.Join(params, ", "), retOrVoid(ret))
+	args = f.gcArgs(args)
 	attr := ""
 	if f.noinlineCalls {
 		attr = " {no_inline}"
