@@ -1619,7 +1619,12 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   EscapeTable table;
   if (opts.escape && opts.optLevel != '0') {
     auto t0 = std::chrono::steady_clock::now();
-    for (unsigned round = 0; round < 16; ++round) {
+    // MARMOT_ESCAPE_ROUNDS caps the rounds (every round is sound; fewer
+    // rounds find fewer non-escaping parameters).
+    unsigned maxRounds = 16;
+    if (const char *e = std::getenv("MARMOT_ESCAPE_ROUNDS"))
+      maxRounds = std::max(1, std::atoi(e));
+    for (unsigned round = 0; round < maxRounds; ++round) {
       std::vector<std::string> found(mods.size());
       parallel([&](unsigned i, raw_ostream &es, PhaseTimes &t) {
         std::string in = restrictTable(table, mods[i]);
