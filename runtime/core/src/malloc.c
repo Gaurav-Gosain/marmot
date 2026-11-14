@@ -159,41 +159,26 @@ static void arena_init(void) {
 uint8_t *rt_card_table;  // hidden (rt.h)
 static uintptr_t card_table_size;
 
-// 128 MiB reserved, a tenth of a millisecond less at startup and exit than
-// a table for the whole address space (the cost of a reservation grows
-// with its size on darwin).
+// 128 MiB of address space, mapped read-write and backed on first write
+// (only the heap's cards are written while no cycle runs): no fault
+// handling, and a card read of an untouched page sees 0 (dirty) and writes
+// nothing. The cost of a mapping grows with its size on darwin, so the
+// table is small and repeats.
 static void cards_init(void) {
 #if !RT_OS_WASI
   card_table_size = RT_CARD_MASK + 1;
-  rt_card_table = os_reserve(card_table_size);
+  rt_card_table = os_map(card_table_size);
   if (!rt_card_table) card_table_size = 0;
 #endif
-}
-
-// Commit the card pages for [lo, lo+n) (the heap's, ahead of its stores).
-static void cards_commit(uintptr_t lo, uintptr_t n) {
-  if (!rt_card_table || !n) return;
-  uintptr_t ps = rt_pagesize, step = ps << RT_CARD_SHIFT;  // address bytes per card page
-  for (uintptr_t a = lo & ~(step - 1); a < lo + n; a += step) {
-    uintptr_t off = ((a >> RT_CARD_SHIFT) & RT_CARD_MASK) & ~(ps - 1);
-    os_commit(rt_card_table + off, ps);
-  }
-}
-
-// From the fault handler: a card store to a page not committed yet (a
-// stack, a C buffer, a global) commits it. Async signal safe (mprotect).
-bool card_fault(uintptr_t addr) {
-  if (!rt_card_table || addr - (uintptr_t)rt_card_table >= card_table_size) return false;
-  uintptr_t chunk = (uintptr_t)64 << 10;
-  uintptr_t off = (addr - (uintptr_t)rt_card_table) & ~(chunk - 1);
-  uintptr_t n = off + chunk > card_table_size ? card_table_size - off : chunk;
-  return os_commit(rt_card_table + off, n);
 }
 
 RT_API RT_PRESERVE_ALL void rt_card_range(void *dst, uintptr_t n) {
   if (!rt_card_table || !n) return;
   uintptr_t a = (uintptr_t)dst >> RT_CARD_SHIFT, b = ((uintptr_t)dst + n - 1) >> RT_CARD_SHIFT;
-  for (uintptr_t i = a; i <= b; i++) rt_card_table[i & RT_CARD_MASK] = 0;
+  for (uintptr_t i = a; i <= b; i++) {
+    uint8_t *c = &rt_card_table[i & RT_CARD_MASK];
+    if (*c) *c = 0;
+  }
 }
 
 static void meta_commit(uintptr_t upto) {
@@ -300,7 +285,6 @@ static void arena_grow(uintptr_t npages) {
   uintptr_t base = rt_arena_used;
   rt_arena_used += n;
   meta_commit(rt_arena_used - rt_arena_start);
-  cards_commit(base, n);
   heap_sys += n;
   mspan *s = fixalloc_alloc(&span_alloc);
   s->base = base;

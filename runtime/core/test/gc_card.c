@@ -21,18 +21,23 @@ static waitgroup wg;
 // A small object's card may be marked through any of its words (the second
 // stop rescans small objects whole): edge stores mark the card of the
 // node's first word.
+static inline void card(void *at) {
+  uint8_t *c = &rt_card_table[((uintptr_t)at >> RT_CARD_SHIFT) & RT_CARD_MASK];
+  if (*c) *c = 0;
+}
+
 static inline void st_field(node *obj, void *slot, void *v) {
   *(void **)slot = v;
   if (obj->npay < 500) {
-    rt_card_table[((uintptr_t)obj >> RT_CARD_SHIFT) & RT_CARD_MASK] = 0;
+    card(obj);
   } else {
-    rt_card_table[((uintptr_t)slot >> RT_CARD_SHIFT) & RT_CARD_MASK] = 0;  // large: per card
+    card(slot);  // large: per card
   }
 }
 
 static inline void st(void *slot, void *v) {
   *(void **)slot = v;
-  rt_card_table[((uintptr_t)slot >> RT_CARD_SHIFT) & RT_CARD_MASK] = 0;
+  card(slot);
 }
 
 static void worker(void *arg) {

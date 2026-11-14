@@ -239,8 +239,6 @@ static void sigfault(int sig, siginfo_t *info, void *ctxp) {
 #elif RT_OS_LINUX && RT_ARCH_AMD64
   pc = (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
 #endif
-  // A card store to a card page not committed yet: commit it and retry.
-  if (card_fault(addr)) return;
   // MARMOT_POISON: an access to freed memory is fatal, never a Go panic.
   if (poison_fault(addr, pc)) os_exit(2);
   rt_m *m = getm();
