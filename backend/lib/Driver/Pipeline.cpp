@@ -767,12 +767,12 @@ ParsedModulePtr parseFile(const std::string &input, const CompileOptions &opts,
   pm->diag = std::make_unique<mlir::SourceMgrDiagnosticHandler>(pm->sm, pm->ctx.get(),
                                                                  *pm->diagStream);
   llvm::StringRef text = pm->sm.getMemoryBuffer(1)->getBuffer();
-  // tier0 batches read the frontend's text with the tier0 reader
+  // Every batch reads the frontend's text with the tier0 reader
   // (MARMOT_FAST_PARSE=0 turns it off), which gives up on text it does not
   // know; the MLIR parser reads that. MARMOT_PARSE_CHECK=1 reads
   // every module both ways and fails when the modules differ.
   bool check = parseCheck();
-  if (opts.tier0 && (fastParse() || check)) {
+  if (fastParse() || check) {
     std::string why;
     pm->module = tier0::readModule(pm->ctx.get(), text, input, why, opts.parseThreads);
     if (check && pm->module) {
