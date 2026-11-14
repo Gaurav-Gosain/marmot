@@ -618,9 +618,13 @@ func (m *moduleGen) ifaceFunc(t types.Type, sel *types.Selection) string {
 		// Recover in the method must see this wrapper as transparent.
 		b.WriteString(" attributes {no_unwind, no_inline, passthrough = [[\"disable-tail-calls\", \"true\"], [\"frame-pointer\", \"all\"], \"nooutline\"]} {\n")
 		enter := m.funcRef(m.p.runtimeFunc("recoverWrapEnter"))
-		fmt.Fprintf(&b, "    %%wz = llvm.mlir.constant(0 : i32) : i32\n")
-		fmt.Fprintf(&b, "    %%wfp = llvm.call_intrinsic \"llvm.frameaddress.p0\"(%%wz) : (i32) -> !llvm.ptr\n")
-		fmt.Fprintf(&b, "    %%wfpi = llvm.ptrtoint %%wfp : !llvm.ptr to i64\n")
+		if m.p.opts.GOARCH == "wasm" { // no frame chain: see frameAddr
+			fmt.Fprintf(&b, "    %%wfpi = llvm.mlir.constant(0 : i64) : i64\n")
+		} else {
+			fmt.Fprintf(&b, "    %%wz = llvm.mlir.constant(0 : i32) : i32\n")
+			fmt.Fprintf(&b, "    %%wfp = llvm.call_intrinsic \"llvm.frameaddress.p0\"(%%wz) : (i32) -> !llvm.ptr\n")
+			fmt.Fprintf(&b, "    %%wfpi = llvm.ptrtoint %%wfp : !llvm.ptr to i64\n")
+		}
 		fmt.Fprintf(&b, "    %%wold = llvm.call %s(%%wfpi) : (i64) -> i64\n", mlir.Symbol(enter))
 	} else {
 		b.WriteString(" attributes {no_unwind, passthrough = [[\"frame-pointer\", \"non-leaf\"]]} {\n")

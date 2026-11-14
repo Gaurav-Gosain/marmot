@@ -256,8 +256,7 @@ func (f *funcGen) builtin(b *ssa.Builtin, args []ssa.Value, instr ssa.Instructio
 			// called by one, so it returns nil and stops nothing (spec).
 			return f.zero(f.tm.valType(types.NewInterfaceType(nil, nil)))
 		}
-		fp := f.markAddr(f.op("llvm.call_intrinsic \"llvm.frameaddress.p0\"(%s) : (i32) -> !llvm.ptr", f.constInt(0, mlir.I32)))
-		return f.rtcall("gorecover", f.op("llvm.ptrtoint %s : !llvm.ptr to i64", fp))
+		return f.rtcall("gorecover", f.frameAddr())
 	case "ssa:deferstack":
 		f.setjmp()
 		return f.frame

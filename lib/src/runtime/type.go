@@ -299,7 +299,8 @@ type stringStruct struct {
 	len int
 }
 
-const ptrSize = unsafe.Sizeof(uintptr(0))
+// ptrSize is the size of a pointer (4 on wasm, where a uintptr is 8).
+const ptrSize = unsafe.Sizeof(unsafe.Pointer(nil))
 
 func efaceOf(p *any) *eface { return (*eface)(unsafe.Pointer(p)) }
 

@@ -809,9 +809,7 @@ func (b *build) backendArgs(emitKind, batch string) []string {
 		args = append(args, "--target="+b.goos+"/"+b.goarch)
 	}
 	if b.goarch == "wasm" {
-		// Defer frames call setjmp: lowered to wasm exceptions with the
-		// legacy encoding, as the runtime (runtime/core WASM_SJLJ_FLAGS).
-		args = append(args, "-wasm-enable-sjlj", "-wasm-use-legacy-eh=true")
+		// (The backend turns on the setjmp lowering for wasm itself.)
 		// LLVM 22's WebAssembly FastISel (-O0 code generation) addresses
 		// memory with a GEP's i64 index as it is, which wasm32 rejects
 		// (i32.load8_u of an i64): selection DAG instead.

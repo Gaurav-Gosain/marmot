@@ -3,6 +3,7 @@
 // LLVMContext, so calls are safe to run in parallel.
 #include "marmot/Driver/Pipeline.h"
 #include "tier0/Reader.h"
+#include "llvm/Support/CommandLine.h"
 #include <mutex>
 #include "marmot/Driver/RuntimeBitcode.h"
 #include "marmot/Driver/Targets.h"
@@ -90,6 +91,19 @@ void registerDialects(mlir::DialectRegistry &registry) {
   mlir::registerLLVMDialectTranslation(registry);
 }
 
+// enableWasmSjLj turns on the WebAssembly backend's setjmp lowering with the
+// legacy exception encoding (-wasm-enable-sjlj -wasm-use-legacy-eh), as the
+// runtime is built, unless the command line set them.
+static void enableWasmSjLj() {
+  static std::once_flag once;
+  std::call_once(once, [] {
+    auto &opts = llvm::cl::getRegisteredOptions();
+    for (const char *name : {"wasm-enable-sjlj", "wasm-use-legacy-eh"})
+      if (llvm::cl::Option *o = opts.lookup(name); o && o->getNumOccurrences() == 0)
+        (void)o->addOccurrence(0, name, "true");
+  });
+}
+
 std::unique_ptr<llvm::TargetMachine>
 makeTargetMachine(const CompileOptions &opts, llvm::Triple &triple,
                   std::string &err) {
@@ -117,6 +131,13 @@ makeTargetMachine(const CompileOptions &opts, llvm::Triple &triple,
   if (triple.isWasm() && features.find("exception-handling") == std::string::npos)
     features += features.empty() ? "+exception-handling" : ",+exception-handling";
   llvm::TargetOptions to;
+  // wasm: defer frames call setjmp, lowered to wasm exceptions (legacy
+  // encoding, as the runtime): the calls after a setjmp are wrapped in
+  // try/catch of __c_longjmp, which needs the wasm exception model.
+  if (triple.isWasm()) {
+    enableWasmSjLj();
+    to.ExceptionModel = llvm::ExceptionHandling::Wasm;
+  }
   to.FunctionSections = true;
   to.DataSections = true;
   // With a profile, split cold blocks of hot functions into a cold section.

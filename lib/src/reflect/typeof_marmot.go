@@ -24,7 +24,8 @@ import (
 	"unsafe"
 )
 
-const ptrSize = unsafe.Sizeof(uintptr(0))
+// ptrSize is the size of a pointer (4 on wasm, where a uintptr is 8).
+const ptrSize = unsafe.Sizeof(unsafe.Pointer(nil))
 
 // madeTypes caches built descriptors by a key describing the type.
 var madeTypes sync.Map // map[any]*rtabi.Type
@@ -185,7 +186,10 @@ func SliceOf(t Type) Type {
 	type key struct{ elem *rtabi.Type }
 	return toType(madeType(key{e}, func() *rtabi.Type {
 		st := new(rtabi.SliceType)
-		st.Type = pointerType(3*ptrSize, rtabi.Slice, "[]"+e.Str, 0)
+		// {pointer, int, int}: 24 bytes, aligned as an int (wasm: 4-byte pointer).
+		st.Type = pointerType(unsafe.Sizeof([]byte(nil)), rtabi.Slice, "[]"+e.Str, 0)
+		st.Align_ = uint8(unsafe.Alignof([]byte(nil)))
+		st.FieldAlign = st.Align_
 		st.Elem = e
 		return &st.Type
 	}))

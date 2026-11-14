@@ -155,7 +155,7 @@ func typedslicecopy(et *_type, dst unsafe.Pointer, dstLen int, src unsafe.Pointe
 
 // mulUintptr returns a * b and whether the product overflowed.
 func mulUintptr(a, b uintptr) (uintptr, bool) {
-	if a|b < 1<<(4*ptrSize) || a == 0 {
+	if a|b < 1<<(4*unsafe.Sizeof(uintptr(0))) || a == 0 {
 		return a * b, false
 	}
 	overflow := b > ^uintptr(0)/a

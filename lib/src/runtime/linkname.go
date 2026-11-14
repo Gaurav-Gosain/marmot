@@ -438,7 +438,7 @@ func weak_runtime_registerWeakPointer(p unsafe.Pointer) unsafe.Pointer {
 			}
 		}
 	}
-	h := (*uintptr)(mallocgc(ptrSize, nil))
+	h := (*uintptr)(mallocgc(unsafe.Sizeof(uintptr(0)), nil))
 	*h = uintptr(p)
 	// p is still referenced by the caller (weak.Make keeps it alive), so
 	// no collection can free the object before it is registered.

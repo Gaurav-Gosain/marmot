@@ -47,8 +47,7 @@ func (f *funcGen) intrinsic(fn *ssa.Function, args []string) (res string, ok boo
 		return "", false
 	}
 	if fn.Pkg.Pkg.Path() == "runtime" && fn.Name() == "getcallerfp" {
-		fp := f.markAddr(f.op("llvm.call_intrinsic \"llvm.frameaddress.p0\"(%s) : (i32) -> !llvm.ptr", f.constInt(0, "i32")))
-		return f.op("llvm.ptrtoint %s : !llvm.ptr to i64", fp), true
+		return f.frameAddr(), true
 	}
 	if fn.Pkg.Pkg.Path() == "internal/abi" && (fn.Name() == "FuncPCABI0" || fn.Name() == "FuncPCABIInternal") {
 		return f.funcPC(), true
