@@ -23,14 +23,36 @@ type escKey struct {
 	v  int // parameter index (receiver first), or -1-i for free variable i
 }
 
-// escapeState holds memoized summaries. Guarded by Program.mu.
+// escapeState holds memoized summaries. Guarded by Program.escMu. Only
+// results that did not depend on an assumed answer for a recursive
+// summary are kept here: those depend on the code alone, not on the order
+// in which modules (generated in parallel) ask, so a module's text is the
+// same in every build (editfuzz found an instance in x/uax29 compiled with
+// a stack slot in one build and a heap object in another).
 type escapeState struct {
-	done    map[escKey]bool // true: escapes
+	done map[escKey]bool // true: escapes
+}
+
+// escQuery is the state of one top-level question: the summaries being
+// computed on its path (a recursive one is assumed to escape), whether the
+// current result used such an assumption, and the results of this query
+// that did (valid within it: its order of evaluation is fixed).
+type escQuery struct {
 	running map[escKey]bool
+	cycle   bool
+	local   map[escKey]bool
+}
+
+func newEscQuery() *escQuery {
+	return &escQuery{running: map[escKey]bool{}, local: map[escKey]bool{}}
 }
 
 // paramEscapes reports whether parameter i of fn may escape fn.
 func (p *Program) paramEscapes(fn *ssa.Function, i int) bool {
+	return p.paramEscapesQ(newEscQuery(), fn, i)
+}
+
+func (p *Program) paramEscapesQ(q *escQuery, fn *ssa.Function, i int) bool {
 	if len(fn.Blocks) == 0 {
 		// Body-less (assembly or the C core): unknown unless //go:noescape.
 		return !optEscapeExt || p.pragmas[fn]&pragmaNoescape == 0
@@ -38,76 +60,80 @@ func (p *Program) paramEscapes(fn *ssa.Function, i int) bool {
 	if i >= len(fn.Params) {
 		return true
 	}
-	return p.summary(escKey{fn, i}, fn.Params[i])
+	return p.summary(q, escKey{fn, i}, fn.Params[i], false)
 }
 
 // paramToResult reports whether parameter i of fn leaves fn only through
 // its results (gc's "leaking param content to result").
 func (p *Program) paramToResult(fn *ssa.Function, i int) bool {
+	return p.paramToResultQ(newEscQuery(), fn, i)
+}
+
+func (p *Program) paramToResultQ(q *escQuery, fn *ssa.Function, i int) bool {
 	if len(fn.Blocks) == 0 || i >= len(fn.Params) {
 		return false
 	}
-	k := escKey{fn, -1000 - i}
-	p.escMu.Lock()
-	if r, ok := p.esc.done[k]; ok {
-		p.escMu.Unlock()
-		return !r
-	}
-	if p.esc.running[k] {
-		p.escMu.Unlock()
-		return false
-	}
-	p.esc.running[k] = true
-	p.escMu.Unlock()
-	r := p.escapesF(fn.Params[i], map[ssa.Value]bool{}, false, true)
-	p.escMu.Lock()
-	delete(p.esc.running, k)
-	p.esc.done[k] = r
-	p.escMu.Unlock()
-	return !r
+	// "Escapes other than through the results"; recursion assumes it does.
+	return !p.summary(q, escKey{fn, -1000 - i}, fn.Params[i], true)
 }
 
 // freeVarEscapes reports whether free variable i of closure fn may escape.
 func (p *Program) freeVarEscapes(fn *ssa.Function, i int) bool {
+	return p.freeVarEscapesQ(newEscQuery(), fn, i)
+}
+
+func (p *Program) freeVarEscapesQ(q *escQuery, fn *ssa.Function, i int) bool {
 	if !optEscSummary || i >= len(fn.FreeVars) {
 		return true
 	}
-	return p.summary(escKey{fn, -1 - i}, fn.FreeVars[i])
+	return p.summary(q, escKey{fn, -1 - i}, fn.FreeVars[i], false)
 }
 
-func (p *Program) summary(k escKey, v ssa.Value) bool {
+// summary reports whether v (a parameter or free variable of k.fn) may
+// escape; with ret, leaving through the results does not count.
+func (p *Program) summary(q *escQuery, k escKey, v ssa.Value, ret bool) bool {
 	p.escMu.Lock()
 	if p.esc.done == nil {
 		p.esc.done = map[escKey]bool{}
-		p.esc.running = map[escKey]bool{}
 	}
-	if r, ok := p.esc.done[k]; ok {
-		p.escMu.Unlock()
+	r, ok := p.esc.done[k]
+	p.escMu.Unlock()
+	if ok {
 		return r
 	}
-	if p.esc.running[k] {
-		p.escMu.Unlock()
+	if r, ok := q.local[k]; ok {
+		q.cycle = true
+		return r
+	}
+	if q.running[k] {
+		q.cycle = true
 		return true // recursion: assume the worst
 	}
-	p.esc.running[k] = true
-	p.escMu.Unlock()
-	r := p.escapes(v, map[ssa.Value]bool{}, false)
-	p.escMu.Lock()
-	delete(p.esc.running, k)
-	p.esc.done[k] = r
-	p.escMu.Unlock()
+	q.running[k] = true
+	outer := q.cycle
+	q.cycle = false
+	r = p.escapesF(q, v, map[ssa.Value]bool{}, false, ret)
+	delete(q.running, k)
+	if q.cycle {
+		q.local[k] = r
+	} else {
+		p.escMu.Lock()
+		p.esc.done[k] = r
+		p.escMu.Unlock()
+	}
+	q.cycle = q.cycle || outer
 	return r
 }
 
 // escapes reports whether pointer value v (or a value derived from it) may
 // outlive the function. noPhi makes flow into a phi count as escaping.
 func (p *Program) escapes(v ssa.Value, seen map[ssa.Value]bool, noPhi bool) bool {
-	return p.escapesF(v, seen, noPhi, false)
+	return p.escapesF(newEscQuery(), v, seen, noPhi, false)
 }
 
 // escapesF is escapes; with ret, returning v (or a value derived from it)
 // from its function does not count as escaping.
-func (p *Program) escapesF(v ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool) bool {
+func (p *Program) escapesF(q *escQuery, v ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool) bool {
 	if seen[v] {
 		return false
 	}
@@ -134,11 +160,11 @@ func (p *Program) escapesF(v ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool
 			if optEscapeExt && len(ptrWords(x.(ssa.Value).Type(), p.opts.Sizes)) == 0 {
 				continue
 			}
-			if p.escapesF(x.(ssa.Value), seen, noPhi, ret) {
+			if p.escapesF(q, x.(ssa.Value), seen, noPhi, ret) {
 				return true
 			}
 		case *ssa.FieldAddr, *ssa.IndexAddr, *ssa.Slice, *ssa.ChangeType, *ssa.SliceToArrayPointer:
-			if p.escapesF(x.(ssa.Value), seen, noPhi, ret) {
+			if p.escapesF(q, x.(ssa.Value), seen, noPhi, ret) {
 				return true
 			}
 		case *ssa.Convert:
@@ -157,7 +183,7 @@ func (p *Program) escapesF(v ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool
 				}
 				return true
 			}
-			if p.escapesF(x, seen, noPhi, ret) {
+			if p.escapesF(q, x, seen, noPhi, ret) {
 				return true
 			}
 		case *ssa.Range:
@@ -176,12 +202,12 @@ func (p *Program) escapesF(v ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool
 				return true
 			}
 			if x.X == v && isString(v.Type()) {
-				if len(ptrWords(x.Type(), p.opts.Sizes)) > 0 && p.escapesF(x, seen, noPhi, ret) {
+				if len(ptrWords(x.Type(), p.opts.Sizes)) > 0 && p.escapesF(q, x, seen, noPhi, ret) {
 					return true
 				}
 			}
 		case *ssa.Phi:
-			if noPhi || p.escapesF(x, seen, noPhi, ret) {
+			if noPhi || p.escapesF(q, x, seen, noPhi, ret) {
 				return true
 			}
 		case *ssa.BinOp:
@@ -189,7 +215,7 @@ func (p *Program) escapesF(v ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool
 			// of its operands itself (the runtime returns the only non-empty
 			// operand uncopied, as gc's does), so an operand escapes when the
 			// result does (verify/testdata/progs/stackconcat.go).
-			if x.Op == token.ADD && isString(x.Type()) && p.escapesF(x, seen, noPhi, ret) {
+			if x.Op == token.ADD && isString(x.Type()) && p.escapesF(q, x, seen, noPhi, ret) {
 				return true
 			}
 		case *ssa.TypeAssert:
@@ -202,21 +228,21 @@ func (p *Program) escapesF(v ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool
 			if _, toIface := x.AssertedType.Underlying().(*types.Interface); !toIface && !isDirectIface(x.AssertedType) {
 				continue
 			}
-			if p.escapesF(x, seen, noPhi, ret) {
+			if p.escapesF(q, x, seen, noPhi, ret) {
 				return true
 			}
 		case *ssa.ChangeInterface:
-			if !optStackBox || p.escapesF(x, seen, noPhi, ret) {
+			if !optStackBox || p.escapesF(q, x, seen, noPhi, ret) {
 				return true
 			}
 		case *ssa.Call:
-			if p.callLeaksF(&x.Call, v, x, seen, noPhi, ret) {
+			if p.callLeaksF(q, &x.Call, v, x, seen, noPhi, ret) {
 				return true
 			}
 		case *ssa.Defer:
 			// A deferred call runs at function exit: storage reused by a
 			// later loop iteration would be wrong by then.
-			if inLoop(x.Block()) || p.callLeaks(&x.Call, v, nil) {
+			if inLoop(x.Block()) || p.callLeaksF(q, &x.Call, v, nil, map[ssa.Value]bool{}, false, false) {
 				return true
 			}
 		case *ssa.MakeClosure:
@@ -229,14 +255,14 @@ func (p *Program) escapesF(v ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool
 			for i, b := range x.Bindings {
 				if b == v && !byv[i] {
 					byRef = true
-					if p.freeVarEscapes(fn, i) {
+					if p.freeVarEscapesQ(q, fn, i) {
 						return true
 					}
 				}
 			}
 			// Captured by value: only a copy of the contents goes into the
 			// closure. By reference: the closure must not escape either.
-			if byRef && p.escapesF(x, seen, noPhi, ret) {
+			if byRef && p.escapesF(q, x, seen, noPhi, ret) {
 				return true
 			}
 		default:
@@ -251,12 +277,12 @@ func (p *Program) escapesF(v ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool
 // callLeaks reports whether passing v to call c may leak it. res is the
 // call's value (its result may carry v back), or nil for defer.
 func (p *Program) callLeaks(c *ssa.CallCommon, v ssa.Value, res ssa.Value) bool {
-	return p.callLeaksF(c, v, res, map[ssa.Value]bool{}, false, false)
+	return p.callLeaksF(newEscQuery(), c, v, res, map[ssa.Value]bool{}, false, false)
 }
 
 // callLeaksF reports whether passing v to call c may let it escape; res is
 // the call's value (nil for go and defer).
-func (p *Program) callLeaksF(c *ssa.CallCommon, v ssa.Value, res ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool) bool {
+func (p *Program) callLeaksF(q *escQuery, c *ssa.CallCommon, v ssa.Value, res ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool) bool {
 	if c.IsInvoke() {
 		return true
 	}
@@ -269,7 +295,7 @@ func (p *Program) callLeaksF(c *ssa.CallCommon, v ssa.Value, res ssa.Value, seen
 		case "len", "cap", "print", "println", "copy", "ssa:wrapnilchk", "min", "max", "clear":
 			// ssa:wrapnilchk returns its argument.
 			if fn.Name() == "ssa:wrapnilchk" && res != nil {
-				return p.escapesF(res, seen, noPhi, ret)
+				return p.escapesF(q, res, seen, noPhi, ret)
 			}
 			return false
 		case "append":
@@ -289,7 +315,7 @@ func (p *Program) callLeaksF(c *ssa.CallCommon, v ssa.Value, res ssa.Value, seen
 			if res == nil || !optEscapeExt {
 				return true
 			}
-			return p.escapesF(res, seen, noPhi, ret)
+			return p.escapesF(q, res, seen, noPhi, ret)
 		}
 		return true
 	case *ssa.Function:
@@ -315,7 +341,7 @@ func (p *Program) callLeaksF(c *ssa.CallCommon, v ssa.Value, res ssa.Value, seen
 				toResult = true
 			}
 			if toResult {
-				return p.escapesF(res, seen, noPhi, ret)
+				return p.escapesF(q, res, seen, noPhi, ret)
 			}
 			return false
 		}
@@ -327,17 +353,17 @@ func (p *Program) callLeaksF(c *ssa.CallCommon, v ssa.Value, res ssa.Value, seen
 		}
 		toResult := false
 		for i, a := range c.Args {
-			if a == v && p.paramEscapes(fn, i) {
+			if a == v && p.paramEscapesQ(q, fn, i) {
 				// Leaking only through fn's results: then v escapes iff
 				// the call's value does.
-				if res == nil || !optEscapeExt || !p.paramToResult(fn, i) {
+				if res == nil || !optEscapeExt || !p.paramToResultQ(q, fn, i) {
 					return true
 				}
 				toResult = true
 			}
 		}
 		if toResult {
-			return p.escapesF(res, seen, noPhi, ret)
+			return p.escapesF(q, res, seen, noPhi, ret)
 		}
 		return false
 	}
@@ -348,16 +374,16 @@ func (p *Program) callLeaksF(c *ssa.CallCommon, v ssa.Value, res ssa.Value, seen
 	if g := p.returnedClosure(c.Value, v); g != nil {
 		toResult := false
 		for i, a := range c.Args {
-			if a != v || !p.paramEscapes(g, i) {
+			if a != v || !p.paramEscapesQ(q, g, i) {
 				continue
 			}
-			if res == nil || !optEscapeExt || !p.paramToResult(g, i) {
+			if res == nil || !optEscapeExt || !p.paramToResultQ(q, g, i) {
 				return true
 			}
 			toResult = true
 		}
 		if toResult {
-			return p.escapesF(res, seen, noPhi, ret)
+			return p.escapesF(q, res, seen, noPhi, ret)
 		}
 		return false
 	}
