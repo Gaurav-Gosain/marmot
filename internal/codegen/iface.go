@@ -21,7 +21,13 @@ func (f *funcGen) typeWord(t, iface types.Type) string {
 func (f *funcGen) makeInterface(v *ssa.MakeInterface) {
 	t := v.X.Type()
 	if _, isConst := v.X.(*ssa.Const); !isDirectIface(t) && !isConst && f.m.p.opts.Sizes.Sizeof(t) != 0 {
-		f.reportAlloc(v, "box", t, "heap")
+		where := "heap"
+		if f.stackOK[v] {
+			where = "stack"
+		} else if b, ok := t.Underlying().(*types.Basic); ok && f.m.p.opts.Sizes.Sizeof(t) == 1 && b.Info()&(types.IsBoolean|types.IsInteger) != 0 {
+			where = "static" // runtime.staticuint64s (scalarBox)
+		}
+		f.reportAlloc(v, "box", t, where)
 	}
 	if f.goOps() {
 		var tab string
@@ -35,7 +41,15 @@ func (f *funcGen) makeInterface(v *ssa.MakeInterface) {
 		return
 	}
 	tw := f.typeWord(t, v.Type())
-	data := f.boxValue(v.X)
+	var data string
+	if f.stackOK[v] {
+		// The interface value does not escape (MARMOT_STACKBOX): its box
+		// is a frame slot.
+		data = f.alloca(f.tm.memType(t), f.m.p.opts.Sizes.Alignof(t))
+		f.store(f.value(v.X), data, t)
+	} else {
+		data = f.boxValue(v.X)
+	}
 	f.vals[v] = f.build(tIface, tw, data)
 }
 
@@ -57,9 +71,44 @@ func (f *funcGen) boxValue(x ssa.Value) string {
 	if f.goOps() && !f.tm.isBig(t) {
 		return f.op("go.box %s, %s : %s", mlir.Symbol(f.m.typeDescSym(t)), f.value(x), f.tm.valType(t))
 	}
+	if p := f.scalarBox(x, t); p != "" {
+		return p
+	}
 	p := f.newObject(t)
 	f.store(f.value(x), p, t)
 	return p
+}
+
+// scalarBox boxes a value of a pointer-free basic type as gc does: one
+// byte values point into runtime.staticuint64s (no call), 2, 4 and 8 byte
+// values go through convT16/32/64, which return a static word for 0-255
+// and allocate only otherwise. "" if t is not such a type.
+func (f *funcGen) scalarBox(x ssa.Value, t types.Type) string {
+	b, ok := t.Underlying().(*types.Basic)
+	if !ok || b.Info()&(types.IsBoolean|types.IsInteger|types.IsFloat) == 0 || b.Info()&types.IsComplex != 0 {
+		return ""
+	}
+	g, ok := f.m.p.runtime.Members["staticuint64s"].(*ssa.Global)
+	if !ok {
+		return ""
+	}
+	size := f.m.p.opts.Sizes.Sizeof(t)
+	vt := f.tm.valType(t)
+	v := f.value(x)
+	if size == 1 {
+		idx := v
+		if vt != mlir.I64 {
+			idx = f.op("llvm.zext %s : %s to i64", v, vt)
+		}
+		return f.gepDyn(f.addressOf(f.m.globalRef(g)), mlir.I64, idx)
+	}
+	it := fmt.Sprintf("i%d", size*8)
+	if b.Info()&types.IsFloat != 0 {
+		v = f.op("llvm.bitcast %s : %s to %s", v, vt, it)
+	} else if vt != it {
+		return "" // not an integer of its size in registers
+	}
+	return f.rtcall(fmt.Sprintf("convT%d", size*8), v)
 }
 
 // toDataWord converts a pointer-shaped value to its ptr representation.

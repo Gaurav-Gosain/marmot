@@ -192,6 +192,23 @@ func (p *Program) escapesF(v ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool
 			if x.Op == token.ADD && isString(x.Type()) && p.escapesF(x, seen, noPhi, ret) {
 				return true
 			}
+		case *ssa.TypeAssert:
+			// To a concrete type that is not pointer shaped, the result is
+			// a copy of the boxed value; to an interface (or a pointer
+			// shape) it is the same data word.
+			if !optStackBox {
+				return true
+			}
+			if _, toIface := x.AssertedType.Underlying().(*types.Interface); !toIface && !isDirectIface(x.AssertedType) {
+				continue
+			}
+			if p.escapesF(x, seen, noPhi, ret) {
+				return true
+			}
+		case *ssa.ChangeInterface:
+			if !optStackBox || p.escapesF(x, seen, noPhi, ret) {
+				return true
+			}
 		case *ssa.Call:
 			if p.callLeaksF(&x.Call, v, x, seen, noPhi, ret) {
 				return true
@@ -329,6 +346,15 @@ func (p *Program) stackAllocs(fn *ssa.Function) map[ssa.Value]bool {
 				}
 				v = x
 			case *ssa.MakeClosure:
+				v = x
+			case *ssa.MakeInterface:
+				// The box of a value that is not pointer shaped.
+				if _, isConst := x.X.(*ssa.Const); !optStackBox || isConst || isDirectIface(x.X.Type()) {
+					continue
+				}
+				if sz := p.opts.Sizes.Sizeof(x.X.Type()); sz == 0 || sz > maxStackVar {
+					continue
+				}
 				v = x
 			default:
 				continue
