@@ -48,6 +48,7 @@ var (
 	flMax    = flag.Int("maxfail", 10, "stop a program after this many failures")
 	flFresh  = flag.Int("fresh", 20, "every this many edits, continue from the clean build's cache so the cache stops growing (0: never)")
 	flMinGB  = flag.Int("mingb", 15, "stop when the work directory's disk has less than this many GB free")
+	flKeep   = flag.Bool("keepall", false, "keep the whole work directory (roots and caches) for debugging")
 )
 
 func main() {
@@ -834,6 +835,9 @@ func freeGB(dir string) float64 {
 // cleanup removes the program's work directory except what explains a
 // failure: the failure-N directories and the differing modules.
 func (f *fuzzer) cleanup() {
+	if *flKeep {
+		return
+	}
 	ents, _ := os.ReadDir(f.dir)
 	for _, e := range ents {
 		if strings.HasPrefix(e.Name(), "failure-") || e.Name() == "differs" {
