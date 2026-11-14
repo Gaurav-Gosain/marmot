@@ -2,6 +2,7 @@
 /memory/classes/heap/unused:bytes uint64
 /memory/classes/heap/stacks:bytes uint64
 /memory/classes/heap/free:bytes uint64
+/memory/classes/heap/released:bytes uint64
 /memory/classes/total:bytes uint64
 /gc/heap/live:bytes uint64
 /gc/heap/allocs:bytes uint64

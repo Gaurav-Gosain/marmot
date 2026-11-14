@@ -33,14 +33,19 @@ func readMetrics(samplesp unsafe.Pointer, n int, _ int) {
 		s := &samples[i]
 		v, ok := uint64(0), true
 		switch s.name {
-		case "/memory/classes/heap/objects:bytes", "/gc/heap/live:bytes":
+		case "/memory/classes/heap/objects:bytes":
 			v = st.heapAlloc
+		case "/gc/heap/live:bytes":
+			v = st.lastLive // marked live by the last GC: 0 before the first
 		case "/memory/classes/heap/unused:bytes", "/memory/classes/heap/stacks:bytes":
 			v = 0
 		case "/memory/classes/heap/free:bytes":
-			if st.heapSys > st.heapAlloc {
-				v = st.heapSys - st.heapAlloc
+			// Free and not returned to the OS.
+			if st.heapSys > st.heapAlloc+st.heapReleased {
+				v = st.heapSys - st.heapAlloc - st.heapReleased
 			}
+		case "/memory/classes/heap/released:bytes":
+			v = st.heapReleased
 		case "/memory/classes/total:bytes":
 			v = st.heapSys
 		case "/gc/heap/allocs:bytes":

@@ -16,6 +16,7 @@ func main() {
 		"/memory/classes/heap/unused:bytes",
 		"/memory/classes/heap/stacks:bytes",
 		"/memory/classes/heap/free:bytes",
+		"/memory/classes/heap/released:bytes",
 		"/memory/classes/total:bytes",
 		"/gc/heap/live:bytes",
 		"/gc/heap/allocs:bytes",
@@ -41,8 +42,8 @@ func main() {
 		sink = append(sink, make([]byte, 1024))
 	}
 	metrics.Read(s)
-	fmt.Println("objects in use > 1000:", s[9].Value.Uint64() > 1000)
+	fmt.Println("objects in use > 1000:", s[10].Value.Uint64() > 1000)
 	fmt.Println("heap objects bytes > 1000 KB:", s[0].Value.Uint64() > 1000*1024)
-	fmt.Println("goroutines >= 1:", s[12].Value.Uint64() >= 1)
-	fmt.Println("gomaxprocs >= 1:", s[13].Value.Uint64() >= 1)
+	fmt.Println("goroutines >= 1:", s[13].Value.Uint64() >= 1)
+	fmt.Println("gomaxprocs >= 1:", s[14].Value.Uint64() >= 1)
 }
