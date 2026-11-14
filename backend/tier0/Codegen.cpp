@@ -781,11 +781,26 @@ private:
   bool emitWide(Operation &op);
   void emitReturn(LL::ReturnOp ret);
   void stackAddr(unsigned rd, unsigned base, uint64_t off);  // rd = base + off
+  // rd = rn + off with add/sub immediates (12 bits, and 12 bits shifted by
+  // 12) when |off| is under 16 MiB, else through a constant in rd.
+  void addConst(unsigned rd, unsigned rn, int64_t off);
+  // A zero aggregate used only as the value of stores: never made in its
+  // slot, each store writes zeros (zeroBytes).
+  bool storedZero(Value v) {
+    if (!v.getDefiningOp<LL::ZeroOp>() || !isAggregate(v.getType())) return false;
+    return llvm::all_of(v.getUses(), [&](OpOperand &u) {
+      auto st = dyn_cast<LL::StoreOp>(u.getOwner());
+      return st && st.getValue() == v && st.getAddr() != v &&
+             st.getOrdering() == LL::AtomicOrdering::not_atomic;
+    });
+  }
+  void zeroBytes(unsigned base, uint64_t off, uint64_t n);  // n zero bytes at [base + off]
   void edgeMoves(Block *dest, OperandRange args);
   void branchTo(Block *dest);
   void jumpIf(bool flags, Cond cc, unsigned reg, bool sense, Block *dest);
   void prologue();
   void epilogue();
+  int64_t epiAt = -1; // offset of the function's epilogue, once emitted
   void saveRestore(bool save);
 };
 
@@ -1106,12 +1121,47 @@ void FuncGen::prologue() {
 void FuncGen::stackAddr(unsigned rd, unsigned base, uint64_t off) {
   if (base == SP) {
     addrOf(rd, off);
-  } else if (off < 4096) {
-    e(addImm(rd, base, uint32_t(off)));
   } else {
-    movImm(rd, off);
-    e(addReg(rd, base, rd));
+    addConst(rd, base, int64_t(off));
   }
+}
+
+void FuncGen::zeroBytes(unsigned base, uint64_t off, uint64_t n) {
+  if (off + n > 4096 || (base != SP && off + n > 504 && n >= 32)) {
+    // Out of the offsets' reach: from a register pointing at it.
+    if (base == SP) flushCache();
+    stackAddr(R4, base, off);
+    base = R4;
+    off = 0;
+  }
+  uint64_t i = 0;
+  for (; i + 16 <= n && (off + i) % 8 == 0 && off + i + 8 <= 504; i += 16) e(stpOff(XZR, XZR, base, int32_t(off + i)));
+  for (; i + 8 <= n; i += 8) stAt(XZR, base, off + i, 8);
+  for (; i + 4 <= n; i += 4) stAt(XZR, base, off + i, 4);
+  for (; i + 2 <= n; i += 2) stAt(XZR, base, off + i, 2);
+  for (; i < n; i++) stAt(XZR, base, off + i, 1);
+  if (base == SP)
+    for (int64_t &c : cache)
+      if (c >= 0 && c < int64_t(off + n) && c + 8 > int64_t(off)) c = -1;
+}
+
+void FuncGen::addConst(unsigned rd, unsigned rn, int64_t off) {
+  uint64_t m = off < 0 ? uint64_t(-off) : uint64_t(off);
+  if (m >= (uint64_t(1) << 24) || (rd == rn && off == 0)) {
+    if (off == 0) return;
+    unsigned t = rd == rn ? RT : rd;
+    movImm(t, uint64_t(off));
+    e(addReg(rd, rn, t));
+    return;
+  }
+  uint32_t hi = uint32_t(m >> 12), lo = uint32_t(m & 0xFFF);
+  unsigned from = rn;
+  if (hi) {
+    e(off < 0 ? subImm(rd, from, hi, true, true) : addImm(rd, from, hi, true, true));
+    from = rd;
+  }
+  if (lo || from != rd)
+    e(off < 0 ? subImm(rd, from, lo) : addImm(rd, from, lo));
 }
 
 // The callee saved registers that hold values, saved (or restored) two at a
@@ -1133,6 +1183,13 @@ void FuncGen::saveRestore(bool save) {
 }
 
 void FuncGen::epilogue() {
+  // One epilogue per function: later returns branch to the first (it is
+  // the same: the callee-saved registers, the frame and the return).
+  if (epiAt >= 0) {
+    e(b(int32_t(epiAt - int64_t(here()))));
+    return;
+  }
+  epiAt = int64_t(here());
   saveRestore(false);
   if (frameSize) e(movSp(SP, FP));  // with no frame, sp is still fp
   e(ldpPost(FP, LR, SP, 16));
@@ -1591,6 +1648,7 @@ void FuncGen::emitOp(Operation &op) {
         Type t = z.getType();
         if (!isAggregate(t) && sizeOf(t) <= 8) return;  // made at each use
         if (!isa<LL::ZeroOp>(z.getOperation())) return;  // undef: any bits (as LLVM)
+        if (storedZero(z.getResult())) return;  // each store writes the zeros
         uint64_t n = sizeOf(t);
         n = std::max<uint64_t>((n + 7) & ~uint64_t(7), 8);
         uint64_t at = of(z.getResult()), i = 0;
@@ -1692,6 +1750,7 @@ void FuncGen::emitOp(Operation &op) {
         putRaw(d, s.getResult());
       })
       .Case<LL::ZExtOp, LL::TruncOp, LL::PtrToIntOp, LL::IntToPtrOp>([&](auto c) {
+        if (fusedCmp.count(c.getOperation())) return;  // tested at the cond_br
         unsigned a = src(c.getArg(), R1), d = dst(c.getResult(), R1);
         if (intWidth(c.getResult().getType()) < intWidth(c.getArg().getType())) {
           e(ubfx0(d, a, intWidth(c.getResult().getType())));  // trunc: keep the low bits
@@ -1805,6 +1864,10 @@ void FuncGen::emitOp(Operation &op) {
         uint64_t so;
         unsigned ar = addrReg(s.getAddr(), R2, so);
         if (isAggregate(t)) {
+          if (storedZero(s.getValue())) {
+            zeroBytes(ar, so, sizeOf(t));
+            return;
+          }
           if (auto lv = s.getValue().template getDefiningOp<LL::LoadOp>(); lv && lazyLoad.count(lv)) {
             uint64_t lo;
             unsigned lr = addrReg(lv.getAddr(), R3, lo);
@@ -1869,15 +1932,8 @@ void FuncGen::emitOp(Operation &op) {
             acc = d;
           }
         }
-        if (constOff > 0 && constOff < 4096) {
-          e(addImm(d, acc, uint32_t(constOff)));
-          acc = d;
-        } else if (constOff < 0 && constOff > -4096) {
-          e(subImm(d, acc, uint32_t(-constOff)));
-          acc = d;
-        } else if (constOff) {
-          movImm(R2, uint64_t(constOff));
-          e(addReg(d, acc, R2));
+        if (constOff) {
+          addConst(d, acc, constOff);
           acc = d;
         }
         if (acc != d) mv(d, acc);
@@ -2009,6 +2065,8 @@ void FuncGen::emitOp(Operation &op) {
             flags = true;
             cc = icmpCond(p);
           }
+        } else if (auto tr = c.getCondition().template getDefiningOp<LL::TruncOp>(); tr && fusedCmp.count(tr)) {
+          cr = src(tr.getArg(), R3);  // the bool byte itself
         } else {
           cr = src(c.getCondition(), R3);
         }
@@ -2399,6 +2457,13 @@ void FuncGen::run() {
     auto ic = c.getCondition().getDefiningOp<LL::ICmpOp>();
     if (ic && ic->getBlock() == c->getBlock() && ic->hasOneUse() && !isWide(ic.getLhs().getType()))
       fusedCmp.insert(ic.getOperation());
+    // A bool byte loaded from memory and truncated to i1 for the branch:
+    // cbz/cbnz on the byte (a Go bool in memory is 0 or 1; gc tests the
+    // byte too).
+    auto tr = c.getCondition().getDefiningOp<LL::TruncOp>();
+    if (tr && tr->getBlock() == c->getBlock() && tr->hasOneUse() && tr.getType().isInteger(1))
+      if (auto ld = tr.getArg().getDefiningOp<LL::LoadOp>(); ld && ld.getType().isInteger(8))
+        fusedCmp.insert(tr.getOperation());
   });
   // A GEP with constant indices whose every use is the address of a plain
   // (not atomic) load or store folds into them as an offset.
