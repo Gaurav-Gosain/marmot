@@ -269,15 +269,21 @@ func (o *litObj) pureLocal(pos map[ssa.Instruction]int) bool {
 // keeps a whole value and the parts written into it apart, and renders the
 // whole one, so such an object gets no image (tuios DefaultConfig lost
 // Notif.Bell and Notif.Style).
+//
+// In sorted order a path that is a strict prefix of another is a strict
+// prefix of the next different path, so neighbours are enough (the pairwise
+// check took minutes for the large literals of net/http).
 func (o *litObj) nestedConstStores(pos map[ssa.Instruction]int) bool {
-	for i, x := range o.stores {
-		if !o.constStore(x, pos) {
-			continue
+	var paths [][]int
+	for _, x := range o.stores {
+		if o.constStore(x, pos) {
+			paths = append(paths, x.path)
 		}
-		for j, y := range o.stores {
-			if i != j && o.constStore(y, pos) && len(x.path) < len(y.path) && isPrefix(x.path, y.path) {
-				return true
-			}
+	}
+	slices.SortFunc(paths, slices.Compare)
+	for i := 1; i < len(paths); i++ {
+		if len(paths[i-1]) < len(paths[i]) && isPrefix(paths[i-1], paths[i]) {
+			return true
 		}
 	}
 	return false
