@@ -8,6 +8,8 @@
 
 #include "Tier0.h"
 
+#include <mutex>
+
 #include "Arm64.h"
 #include "MachO.h"
 #include "X64.h"
@@ -15,6 +17,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/IR/AttrTypeSubElements.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/DenseMap.h"
@@ -668,12 +671,23 @@ private:
 
   llvm::DenseMap<Value, uint64_t> slot;        // value -> frame offset from sp
   llvm::DenseMap<Value, unsigned> home;        // value -> callee saved register (x19..x28)
-  llvm::DenseSet<Operation *> fusedCmp;        // icmps that only set the flags for the next cond_br
+  llvm::DenseSet<Operation *> fusedCmp;        // emitted at their use: icmps (at the cond_br), lazy loads
+  llvm::DenseSet<Operation *> lazyLoad;        // aggregate loads read field by field from memory at each use
+  llvm::DenseMap<Operation *, uint64_t> foldGep;  // constant offset GEPs folded into their loads and stores
   Block *nextBlock = nullptr;                  // the block emitted after the current one
   uint32_t calleeUsed = 0;                     // bit r: xr is a home, saved in the prologue
   uint64_t saveArea = 0;
   llvm::DenseMap<Operation *, uint64_t> allocaStorage;
   llvm::DenseMap<Block *, uint64_t> blockStart;
+  // The last instruction emitted, when it stored a register to an 8-byte
+  // stack slot (at: the position after it; 0: none). A load right after it
+  // from the same slot into the same register is dropped (not across a
+  // block start: a branch may arrive there).
+  struct {
+    uint64_t at = 0;
+    unsigned reg = 0;
+    uint64_t off = 0;
+  } lastStore;
   struct Fixup {
     uint64_t at;
     Block *dest;
@@ -742,6 +756,17 @@ private:
   void normalize(unsigned r, Type t);
 
   void emitOp(Operation &op);
+  void cmpFlags(LL::ICmpOp c);  // sets the flags for c's predicate
+  // The address in v as a register plus *off (a folded GEP's offset).
+  unsigned addrReg(Value v, unsigned scratch, uint64_t &off) {
+    off = 0;
+    if (Operation *d = v.getDefiningOp())
+      if (auto it = foldGep.find(d); it != foldGep.end()) {
+        off = it->second;
+        return src(cast<LL::GEPOp>(d).getBase(), scratch);
+      }
+    return src(v, scratch);
+  }
   void emitCall(LL::CallOp call);
   void emitIntrinsic(LL::CallIntrinsicOp c);
   bool emitWide(Operation &op);
@@ -765,6 +790,8 @@ void FuncGen::layout() {
     out = std::max(out, n);
   });
   alloc(out, 16);
+  // The callee saved registers next, near sp, so ldp/stp reach them.
+  saveArea = alloc(8 * uint64_t(llvm::popcount(calleeUsed)), 8);
   auto rt = fn.getFunctionType().getReturnType();
   if (!isa<LL::LLVMVoidType>(rt) && returnsInMemory(rt)) {
     sret = true;
@@ -805,7 +832,6 @@ void FuncGen::layout() {
     tempSize = std::max(tempSize, n);
   }
   tempArea = alloc(tempSize, 8);
-  saveArea = alloc(8 * uint64_t(llvm::popcount(calleeUsed)), 8);
   frameSize = (frameSize + 15) & ~uint64_t(15);
 }
 
@@ -823,6 +849,10 @@ void FuncGen::ldSlot(unsigned r, uint64_t off, uint64_t size) { ldAt(r, SP, off,
 void FuncGen::stSlot(unsigned r, uint64_t off, uint64_t size) { stAt(r, SP, off, size); }
 
 void FuncGen::ldAt(unsigned r, unsigned base, uint64_t off, uint64_t size) {
+  // The previous instruction stored r to this very place: r holds it.
+  if (base == SP && size == 8 && lastStore.at == here() && lastStore.at && lastStore.reg == r &&
+      lastStore.off == off)
+    return;
   unsigned ls = log2Size(size);
   if (off % size == 0 && (off >> ls) < 4096) {
     e(ldrImm(r, base, uint32_t(off), ls));
@@ -838,6 +868,7 @@ void FuncGen::stAt(unsigned r, unsigned base, uint64_t off, uint64_t size) {
   unsigned ls = log2Size(size);
   if (off % size == 0 && (off >> ls) < 4096) {
     e(strImm(r, base, uint32_t(off), ls));
+    if (base == SP && size == 8 && r != XZR) lastStore = {here(), r, off};
   } else if (off < 256) {
     e(stur(r, base, int32_t(off), ls));
   } else {
@@ -869,7 +900,9 @@ void FuncGen::copyBytes(unsigned dstBase, uint64_t dstOff, unsigned srcBase, uin
   constexpr unsigned X14 = 14, X15 = 15;
   if (n > 32760) unsupported("aggregate copy over 32 KiB");
   auto base = [&](unsigned out, unsigned reg, uint64_t &off) -> unsigned {
-    if (off % 8 == 0 && off + n <= 32760) return reg;
+    // Kept as base + offset when every access fits; a copy of 32 bytes or
+    // more past ldp's reach is cheaper from a register pointing at it.
+    if (off % 8 == 0 && off + n <= 32760 && (n < 32 || off + n <= 504)) return reg;
     if (reg == SP) {
       addrOf(out, off);
     } else if (off < 4096) {
@@ -1034,8 +1067,30 @@ void FuncGen::epilogue() {
 void FuncGen::edgeMoves(Block *dest, OperandRange args) {
   if (args.empty()) return;
   if (args.size() == 1 && !isAggregate(args[0].getType())) {
-    get(R1, args[0]);
-    putRaw(R1, dest->getArgument(0));
+    if (auto h = home.find(dest->getArgument(0)); h != home.end()) {
+      get(h->second, args[0]);  // straight into the argument's register
+      return;
+    }
+    putRaw(src(args[0], R1), dest->getArgument(0));
+    return;
+  }
+  // When no source is one of dest's own arguments, nothing is overwritten
+  // before it is read: move directly.
+  bool direct = true;
+  for (Value v : args)
+    if (auto ba = dyn_cast<BlockArgument>(v); ba && ba.getOwner() == dest) direct = false;
+  if (direct) {
+    for (unsigned i = 0; i < args.size(); i++) {
+      Value v = args[i];
+      BlockArgument a = dest->getArgument(i);
+      if (isAggregate(a.getType())) {
+        copyBytes(SP, of(a), SP, of(v), std::max<uint64_t>((sizeOf(a.getType()) + 7) & ~uint64_t(7), 8));
+      } else if (auto h = home.find(a); h != home.end()) {
+        get(h->second, v);
+      } else {
+        putRaw(src(v, R1), a);
+      }
+    }
     return;
   }
   // Parallel move: sources to the temporary area, then to the arguments.
@@ -1085,7 +1140,11 @@ void FuncGen::emitCall(LL::CallOp call) {
   std::vector<ArgLoc> locs = assignArgs(args.getTypes(), stackSize);
   auto load = [&](unsigned r, const ArgLoc &l) {
     Value v = args[l.arg];
-    if (isAggregate(v.getType())) {
+    if (auto lv = v.getDefiningOp<LL::LoadOp>(); lv && lazyLoad.count(lv)) {
+      uint64_t ao;
+      unsigned ar = addrReg(lv.getAddr(), R2, ao);
+      ldAt(r, ar, ao + l.off, sizeOf(l.t));
+    } else if (isAggregate(v.getType())) {
       ldAt(r, SP, of(v) + l.off, sizeOf(l.t));
     } else if (mg.signExtArg(call, l.arg)) {
       getSigned(r, v);
@@ -1106,8 +1165,34 @@ void FuncGen::emitCall(LL::CallOp call) {
   // Indirect callee next (into x17, not an argument register).
   bool indirect = !call.getCallee();
   if (indirect) get(17, call.getCalleeOperands().front());
-  for (const ArgLoc &l : locs)
-    if (l.reg >= 0 && !l.fp) load(unsigned(l.reg), l);
+  for (size_t i = 0; i < locs.size(); i++) {
+    const ArgLoc &l = locs[i];
+    if (l.reg < 0 || l.fp) continue;
+    // Two 8-byte pieces of one aggregate, side by side, into consecutive
+    // registers: one ldp.
+    if (i + 1 < locs.size()) {
+      const ArgLoc &m = locs[i + 1];
+      Value v = args[l.arg];
+      if (m.arg == l.arg && m.reg == l.reg + 1 && !m.fp && m.off == l.off + 8 && sizeOf(l.t) == 8 &&
+          sizeOf(m.t) == 8 && isAggregate(v.getType())) {
+        unsigned base = SP;
+        uint64_t off = 0;
+        if (auto lv = v.getDefiningOp<LL::LoadOp>(); lv && lazyLoad.count(lv)) {
+          uint64_t ao;
+          base = addrReg(lv.getAddr(), R2, ao);
+          off = ao + l.off;
+        } else {
+          off = of(v) + l.off;
+        }
+        if (off % 8 == 0 && off <= 496) {
+          e(ldpOff(unsigned(l.reg), unsigned(m.reg), base, int32_t(off)));
+          i++;
+          continue;
+        }
+      }
+    }
+    load(unsigned(l.reg), l);
+  }
   bool memResult = call.getNumResults() == 1 && returnsInMemory(call.getResult().getType());
   if (memResult) addrOf(X8, of(call.getResult()));
   if (indirect) {
@@ -1128,8 +1213,23 @@ void FuncGen::emitCall(LL::CallOp call) {
   std::vector<std::pair<uint64_t, Type>> parts;
   flatten(r.getType(), 0, parts);
   unsigned ngp = 0, nfp = 0;
-  for (auto [off, t] : parts) {
+  // Two adjacent 8-byte integer pieces of an aggregate (p and p+1).
+  auto pairAt = [&](size_t p) {
+    if (p + 1 >= parts.size()) return false;
+    auto [o1, t1] = parts[p];
+    auto [o2, t2] = parts[p + 1];
+    return !isFloat(t1) && !isFloat(t2) && sizeOf(t1) == 8 && sizeOf(t2) == 8 && intWidth(t1) >= 64 &&
+           intWidth(t2) >= 64 && o2 == o1 + 8;
+  };
+  for (size_t p = 0; p < parts.size(); p++) {
+    auto [off, t] = parts[p];
     if (isFloat(t) ? nfp >= 8 : ngp >= 8) unsupported("result returned in memory");
+    if (isAggregate(r.getType()) && ngp + 1 < 8 && pairAt(p) && (of(r) + off) % 8 == 0 && of(r) + off <= 496) {
+      e(stpOff(ngp, ngp + 1, SP, int32_t(of(r) + off)));
+      ngp += 2;
+      p++;
+      continue;
+    }
     if (!isAggregate(r.getType())) {
       unsigned d = dst(r, R1);
       if (isFloat(t)) {
@@ -1162,15 +1262,52 @@ void FuncGen::emitReturn(LL::ReturnOp ret) {
   if (sret) {
     Value v = ret.getOperand(0);
     ldSlot(R1, sretSlot, 8);
-    copyBytes(R1, 0, SP, of(v), sizeOf(v.getType()));
+    if (auto lv = v.getDefiningOp<LL::LoadOp>(); lv && lazyLoad.count(lv))
+    {
+      uint64_t ao;
+      unsigned ar = addrReg(lv.getAddr(), R2, ao);
+      copyBytes(R1, 0, ar, ao, sizeOf(v.getType()));
+    }
+    else
+      copyBytes(R1, 0, SP, of(v), sizeOf(v.getType()));
   } else if (ret.getNumOperands() == 1) {
     Value v = ret.getOperand(0);
     std::vector<std::pair<uint64_t, Type>> parts;
     flatten(v.getType(), 0, parts);
     unsigned ngp = 0, nfp = 0;
-    for (auto [off, t] : parts) {
+    for (size_t p = 0; p < parts.size(); p++) {
+      auto [off, t] = parts[p];
       if (isFloat(t) ? nfp >= 8 : ngp >= 8) unsupported("result returned in memory");
-      if (isAggregate(v.getType())) {
+      // Two adjacent 8-byte integer pieces: one ldp.
+      if (isAggregate(v.getType()) && ngp + 1 < 8 && p + 1 < parts.size()) {
+        auto [o2, t2] = parts[p + 1];
+        if (!isFloat(t) && !isFloat(t2) && sizeOf(t) == 8 && sizeOf(t2) == 8 && o2 == off + 8) {
+          unsigned base = SP;
+          uint64_t at;
+          if (auto lv = v.getDefiningOp<LL::LoadOp>(); lv && lazyLoad.count(lv)) {
+            uint64_t ao;
+            base = addrReg(lv.getAddr(), R2, ao);
+            at = ao + off;
+          } else {
+            at = of(v) + off;
+          }
+          if (at % 8 == 0 && at <= 496) {
+            e(ldpOff(ngp, ngp + 1, base, int32_t(at)));
+            ngp += 2;
+            p++;
+            continue;
+          }
+        }
+      }
+      if (auto lv = v.getDefiningOp<LL::LoadOp>(); lv && lazyLoad.count(lv)) {
+        uint64_t ao;
+        unsigned ar = addrReg(lv.getAddr(), R2, ao);
+        if (!isFloat(t)) {
+          ldAt(ngp++, ar, ao + off, sizeOf(t));
+          continue;
+        }
+        ldAt(R1, ar, ao + off, sizeOf(t));
+      } else if (isAggregate(v.getType())) {
         if (!isFloat(t)) {
           ldAt(ngp++, SP, of(v) + off, sizeOf(t));
           continue;
@@ -1188,6 +1325,26 @@ void FuncGen::emitReturn(LL::ReturnOp ret) {
     }
   }
   epilogue();
+}
+
+Cond icmpCond(LL::ICmpPredicate p);
+bool isSignedPred(LL::ICmpPredicate p);
+
+void FuncGen::cmpFlags(LL::ICmpOp c) {
+  bool sgn = isSignedPred(c.getPredicate());
+  unsigned a = sgn ? srcSigned(c.getLhs(), R1) : src(c.getLhs(), R1);
+  uint64_t bits;
+  if (constBits(c.getRhs(), bits)) {
+    unsigned wdt = intWidth(c.getRhs().getType());
+    // The constant as the compare sees it: sign extended for a signed one.
+    int64_t v = wdt < 64 && sgn ? int64_t(bits << (64 - wdt)) >> (64 - wdt) : int64_t(bits);
+    if (v >= 0 && v < 4096 && (sgn || bits < 4096)) {
+      e(cmpImm(a, uint32_t(v)));
+      return;
+    }
+  }
+  unsigned b = sgn ? srcSigned(c.getRhs(), R2) : src(c.getRhs(), R2);
+  e(cmpReg(a, b));
 }
 
 Cond icmpCond(LL::ICmpPredicate p) {
@@ -1358,29 +1515,37 @@ void FuncGen::emitOp(Operation &op) {
       .Case<LL::ZeroOp, LL::UndefOp, LL::PoisonOp>([&](auto z) {
         Type t = z.getType();
         if (!isAggregate(t) && sizeOf(t) <= 8) return;  // made at each use
+        if (!isa<LL::ZeroOp>(z.getOperation())) return;  // undef: any bits (as LLVM)
         uint64_t n = sizeOf(t);
         n = std::max<uint64_t>((n + 7) & ~uint64_t(7), 8);
         uint64_t at = of(z.getResult()), i = 0;
-        for (; i + 16 <= n && at + i + 8 <= 504; i += 16) e(stpOff(XZR, XZR, SP, int32_t(at + i)));
-        for (; i < n; i += 8) stSlot(XZR, at + i, 8);
+        unsigned base = SP;
+        if (at + 8 > 504 && n >= 32) {  // out of stp's reach: through x12
+          addrOf(R4, at);
+          base = R4;
+          at = 0;
+        }
+        for (; i + 16 <= n && at + i + 8 <= 504; i += 16) e(stpOff(XZR, XZR, base, int32_t(at + i)));
+        for (; i < n; i += 8) stAt(XZR, base, at + i, 8);
       })
       .Case<LL::AddressOfOp>([&](auto a) {
         std::string name = machoName(a.getGlobalName());
         unsigned sym = w.symbol(name);
+        unsigned d = dst(a.getResult(), R1);
         uint64_t at = here();
-        e(adrp(R1));
+        e(adrp(d));
         if (mg.isDefinedData(a.getGlobalName())) {
           w.reloc(Sect::Text, at, Reloc::Page21, sym);
           at = here();
-          e(addImm(R1, R1, 0));
+          e(addImm(d, d, 0));
           w.reloc(Sect::Text, at, Reloc::PageOff12, sym);
         } else {
           w.reloc(Sect::Text, at, Reloc::GotPage21, sym);
           at = here();
-          e(ldrImm(R1, R1, 0, 3));
+          e(ldrImm(d, d, 0, 3));
           w.reloc(Sect::Text, at, Reloc::GotPageOff12, sym);
         }
-        put(R1, a.getResult());
+        putRaw(d, a.getResult());
       })
       .Case<LL::AddOp>([&](auto) { bin([](unsigned d, unsigned n, unsigned m) { return addReg(d, n, m); }); })
       .Case<LL::SubOp>([&](auto) { bin([](unsigned d, unsigned n, unsigned m) { return subReg(d, n, m); }); })
@@ -1418,16 +1583,8 @@ void FuncGen::emitOp(Operation &op) {
         put(R1, o.getResult());
       })
       .Case<LL::ICmpOp>([&](auto c) {
-        unsigned a, b;
-        if (isSignedPred(c.getPredicate())) {
-          a = srcSigned(c.getLhs(), R1);
-          b = srcSigned(c.getRhs(), R2);
-        } else {
-          a = src(c.getLhs(), R1);
-          b = src(c.getRhs(), R2);
-        }
-        e(cmpReg(a, b));
-        if (fusedCmp.count(c.getOperation())) return;  // the cond_br branches on the flags
+        if (fusedCmp.count(c.getOperation())) return;  // compared at the cond_br
+        cmpFlags(c);
         unsigned d = dst(c.getResult(), R1);
         e(cset(d, icmpCond(c.getPredicate())));
         putRaw(d, c.getResult());
@@ -1446,6 +1603,7 @@ void FuncGen::emitOp(Operation &op) {
           uint64_t elseAt = here();
           copyBytes(SP, of(s.getResult()), SP, of(s.getFalseValue()), sz);
           uint64_t end = here();
+          lastStore.at = 0;  // the true path arrives here too
           auto patch = [&](uint64_t pos, uint32_t word) { std::memcpy(&w.bytes(Sect::Text)[pos], &word, 4); };
           patch(at, cbz(R3, int32_t(elseAt - at)));
           patch(skip, b(int32_t(end - skip)));
@@ -1548,35 +1706,44 @@ void FuncGen::emitOp(Operation &op) {
         putF(F1, c.getResult());
       })
       .Case<LL::LoadOp>([&](auto l) {
+        if (lazyLoad.count(l.getOperation())) return;  // read at each use
         Type t = l.getType();
-        unsigned ar = src(l.getAddr(), R2);
+        uint64_t ao;
+        unsigned ar = addrReg(l.getAddr(), R2, ao);
         if (isAggregate(t)) {
-          copyBytes(SP, of(l.getResult()), ar, 0, sizeOf(t));
+          copyBytes(SP, of(l.getResult()), ar, ao, sizeOf(t));
           return;
         }
         uint64_t sz = sizeOf(t);
         unsigned d = dst(l.getResult(), R1);
         if (l.getOrdering() != LL::AtomicOrdering::not_atomic)
-          e(ldar(d, ar, log2Size(sz)));
+          e(ldar(d, ar, log2Size(sz)));  // never a folded address
         else
-          memLoad(d, ar, sz);
+          ldAt(d, ar, ao, sz);
         if (intWidth(t) == 1) e(ubfx0(d, d, 1));
         putRaw(d, l.getResult());
       })
       .Case<LL::StoreOp>([&](auto s) {
         Type t = s.getValue().getType();
-        unsigned ar = src(s.getAddr(), R2);
+        uint64_t so;
+        unsigned ar = addrReg(s.getAddr(), R2, so);
         if (isAggregate(t)) {
-          copyBytes(ar, 0, SP, of(s.getValue()), sizeOf(t));
+          if (auto lv = s.getValue().template getDefiningOp<LL::LoadOp>(); lv && lazyLoad.count(lv)) {
+            uint64_t lo;
+            unsigned lr = addrReg(lv.getAddr(), R3, lo);
+            copyBytes(ar, so, lr, lo, sizeOf(t));
+          } else {
+            copyBytes(ar, so, SP, of(s.getValue()), sizeOf(t));
+          }
           return;
         }
         uint64_t bits;
         unsigned v = constBits(s.getValue(), bits) && bits == 0 ? XZR : src(s.getValue(), R1);
         uint64_t sz = sizeOf(t);
         if (s.getOrdering() != LL::AtomicOrdering::not_atomic)
-          e(stlr(v, ar, log2Size(sz)));
+          e(stlr(v, ar, log2Size(sz)));  // never a folded address
         else
-          memStore(v, ar, sz);
+          stAt(v, ar, so, sz);
       })
       .Case<LL::AllocaOp>([&](auto a) {
         unsigned d = dst(a.getResult(), R1);
@@ -1584,6 +1751,7 @@ void FuncGen::emitOp(Operation &op) {
         putRaw(d, a.getResult());
       })
       .Case<LL::GEPOp>([&](auto g) {
+        if (foldGep.count(g.getOperation())) return;  // folded into its loads and stores
         unsigned acc = src(g.getBase(), R1);  // the address so far
         unsigned d = dst(g.getResult(), R1);
         Type et = g.getElemType();
@@ -1640,6 +1808,18 @@ void FuncGen::emitOp(Operation &op) {
       })
       .Case<LL::ExtractValueOp>([&](auto x) {
         auto [off, t] = elementAt(x.getContainer().getType(), x.getPosition());
+        if (auto lv = x.getContainer().template getDefiningOp<LL::LoadOp>(); lv && lazyLoad.count(lv)) {
+          uint64_t ao;
+          unsigned ar = addrReg(lv.getAddr(), R2, ao);
+          if (isAggregate(t)) {
+            copyBytes(SP, of(x.getResult()), ar, ao + off, std::max<uint64_t>((sizeOf(t) + 7) & ~uint64_t(7), 8));
+            return;
+          }
+          unsigned d = dst(x.getResult(), R1);
+          ldAt(d, ar, ao + off, sizeOf(t));
+          putRaw(d, x.getResult());
+          return;
+        }
         uint64_t src = of(x.getContainer()) + off;
         if (isAggregate(t)) {
           copyBytes(SP, of(x.getResult()), SP, src, std::max<uint64_t>((sizeOf(t) + 7) & ~uint64_t(7), 8));
@@ -1660,7 +1840,8 @@ void FuncGen::emitOp(Operation &op) {
           copyBytes(SP, dst, SP, of(ins.getValue()), sizeOf(t));
           return;
         }
-        stAt(src(ins.getValue(), R1), SP, dst, sizeOf(t));
+        uint64_t bits;
+        stAt(constBits(ins.getValue(), bits) && bits == 0 ? XZR : src(ins.getValue(), R1), SP, dst, sizeOf(t));
       })
       .Case<LL::CallOp>([&](auto c) { emitCall(c); })
       .Case<LL::MemcpyOp, LL::MemmoveOp>([&](auto m) {
@@ -1736,22 +1917,33 @@ void FuncGen::emitOp(Operation &op) {
         if (br_.getDest() != nextBlock) branchTo(br_.getDest());
       })
       .Case<LL::CondBrOp>([&](auto c) {
-        bool flags = false;
+        bool flags = false, inv = false;  // inv: the condition holds when cr is zero
         Cond cc = AL;
         unsigned cr = 0;
         if (auto ic = c.getCondition().template getDefiningOp<LL::ICmpOp>(); ic && fusedCmp.count(ic)) {
-          flags = true;
-          cc = icmpCond(ic.getPredicate());
+          uint64_t bits;
+          auto p = ic.getPredicate();
+          if ((p == LL::ICmpPredicate::eq || p == LL::ICmpPredicate::ne) && constBits(ic.getRhs(), bits) &&
+              bits == 0) {
+            cr = src(ic.getLhs(), R1);  // cbz / cbnz
+            inv = p == LL::ICmpPredicate::eq;
+          } else {
+            cmpFlags(ic);
+            flags = true;
+            cc = icmpCond(p);
+          }
         } else {
           cr = src(c.getCondition(), R3);
         }
         Block *t = c.getTrueDest(), *f = c.getFalseDest();
-        if (c.getTrueDestOperands().empty()) {
-          jumpIf(flags, cc, cr, true, t);
+        if (c.getTrueDestOperands().empty() && c.getFalseDestOperands().empty() && t == nextBlock) {
+          jumpIf(flags, cc, cr, inv, f);  // falls through into the true block
+        } else if (c.getTrueDestOperands().empty()) {
+          jumpIf(flags, cc, cr, !inv, t);
           edgeMoves(f, c.getFalseDestOperands());
           if (f != nextBlock) branchTo(f);
         } else if (c.getFalseDestOperands().empty()) {
-          jumpIf(flags, cc, cr, false, f);
+          jumpIf(flags, cc, cr, inv, f);
           edgeMoves(t, c.getTrueDestOperands());
           if (t != nextBlock) branchTo(t);
         } else {
@@ -1763,7 +1955,7 @@ void FuncGen::emitOp(Operation &op) {
           branchTo(f);
           uint64_t trueAt = here();
           int32_t off = int32_t(trueAt - at);
-          uint32_t word = flags ? bcond(cc, off) : cbnz(cr, off);
+          uint32_t word = flags ? bcond(cc, off) : inv ? cbz(cr, off) : cbnz(cr, off);
           std::memcpy(&w.bytes(Sect::Text)[at], &word, 4);
           edgeMoves(t, c.getTrueDestOperands());
           if (t != nextBlock) branchTo(t);
@@ -1984,7 +2176,13 @@ static llvm::DenseMap<Value, unsigned> linearScan(LL::LLVMFuncOp fn, llvm::Array
     for (BlockArgument a : b.getArguments()) cand(a, i, start);
     for (Operation &op : b) {
       unsigned at = p++;
-      for (Value v : op.getOperands())
+      llvm::SmallVector<Value, 4> used(op.getOperands());
+      // A skipped operation (a fused compare, a lazy load) is emitted at its
+      // users: its operands live there.
+      for (size_t q = 0; q < used.size(); q++)
+        if (Operation *d = used[q].getDefiningOp(); d && skip.count(d))
+          used.append(d->getOperands().begin(), d->getOperands().end());
+      for (Value v : used)
         if (auto it = idx.find(v); it != idx.end()) {
           unsigned k = it->second;
           iv[k].first = std::min(iv[k].first, at);
@@ -2089,14 +2287,79 @@ void FuncGen::allocate() {
   for (auto [v, r] : home) calleeUsed |= 1u << r;
 }
 
+static std::mutex opBytesMu;
+static std::map<std::string, uint64_t> opBytesAll;
+static const bool opStatsOn = getenv("TIER0_OPSTATS") != nullptr;
+
 void FuncGen::run() {
   if (fn.isVarArg()) unsupported("variadic function");
   mg.checkFunction(fn);
   // An icmp right before the cond_br that is its only use sets the flags.
   fn.walk([&](LL::CondBrOp c) {
     auto ic = c.getCondition().getDefiningOp<LL::ICmpOp>();
-    if (ic && ic->getNextNode() == c.getOperation() && ic->hasOneUse() && !isWide(ic.getLhs().getType()))
+    if (ic && ic->getBlock() == c->getBlock() && ic->hasOneUse() && !isWide(ic.getLhs().getType()))
       fusedCmp.insert(ic.getOperation());
+  });
+  // A GEP with constant indices whose every use is the address of a plain
+  // (not atomic) load or store folds into them as an offset.
+  fn.walk([&](LL::GEPOp g) {
+    int64_t off = 0;
+    Type et = g.getElemType();
+    bool first = true;
+    for (auto idx : g.getIndices()) {
+      auto ia = llvm::dyn_cast_if_present<IntegerAttr>(idx);
+      if (!ia) return;
+      if (first) {
+        off += ia.getInt() * int64_t(sizeOf(et));
+      } else if (auto st = dyn_cast<LL::LLVMStructType>(et)) {
+        off += int64_t(fieldOffset(st, unsigned(ia.getInt())));
+        et = st.getBody()[ia.getInt()];
+      } else if (auto at = dyn_cast<LL::LLVMArrayType>(et)) {
+        off += ia.getInt() * int64_t(sizeOf(at.getElementType()));
+        et = at.getElementType();
+      } else {
+        return;
+      }
+      first = false;
+    }
+    if (off < 0 || off >= 4096 || g.getResult().use_empty()) return;
+    for (OpOperand &u : g.getResult().getUses()) {
+      Operation *o = u.getOwner();
+      if (auto l = dyn_cast<LL::LoadOp>(o)) {
+        if (l.getOrdering() != LL::AtomicOrdering::not_atomic) return;
+      } else if (auto st = dyn_cast<LL::StoreOp>(o)) {
+        if (u.getOperandNumber() != 1 || st.getOrdering() != LL::AtomicOrdering::not_atomic) return;
+      } else {
+        return;
+      }
+    }
+    foldGep[g] = uint64_t(off);
+    fusedCmp.insert(g);
+  });
+  // An aggregate load whose uses are all in its block, read its fields
+  // (extractvalue), copy it (store), pass it (call) or return it, with
+  // nothing that may write memory in between, is not copied to a slot:
+  // each use reads the memory.
+  fn.walk([&](LL::LoadOp l) {
+    if (!isAggregate(l.getType()) || l.getVolatile_() || l.getOrdering() != LL::AtomicOrdering::not_atomic)
+      return;
+    Operation *last = nullptr;
+    for (OpOperand &u : l.getResult().getUses()) {
+      Operation *o = u.getOwner();
+      if (o->getBlock() != l->getBlock()) return;
+      bool ok = isa<LL::ExtractValueOp, LL::ReturnOp>(o) || (isa<LL::StoreOp>(o) && u.getOperandNumber() == 0) ||
+                (isa<LL::CallOp>(o) && !cast<LL::CallOp>(o).getVarCalleeType());
+      if (auto c = dyn_cast<LL::CallOp>(o); c && !c.getCallee() && u.getOperandNumber() == 0) ok = false;
+      if (!ok) return;
+      if (!last || last->isBeforeInBlock(o)) last = o;
+    }
+    if (!last) return;
+    for (Operation *o = l->getNextNode(); o != last; o = o->getNextNode()) {
+      auto mi = dyn_cast<MemoryEffectOpInterface>(o);
+      if (!mi || mi.hasEffect<MemoryEffects::Write>()) return;
+    }
+    lazyLoad.insert(l);
+    fusedCmp.insert(l);
   });
   allocate();
   layout();
@@ -2111,14 +2374,27 @@ void FuncGen::run() {
     rows.push_back({here() - start, r->second, file});
   };
   row(fn.getLoc());
+  std::map<std::string, uint64_t> ob;
+  uint64_t was = here();
   prologue();
+  if (opStatsOn) ob["prologue"] += here() - was;
   for (Block &b : fn.getBody()) {
     blockStart[&b] = here();
+    lastStore.at = 0;
     nextBlock = b.getNextNode();
     for (Operation &op : b) {
       row(op.getLoc());
+      was = here();
       emitOp(op);
+      if (opStatsOn) {
+        bool agg = llvm::any_of(op.getResultTypes(), isAggregate) || llvm::any_of(op.getOperandTypes(), isAggregate);
+        ob[op.getName().getStringRef().str() + (agg ? ".agg" : "")] += here() - was;
+      }
     }
+  }
+  if (opStatsOn) {
+    std::lock_guard<std::mutex> l(opBytesMu);
+    for (auto &[k, v] : ob) opBytesAll[k] += v;
   }
   for (const Fixup &f : fixups) {
     int64_t off = int64_t(blockStart[f.dest]) - int64_t(f.at);
@@ -2358,6 +2634,11 @@ bool emit(ModuleOp module, const std::string &unit, const std::string &outObject
   if (const char *e = getenv("MARMOT_TIER0_THREADS"); e && atoi(e) > 0) mg.threads = unsigned(atoi(e));
   if (!mg.run(fragment, fallback, reasons, stats, err)) return false;
   return mg.w.write(outObject, err);
+}
+
+std::map<std::string, uint64_t> opBytes() {
+  std::lock_guard<std::mutex> l(opBytesMu);
+  return opBytesAll;
 }
 
 } // namespace tier0

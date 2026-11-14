@@ -27,8 +27,10 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <chrono>
 #include <functional>
 #include <map>
@@ -126,6 +128,18 @@ int main(int argc, char **argv) {
   std::map<std::string, unsigned> why;
   for (auto &r : reasons) why[r]++;
   for (auto &[r, n] : why) llvm::outs() << "  fallback " << n << ": " << r << "\n";
+  if (getenv("TIER0_OPSTATS")) {
+    std::vector<std::pair<uint64_t, std::string>> ob;
+    uint64_t all = 0;
+    for (auto &[k, v] : marmot::tier0::opBytes()) {
+      ob.push_back({v, k});
+      all += v;
+    }
+    std::sort(ob.rbegin(), ob.rend());
+    for (auto &[v, k] : ob)
+      llvm::outs() << llvm::format("  %10llu %5.1f%%  ", (unsigned long long)v, 100.0 * double(v) / double(all ? all : 1))
+                   << k << "\n";
+  }
   for (int i = 3; i < argc; i++) {
     std::error_code ec;
     llvm::raw_fd_ostream os(argv[i], ec);

@@ -3,6 +3,8 @@
 #ifndef MARMOT_TIER0_TIER0_H
 #define MARMOT_TIER0_TIER0_H
 
+#include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -38,6 +40,11 @@ struct Stats {
 bool emit(mlir::ModuleOp module, const std::string &unit, const std::string &outObject,
           std::string &fragment, std::vector<std::string> &fallback, std::vector<std::string> &reasons,
           Stats &stats, std::string &err, Target target = Target::Arm64MachO, unsigned threads = 1);
+
+// With TIER0_OPSTATS set, the arm64 code bytes of every emit so far by
+// operation (name, ".agg" for an aggregate result or operand, and
+// "prologue"), for finding what makes code large.
+std::map<std::string, uint64_t> opBytes();
 
 } // namespace tier0
 } // namespace marmot
