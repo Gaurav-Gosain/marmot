@@ -98,7 +98,7 @@ func (f *funcGen) invoke(c *ssa.CallCommon) string {
 	it := c.Value.Type().Underlying().(*types.Interface)
 	idx := ifaceMethodIndex(it, c.Method)
 	slot := f.gepByte(tab, f.m.p.itabFun(idx))
-	code := f.markAddr(f.op("llvm.load %s {alignment = 8 : i64} : %s -> !llvm.ptr", slot, f.pty(slot)))
+	code := f.markAddr(f.op("llvm.load %s "+f.ptrAlign()+" : %s -> !llvm.ptr", slot, f.pty(slot)))
 	sig := c.Method.Type().(*types.Signature)
 	params, ret := f.m.sigTypes(stripRecv(sig), false)
 	params = append([]string{tP}, params...)
@@ -506,7 +506,7 @@ func (f *funcGen) devirtualize(c *ssa.CallCommon) (string, bool) {
 	it := iface.Underlying().(*types.Interface)
 	idx := ifaceMethodIndex(it, c.Method)
 	slot := f.gepByte(tab, f.m.p.itabFun(idx))
-	code := f.markAddr(f.op("llvm.load %s {alignment = 8 : i64} : %s -> !llvm.ptr", slot, f.pty(slot)))
+	code := f.markAddr(f.op("llvm.load %s "+f.ptrAlign()+" : %s -> !llvm.ptr", slot, f.pty(slot)))
 	r := f.indirectCall(code, args, params, ret)
 	if ret == "" {
 		f.emit("llvm.br %s", done)

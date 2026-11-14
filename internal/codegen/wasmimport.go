@@ -3,6 +3,7 @@ package codegen
 import (
 	"fmt"
 	"go/types"
+	"hash/fnv"
 	"strings"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
@@ -157,12 +158,16 @@ func cWordSig(fn *ssa.Function) bool {
 // memory fit in 32 bits, so the truncation loses nothing. It returns the
 // wrapper's symbol.
 func (m *moduleGen) cWordWrapper(sym string, fn *ssa.Function) string {
-	w := sym + "$cw"
+	params, ret := m.signature(fn)
+	// Packages may declare one C function with different Go types: the
+	// wrapper's name carries its Go signature.
+	h := fnv.New32a()
+	fmt.Fprint(h, params, ret, fn.Signature.String())
+	w := fmt.Sprintf("%s$cw%08x", sym, h.Sum32())
 	if m.defined[w] {
 		return w
 	}
 	m.defined[w] = true
-	params, ret := m.signature(fn)
 	sig := fn.Signature
 	var b strings.Builder
 	var args, cparams []string

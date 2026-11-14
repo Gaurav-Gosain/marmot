@@ -74,11 +74,11 @@ func (m *moduleGen) function(fn *ssa.Function, shared bool) {
 	if len(fn.Blocks) == 0 {
 		// Body-less: an external symbol provided by another object (the C
 		if wi, ok := m.p.wasmImports[fn]; ok && m.p.opts.GOARCH == "wasm" {
+		// runtime core, or assembly in the stock library), or on wasm a
+		// //go:wasmimport, defined here as a wrapper of the import.
 			m.defined[sym] = true
 			m.wasmImportWrapper(fn, sym, wi)
-			return
 		}
-		// runtime core, or assembly in the stock library).
 		return
 	}
 	m.defined[sym] = true

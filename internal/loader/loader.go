@@ -155,6 +155,17 @@ func Load(cfg Config) (*Program, error) {
 			return nil, err
 		}
 		pkgs, incr, cgoPkgs = roots, res, cg
+	} else if cfg.GOARCH == "wasm" {
+		// go/packages type-checks with gc's wasm sizes (8-byte pointers):
+		// load every package from source with marmot's (target.Sizes), so
+		// unsafe.Sizeof and the layout agree with the 4-byte pointers.
+		cfg.Incremental = true
+		roots, _, _, _, cg, err := loadIncremental(cfg, pcfg, patterns, confSig(cfg, goroot, pcfg),
+			func(*packages.Package, string) bool { return true })
+		if err != nil {
+			return nil, err
+		}
+		pkgs, cgoPkgs = roots, cg
 	} else {
 		if pkgs, err = loadFull(pcfg, patterns, filePatterns); err != nil {
 			return nil, err
