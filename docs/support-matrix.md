@@ -252,6 +252,7 @@ Vendored at a pinned version under `tests/world` (see `tests/world/README.md`), 
 | Defer record elision (panics.go) | MARMOT_DEFERELIDE | off |
 | Dead initializer removal (staticinit.go) | MARMOT_DEADINIT | off |
 | Allocation without zeroing (rtcore rt_alloc_nozero, 569d095; poison fill c8e0a15) | callers only | on |
+| API module keys of incremental dev builds (driver/stamp.go moduleKey) | MARMOT_API_KEYS=0 turns off | on |
 
 Stress modes used by the conformance runner: `gcstress` (`MARMOT_GCSTRESS=1`), `poison` (`MARMOT_POISON=1`), `lifetime` (`MARMOT_LIFETIME=all`).
 

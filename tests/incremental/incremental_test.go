@@ -7,7 +7,7 @@
 // package's body, positions, generic code) shows up here.
 //
 // go test ./tests/incremental uses the marmot in build/bin (or $MARMOT_BIN),
-// with the module keys MARMOT_API_KEYS selects.
+// with the module keys MARMOT_API_KEYS selects (API keys unless it is 0).
 package incremental
 
 import (

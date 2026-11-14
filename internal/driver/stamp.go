@@ -159,12 +159,11 @@ func (b *build) packageKeys(lp *loader.Program, cg *codegen.Program, pkgs []*ssa
 	return out
 }
 
-// apiKeys selects the module keys of incremental builds: with
-// MARMOT_API_KEYS=1 a module is keyed by its dependencies' API (moduleKey),
-// else by their source (moduleKeyFromSource). Off by default again: an
-// edit adding an instantiation of a dependency's generic function linked a
-// program that printed nothing (tests/incremental newinst).
-var apiKeys = os.Getenv("MARMOT_API_KEYS") == "1"
+// apiKeys selects the module keys of incremental builds: by default a
+// module is keyed by its dependencies' API (moduleKey), so a body edit in
+// a dependency rebuilds only that dependency's module. MARMOT_API_KEYS=0
+// keys by their source instead (moduleKeyFromSource).
+var apiKeys = os.Getenv("MARMOT_API_KEYS") != "0"
 
 // moduleKey is the key of a package's module in an incremental build,
 // where no whole-program facts enter a module: the flags and the marmot

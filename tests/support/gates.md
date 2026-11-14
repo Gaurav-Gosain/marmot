@@ -19,3 +19,8 @@ forced on. Update a row when the switch or the default changes.
 | Defer record elision (panics.go) | MARMOT_DEFERELIDE | off |
 | Dead initializer removal (staticinit.go) | MARMOT_DEADINIT | off |
 | Allocation without zeroing (rtcore rt_alloc_nozero, 569d095; poison fill c8e0a15) | callers only | on |
+| API module keys of incremental dev builds (driver/stamp.go moduleKey) | MARMOT_API_KEYS=0 turns off | on |
+
+Incremental build changes (module keys, separate compilation, the cache) gate on
+tests/incremental plus tests/editfuzz: a sweep of cmd/marmot with a writable copy
+of GOROOT (`-prog self -sweep -goroot DIR`), keys on and off, 0 failures.
