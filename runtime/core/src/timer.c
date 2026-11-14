@@ -304,6 +304,7 @@ RT_API void rt_sleep(int64_t ns) {
   }
   g->sleeptimer->when = os_nanotime() + ns;
   if (trace_on()) trace_frames(__builtin_frame_address(0), g->sleeptimer->pc);
+  g->waitreason = WAIT_SLEEP;
   rt_park(sleep_park, g);
 }
 

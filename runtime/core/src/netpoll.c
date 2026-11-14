@@ -308,6 +308,7 @@ RT_API int32_t rt_poll_wait(void *h, int32_t mode, int64_t deadline) {
     // A thread may be blocked in the poller without this fd; it will see the
     // new waiter count on its next poll. Make sure someone polls.
     if (atomic_load(&netpoll_blocked) == 0) wakep();
+    rt_set_waitreason(WAIT_IO);
     rt_park(pd_unlock, pd);
     atomic_fetch_sub(&netpoll_waiters, 1);
     if (deadline > 0) itimer_stop(t);

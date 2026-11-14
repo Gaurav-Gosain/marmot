@@ -1543,7 +1543,7 @@ RT_API int64_t rt_gstacks(rt_gstack *out, int64_t n) {
     if (k < n) {
       rt_gstack *r = &out[k];
       r->id = g->id;
-      r->status = (int32_t)st;
+      r->status = (int32_t)(st | (st == G_WAITING ? (uint32_t)g->waitreason << 8 : 0));  // reason in bits 8-15
       r->n = 0;
 #if !RT_OS_WASI
       if ((st == G_WAITING || st == G_RUNNABLE) && g->sp) {
@@ -1567,6 +1567,12 @@ RT_API int64_t rt_gstacks(rt_gstack *out, int64_t n) {
   }
   start_the_world();
   return k;
+}
+
+// The reason the current goroutine is about to wait (WAIT_*).
+RT_API void rt_set_waitreason(uint32_t r) {
+  rt_m *m = getm();
+  if (m && m->curg) m->curg->waitreason = (uint8_t)r;
 }
 
 RT_API int32_t rt_numcpu(void) { return os_ncpu(); }

@@ -124,6 +124,8 @@ typedef struct rt_memstats {
   uint64_t heap_released;  // part of heap_sys returned to the OS
 } rt_memstats;
 void rt_gc_stats(rt_memstats *out);
+// Why the current goroutine is about to park (runtime.Stack prints it).
+void rt_set_waitreason(uint32_t reason);
 // The write barrier, for concurrent marking. Compiled code checks the flag
 // before a store of a pointer to the heap or a global:
 //   if (rt_gc_marking) rt_wb(slot, new); *slot = new;

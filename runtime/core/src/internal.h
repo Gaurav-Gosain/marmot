@@ -186,6 +186,24 @@ void rt_ctx_start(void (*fn)(void *), void *arg) NORETURN;
 
 // ---- Goroutines and scheduler (sched.c) ----
 
+// Why a goroutine waits (rt_set_waitreason; the Go runtime's names in
+// runtime.Stack: "chan receive", ...).
+enum {
+  WAIT_NONE = 0,
+  WAIT_CHAN_RECV,
+  WAIT_CHAN_SEND,
+  WAIT_SELECT,
+  WAIT_SELECT_NO_CASES,
+  WAIT_CHAN_RECV_NIL,
+  WAIT_CHAN_SEND_NIL,
+  WAIT_SLEEP,
+  WAIT_SEMACQUIRE,
+  WAIT_COND,
+  WAIT_IO,
+  WAIT_COROUTINE,
+  WAIT_SYNCTEST,
+};
+
 enum {
   G_IDLE = 0,   // on a free list
   G_RUNNABLE,
@@ -216,6 +234,7 @@ struct rt_g {
   void *syscallsp;        // sp saved at rt_entersyscall
   void *syscallregs[24];  // callee-saved registers at rt_entersyscall
   rt_timer *sleeptimer;   // rt_sleep, allocated on first use (not GC memory)
+  uint8_t waitreason;     // why it waits (WAIT_*), for runtime.Stack; set before a park
   struct rt_group *group; // rt_group_join: counted in this group, NULL if none
   _Atomic bool durable;   // parked with rt_park_durable (not counted as running)
   int32_t cgo_errno;      // errno after the last C call (cgo.c)
