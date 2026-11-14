@@ -50,6 +50,7 @@ type funcGen struct {
 	addr0             map[string]bool            // values that are addresses in address space 0 (gcptr.go)
 	slot0             map[string]bool            // the stack slots among them
 	slotCast          map[string]string          // stack slot -> its cast to a GC pointer
+	stack0            map[string]bool            // stack slots and addresses computed from them (wb.go)
 	mapLits           map[*ssa.MapUpdate]*mapLit // constant map literals: the loop at their last update (maplit.go)
 	appendMake        map[*ssa.MakeSlice]bool    // append(s, make([]T, n)...): no temporary
 	skipInstr         map[ssa.Instruction]bool   // instructions folded into others
@@ -71,6 +72,11 @@ type funcGen struct {
 func (m *moduleGen) function(fn *ssa.Function, shared bool) {
 	sym := m.p.symbol(fn)
 	if len(fn.Blocks) == 0 {
+		if wi, ok := m.p.wasmImports[fn]; ok && m.p.opts.GOARCH == "wasm" {
+			m.defined[sym] = true
+			m.wasmImportWrapper(fn, sym, wi)
+			return
+		}
 		// Body-less: an external symbol provided by another object (the C
 		// runtime core, or assembly in the stock library).
 		return
@@ -378,9 +384,11 @@ func (f *funcGen) load(p string, t types.Type, volatile ...bool) string {
 // store writes the register value v of type t to p.
 func (f *funcGen) store(v, p string, t types.Type, volatile ...bool) {
 	if f.tm.isBig(t) {
+		f.wbCopy(p, v, t, f.m.p.opts.Sizes.Sizeof(t))
 		f.memmove(p, v, f.m.p.opts.Sizes.Sizeof(t))
 		return
 	}
+	f.wbStore(v, p, t)
 	mt := f.tm.memType(t)
 	if isBool(t) {
 		v = f.op("llvm.zext %s : i1 to i8", v)
@@ -426,12 +434,13 @@ func (f *funcGen) alloca(t string, align int64) string {
 	one := f.newVal()
 	fmt.Fprintf(&f.pro, "    %s = llvm.mlir.constant(1 : i64) : i64\n", one)
 	fmt.Fprintf(&f.pro, "    %s = llvm.alloca %s x %s {alignment = %d : i64} : (i64) -> !llvm.ptr\n", v, one, t, align)
-	if optGCPtr {
+	if trackAddr {
 		f.markAddr(v)
 		if f.slot0 == nil {
-			f.slot0 = map[string]bool{}
+			f.slot0, f.stack0 = map[string]bool{}, map[string]bool{}
 		}
 		f.slot0[v] = true
+		f.stack0[v] = true
 	}
 	return v
 }

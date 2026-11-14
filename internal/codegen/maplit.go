@@ -109,7 +109,9 @@ func (f *funcGen) mapLitLoop(m string, mapType types.Type, ml *mapLit) {
 	f.b.WriteString("  " + loop + "(" + i + ": i64):\n")
 	slot := f.rtcall("mapassign", td, m, f.gepDyn(keys, kt, i))
 	if vsize > 0 {
-		f.memmove(slot, f.gepDyn(vals, vt, i), vsize)
+		src := f.gepDyn(vals, vt, i)
+		f.wbCopy(slot, src, ml.mt.Elem(), vsize)
+		f.memmove(slot, src, vsize)
 	}
 	next := f.op("llvm.add %s, %s : i64", i, one)
 	more := f.op("llvm.icmp \"ult\" %s, %s : i64", next, n)

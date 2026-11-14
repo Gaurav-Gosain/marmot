@@ -68,6 +68,14 @@ func (f *funcGen) intrinsic(fn *ssa.Function, args []string) (res string, ok boo
 		args = f.gcArgs(args)
 	}
 	align := map[string]int{"i8": 1, "i32": 4, "i64": 8, "ptr": 8}[op.typ]
+	if optWB && op.typ == "ptr" && op.kind != "load" && !f.onStack(args[0]) {
+		// The new pointer value is the last argument of store, swap and
+		// compare and swap.
+		slot, nv := args[0], args[len(args)-1]
+		f.wbCheck(func() {
+			f.emit("llvm.call @rt_wb(%s, %s) : (%s, %s) -> ()", f.gcv(slot), f.gcv(nv), tP, tP)
+		})
+	}
 	switch op.kind {
 	case "load":
 		return f.op("llvm.load %s atomic seq_cst {alignment = %d : i64} : %s -> %s", args[0], align, f.pty(args[0]), t), true

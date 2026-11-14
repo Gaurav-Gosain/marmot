@@ -31,7 +31,7 @@ var tP = func() string {
 
 // markAddr records that v is an address in address space 0 and returns v.
 func (f *funcGen) markAddr(v string) string {
-	if optGCPtr {
+	if trackAddr {
 		if f.addr0 == nil {
 			f.addr0 = map[string]bool{}
 		}
@@ -74,8 +74,11 @@ func (f *funcGen) gcv(v string) string {
 // derived records the address computed from base: in address space 0 when
 // base is. It returns v.
 func (f *funcGen) derived(base, v string) string {
-	if optGCPtr && f.addr0[base] {
+	if trackAddr && f.addr0[base] {
 		f.addr0[v] = true
+		if f.stack0[base] {
+			f.stack0[v] = true
+		}
 	}
 	return v
 }
