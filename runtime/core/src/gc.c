@@ -1084,6 +1084,52 @@ static bool mark_finalizers(void) {
   return queued;
 }
 
+// ---- stack map check (MARMOT_STACKMAPS_CHECK=1) ----
+
+// After the mark: each word a stack map rule left out whose object is still
+// unmarked (nothing else keeps it) is reported (the first 16 per cycle) and
+// marked, so the program goes on as with conservative frames.
+static void stackmap_check(void) {
+  gcw *w = &workers[0];
+  uint32_t shown = 0, kept = 0;
+  const uint8_t *tab;
+  intptr_t tlen;
+  uintptr_t base = 0;
+  rt_pcln(&tab, &tlen, &base);
+  for (uint32_t i = 0; i < sm_nex; i++) {
+    sm_excl *e = &sm_ex[i];
+    uintptr_t idx;
+    mspan *s = find_object(e->val, &idx);
+    if (!s || ((s->markbits[idx / 64] >> (idx % 64)) & 1)) continue;
+    kept++;
+    if (shown++ < 16) {
+      rt_print("stackmaps check: ");
+      rt_print(e->rule == 1 ? "a word outside the frame's map" : "a word in a save area the caller's map skips");
+      rt_print(" keeps an object nothing else does: pc ");
+      rt_printx(e->pc);
+      rt_print(" (offset ");
+      rt_printx(e->pc - base);
+      rt_print(" from image base ");
+      rt_printx(base);
+      rt_print("), word at fp-");
+      rt_printu(e->fpoff);
+      rt_print(", object ");
+      rt_printx(s->base + idx * s->elemsize);
+      rt_print(" size ");
+      rt_printu(s->elemsize);
+      rt_print("\n");
+    }
+    mark_ptr(w, e->val);
+  }
+  if (kept) {
+    drain();
+    rt_print("stackmaps check: ");
+    rt_printu(kept);
+    rt_print(" objects kept only by words the maps leave out\n");
+  }
+  sm_nex = 0;
+}
+
 // ---- verify mode (MARMOT_GC_VERIFY=1) ----
 //
 // After the mark and before weak pointers and finalizers, the mark bits are
@@ -1509,6 +1555,7 @@ static NOINLINE void gc_collect_body(bool forced, void *sp, void *fp) {
   } else {
     mark_roots();
   }
+  if (UNLIKELY(sm_check)) stackmap_check();
   if (UNLIKELY(gc_verify)) verify_mark();
   if (weak_live) weak_clear();
   bool queued = mark_finalizers();
@@ -1595,6 +1642,8 @@ RT_API int32_t rt_gc_set_percent(int32_t percent) {
 void gc_init(void) {
   const char *t = rt_getenv("MARMOT_GCTRACE");
   gc_trace = t && *t >= '1' && *t <= '9' ? *t - '0' : 0;
+  const char *smc = rt_getenv("MARMOT_STACKMAPS_CHECK");
+  sm_check = smc && *smc == '1';
   const char *v = rt_getenv("MARMOT_GC_VERIFY");
   gc_verify = v && *v == '1';
 #if !RT_OS_WASI

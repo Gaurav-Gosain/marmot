@@ -509,6 +509,14 @@ extern int64_t rt_gcstress;  // collect every N allocations, 0 off
 bool pcln_has_stackmaps(void);
 uint32_t pcln_stackmap(uintptr_t pc, const uint8_t **bits);
 uint32_t pcln_frameinfo(uintptr_t pc, const uint8_t **bits, uint32_t *csr_off, uint32_t *csr_words);
+// MARMOT_STACKMAPS_CHECK (sched.c records, gc.c reports).
+typedef struct {
+  uintptr_t val, pc, fpoff;
+  uint8_t rule;  // 1: not in the frame's map, 2: in a save area skipped by the caller's map
+} sm_excl;
+extern bool sm_check;
+extern sm_excl *sm_ex;
+extern uint32_t sm_nex;
 
 #pragma GCC visibility pop
 

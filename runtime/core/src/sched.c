@@ -2171,6 +2171,28 @@ uint64_t sched_progress(void) {
 // the rest of the stack (runtime C frames, frames without a map, words a
 // map does not cover) is scanned conservatively. The chain is followed only
 // while it climbs within [lo, hi).
+// MARMOT_STACKMAPS_CHECK=1: every word a stack map or the save-area rule
+// leaves out of the scan, when it points into a heap object, is recorded;
+// after the mark the collector reports those whose object nobody else kept
+// (gc.c, stackmap_check) and keeps them alive.
+bool sm_check;
+sm_excl *sm_ex;
+uint32_t sm_nex;
+#define SM_EXCL_MAX 65536
+
+static void sm_record(uintptr_t a, uintptr_t pc, uintptr_t fp, uint8_t rule) {
+  uintptr_t v = *(uintptr_t *)a;
+  if (!rt_heap_object((void *)v)) return;
+  if (!sm_ex) sm_ex = os_map(SM_EXCL_MAX * sizeof *sm_ex);
+  if (!sm_ex || sm_nex >= SM_EXCL_MAX) return;
+  sm_ex[sm_nex++] = (sm_excl){v, pc, fp - a, rule};
+}
+
+// Every word of [lo, hi), left out of the scan by rule.
+static void sm_record_range(uintptr_t lo, uintptr_t hi, uintptr_t pc, uintptr_t fp, uint8_t rule) {
+  for (uintptr_t a = (lo + 7) & ~(uintptr_t)7; a + 8 <= hi; a += 8) sm_record(a, pc, fp, rule);
+}
+
 // [lo, hi) without [xlo, xhi).
 static void scan_except(uintptr_t lo, uintptr_t hi, uintptr_t xlo, uintptr_t xhi,
                         void (*scan)(uintptr_t lo, uintptr_t hi)) {
@@ -2198,12 +2220,18 @@ static void scan_frames(uintptr_t lo, uintptr_t hi, uintptr_t fp, uintptr_t pc,
         xlo = fp - coff;
         xhi = xlo + 8 * (uintptr_t)cwords;
       }
+      if (UNLIKELY(sm_check) && xhi > xlo) sm_record_range(xlo < cur ? cur : xlo, xhi, pc, fp, 2);
       if (n) {
         uintptr_t start = n * 8 > fp - cur ? cur : fp - (uintptr_t)n * 8;
         scan_except(cur, start, xlo, xhi, scan);
         for (uint32_t w = 0; w < n; w++) {
           uintptr_t a = fp - 8 * ((uintptr_t)w + 1);
-          if (a >= cur && (a < xlo || a >= xhi) && (bits[w / 8] >> (w % 8) & 1)) scan(a, a + 8);
+          if (a < cur || (a >= xlo && a < xhi)) continue;
+          if (bits[w / 8] >> (w % 8) & 1) {
+            scan(a, a + 8);
+          } else if (UNLIKELY(sm_check)) {
+            sm_record(a, pc, fp, 1);
+          }
         }
         cur = fp;  // the frame record (saved fp and return address) holds no heap pointer
       } else if (xhi > xlo) {
