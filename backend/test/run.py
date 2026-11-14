@@ -55,6 +55,31 @@ MARMOT_ROOT_DIR = marmot_root()
 TIMEOUT = 300  # seconds per RUN line (marmot build -nocache waits for build slots under load)
 JOBS = 4
 
+def llvm_tool(name):
+    """An LLVM tool: from the install, else (for the test utilities an
+    install does not copy, FileCheck and not) from the build directory
+    beside it or LLVM_UTILS, else from PATH. None when there is none."""
+    import shutil
+    for d in (BIN, os.path.join(LLVM, "..", "build", "bin"), os.environ.get("LLVM_UTILS", "")):
+        p = os.path.join(d, name) if d else ""
+        if p and os.path.exists(p):
+            return os.path.abspath(p)
+    return shutil.which(name)
+
+
+# Tools a test needs that this machine lacks: the tests that use them are
+# skipped with the tool named, not failed.
+MISSING = {}
+
+
+def tool_path(sub, name):
+    p = llvm_tool(name)
+    if p is None:
+        MISSING[sub] = name
+        return os.path.join(BIN, name)
+    return p
+
+
 SUBST = [
     ("%backend", os.path.join(TOOLS, "marmot-backend")),
     ("%marmot-opt", os.path.join(TOOLS, "marmot-opt")),
@@ -62,19 +87,19 @@ SUBST = [
     # prefixes); use it instead of a path to build/bin/marmot.
     ("%marmot", "env MARMOT_ROOT=" + MARMOT_ROOT_DIR + " " +
      os.path.join(MARMOT_ROOT_DIR, "build", "bin", "marmot")),
-    ("%clang", os.path.join(BIN, "clang")),
-    ("%opt", os.path.join(BIN, "opt")),
-    ("%FileCheck", os.path.join(BIN, "FileCheck")),
-    ("%not", os.path.join(BIN, "not")),
-    ("%mlir-translate", os.path.join(BIN, "mlir-translate")),
-    ("%llvm-dis", os.path.join(BIN, "llvm-dis")),
-    ("%llvm-nm", os.path.join(BIN, "llvm-nm")),
-    ("%mlir-opt", os.path.join(BIN, "mlir-opt")),
-    ("%llvm-readobj", os.path.join(BIN, "llvm-readobj")),
-    ("%llvm-profdata", os.path.join(BIN, "llvm-profdata")),
-    ("%llvm-dwarfdump", os.path.join(BIN, "llvm-dwarfdump")),
-    ("%llvm-objcopy", os.path.join(BIN, "llvm-objcopy")),
-    ("%dsymutil", os.path.join(BIN, "dsymutil")),
+    ("%clang", tool_path("%clang", "clang")),
+    ("%opt", tool_path("%opt", "opt")),
+    ("%FileCheck", tool_path("%FileCheck", "FileCheck")),
+    ("%not", tool_path("%not", "not")),
+    ("%mlir-translate", tool_path("%mlir-translate", "mlir-translate")),
+    ("%llvm-dis", tool_path("%llvm-dis", "llvm-dis")),
+    ("%llvm-nm", tool_path("%llvm-nm", "llvm-nm")),
+    ("%mlir-opt", tool_path("%mlir-opt", "mlir-opt")),
+    ("%llvm-readobj", tool_path("%llvm-readobj", "llvm-readobj")),
+    ("%llvm-profdata", tool_path("%llvm-profdata", "llvm-profdata")),
+    ("%llvm-dwarfdump", tool_path("%llvm-dwarfdump", "llvm-dwarfdump")),
+    ("%llvm-objcopy", tool_path("%llvm-objcopy", "llvm-objcopy")),
+    ("%dsymutil", tool_path("%dsymutil", "dsymutil")),
     ("%pcln", os.path.join(TOOLS, "marmot-pcln")),
 ]
 
@@ -118,6 +143,9 @@ def run_test(path):
     # REQUIRES: wasm skips a test when this LLVM has no WebAssembly target.
     if re.search(r"//\s*REQUIRES:\s*wasm", src) and not have_wasm():
         return path, "SKIP", ""
+    need = sorted({MISSING[k] for k in MISSING if k in src})
+    if need:
+        return path, "SKIP", "needs " + ", ".join(need) + " (not in the LLVM install, its build directory, LLVM_UTILS or PATH)"
     rel = os.path.relpath(path, os.path.join(ROOT, "backend", "test"))
     tmp = os.path.join(WORK, rel)
     os.makedirs(os.path.dirname(tmp), exist_ok=True)
@@ -159,16 +187,19 @@ def main():
             dirs[:] = [x for x in dirs if x != "Inputs"]
             tests += [os.path.join(d, f) for f in files if f.endswith((".mlir", ".ll"))]
     tests.sort()
-    fails = 0
+    fails = skips = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=JOBS) as ex:
         for path, status, log in ex.map(run_test, tests):
             rel = os.path.relpath(path, ROOT)
             if status == "FAIL":
                 fails += 1
                 print(f"FAIL {rel}\n{log}")
-            elif verbose or status == "SKIP":
+            elif status == "SKIP":
+                skips += 1
+                print(f"SKIP {rel}" + (f": {log}" if log else ""))
+            elif verbose:
                 print(f"{status} {rel}")
-    print(f"{len(tests) - fails}/{len(tests)} passed")
+    print(f"{len(tests) - fails - skips}/{len(tests)} passed" + (f", {skips} skipped" if skips else ""))
     return 1 if fails else 0
 
 
