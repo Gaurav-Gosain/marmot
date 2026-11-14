@@ -2,6 +2,7 @@
 #ifndef MARMOT_DRIVER_WATCHDOG_H
 #define MARMOT_DRIVER_WATCHDOG_H
 
+#include <cstdint>
 #include <string>
 
 namespace marmot {
