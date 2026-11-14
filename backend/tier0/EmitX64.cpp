@@ -1,46 +1,17 @@
-// CodegenX64.inc: the x86-64 function generator (SysV, as LLVM lowers it),
-// included by Codegen.cpp after the arm64 one; same frame scheme: every
-// value in a slot at rsp + offset, integers zero extended in 64 bits.
+// EmitX64.cpp: the x86-64 function emitter (SysV, as LLVM lowers it); every
+// value in a slot at rsp + offset or in its home register, integers zero
+// extended in 64 bits.
+#include "Abi.h"
+#include "Middle.h"
+#include "X64.h"
+
+#include <cstring>
+
+namespace marmot {
+namespace tier0 {
+namespace {
 
 namespace X = marmot::tier0::x64;
-
-// Where LLVM's x86-64 SysV lowering puts each piece of the arguments:
-// integers and pointers in rdi, rsi, rdx, rcx, r8, r9, floats in xmm0-7,
-// the rest in 8-byte stack slots in order.
-std::vector<ArgLoc> assignArgsX64(TypeRange types, uint64_t &stackSize, bool sret) {
-  static const unsigned gpr[6] = {X::RDI, X::RSI, X::RDX, X::RCX, X::R8, X::R9};
-  std::vector<ArgLoc> out;
-  unsigned ngp = sret ? 1 : 0, nfp = 0;
-  uint64_t sp = 0;
-  for (unsigned i = 0; i < types.size(); i++) {
-    std::vector<std::pair<uint64_t, Type>> parts;
-    flatten(types[i], 0, parts);
-    for (auto [off, t] : parts) {
-      ArgLoc l{i, off, t, isFloat(t), -1, 0};
-      if (l.fp ? nfp < 8 : ngp < 6) {
-        l.reg = l.fp ? int(nfp++) : int(gpr[ngp++]);
-      } else {
-        l.stack = sp;
-        sp += 8;
-      }
-      out.push_back(l);
-    }
-  }
-  stackSize = (sp + 15) & ~uint64_t(15);
-  return out;
-}
-
-// Results: up to three integer pieces (rax, rdx, rcx) and four float pieces
-// (xmm0, xmm1, then the x87 st0, st1), as llc assigns them; more and the
-// result goes through a pointer passed in rdi, returned again in rax.
-bool returnsInMemoryX64(Type t) {
-  std::vector<std::pair<uint64_t, Type>> parts;
-  flatten(t, 0, parts);
-  unsigned ngp = 0, nfp = 0;
-  for (auto &p : parts) (isFloat(p.second) ? nfp : ngp)++;
-  return ngp > 3 || nfp > 4;
-}
-const unsigned retGpr[3] = {X::RAX, X::RDX, X::RCX};
 
 class FuncGenX64 {
 public:
@@ -444,7 +415,7 @@ void FuncGenX64::emitReturn(LL::ReturnOp ret) {
   epilogue();
 }
 
-X::CC icmpCC(LL::ICmpPredicate p) {
+static X::CC icmpCC(LL::ICmpPredicate p) {
   using P = LL::ICmpPredicate;
   switch (p) {
   case P::eq: return X::E;
@@ -1256,3 +1227,10 @@ void FuncGenX64::run() {
   w.define(sym, Sect::Text, start, !isLocalLinkage(lk), isWeakLinkage(lk), isHidden(fn));
   mg.lines.push_back({w.symbol(sym), a.here() - start, std::move(rows)});
 }
+
+} // namespace
+
+void runX64(ModuleGen &mg, LL::LLVMFuncOp f) { FuncGenX64(mg, f).run(); }
+
+} // namespace tier0
+} // namespace marmot

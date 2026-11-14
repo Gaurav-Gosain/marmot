@@ -109,6 +109,19 @@ Single pass per function, no IR of its own:
    the operation locations), so no DWARF is produced or parsed in dev mode. DWARF line tables
    can be added later for debuggers.
 
+## Code layout
+
+- `Common.*`: type layout, symbol names, unsupported constructs.
+- `Abi.*`: argument and result assignment per target (Darwin arm64, x86-64 SysV).
+- `Module.*`: globals, the functions on threads, the pc table fragment, what is left for LLVM.
+- `Middle.*`: `FuncPlan`, the target independent decisions for one function: operations
+  emitted at their users (fused compares, folded GEPs, lazy loads and aggregate arguments),
+  decided nil checks and dead blocks, linear scan register assignment over a target's
+  register sets, the frame layout with slots shared by values that are not live together, and
+  stack maps. An improvement there reaches every target.
+- `EmitArm64.cpp`, `EmitX64.cpp`: the emitters, deriving from `FuncPlan`; they own instruction
+  selection, encoding and target peepholes only.
+
 ## Fallback and rollout
 
 Every function either compiles completely in tier0 or is listed for LLVM. Coverage grows by
