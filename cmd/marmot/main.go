@@ -56,7 +56,7 @@ func newBuildFlags(name string) (*flag.FlagSet, *buildFlags) {
 	b.pgoGen = fs.Bool("pgo-gen", false, "build an instrumented binary that writes marmot-<id>.profraw next to itself")
 	b.pgo = fs.String("pgo", "", "profile guided optimization with this indexed profile (llvm-profdata merge -o FILE *.profraw)")
 	b.release = fs.Bool("release", os.Getenv("MARMOT_RELEASE") == "1", "release build: whole program optimization, -O3, all specializations (default from $MARMOT_RELEASE=1)")
-	b.emit = fs.String("emit", "exe", "output kind: mlir, llvm, obj, exe")
+	b.emit = fs.String("emit", "exe", "output kind: mlir, llvm, obj, exe; wat with -target wasip1/wasm")
 	b.work = fs.Bool("work", false, "print and keep the temporary work directory")
 	b.verbose = fs.Bool("v", false, "print progress and timing")
 	b.tags = fs.String("tags", "", "comma separated build tags")
@@ -110,7 +110,7 @@ func cmdBuild(args []string, run bool) int {
 		return rep.Usage(fmt.Sprintf("marmot: bad -dialect %q", *dialect))
 	}
 	switch *emit {
-	case "mlir", "llvm", "obj", "exe":
+	case "mlir", "llvm", "obj", "exe", "wat":
 	default:
 		return rep.Usage(fmt.Sprintf("marmot: bad -emit kind %q", *emit))
 	}

@@ -5,6 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+
+	"github.com/Gaurav-Gosain/marmot/internal/wasmfile"
 )
 
 // wasmTool finds a wasm tool: $env, beside marmot's clang, Homebrew's lld
@@ -55,8 +58,63 @@ func (b *build) linkWasm(objs []string, rt, out string) error {
 	case b.cfg.OptLevel != "" && b.cfg.OptLevel != "0":
 		oargs = append(oargs, "-O2")
 	}
-	if !b.cfg.Strip {
-		oargs = append(oargs, "-g") // keep the name section
+	oargs = append(oargs, "-g") // names stay until clean, which -s strips
+	if err := b.run(opt, oargs...); err != nil {
+		return err
 	}
-	return b.run(opt, oargs...)
+	return cleanWasm(out, b.cfg.Strip)
+}
+
+// cleanWasm rewrites the linked module: only _start and the memory stay
+// exported (Asyncify exports its own control functions, which the runtime
+// calls inside the module), a producers section names marmot, and -s drops
+// the names section.
+func cleanWasm(path string, strip bool) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	data, err = wasmfile.Clean(data, wasmfile.Options{
+		Keep:       []string{"_start", "memory"},
+		StripNames: strip,
+		Producers:  [][2]string{{"marmot", "devel"}},
+	})
+	if err != nil {
+		return fmt.Errorf("%s: %v", path, err)
+	}
+	return os.WriteFile(path, data, 0o755)
+}
+
+// buildWat implements -emit wat: the program linked as for -emit exe, then
+// printed as WebAssembly text (binaryen's wasm-dis), for /play and reading.
+func buildWat(cfg Config) (string, error) {
+	if _, arch, _ := strings.Cut(cfg.Target, "/"); arch != "wasm" {
+		return "", fmt.Errorf("-emit wat needs -target wasip1/wasm")
+	}
+	dis := wasmTool("wasm-dis", "MARMOT_WASMDIS")
+	if dis == "" {
+		return "", fmt.Errorf("-emit wat needs wasm-dis (binaryen: brew install binaryen, or set MARMOT_WASMDIS)")
+	}
+	tmp, err := os.MkdirTemp("", "marmot-wat-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmp)
+	out := cfg.Output
+	cfg.Emit, cfg.Output = "exe", filepath.Join(tmp, "prog.wasm")
+	wasm, err := Build(cfg)
+	if err != nil {
+		return "", err
+	}
+	if out == "" {
+		out = strings.TrimSuffix(filepath.Base(cfg.Dir), "/") + ".wat"
+		if cfg.Dir == "" || cfg.Dir == "." {
+			wd, _ := os.Getwd()
+			out = filepath.Base(wd) + ".wat"
+		}
+	}
+	if b, err := exec.Command(dis, wasm, "-o", out).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("wasm-dis: %v: %s", err, b)
+	}
+	return out, nil
 }

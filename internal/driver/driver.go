@@ -34,7 +34,7 @@ type Config struct {
 	Output   string // -o
 	OptLevel string // -O
 	OptSet   bool   // -O was given: compile with LLVM at that level, not tier0
-	Emit     string // mlir, llvm, obj, exe
+	Emit     string // mlir, llvm, obj, exe, wat (wasip1/wasm: the linked module as text)
 	Work     bool   // keep the work directory
 	Verbose  bool
 	PrintCmd bool // -x
@@ -143,6 +143,9 @@ func BuildTest(cfg Config) (exe, dir string, err error) {
 // Build compiles the packages and writes the output. It returns the output
 // path.
 func Build(cfg Config) (string, error) {
+	if cfg.Emit == "wat" {
+		return buildWat(cfg)
+	}
 	if dev := cfg.Output; dev != "" {
 		if st, err := os.Stat(dev); err == nil && !st.Mode().IsRegular() && !st.IsDir() {
 			return buildToDevice(cfg, dev)
