@@ -144,8 +144,8 @@ void os_yield(void) { sched_yield(); }
 // never touched is still all zeros (bss) or as the file has it (data): it
 // holds no heap pointer. Skipping it matters: on macOS reading a zero fill
 // page makes it resident, so scanning a 36 MB bss array nobody uses would
-// cost 36 MB. mincore marks touched pages, also paged out ones
-// (MINCORE_PAGED_OUT), which are scanned.
+// cost 36 MB. mincore marks touched pages (in core, referenced, modified),
+// also paged out ones (MINCORE_PAGED_OUT), which are scanned.
 static void touched_ranges(uintptr_t lo, uintptr_t hi, void (*fn)(void *start, void *end)) {
   uintptr_t ps = rt_pagesize;
   lo &= ~(ps - 1);
@@ -160,7 +160,7 @@ static void touched_ranges(uintptr_t lo, uintptr_t hi, void (*fn)(void *start, v
       break;
     }
     for (uintptr_t i = 0; i < n; i++, at += ps) {
-      if (vec[i]) {
+      if (vec[i] & ~MINCORE_ANONYMOUS) {  // an untouched anonymous page reports only that bit
         if (!run) run = at;
       } else if (run) {
         fn((void *)run, (void *)at);
