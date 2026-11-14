@@ -251,4 +251,9 @@ intptr_t os_syscall6(uintptr_t num, uintptr_t a1, uintptr_t a2, uintptr_t a3, ui
 }
 #pragma clang diagnostic pop
 
+void os_nohuge(void *p, uintptr_t n) {
+  (void)p;
+  (void)n;
+}
+
 #endif

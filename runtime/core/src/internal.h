@@ -99,6 +99,7 @@ void *os_reserve(uintptr_t n);
 bool os_commit(void *p, uintptr_t n);
 // Map fresh zeroed read/write memory. Returns NULL on failure.
 void *os_map(uintptr_t n);
+void os_nohuge(void *p, uintptr_t n);  // no transparent huge pages here (Linux; no-op elsewhere)
 void os_unmap(void *p, uintptr_t n);
 // Tell the OS the whole pages inside [p, p+n) may be discarded; later reads
 // see zero or old data.

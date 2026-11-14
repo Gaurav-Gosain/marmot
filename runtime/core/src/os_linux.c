@@ -7,6 +7,9 @@
 
 #include <errno.h>
 #include <link.h>
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 #include <linux/futex.h>
 #include <pthread.h>
 #include <sched.h>
@@ -45,6 +48,12 @@ void setm(rt_m *m) { rt_tls_m = m; }
 
 void os_init(void) {
   tls_init();
+#ifdef __GLIBC__
+  // One malloc arena: every thread that calls into libc malloc would get its
+  // own 64 MiB arena, and with transparent huge pages on its first touch
+  // commits 2 MiB. The runtime itself does not use malloc.
+  mallopt(M_ARENA_MAX, 1);
+#endif
   long ps = sysconf(_SC_PAGESIZE);
   rt_pagesize = ps > 0 ? (uintptr_t)ps : 4096;
 }
@@ -63,6 +72,11 @@ void *os_map(uintptr_t n) {
 }
 
 void os_unmap(void *p, uintptr_t n) { munmap(p, n); }
+
+// With transparent huge pages on, touching one page of a large mapping can
+// commit a whole 2 MiB page: a goroutine stack that uses a few KiB would
+// cost 2 MiB.
+void os_nohuge(void *p, uintptr_t n) { madvise(p, n, MADV_NOHUGEPAGE); }
 
 // Only whole pages inside [p, p+n). Reads afterwards return zero.
 void os_release(void *p, uintptr_t n) {

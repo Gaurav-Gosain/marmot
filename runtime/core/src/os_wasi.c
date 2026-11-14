@@ -421,4 +421,9 @@ NOBUILTIN RT_API int strncmp(const char *a, const char *b, size_t n) {
   return 0;
 }
 
+void os_nohuge(void *p, uintptr_t n) {
+  (void)p;
+  (void)n;
+}
+
 #endif

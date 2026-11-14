@@ -93,6 +93,7 @@ static bool stack_alloc(rt_g *g, uintptr_t size) {
     p = os_map(size + ps);
   }
   if (!p) return false;
+  os_nohuge(p, size + ps);
   os_protect_none(p, ps);
   g->map_base = (uintptr_t)p;
   g->map_size = size + ps;
@@ -1825,6 +1826,7 @@ static void cgo_needm(rt_m *m) {
     signal_init_thread(m);
     void *st = os_map(G0_STACK);
     if (!st) rt_throw("cgo callback: cannot allocate a scheduler stack");
+    os_nohuge(st, G0_STACK);
     m->g0stack = (uintptr_t)st + G0_STACK;
     m->foreign_g = galloc(0);
 #ifdef RT_TSAN
