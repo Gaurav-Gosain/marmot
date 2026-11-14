@@ -1,6 +1,6 @@
 // X64.h: x86-64 instruction encoders for tier0 (x86-64-v2: SSE4.2, POPCNT;
 // no BMI, LZCNT or FMA). Each appends to a byte buffer. Memory operands are
-// [base + disp32]; general registers 0-15 (rax..r15), xmm 0-15.
+// [base + disp]; general registers 0-15 (rax..r15), xmm 0-15.
 #ifndef MARMOT_TIER0_X64_H
 #define MARMOT_TIER0_X64_H
 
@@ -36,10 +36,16 @@ public:
     if (r != 0x40 || force) u8(r);
   }
   void modrmReg(unsigned reg, unsigned rm) { u8(uint8_t(0xC0 | (reg & 7) << 3 | (rm & 7))); }
+  // [base + disp] with the shortest displacement: none (except for base
+  // rbp/r13, which needs one), 8 bits or 32 bits.
   void modrmMem(unsigned reg, unsigned base, int32_t disp) {
-    u8(uint8_t(0x80 | (reg & 7) << 3 | (base & 7)));
+    unsigned mod = disp == 0 && (base & 7) != RBP ? 0 : disp >= -128 && disp <= 127 ? 1 : 2;
+    u8(uint8_t(mod << 6 | (reg & 7) << 3 | (base & 7)));
     if ((base & 7) == RSP) u8(0x24);  // SIB: no index, base rsp/r12
-    u32(uint32_t(disp));
+    if (mod == 1)
+      u8(uint8_t(int8_t(disp)));
+    else if (mod == 2)
+      u32(uint32_t(disp));
   }
   // op r, r/m (register form): opcode bytes then modrm.
   void rr(bool w, std::initializer_list<uint8_t> op, unsigned reg, unsigned rm, bool byteRegs = false) {
@@ -155,17 +161,34 @@ public:
     rr(true, {0xC1}, kind, d);
     u8(n);
   }
-  void addImm(unsigned d, int32_t v) {  // add d, simm32
-    rr(true, {0x81}, 0, d);
-    u32(uint32_t(v));
+  // Group 1 with an immediate (kind 0 add, 1 or, 4 and, 5 sub, 6 xor, 7
+  // cmp): simm8 when it fits, else simm32.
+  void aluImm(unsigned kind, unsigned d, int32_t v) {
+    if (v >= -128 && v <= 127) {
+      rr(true, {0x83}, kind, d);
+      u8(uint8_t(int8_t(v)));
+    } else {
+      rr(true, {0x81}, kind, d);
+      u32(uint32_t(v));
+    }
   }
-  void subImm(unsigned d, int32_t v) {
-    rr(true, {0x81}, 5, d);
-    u32(uint32_t(v));
+  void addImm(unsigned d, int32_t v) { aluImm(0, d, v); }
+  void subImm(unsigned d, int32_t v) { aluImm(5, d, v); }
+  void cmpImm(unsigned d, int32_t v) { aluImm(7, d, v); }
+  void andImm(unsigned d, int32_t v) { aluImm(4, d, v); }
+  // mov [base + disp], imm (size 1, 2, 4, or 8 with a sign extended imm32).
+  void storeImm(unsigned base, int32_t disp, unsigned size, int32_t v) {
+    switch (size) {
+    case 1: rm(false, {0xC6}, 0, base, disp); u8(uint8_t(v)); break;
+    case 2: u8(0x66); rm(false, {0xC7}, 0, base, disp); u8(uint8_t(v)); u8(uint8_t(v >> 8)); break;
+    case 4: rm(false, {0xC7}, 0, base, disp); u32(uint32_t(v)); break;
+    default: rm(true, {0xC7}, 0, base, disp); u32(uint32_t(v)); break;
+    }
   }
-  void cmpImm(unsigned d, int32_t v) {
-    rr(true, {0x81}, 7, d);
-    u32(uint32_t(v));
+  // test byte [base + disp], imm8.
+  void testMem8(unsigned base, int32_t disp, uint8_t v) {
+    rm(false, {0xF6}, 0, base, disp);
+    u8(v);
   }
   void setcc(CC c, unsigned d) { rr(false, {0x0F, uint8_t(0x90 | c)}, 0, d, true); }
   void cmov(CC c, unsigned d, unsigned s) { rr(true, {0x0F, uint8_t(0x40 | c)}, d, s); }
@@ -206,6 +229,7 @@ public:
     return at;
   }
   void ret() { u8(0xC3); }
+  void leave() { u8(0xC9); }
   void push(unsigned r) {
     rex(false, 0, r);
     u8(uint8_t(0x50 | (r & 7)));

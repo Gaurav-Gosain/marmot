@@ -13,51 +13,40 @@ namespace {
 
 namespace X = marmot::tier0::x64;
 
-class FuncGenX64 {
+class FuncGenX64 : public FuncPlan {
 public:
-  FuncGenX64(ModuleGen &mg, LL::LLVMFuncOp f) : mg(mg), w(mg.w), fn(f), a(w.bytes(Sect::Text)) {}
+  FuncGenX64(ModuleGen &mg, LL::LLVMFuncOp f) : FuncPlan(mg, f), w(mg.w), a(w.bytes(Sect::Text)) {}
   void run();
 
 private:
-  ModuleGen &mg;
   MachOWriter &w;
-  LL::LLVMFuncOp fn;
   X::Asm a;
   // Scratch: rax, rcx, rdx and r11 inside an operation; r10 holds an
-  // indirect callee; argument registers only around calls.
+  // indirect callee; argument registers only around calls (rsi, rdi, r8
+  // and r9 also hold values that no call meets, see allocate).
   static constexpr unsigned T1 = X::RAX, T2 = X::RCX, T3 = X::RDX, T4 = X::R11, T5 = X::R10;
   static constexpr unsigned XF1 = 14, XF2 = 15;  // xmm14, xmm15
 
-  llvm::DenseMap<Value, uint64_t> slot;
-  llvm::DenseMap<Value, unsigned> home;  // value -> callee saved register (rbx, r12..r15)
-  llvm::DenseSet<Operation *> fusedCmp;  // icmps that only set the flags for the next cond_br
+  uint64_t outgoingArgBytes(LL::CallOp c) override {
+    uint64_t n = 0;
+    bool mem = c.getNumResults() == 1 && returnsInMemoryX64(c.getResult().getType());
+    assignArgsX64(c.getArgOperands().getTypes(), n, mem);
+    return n;
+  }
+  bool resultInMemory(Type t) override { return returnsInMemoryX64(t); }
+
   Block *nextBlock = nullptr;
-  uint32_t calleeUsed = 0;
-  uint64_t saveArea = 0;
-  llvm::DenseMap<Operation *, uint64_t> allocaStorage;
   llvm::DenseMap<Block *, uint64_t> blockStart;
   struct Fixup {
     size_t field;  // rel32 field, relative to the end of the field
     Block *dest;
   };
   std::vector<Fixup> fixups;
-  uint64_t frameSize = 0, tempArea = 0, tempSize = 0, sretSlot = 0;
-  bool sret = false;
+  int64_t epiAt = -1;  // offset of the shared epilogue, once emitted
 
-  uint64_t alloc(uint64_t size, uint64_t align) {
-    frameSize = (frameSize + align - 1) & ~(align - 1);
-    uint64_t at = frameSize;
-    frameSize += size;
-    return at;
-  }
   int32_t d32(uint64_t off) {
     if (off >= (uint64_t(1) << 31)) unsupported("frame larger than 2 GiB");
     return int32_t(off);
-  }
-  uint64_t of(Value v) {
-    auto it = slot.find(v);
-    if (it == slot.end()) unsupported("value without a slot");
-    return it->second;
   }
   void ld(unsigned r, uint64_t off) { a.load(r, X::RSP, d32(off), 8); }
   void st(unsigned r, uint64_t off) { a.store(r, X::RSP, d32(off), 8); }
@@ -117,6 +106,7 @@ private:
     case 32: a.mov32(r, r); break;
     case 16: a.movzx16(r, r); break;
     case 8: a.movzx8(r, r); break;
+    case 1: a.andImm(r, 1); break;
     default:
       a.shiftImm(4, r, uint8_t(64 - wdt));
       a.shiftImm(5, r, uint8_t(64 - wdt));
@@ -134,8 +124,29 @@ private:
     if (v.getType().isF32()) a.mov32(d, d);
     putRaw(d, v);
   }
+  // The address in v as a register plus *off (a folded GEP's offset).
+  unsigned addrReg(Value v, unsigned scratch, uint64_t &off) {
+    off = 0;
+    if (Operation *d = v.getDefiningOp())
+      if (auto it = foldGep.find(d); it != foldGep.end()) {
+        off = it->second;
+        return src(cast<LL::GEPOp>(d).getBase(), scratch);
+      }
+    return src(v, scratch);
+  }
+  // Where the bytes of an aggregate value are: its slot, or for a lazy load
+  // the memory it reads (through scratch).
+  std::pair<unsigned, uint64_t> aggAt(Value v, unsigned scratch) {
+    if (auto lv = v.getDefiningOp<LL::LoadOp>(); lv && lazyLoad.count(lv)) {
+      uint64_t ao;
+      unsigned ar = addrReg(lv.getAddr(), scratch, ao);
+      return {ar, ao};
+    }
+    return {X::RSP, of(v)};
+  }
   // Copies n bytes from [sb + so] to [db + do_] through r11.
   void copyBytes(unsigned db, uint64_t do_, unsigned sb, uint64_t so, uint64_t n) {
+    if (db == sb && do_ == so) return;
     uint64_t i = 0;
     for (; i + 8 <= n; i += 8) {
       a.load(T4, sb, d32(so + i), 8);
@@ -147,6 +158,16 @@ private:
         a.store(T4, db, d32(do_ + i), sz);
       }
   }
+  // n zero bytes at [base + off].
+  void zeroBytes(unsigned base, uint64_t off, uint64_t n) {
+    uint64_t i = 0;
+    if (n >= 16) {
+      a.xor_(T4, T4);  // no flags are live between operations
+      for (; i + 8 <= n; i += 8) a.store(T4, base, d32(off + i), 8);
+    }
+    for (unsigned sz = 8; sz >= 1; sz /= 2)
+      for (; i + sz <= n; i += sz) a.storeImm(base, d32(off + i), sz, 0);
+  }
   void callSym(const std::string &name) {
     size_t at = a.call();
     w.reloc(Sect::Text, at, Reloc::Call32, w.symbol(name));
@@ -155,10 +176,32 @@ private:
     int32_t rel = int32_t(target - int64_t(field + 4));
     std::memcpy(&w.bytes(Sect::Text)[field], &rel, 4);
   }
+  // A jump to a known (earlier) offset: rel8 when it reaches.
+  void jmpBack(int64_t target) {
+    int64_t rel = target - int64_t(a.here() + 2);
+    if (rel >= -128) {
+      a.u8(0xEB);
+      a.u8(uint8_t(int8_t(rel)));
+    } else {
+      patch32(a.jmp(), target);
+    }
+  }
+  void jccTo(X::CC cc, Block *dest) {
+    if (auto it = blockStart.find(dest); it != blockStart.end()) {
+      int64_t rel = int64_t(it->second) - int64_t(a.here() + 2);
+      if (rel >= -128) {
+        a.u8(uint8_t(0x70 | cc));
+        a.u8(uint8_t(int8_t(rel)));
+        return;
+      }
+    }
+    fixups.push_back({a.jcc(cc), dest});
+  }
 
-  void layout();
+  void allocate();
   void prologue();
   void epilogue();
+  void cmpFlags(LL::ICmpOp c);
   void emitOp(Operation &op);
   bool emitWide(Operation &op);
   void emitCall(LL::CallOp call);
@@ -167,49 +210,25 @@ private:
   void fminmax(Operation &op, bool max, bool num);
   void edgeMoves(Block *dest, OperandRange args);
   void branchTo(Block *dest) {
+    if (auto it = blockStart.find(dest); it != blockStart.end()) {
+      jmpBack(int64_t(it->second));
+      return;
+    }
     size_t f = a.jmp();
     fixups.push_back({f, dest});
   }
 };
 
-void FuncGenX64::layout() {
-  uint64_t out = 0;
-  fn.walk([&](LL::CallOp c) {
-    uint64_t n = 0;
-    bool mem = c.getNumResults() == 1 && returnsInMemoryX64(c.getResult().getType());
-    assignArgsX64(c.getArgOperands().getTypes(), n, mem);
-    out = std::max(out, n);
-  });
-  alloc(out, 16);
-  auto rt = fn.getFunctionType().getReturnType();
-  if (!isa<LL::LLVMVoidType>(rt) && returnsInMemoryX64(rt)) {
-    sret = true;
-    sretSlot = alloc(8, 8);
-  }
-  for (Block &b : fn.getBody()) {
-    for (BlockArgument arg : b.getArguments())
-      if (!home.count(arg)) slot[arg] = alloc(std::max<uint64_t>(sizeOf(arg.getType()), 8), std::max<uint64_t>(8, alignOf(arg.getType())));
-    for (Operation &op : b) {
-      for (Value r : op.getResults())
-        if (uint64_t bits; !home.count(r) && !scalarConst(r, bits) && !fusedCmp.count(&op)) slot[r] = alloc(std::max<uint64_t>(sizeOf(r.getType()), 8), std::max<uint64_t>(8, alignOf(r.getType())));
-      if (auto al = dyn_cast<LL::AllocaOp>(op)) {
-        if (&b != &fn.getBody().front()) unsupported("alloca outside the entry block");
-        auto c = al.getArraySize().getDefiningOp<LL::ConstantOp>();
-        if (!c) unsupported("dynamic alloca");
-        uint64_t n = cast<IntegerAttr>(c.getValue()).getValue().getZExtValue();
-        uint64_t algn = std::max<uint64_t>(al.getAlignment().value_or(0), alignOf(al.getElemType()));
-        allocaStorage[&op] = alloc(std::max<uint64_t>(n * sizeOf(al.getElemType()), 1), std::max<uint64_t>(algn, 8));
-      }
-    }
-  }
-  for (Block &b : fn.getBody()) {
-    uint64_t n = 0;
-    for (BlockArgument arg : b.getArguments()) n += std::max<uint64_t>((sizeOf(arg.getType()) + 7) & ~uint64_t(7), 8);
-    tempSize = std::max(tempSize, n);
-  }
-  tempArea = alloc(std::max<uint64_t>(tempSize, 8), 8);  // also the x87 result spill
-  saveArea = alloc(8 * uint64_t(llvm::popcount(calleeUsed)), 8);
-  frameSize = (frameSize + 15) & ~uint64_t(15);
+// Values in registers: the callee saved rbx and r12-r15, and first the
+// argument registers rsi, rdi, r8 and r9 (no operation uses them as
+// scratch) for values that no call meets: calls, memory intrinsics,
+// returns, and fma (a call to the C library at x86-64-v2).
+void FuncGenX64::allocate() {
+  static const unsigned regs[] = {X::RBX, X::R12, X::R13, X::R14, X::R15};
+  static const unsigned low[] = {X::RSI, X::RDI, X::R8, X::R9};
+  home = linearScan(fn, regs, fusedCmp, mg.returnsTwice, low, [](Operation &op) { return isa<LL::FMAOp>(op); });
+  for (auto [v, r] : home)
+    if (r == X::RBX || r >= X::R12) calleeUsed |= 1u << r;
 }
 
 void FuncGenX64::prologue() {
@@ -248,33 +267,66 @@ void FuncGenX64::prologue() {
       }
       a.store(r, X::RSP, d32(of(arg) + l.off), unsigned(sizeOf(l.t)));
     } else {
-      if (r != T4) {
-        a.mov(T4, r);
-        r = T4;
+      if (!l.fp && intWidth(l.t) < 64) {
+        unsigned d = dst(arg, T4);
+        if (r != d) a.mov(d, r);
+        normalize(d, l.t);
+        putRaw(d, arg);
+      } else {
+        putRaw(r, arg);
       }
-      if (!l.fp) normalize(r, l.t);
-      putRaw(r, arg);
     }
   }
 }
 
+// One epilogue per function when it restores registers: later returns jump
+// to the first. Without saved registers it is two bytes (leave, ret).
 void FuncGenX64::epilogue() {
+  if (epiAt >= 0) {
+    jmpBack(epiAt);
+    return;
+  }
+  if (calleeUsed) epiAt = int64_t(a.here());
   uint64_t at = saveArea;
   for (unsigned r = 0; r < 16; r++)
     if (calleeUsed >> r & 1) {
       ld(r, at);
       at += 8;
     }
-  a.mov(X::RSP, X::RBP);
-  a.pop(X::RBP);
+  if (frameSize)
+    a.leave();
+  else
+    a.pop(X::RBP);
   a.ret();
 }
 
 void FuncGenX64::edgeMoves(Block *dest, OperandRange args) {
   if (args.empty()) return;
   if (args.size() == 1 && !isAggregate(args[0].getType())) {
-    get(T1, args[0]);
-    putRaw(T1, dest->getArgument(0));
+    if (auto h = home.find(dest->getArgument(0)); h != home.end()) {
+      get(h->second, args[0]);  // straight into the argument's register
+      return;
+    }
+    putRaw(src(args[0], T1), dest->getArgument(0));
+    return;
+  }
+  // When no source is one of dest's own arguments, nothing is overwritten
+  // before it is read: move directly.
+  bool direct = true;
+  for (Value v : args)
+    if (auto ba = dyn_cast<BlockArgument>(v); ba && ba.getOwner() == dest) direct = false;
+  if (direct) {
+    for (unsigned i = 0; i < args.size(); i++) {
+      Value v = args[i];
+      BlockArgument arg = dest->getArgument(i);
+      if (isAggregate(arg.getType())) {
+        copyBytes(X::RSP, of(arg), X::RSP, of(v), std::max<uint64_t>((sizeOf(arg.getType()) + 7) & ~uint64_t(7), 8));
+      } else if (auto h = home.find(arg); h != home.end()) {
+        get(h->second, v);
+      } else {
+        putRaw(src(v, T4), arg);
+      }
+    }
     return;
   }
   uint64_t t = tempArea;
@@ -284,8 +336,7 @@ void FuncGenX64::edgeMoves(Block *dest, OperandRange args) {
     if (isAggregate(v.getType())) {
       copyBytes(X::RSP, t, X::RSP, of(v), sz);
     } else {
-      get(T4, v);
-      st(T4, t);
+      st(src(v, T4), t);
     }
     tmp.push_back(t);
     t += sz;
@@ -296,8 +347,9 @@ void FuncGenX64::edgeMoves(Block *dest, OperandRange args) {
     if (isAggregate(arg.getType())) {
       copyBytes(X::RSP, of(arg), X::RSP, tmp[i], sz);
     } else {
-      ld(T4, tmp[i]);
-      putRaw(T4, arg);
+      unsigned d = dst(arg, T4);
+      ld(d, tmp[i]);
+      putRaw(d, arg);
     }
   }
 }
@@ -308,20 +360,40 @@ void FuncGenX64::emitCall(LL::CallOp call) {
   bool memResult = call.getNumResults() == 1 && returnsInMemoryX64(call.getResult().getType());
   uint64_t stackSize = 0;
   std::vector<ArgLoc> locs = assignArgsX64(args.getTypes(), stackSize, memResult);
-  auto load = [&](unsigned r, const ArgLoc &l) {
+  // scratch: the register a lazy load's address may use (not an argument
+  // register loaded before it).
+  auto load = [&](unsigned r, const ArgLoc &l, unsigned scratch) {
     Value v = args[l.arg];
-    if (isAggregate(v.getType()))
-      a.load(r, X::RSP, d32(of(v) + l.off), unsigned(sizeOf(l.t)));
-    else if (mg.signExtArg(call, l.arg))
+    if (auto la = lazyAgg.find(v); la != lazyAgg.end()) {
+      auto f = la->second.find(l.off);
+      if (f == la->second.end()) {
+        a.movImm(r, 0);
+      } else if (auto ao = f->second.getDefiningOp<LL::AddressOfOp>()) {
+        unsigned sym = w.symbol(symName(ao.getGlobalName()));
+        if (mg.isDefinedData(ao.getGlobalName()))
+          w.reloc(Sect::Text, a.leaRip(r), Reloc::Pc32, sym);
+        else
+          w.reloc(Sect::Text, a.loadRip(r), Reloc::GotPc32, sym);
+      } else {
+        get(r, f->second);
+      }
+      return;
+    }
+    if (isAggregate(v.getType())) {
+      auto [base, off] = aggAt(v, scratch);
+      a.load(r, base, d32(off + l.off), unsigned(sizeOf(l.t)));
+    } else if (mg.signExtArg(call, l.arg)) {
       getSigned(r, v);
-    else
+    } else {
       get(r, v);
+    }
   };
   // Stack and float pieces through r11, then the indirect callee into r10,
-  // then the integer registers (rcx and rdx are arguments too).
+  // then the integer registers (rcx and rdx are arguments too; a lazy
+  // load's address goes through rax, never an argument).
   for (const ArgLoc &l : locs) {
     if (l.reg >= 0 && !l.fp) continue;
-    load(T4, l);
+    load(T4, l, T1);
     if (l.reg >= 0)
       a.movqToX(unsigned(l.reg), T4);
     else
@@ -330,16 +402,23 @@ void FuncGenX64::emitCall(LL::CallOp call) {
   bool indirect = !call.getCallee();
   if (indirect) get(T5, call.getCalleeOperands().front());
   for (const ArgLoc &l : locs)
-    if (l.reg >= 0 && !l.fp) load(unsigned(l.reg), l);
+    if (l.reg >= 0 && !l.fp) load(unsigned(l.reg), l, T1);
   if (memResult) a.lea(X::RDI, X::RSP, d32(of(call.getResult())));
+  auto site = [&] {
+    if (auto m = callMap.find(call.getOperation()); m != callMap.end())
+      smSites.push_back({a.here() - fnStart, m->second});
+  };
   if (indirect) {
     a.callReg(T5);
+    site();
   } else {
     StringRef callee = *call.getCallee();
-    if (callee == "marmot_gpu_for")
+    if (callee == "marmot_gpu_for") {
       a.movImm(X::RAX, 0);
-    else
+    } else {
       callSym(symName(callee));
+      site();
+    }
   }
   if (call.getNumResults() == 0 || memResult) return;
   Value r = call.getResult();
@@ -358,7 +437,7 @@ void FuncGenX64::emitCall(LL::CallOp call) {
       a.store(reg, X::RSP, d32(of(r) + off), unsigned(sizeOf(t)));
     } else {
       unsigned d = dst(r, T4);
-      a.mov(d, reg);
+      if (d != reg) a.mov(d, reg);
       if (!isFloat(t)) normalize(d, t);
       putRaw(d, r);
     }
@@ -381,31 +460,36 @@ void FuncGenX64::emitReturn(LL::ReturnOp ret) {
   if (sret) {
     Value v = ret.getOperand(0);
     ld(T2, sretSlot);
-    copyBytes(T2, 0, X::RSP, of(v), sizeOf(v.getType()));
+    auto [base, off] = aggAt(v, T3);
+    copyBytes(T2, 0, base, off, sizeOf(v.getType()));
     a.mov(X::RAX, T2);
   } else if (ret.getNumOperands() == 1) {
     Value v = ret.getOperand(0);
     std::vector<std::pair<uint64_t, Type>> parts;
     flatten(v.getType(), 0, parts);
     unsigned ngp = 0, nfp = 0;
+    bool agg = isAggregate(v.getType());
+    // The aggregate's bytes: its slot or a lazy load's memory, through r10
+    // (not a result register).
+    std::pair<unsigned, uint64_t> at = agg ? aggAt(v, T5) : std::pair<unsigned, uint64_t>{X::RSP, 0};
     // Floats first (through r11; the third and fourth on the x87 stack,
     // the fourth pushed first), then the integer registers.
     std::vector<std::pair<uint64_t, Type>> fps;
     for (auto &p : parts)
       if (isFloat(p.second)) fps.push_back(p);
     for (unsigned i = unsigned(fps.size()); i-- > 2;)
-      a.fld(X::RSP, d32(isAggregate(v.getType()) ? of(v) + fps[i].first : of(v)), fps[i].second.isF64());
+      a.fld(at.first, d32(agg ? at.second + fps[i].first : of(v)), fps[i].second.isF64());
     for (unsigned i = 0; i < fps.size() && i < 2; i++) {
-      if (isAggregate(v.getType()))
-        a.load(T4, X::RSP, d32(of(v) + fps[i].first), unsigned(sizeOf(fps[i].second)));
+      if (agg)
+        a.load(T4, at.first, d32(at.second + fps[i].first), unsigned(sizeOf(fps[i].second)));
       else
         get(T4, v);
       a.movqToX(nfp++, T4);
     }
     for (auto [off, t] : parts) {
       if (isFloat(t)) continue;
-      if (isAggregate(v.getType()))
-        a.load(retGpr[ngp++], X::RSP, d32(of(v) + off), unsigned(sizeOf(t)));
+      if (agg)
+        a.load(retGpr[ngp++], at.first, d32(at.second + off), unsigned(sizeOf(t)));
       else if (ModuleGen::signExtResult(fn))
         getSigned(retGpr[ngp++], v);
       else
@@ -430,6 +514,28 @@ static X::CC icmpCC(LL::ICmpPredicate p) {
   case P::uge: return X::AE;
   }
   return X::E;
+}
+
+// Sets the flags for c's predicate: a register or immediate compare (the
+// immediate is sign extended from 32 bits, so it must equal the operand as
+// the compare sees it).
+void FuncGenX64::cmpFlags(LL::ICmpOp c) {
+  bool sgn = isSignedPred(c.getPredicate());
+  unsigned l = sgn ? srcSigned(c.getLhs(), T1) : src(c.getLhs(), T1);
+  uint64_t bits;
+  if (constBits(c.getRhs(), bits)) {
+    unsigned wdt = intWidth(c.getRhs().getType());
+    int64_t v = wdt < 64 && sgn ? int64_t(bits << (64 - wdt)) >> (64 - wdt) : int64_t(bits);
+    if (sgn ? v == int64_t(int32_t(v)) : bits < (uint64_t(1) << 31)) {
+      if (v == 0 && !sgn)
+        a.test(l, l);
+      else
+        a.cmpImm(l, int32_t(v));
+      return;
+    }
+  }
+  unsigned r = sgn ? srcSigned(c.getRhs(), T2) : src(c.getRhs(), T2);
+  a.cmp(l, r);
 }
 
 // llvm.maximum / minimum (NaN propagates, -0 < +0) and maxnum / minnum
@@ -529,17 +635,20 @@ void FuncGenX64::emitOp(Operation &op) {
       })
       .Case<LL::ZeroOp, LL::UndefOp, LL::PoisonOp>([&](auto z) {
         if (!isAggregate(z.getType()) && sizeOf(z.getType()) <= 8) return;  // made at each use
-        uint64_t n = std::max<uint64_t>((sizeOf(z.getType()) + 7) & ~uint64_t(7), 8);
-        a.xor_(T1, T1);
-        for (uint64_t i = 0; i < n; i += 8) st(T1, of(z.getResult()) + i);
+        if (lazyChainOps.count(z.getOperation())) return;  // made at the call
+        if (!isa<LL::ZeroOp>(z.getOperation())) return;  // undef: any bits (as LLVM)
+        if (storedZero(z.getResult())) return;  // each store writes the zeros
+        zeroBytes(X::RSP, of(z.getResult()), std::max<uint64_t>((sizeOf(z.getType()) + 7) & ~uint64_t(7), 8));
       })
       .Case<LL::AddressOfOp>([&](auto ad) {
+        if (lazyChainOps.count(ad.getOperation())) return;  // made at the call
+        unsigned d = dst(ad.getResult(), T1);
         unsigned sym = w.symbol(symName(ad.getGlobalName()));
         if (mg.isDefinedData(ad.getGlobalName()))
-          w.reloc(Sect::Text, a.leaRip(T1), Reloc::Pc32, sym);
+          w.reloc(Sect::Text, a.leaRip(d), Reloc::Pc32, sym);
         else
-          w.reloc(Sect::Text, a.loadRip(T1), Reloc::GotPc32, sym);
-        put(T1, ad.getResult());
+          w.reloc(Sect::Text, a.loadRip(d), Reloc::GotPc32, sym);
+        putRaw(d, ad.getResult());
       })
       .Case<LL::AddOp>([&](auto) { bin([&](unsigned d, unsigned s) { a.add(d, s); }); })
       .Case<LL::SubOp>([&](auto) { bin([&](unsigned d, unsigned s) { a.sub(d, s); }); })
@@ -555,11 +664,8 @@ void FuncGenX64::emitOp(Operation &op) {
       .Case<LL::URemOp>([&](auto) { divide(false, true); })
       .Case<LL::SRemOp>([&](auto) { divide(true, true); })
       .Case<LL::ICmpOp>([&](auto c) {
-        bool sgn = isSignedPred(c.getPredicate());
-        unsigned l = sgn ? srcSigned(c.getLhs(), T1) : src(c.getLhs(), T1);
-        unsigned r = sgn ? srcSigned(c.getRhs(), T2) : src(c.getRhs(), T2);
-        a.cmp(l, r);
-        if (fusedCmp.count(c.getOperation())) return;  // the cond_br jumps on the flags
+        if (fusedCmp.count(c.getOperation())) return;  // compared at the cond_br
+        cmpFlags(c);
         unsigned d = dst(c.getResult(), T1);
         a.setcc(icmpCC(c.getPredicate()), d);
         a.movzx8(d, d);
@@ -587,9 +693,13 @@ void FuncGenX64::emitOp(Operation &op) {
         putRaw(d, s.getResult());
       })
       .Case<LL::ZExtOp, LL::TruncOp, LL::PtrToIntOp, LL::IntToPtrOp, LL::AddrSpaceCastOp>([&](auto c) {
+        if (fusedCmp.count(c.getOperation())) return;  // tested at the cond_br
         unsigned d = dst(c.getResult(), T1);
         get(d, c.getArg());
-        put(d, c.getResult());
+        if (intWidth(c.getResult().getType()) < intWidth(c.getArg().getType()))
+          put(d, c.getResult());  // trunc: keep the low bits
+        else
+          putRaw(d, c.getResult());  // zext and pointer casts: already canonical
       })
       .Case<LL::SExtOp>([&](auto c) {
         unsigned d = dst(c.getResult(), T1);
@@ -713,33 +823,41 @@ void FuncGenX64::emitOp(Operation &op) {
         putF(XF1, c.getResult());
       })
       .Case<LL::LoadOp>([&](auto l) {
+        if (lazyLoad.count(l.getOperation())) return;  // read at each use
         Type t = l.getType();
-        unsigned ar = src(l.getAddr(), T3);
+        uint64_t ao;
+        unsigned ar = addrReg(l.getAddr(), T3, ao);
         if (isAggregate(t)) {
-          copyBytes(X::RSP, of(l.getResult()), ar, 0, sizeOf(t));
+          copyBytes(X::RSP, of(l.getResult()), ar, ao, sizeOf(t));
           return;
         }
         unsigned d = dst(l.getResult(), T1);
-        a.load(d, ar, 0, unsigned(sizeOf(t)));  // atomic loads are plain loads on x86
-        if (intWidth(t) == 1) {
-          a.movImm(T2, 1);
-          a.and_(d, T2);
-        }
+        a.load(d, ar, d32(ao), unsigned(sizeOf(t)));  // atomic loads are plain loads on x86
+        if (intWidth(t) == 1) a.andImm(d, 1);
         putRaw(d, l.getResult());
       })
       .Case<LL::StoreOp>([&](auto s) {
         Type t = s.getValue().getType();
-        unsigned ar = src(s.getAddr(), T3);
+        uint64_t so;
+        unsigned ar = addrReg(s.getAddr(), T3, so);
         if (isAggregate(t)) {
-          copyBytes(ar, 0, X::RSP, of(s.getValue()), sizeOf(t));
+          if (storedZero(s.getValue())) {
+            zeroBytes(ar, so, sizeOf(t));
+            return;
+          }
+          auto [vb, vo] = aggAt(s.getValue(), T2);
+          copyBytes(ar, so, vb, vo, sizeOf(t));
           return;
         }
         unsigned sz = unsigned(sizeOf(t));
+        uint64_t bits;
         if (s.getOrdering() == LL::AtomicOrdering::seq_cst) {
-          get(T1, s.getValue());  // xchg writes its register
+          get(T1, s.getValue());  // xchg writes its register (never a folded address)
           a.xchg(T1, ar, sz);
+        } else if (constBits(s.getValue(), bits) && (sz < 8 || int64_t(bits) == int64_t(int32_t(bits)))) {
+          a.storeImm(ar, d32(so), sz, int32_t(bits));
         } else {
-          a.store(src(s.getValue(), T1), ar, 0, sz);
+          a.store(src(s.getValue(), T1), ar, d32(so), sz);
         }
       })
       .Case<LL::AllocaOp>([&](auto al) {
@@ -748,6 +866,7 @@ void FuncGenX64::emitOp(Operation &op) {
         putRaw(d, al.getResult());
       })
       .Case<LL::GEPOp>([&](auto g) {
+        if (foldGep.count(g.getOperation())) return;  // folded into its loads and stores
         unsigned d = dst(g.getResult(), T1);
         get(d, g.getBase());
         Type et = g.getElemType();
@@ -774,10 +893,15 @@ void FuncGenX64::emitOp(Operation &op) {
             constOff += ia.getInt() * int64_t(scale);
           } else {
             unsigned ir = srcSigned(llvm::cast<Value>(idx), T2);
+            if (scale == 0) continue;
             if (scale != 1) {
               if (ir != T2) a.mov(T2, ir);
-              a.movImm(T3, scale);
-              a.imul(T2, T3);
+              if (llvm::isPowerOf2_64(scale)) {
+                a.shiftImm(4, T2, uint8_t(llvm::Log2_64(scale)));
+              } else {
+                a.movImm(T3, scale);
+                a.imul(T2, T3);
+              }
               ir = T2;
             }
             a.add(d, ir);
@@ -793,26 +917,32 @@ void FuncGenX64::emitOp(Operation &op) {
       })
       .Case<LL::ExtractValueOp>([&](auto x) {
         auto [off, t] = elementAt(x.getContainer().getType(), x.getPosition());
-        uint64_t src = of(x.getContainer()) + off;
+        auto [base, at] = aggAt(x.getContainer(), T3);
         if (isAggregate(t)) {
-          copyBytes(X::RSP, of(x.getResult()), X::RSP, src, std::max<uint64_t>((sizeOf(t) + 7) & ~uint64_t(7), 8));
+          copyBytes(X::RSP, of(x.getResult()), base, at + off, std::max<uint64_t>((sizeOf(t) + 7) & ~uint64_t(7), 8));
           return;
         }
-        a.load(T1, X::RSP, d32(src), unsigned(sizeOf(t)));
-        putRaw(T1, x.getResult());
+        unsigned d = dst(x.getResult(), T1);
+        a.load(d, base, d32(at + off), unsigned(sizeOf(t)));
+        putRaw(d, x.getResult());
       })
       .Case<LL::InsertValueOp>([&](auto ins) {
+        if (lazyChainOps.count(ins.getOperation())) return;  // made at the call
         Type at = ins.getType();
         uint64_t sz = std::max<uint64_t>((sizeOf(at) + 7) & ~uint64_t(7), 8);
-        copyBytes(X::RSP, of(ins.getResult()), X::RSP, of(ins.getContainer()), sz);
+        copyBytes(X::RSP, of(ins.getResult()), X::RSP, of(ins.getContainer()), sz);  // nothing when updated in place (layout)
         auto [off, t] = elementAt(at, ins.getPosition());
         uint64_t dst = of(ins.getResult()) + off;
         if (isAggregate(t)) {
           copyBytes(X::RSP, dst, X::RSP, of(ins.getValue()), sizeOf(t));
           return;
         }
-        get(T1, ins.getValue());
-        a.store(T1, X::RSP, d32(dst), unsigned(sizeOf(t)));
+        uint64_t bits;
+        unsigned sz1 = unsigned(sizeOf(t));
+        if (constBits(ins.getValue(), bits) && (sz1 < 8 || int64_t(bits) == int64_t(int32_t(bits))))
+          a.storeImm(X::RSP, d32(dst), sz1, int32_t(bits));
+        else
+          a.store(src(ins.getValue(), T1), X::RSP, d32(dst), sz1);
       })
       .Case<LL::CallOp>([&](auto c) { emitCall(c); })
       .Case<LL::MemcpyOp, LL::MemmoveOp>([&](auto m) {
@@ -896,20 +1026,31 @@ void FuncGenX64::emitOp(Operation &op) {
         if (b.getDest() != nextBlock) branchTo(b.getDest());
       })
       .Case<LL::CondBrOp>([&](auto c) {
+        if (auto d = decidedBr.find(c.getOperation()); d != decidedBr.end()) {
+          // A nil check of a pointer known to be non-nil here.
+          if (d->second != nextBlock) branchTo(d->second);
+          return;
+        }
         X::CC cc = X::NE;
         if (auto ic = c.getCondition().template getDefiningOp<LL::ICmpOp>(); ic && fusedCmp.count(ic)) {
+          cmpFlags(ic);
           cc = icmpCC(ic.getPredicate());
+        } else if (auto tr = c.getCondition().template getDefiningOp<LL::TruncOp>(); tr && fusedCmp.count(tr)) {
+          unsigned cr = src(tr.getArg(), T3);  // the bool byte itself (0 or 1)
+          a.test(cr, cr);
         } else {
           unsigned cr = src(c.getCondition(), T3);
           a.test(cr, cr);
         }
         Block *t = c.getTrueDest(), *f = c.getFalseDest();
-        if (c.getTrueDestOperands().empty()) {
-          fixups.push_back({a.jcc(cc), t});
+        if (c.getTrueDestOperands().empty() && c.getFalseDestOperands().empty() && t == nextBlock) {
+          jccTo(X::CC(cc ^ 1), f);  // falls through into the true block
+        } else if (c.getTrueDestOperands().empty()) {
+          jccTo(cc, t);
           edgeMoves(f, c.getFalseDestOperands());
           if (f != nextBlock) branchTo(f);
         } else if (c.getFalseDestOperands().empty()) {
-          fixups.push_back({a.jcc(X::CC(cc ^ 1)), f});
+          jccTo(X::CC(cc ^ 1), f);
           edgeMoves(t, c.getTrueDestOperands());
           if (t != nextBlock) branchTo(t);
         } else {
@@ -1191,16 +1332,13 @@ void FuncGenX64::emitIntrinsic(LL::CallIntrinsicOp c) {
 void FuncGenX64::run() {
   if (fn.isVarArg()) unsupported("variadic function");
   mg.checkFunction(fn);
-  fn.walk([&](LL::CondBrOp c) {
-    auto ic = c.getCondition().getDefiningOp<LL::ICmpOp>();
-    if (ic && ic->getNextNode() == c.getOperation() && ic->hasOneUse() && !isWide(ic.getLhs().getType()))
-      fusedCmp.insert(ic.getOperation());
-  });
-  static const unsigned regs[] = {X::RBX, X::R12, X::R13, X::R14, X::R15};
-  home = linearScan(fn, regs, fusedCmp, mg.returnsTwice);
-  for (auto [v, r] : home) calleeUsed |= 1u << r;
+  analyze();
+  allocate();
+  minTemp = 8;  // the x87 result spill
   layout();
   uint64_t start = a.here();
+  fnStart = start;
+  computeStackMaps();
   std::vector<ModuleGen::Row> rows;
   auto row = [&](Location l) {
     auto r = lineOf(l);
@@ -1212,20 +1350,34 @@ void FuncGenX64::run() {
     rows.push_back({at, r->second, file});
   };
   row(fn.getLoc());
+  std::map<std::string, uint64_t> ob;
+  uint64_t was = a.here();
   prologue();
+  if (opStatsOn) ob["prologue"] += a.here() - was;
   for (Block &b : fn.getBody()) {
+    if (deadBlock.count(&b)) continue;
     blockStart[&b] = a.here();
     nextBlock = b.getNextNode();
+    while (nextBlock && deadBlock.count(nextBlock)) nextBlock = nextBlock->getNextNode();
     for (Operation &op : b) {
       row(op.getLoc());
+      was = a.here();
       emitOp(op);
+      if (opStatsOn) {
+        bool agg = llvm::any_of(op.getResultTypes(), isAggregate) || llvm::any_of(op.getOperandTypes(), isAggregate);
+        ob[op.getName().getStringRef().str() + (agg ? ".agg" : "")] += a.here() - was;
+      }
     }
+  }
+  if (opStatsOn) {
+    std::lock_guard<std::mutex> l(opBytesMu);
+    for (auto &[k, v] : ob) opBytesAll[k] += v;
   }
   for (const Fixup &f : fixups) patch32(f.field, int64_t(blockStart[f.dest]));
   auto lk = fn.getLinkage();
   std::string sym = symName(fn.getSymName());
   w.define(sym, Sect::Text, start, !isLocalLinkage(lk), isWeakLinkage(lk), isHidden(fn));
-  mg.lines.push_back({w.symbol(sym), a.here() - start, std::move(rows)});
+  mg.lines.push_back({w.symbol(sym), a.here() - start, std::move(rows), std::move(smaps), std::move(smSites)});
 }
 
 } // namespace

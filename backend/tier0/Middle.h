@@ -15,6 +15,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 
 #include <map>
 #include <vector>
@@ -24,11 +25,13 @@ namespace tier0 {
 
 // Values to registers (from regs, all below 32); values of the operations in
 // skip are never materialized. Values that no call, memory intrinsic or
-// return meets after their definition may take the low registers first.
+// return meets after their definition may take the low registers first;
+// clobbersLow names other operations that write them (library calls).
 llvm::DenseMap<Value, unsigned> linearScan(LL::LLVMFuncOp fn, llvm::ArrayRef<unsigned> regs,
                                            const llvm::DenseSet<Operation *> &skip,
                                            const llvm::DenseSet<StringAttr> &twice,
-                                           llvm::ArrayRef<unsigned> low = {});
+                                           llvm::ArrayRef<unsigned> low = {},
+                                           llvm::function_ref<bool(Operation &)> clobbersLow = nullptr);
 bool callsReturnsTwice(LL::LLVMFuncOp fn, const llvm::DenseSet<StringAttr> &twice);
 
 class FuncPlan {
@@ -73,6 +76,7 @@ protected:
   uint64_t frameSize = 0, tempArea = 0, tempSize = 0;
   uint64_t sretSlot = 0;  // where the incoming result pointer is kept, when the result is returned in memory
   bool sret = false;
+  uint64_t minTemp = 0;   // least size of the temporary area (x86-64: the x87 result spill)
 
   // Fused compares, decided nil checks, lazy aggregate arguments, folded
   // GEPs and lazy loads.

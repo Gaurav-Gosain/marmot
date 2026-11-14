@@ -40,7 +40,8 @@ static bool raOff() {
 llvm::DenseMap<Value, unsigned> linearScan(LL::LLVMFuncOp fn, llvm::ArrayRef<unsigned> regs,
                                            const llvm::DenseSet<Operation *> &skip,
                                            const llvm::DenseSet<StringAttr> &twice,
-                                           llvm::ArrayRef<unsigned> low) {
+                                           llvm::ArrayRef<unsigned> low,
+                                           llvm::function_ref<bool(Operation &)> clobbersLow) {
   llvm::DenseMap<Value, unsigned> res;
   if (raOff() || callsReturnsTwice(fn, twice)) return res;
   llvm::DenseMap<Value, unsigned> idx;
@@ -73,7 +74,8 @@ llvm::DenseMap<Value, unsigned> linearScan(LL::LLVMFuncOp fn, llvm::ArrayRef<uns
     for (BlockArgument a : b.getArguments()) cand(a, i, start);
     for (Operation &op : b) {
       unsigned at = p++;
-      if (isa<LL::CallOp, LL::MemcpyOp, LL::MemmoveOp, LL::MemsetOp, LL::ReturnOp>(op)) barrier.push_back(at);
+      if (isa<LL::CallOp, LL::MemcpyOp, LL::MemmoveOp, LL::MemsetOp, LL::ReturnOp>(op) || (clobbersLow && clobbersLow(op)))
+        barrier.push_back(at);
       llvm::SmallVector<Value, 4> used(op.getOperands());
       // A skipped operation (a fused compare, a lazy load) is emitted at its
       // users: its operands live there.
@@ -387,7 +389,7 @@ void FuncPlan::layout() {
     for (BlockArgument a : b.getArguments()) n += (sizeOf(a.getType()) + 7) & ~uint64_t(7);
     tempSize = std::max(tempSize, n);
   }
-  tempArea = alloc(tempSize, 8);
+  tempArea = alloc(std::max(tempSize, minTemp), 8);
   frameSize = (frameSize + 15) & ~uint64_t(15);
 }
 
