@@ -1,0 +1,13 @@
+"toast" "full" 7 5 map[a:[b]]
+"after" "s" 9 7 "y"
+{Name:n Notif:{RateLimitMS:3 BellRate:0 Bell: Style:whole} Keys:map[] Grid:[[0 0] [0 0] [0 0]] Tags:[t0 t1 T2 t3]}
+[[1 2] [30 4] [50 60]] [run b c const]
+[[1 2] [30 4] [50 60]] [a run c const]
+31
+{Name:e Notif:{RateLimitMS:1 BellRate:2 Bell:escaped Style:run time} Keys:map[] Grid:[[0 0] [0 0] [0 0]] Tags:[1 2 3 4]}
+{1 2 i0 y} [[0 0] [0 0] [0 0]]
+{1 2 i1 one} [[0 0] [0 1] [0 0]]
+{1 2 i2 y} [[0 0] [0 0] [0 2]]
+7 {0 0  replaced} {5 6 changed c} {0 0  } {13 14 g g}
+{RateLimitMS:1 BellRate:2 Bell:from init Style:gs}
+mutated toast true

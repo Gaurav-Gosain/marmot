@@ -49,6 +49,7 @@ func (g *gen) genDecls() {
 	g.decls = append(g.decls, "type pt struct {\n\ta int\n\tb float64\n\tc string\n}\n")
 	g.decls = append(g.decls, "type mkey struct {\n\ta int8\n\tb string\n\tc [2]uint8\n}\n")
 	g.decls = append(g.decls, "type smallKey [3]int16\n")
+	g.decls = append(g.decls, "type lnote struct {\n\ta, b int\n\ts, t string\n}\n\ntype lcfg struct {\n\tn   string\n\tno  lnote\n\tarr [3]lnote\n\tg   [2][2]int\n\tk   int8\n}\n")
 	g.decls = append(g.decls, "var sinkF [][]int\n\n//go:noinline\nfunc junkF(n int) {\n\tj := make([]int, n)\n\tfor i := range j {\n\t\tj[i] = -1 - i\n\t}\n\tsinkF = append(sinkF, j)\n\tif len(sinkF) > 6 {\n\t\tsinkF = sinkF[1:]\n\t}\n}\n")
 	g.decls = append(g.decls, "type tn struct {\n\tv    int\n\tl, r *tn\n\td    []int\n}\n\n//go:noinline\nfunc buildT(d, c int) *tn {\n\tn := &tn{v: d, d: make([]int, 2, c)}\n\tn.d[0], n.d[1] = d, d*2\n\tif d > 0 {\n\t\tn.l, n.r = buildT(d-1, c), buildT(d-1, c)\n\t}\n\treturn n\n}\n\nfunc sumT(n *tn) int {\n\tif n == nil {\n\t\treturn 0\n\t}\n\treturn n.v + n.d[0] + n.d[1] + sumT(n.l) + sumT(n.r)\n}\n")
 }
@@ -76,6 +77,10 @@ func (g *gen) jvalue(t string) string {
 func (g *gen) ext2Stmt() {
 	i := fmt.Sprintf("%d", len(g.lines))
 	k := g.r.Intn(8)
+	if g.r.Intn(6) == 0 {
+		g.litMutate()
+		return
+	}
 	if *flMem && g.r.Intn(3) == 0 {
 		k = 8 + g.r.Intn(3)
 	}
@@ -300,4 +305,99 @@ func (g *gen) fmtLine() {
 	default:
 		g.emit(`fmt.Printf("%%v|%%T|%%t|%%5t|%%v\n", %s, %s, %s != 0, %s == 0, []int{int(%s), 2})`, g.anyVar(), g.anyVar(), g.anyVar(), g.anyVar(), g.anyVar())
 	}
+}
+
+// litMutate builds a composite literal of nested structs and arrays with
+// constant fields, then writes into it: fields, nested fields, elements
+// and whole nested values, with constant and run-time values, sometimes in
+// a loop and through a pointer. Constant literal images (codegen
+// litcopy.go) once dropped a constant store into a field after the field's
+// own literal.
+func (g *gen) litMutate() {
+	note := func() string {
+		var fs []string
+		if g.r.Intn(2) == 0 {
+			fs = append(fs, fmt.Sprintf("a: %d", g.r.Intn(50)))
+		}
+		if g.r.Intn(2) == 0 {
+			fs = append(fs, fmt.Sprintf("b: %d", g.r.Intn(50)))
+		}
+		if g.r.Intn(2) == 0 {
+			fs = append(fs, "s: "+strPool[g.r.Intn(len(strPool))])
+		}
+		if g.r.Intn(2) == 0 {
+			fs = append(fs, "t: "+strPool[g.r.Intn(len(strPool))])
+		}
+		return "lnote{" + strings.Join(fs, ", ") + "}"
+	}
+	var fs []string
+	fs = append(fs, "n: "+strPool[g.r.Intn(len(strPool))])
+	if g.r.Intn(3) > 0 {
+		fs = append(fs, "no: "+note())
+	}
+	if g.r.Intn(2) == 0 {
+		fs = append(fs, fmt.Sprintf("arr: [3]lnote{%s, %s, %s}", note(), note(), note()))
+	}
+	if g.r.Intn(2) == 0 {
+		fs = append(fs, fmt.Sprintf("g: [2][2]int{{%d, %d}, {%d, %d}}", g.r.Intn(9), g.r.Intn(9), g.r.Intn(9), g.r.Intn(9)))
+	}
+	lit := "lcfg{" + strings.Join(fs, ", ") + "}"
+	ptr := g.r.Intn(2) == 0
+	loop := g.r.Intn(3) == 0
+	g.emit("{")
+	ind := "\t"
+	if loop {
+		g.emit("\tfor it := 0; it < 3; it++ {")
+		ind = "\t\t"
+	}
+	if ptr {
+		g.emit("%sc := &%s", ind, lit)
+	} else {
+		g.emit("%sc := %s", ind, lit)
+	}
+	val := func(kind string) string {
+		dyn := g.r.Intn(3) == 0
+		switch kind {
+		case "int":
+			if dyn {
+				return "int(" + g.anyVar() + ")"
+			}
+			return fmt.Sprint(g.r.Intn(90))
+		case "string":
+			if dyn {
+				return "fmt.Sprint(" + g.anyVar() + ")"
+			}
+			return strPool[g.r.Intn(len(strPool))]
+		}
+		return note()
+	}
+	for n := 1 + g.r.Intn(4); n > 0; n-- {
+		e := fmt.Sprint(g.r.Intn(3))
+		switch g.r.Intn(8) {
+		case 0:
+			g.emit("%sc.n = %s", ind, val("string"))
+		case 1:
+			g.emit("%sc.no.s = %s", ind, val("string"))
+		case 2:
+			g.emit("%sc.no.a = %s", ind, val("int"))
+		case 3:
+			g.emit("%sc.no = %s", ind, val("note"))
+		case 4:
+			g.emit("%sc.arr[%s].t = %s", ind, e, val("string"))
+		case 5:
+			g.emit("%sc.arr[%s] = %s", ind, e, val("note"))
+		case 6:
+			g.emit("%sc.g[%d][%d] = %s", ind, g.r.Intn(2), g.r.Intn(2), val("int"))
+		case 7:
+			g.emit("%sc.k = int8(%s)", ind, val("int"))
+		}
+	}
+	if loop {
+		g.emit("%sc.no.b += it", ind)
+	}
+	g.emit("%sfmt.Printf(\"%%+v\\n\", %sc)", ind, map[bool]string{true: "*", false: ""}[ptr])
+	if loop {
+		g.emit("\t}")
+	}
+	g.emit("}")
 }
