@@ -1,7 +1,9 @@
-// Profiling API. marmot records no profiles: the functions exist so that
-// runtime/pprof and testing (which imports it) build, and they report
-// empty profiles. Goroutine profile labels are kept, so pprof.Do and
-// pprof.Label work within a goroutine. Compiled only by marmot.
+// Profiling API. The memory profile is recorded (the C core samples one
+// allocation per MemProfileRate bytes from its allocation slow path); the
+// other profiles exist so that runtime/pprof and testing (which imports it)
+// build, and they report empty profiles. Goroutine profile labels are
+// kept, so pprof.Do and pprof.Label work within a goroutine. Compiled only
+// by marmot.
 
 package runtime
 
@@ -10,9 +12,63 @@ import (
 	"unsafe"
 )
 
-// MemProfileRate controls the fraction of allocations that are recorded.
-// marmot records none.
+// MemProfileRate controls the fraction of allocations that are recorded:
+// on average one per MemProfileRate bytes allocated; 0 records none.
 var MemProfileRate int = 512 * 1024
+
+//go:linkname rt_memprof_init rt_memprof_init
+func rt_memprof_init(rate *int)
+
+//go:linkname rt_memprof_read rt_memprof_read
+func rt_memprof_read(out unsafe.Pointer, n int, inuseZero int32) int
+
+// memprofRec is rt_memprof_rec (memprof.c).
+type memprofRec struct {
+	allocBytes, freeBytes, allocObjects, freeObjects int64
+	nstk                                             int64
+	stk                                              [32]uintptr
+}
+
+func init() { rt_memprof_init(&MemProfileRate) }
+
+func inRuntime(name string) bool { return len(name) > 8 && name[:8] == "runtime." }
+
+// memprofRecords reads the C core's buckets. Each stack starts at the
+// allocating function, as gc's: the frames of the C core (no pc table
+// entry) and of package runtime before it are dropped.
+func memprofRecords(inuseZero bool) []memprofRec {
+	z := int32(0)
+	if inuseZero {
+		z = 1
+	}
+	n := rt_memprof_read(nil, 0, z)
+	for {
+		recs := make([]memprofRec, n+n/4+8)
+		m := rt_memprof_read(unsafe.Pointer(&recs[0]), len(recs), z)
+		if m <= len(recs) {
+			recs = recs[:m]
+			var fr [maxInlineDepth]pcInfo
+			for i := range recs {
+				r := &recs[i]
+				k := 0
+				for k < int(r.nstk) {
+					m := pcFrames(r.stk[k]-1, fr[:])
+					if m > 0 && !inRuntime(fr[m-1].namePrefix+fr[m-1].name) {
+						break
+					}
+					k++
+				}
+				copy(r.stk[:], r.stk[k:r.nstk])
+				r.nstk -= int64(k)
+				for j := r.nstk; j < int64(len(r.stk)); j++ {
+					r.stk[j] = 0
+				}
+			}
+			return recs
+		}
+		n = m
+	}
+}
 
 // StackRecord describes a single execution stack.
 type StackRecord struct {
@@ -60,9 +116,19 @@ type BlockProfileRecord struct {
 	StackRecord
 }
 
-// MemProfile returns a profile of memory allocated and freed. It is always
-// empty.
-func MemProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool) { return 0, true }
+// MemProfile returns a profile of memory allocated and freed: n records, or
+// ok false (and the needed n) when p is too small.
+func MemProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
+	recs := memprofRecords(inuseZero)
+	if len(recs) > len(p) {
+		return len(recs), false
+	}
+	for i, r := range recs {
+		p[i] = MemProfileRecord{AllocBytes: r.allocBytes, FreeBytes: r.freeBytes,
+			AllocObjects: r.allocObjects, FreeObjects: r.freeObjects, Stack0: r.stk}
+	}
+	return len(recs), true
+}
 
 // BlockProfile returns the blocking profile. It is always empty.
 func BlockProfile(p []BlockProfileRecord) (n int, ok bool) { return 0, true }
@@ -131,7 +197,20 @@ func pprof_goroutineLeakProfileWithLabels(p []profilerecord.StackRecord, labels 
 
 //go:linkname pprof_memProfileInternal
 func pprof_memProfileInternal(p []profilerecord.MemProfileRecord, inuseZero bool) (n int, ok bool) {
-	return 0, true
+	recs := memprofRecords(inuseZero)
+	if len(recs) > len(p) {
+		return len(recs), false
+	}
+	for i := range recs {
+		r := &recs[i]
+		size := int64(0)
+		if r.allocObjects > 0 {
+			size = r.allocBytes / r.allocObjects // one size per bucket
+		}
+		p[i] = profilerecord.MemProfileRecord{ObjectSize: size, AllocObjects: r.allocObjects,
+			FreeObjects: r.freeObjects, Stack: append([]uintptr(nil), r.stk[:r.nstk]...)}
+	}
+	return len(recs), true
 }
 
 //go:linkname pprof_blockProfileInternal
