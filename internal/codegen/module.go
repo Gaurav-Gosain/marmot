@@ -20,7 +20,12 @@ type moduleGen struct {
 	// first part defines the package's own type descriptors (and their
 	// method tables and wrappers), the others declare them.
 	laterPart bool
-	tm  *typeMapper
+	// helpers, set for the parts after the first, collects the shared code
+	// (linkonce type descriptors and functions: instances, wrappers) the
+	// part uses: the part declares it, and the package's helper part
+	// defines it once (helperpart.go).
+	helpers *helperSet
+	tm      *typeMapper
 
 	defs         textBuf           // definitions: globals and functions
 	spare        [][]byte          // storage of written function buffers, for reuse
@@ -118,10 +123,14 @@ func (p *Program) GenerateParts(pkg *ssa.Package, partInstrs int) ([]Module, err
 	}
 	mods := make([]Module, len(parts))
 	errs := make([]error, len(parts))
+	sets := make([]*helperSet, len(parts))
 	var wg sync.WaitGroup
 	for i := range parts {
+		if i > 0 && !noHelperPart {
+			sets[i] = newHelperSet()
+		}
 		wg.Go(func() {
-			mods[i], errs[i] = p.generatePart(pkg, parts[i], i == 0, pkg.Pkg.Path())
+			mods[i], errs[i] = p.generatePart(pkg, parts[i], i == 0, pkg.Pkg.Path(), sets[i])
 		})
 	}
 	wg.Wait()
@@ -129,6 +138,13 @@ func (p *Program) GenerateParts(pkg *ssa.Package, partInstrs int) ([]Module, err
 		if e != nil {
 			return nil, e
 		}
+	}
+	if h := mergeHelpers(sets[1:]); h != nil {
+		hm, err := p.generateHelpers(pkg, h)
+		if err != nil {
+			return nil, err
+		}
+		mods = append(mods, hm)
 	}
 	return mods, nil
 }
@@ -153,9 +169,10 @@ func funcInstrs(fn *ssa.Function) int {
 
 // generatePart emits fns of pkg as one module; the first part also holds
 // the globals, the static data and the package init.
-func (p *Program) generatePart(pkg *ssa.Package, fns []*ssa.Function, first bool, name string) (Module, error) {
+func (p *Program) generatePart(pkg *ssa.Package, fns []*ssa.Function, first bool, name string, helpers *helperSet) (Module, error) {
 	m := p.newModule(pkg)
 	m.laterPart = !first
+	m.helpers = helpers
 	if first {
 		m.static = m.analyzeStaticInit(pkg)
 	} else {
@@ -280,6 +297,11 @@ func (m *moduleGen) funcRef(fn *ssa.Function) string {
 		return sym
 	}
 	if owner := m.p.owner[fn]; owner == nil && len(fn.Blocks) > 0 {
+		if m.helpers != nil {
+			m.helpers.addFunc(sym, fn)
+			m.declare(sym, fn)
+			return sym
+		}
 		m.defined[sym] = true
 		m.queue = append(m.queue, fn)
 		return sym

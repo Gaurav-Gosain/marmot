@@ -230,6 +230,14 @@ func (m *moduleGen) typeDescSym(t types.Type) string {
 		}
 		return sym
 	}
+	if m.helpers != nil {
+		// Defined by the package's helper part.
+		m.helpers.addType(sym, t)
+		if _, ok := m.decls[sym]; !ok {
+			m.decls[sym] = fmt.Sprintf("  llvm.mlir.global external constant %s() {addr_space = 0 : i32} : !llvm.ptr\n", mlir.Symbol(sym))
+		}
+		return sym
+	}
 	m.defined[sym] = true
 	m.emitTypeDesc(sym, t)
 	switch t.(type) {
