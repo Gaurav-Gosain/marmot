@@ -204,6 +204,14 @@ static void span_struct_free(mspan *s) {
   fixalloc_free(&span_alloc, s);
 }
 
+// A merged span is released only if both halves were; a released half
+// merged into an unreleased one counts as backed again (its pages are
+// released again by the next scavenge, which counts them then).
+static void merge_released(mspan *s, mspan *o) {
+  if (s->released != o->released) heap_released -= (s->released ? s->npages : o->npages) * PAGE_SIZE;
+  s->released &= o->released;
+}
+
 // Insert a free span, merging with free neighbors. The page map entries on
 // both sides of s must be current (they are boundaries of other spans).
 static void free_span_insert(mspan *s) {
@@ -212,10 +220,10 @@ static void free_span_insert(mspan *s) {
     mspan *l = pagemap_get(s->base - 1);
     if (l && l->state == SPAN_FREE && l->limit == s->base) {
       freelist_remove(l);
+      merge_released(s, l);
       s->base = l->base;
       s->npages += l->npages;
       s->needzero |= l->needzero;
-      s->released &= l->released;
       span_struct_free(l);
     }
   }
@@ -223,9 +231,9 @@ static void free_span_insert(mspan *s) {
     mspan *r = pagemap_get(s->limit);
     if (r && r->state == SPAN_FREE && r->base == s->limit) {
       freelist_remove(r);
+      merge_released(s, r);
       s->npages += r->npages;
       s->needzero |= r->needzero;
-      s->released &= r->released;
       span_struct_free(r);
     }
   }

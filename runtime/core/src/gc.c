@@ -17,7 +17,7 @@
 
 static rt_mutex gc_mu;
 uint32_t gc_mu_state(void) { return __atomic_load_n((uint32_t *)&gc_mu.state, __ATOMIC_RELAXED); }
-static bool gc_trace;
+static int gc_trace;  // MARMOT_GCTRACE: 1 a line per cycle, 2 also the heap by size class
 static _Atomic uint64_t num_gc;
 static uint64_t pause_total_ns;
 
@@ -824,6 +824,51 @@ static void sweep_all(void) {
 
 // ---- collection ----
 
+// MARMOT_GCTRACE=2: span bytes against live bytes by size class (after the
+// sweep), the classes that waste the most first, and large objects.
+NOINLINE static void gc_print_classes(void) {
+  uint64_t span[NUM_CLASSES] = {0}, used[NUM_CLASSES] = {0}, nspans[NUM_CLASSES] = {0};
+  spin_lock(&heap_lock);
+  for (int32_t i = 0; i < nallspans; i++) {
+    mspan *s = allspans[i];
+    if (s->cls >= NUM_CLASSES) continue;
+    span[s->cls] += s->npages * PAGE_SIZE;
+    used[s->cls] += (uint64_t)s->swept_live * s->elemsize;
+    nspans[s->cls]++;
+  }
+  spin_unlock(&heap_lock);
+  uint64_t ts = 0, tu = 0;
+  for (int c = 0; c < NUM_CLASSES; c++) ts += span[c], tu += used[c];
+  rt_print("  heap by class: spans ");
+  rt_printu(ts >> 10);
+  rt_print(" KiB, live ");
+  rt_printu(tu >> 10);
+  rt_print(" KiB; large objects ");
+  rt_printu(span[0] >> 10);
+  rt_print(" KiB in ");
+  rt_printu(nspans[0]);
+  rt_print(" spans\n");
+  bool shown[NUM_CLASSES] = {false};
+  for (int k = 0; k < 10; k++) {
+    int best = -1;
+    for (int c = 1; c < NUM_CLASSES; c++)
+      if (!shown[c] && (best < 0 || span[c] - used[c] > span[best] - used[best])) best = c;
+    if (best < 0 || span[best] == used[best]) break;
+    shown[best] = true;
+    rt_print("    class ");
+    rt_printu((uint64_t)best);
+    rt_print(" (");
+    rt_printu(rt_class_size[best]);
+    rt_print(" B): ");
+    rt_printu(nspans[best]);
+    rt_print(" spans, ");
+    rt_printu(span[best] >> 10);
+    rt_print(" KiB, live ");
+    rt_printu(used[best] >> 10);
+    rt_print(" KiB\n");
+  }
+}
+
 NOINLINE static void gc_print_trace(uint64_t before, uint64_t live, int64_t t0, int64_t t1,
                                   int64_t t2, int64_t t3, int64_t t4) {
   rt_print("gc ");
@@ -914,6 +959,7 @@ void gc_collect(bool forced) {
   int64_t t4 = os_nanotime();
   pause_total_ns += (uint64_t)(t4 - t0);
   if (UNLIKELY(gc_trace)) gc_print_trace(before, live, t0, t1, t2, t3, t4);
+  if (UNLIKELY(gc_trace >= 2)) gc_print_classes();
   bool wake = false;
   if (queued) {
     spin_lock(&fin_lock);
@@ -974,7 +1020,7 @@ RT_API int32_t rt_gc_set_percent(int32_t percent) {
 
 void gc_init(void) {
   const char *t = rt_getenv("MARMOT_GCTRACE");
-  gc_trace = t && *t == '1';
+  gc_trace = t && *t >= '1' && *t <= '9' ? *t - '0' : 0;
   if (gc_percent < 0) next_gc = UINT64_MAX;
 }
 
