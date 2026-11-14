@@ -832,7 +832,11 @@ NOINLINE static void gc_print_trace(uint64_t before, uint64_t live, int64_t t0, 
     rt_printu(workers[i].nscan);
     workers[i].nscan = 0;
   }
-  rt_print("\n");
+  rt_print(", heap ");
+  rt_printu(heap_sys >> 10);
+  rt_print(" KiB, released ");
+  rt_printu(heap_released >> 10);
+  rt_print(" KiB\n");
   }
 
 void gc_collect(bool forced) {
