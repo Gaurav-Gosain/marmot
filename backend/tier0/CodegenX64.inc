@@ -615,7 +615,7 @@ void FuncGenX64::emitOp(Operation &op) {
         a.cmov(X::NE, d, tv);
         putRaw(d, s.getResult());
       })
-      .Case<LL::ZExtOp, LL::TruncOp, LL::PtrToIntOp, LL::IntToPtrOp>([&](auto c) {
+      .Case<LL::ZExtOp, LL::TruncOp, LL::PtrToIntOp, LL::IntToPtrOp, LL::AddrSpaceCastOp>([&](auto c) {
         unsigned d = dst(c.getResult(), T1);
         get(d, c.getArg());
         put(d, c.getResult());

@@ -264,7 +264,18 @@ private:
   Type typeUncached() {
     skipSpace();
     const char *s = p;
-    if (consumeWord("ptr") || consumeWord("!llvm.ptr")) return LL::LLVMPointerType::get(ctx);
+    if (consumeWord("ptr") || consumeWord("!llvm.ptr")) {
+      // ptr<N>: an address space (MARMOT_GCPTR marks GC pointers ptr<1>).
+      unsigned as = 0;
+      if (p < end && *p == '<') {
+        ++p;
+        int64_t n = integer();
+        if (n < 0 || n > 0xffffff) fail("address space");
+        expect('>');
+        as = unsigned(n);
+      }
+      return LL::LLVMPointerType::get(ctx, as);
+    }
     if (p < end && *p == 'i' && p + 1 < end && isdigit(p[1])) {
       ++p;
       int64_t w = integer();
@@ -1074,6 +1085,7 @@ void Reader::operation() {
     else if (name == "llvm.trunc") op = cast(LL::TruncOp());
     else if (name == "llvm.ptrtoint") op = cast(LL::PtrToIntOp());
     else if (name == "llvm.inttoptr") op = cast(LL::IntToPtrOp());
+    else if (name == "llvm.addrspacecast") op = cast(LL::AddrSpaceCastOp());
     else if (name == "llvm.sitofp") op = cast(LL::SIToFPOp());
     else if (name == "llvm.uitofp") op = cast(LL::UIToFPOp());
     else if (name == "llvm.fptrunc") op = cast(LL::FPTruncOp());

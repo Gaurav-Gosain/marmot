@@ -441,7 +441,7 @@ ConstVal evalInitializer(LL::GlobalOp g) {
           (void)ft;
           vals[ins.getResult()] = std::move(cv);
         })
-        .Case<LL::PtrToIntOp, LL::IntToPtrOp, LL::BitcastOp>([&](auto c) {
+        .Case<LL::PtrToIntOp, LL::IntToPtrOp, LL::BitcastOp, LL::AddrSpaceCastOp>([&](auto c) {
           // The same 8 bytes (an address stays a relocation).
           if (sizeOf(c.getType()) != 8 || sizeOf(c.getArg().getType()) != 8) unsupported("narrowing constant cast");
           vals[c.getResult()] = take(c.getArg());
@@ -1827,7 +1827,7 @@ void FuncGen::emitOp(Operation &op) {
         e(csel(d, a, b, NE));
         putRaw(d, s.getResult());
       })
-      .Case<LL::ZExtOp, LL::TruncOp, LL::PtrToIntOp, LL::IntToPtrOp>([&](auto c) {
+      .Case<LL::ZExtOp, LL::TruncOp, LL::PtrToIntOp, LL::IntToPtrOp, LL::AddrSpaceCastOp>([&](auto c) {
         if (fusedCmp.count(c.getOperation())) return;  // tested at the cond_br
         unsigned a = src(c.getArg(), R1), d = dst(c.getResult(), R1);
         if (intWidth(c.getResult().getType()) < intWidth(c.getArg().getType())) {
@@ -3080,7 +3080,7 @@ static void dropUnused(ModuleOp module) {
               LL::UndefOp, LL::SelectOp, LL::AllocaOp, LL::AddOp, LL::SubOp, LL::MulOp, LL::AndOp, LL::OrOp,
               LL::XOrOp, LL::ShlOp, LL::LShrOp, LL::AShrOp, LL::SDivOp, LL::UDivOp, LL::SRemOp, LL::URemOp,
               LL::FAddOp, LL::FSubOp, LL::FMulOp, LL::FDivOp, LL::FNegOp, LL::ZExtOp, LL::SExtOp, LL::TruncOp,
-              LL::PtrToIntOp, LL::IntToPtrOp, LL::SIToFPOp, LL::UIToFPOp, LL::FPToSIOp, LL::FPToUIOp,
+              LL::PtrToIntOp, LL::IntToPtrOp, LL::AddrSpaceCastOp, LL::SIToFPOp, LL::UIToFPOp, LL::FPToSIOp, LL::FPToUIOp,
               LL::FPTruncOp, LL::FPExtOp, LL::FMAOp, LL::MinimumOp, LL::MaximumOp, LL::CallIntrinsicOp,
               LL::AtomicRMWOp, LL::AtomicCmpXchgOp, LL::MemmoveOp, LL::MemsetOp, LL::MemcpyOp>(inner))
         return;
