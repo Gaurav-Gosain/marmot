@@ -1396,6 +1396,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   unsigned phaseNo = 0;
   std::atomic<uint64_t> parsedBytes{0}; // input text of the modules kept parsed
   std::function<void(unsigned)> releaseHook; // releaseParsed(i, false), set below
+  std::vector<char> running(mods.size(), 0); // jobs in flight, under admitMu
   auto parallel = [&](auto fn) {
     ++phaseNo;
     std::vector<unsigned> pending(order.begin(), order.end());
@@ -1423,6 +1424,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
             pending.erase(pending.begin() + k);
             n = inputSize[i];
             admitted += n;
+            running[i] = 1;
           }
           watchdogBegin(jobs[i].in);
           std::string msgs;
@@ -1446,6 +1448,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           {
             std::lock_guard<std::mutex> l(admitMu);
             admitted -= n;
+            running[i] = 0;
           }
           admitCv.notify_all();
           report(i, msgs, t);
@@ -1486,7 +1489,44 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       parsedBytes -= inputSize[i];
     }
   };
-  releaseHook = [&](unsigned i) { releaseParsed(i, false); };
+  // Over the budget, the kept parses of modules whose jobs are not running
+  // go too, largest first (they are parsed again when their job comes):
+  // otherwise the parses kept for the next phase stayed until each
+  // module's own job, and a cold tuios -O 2 build passed 3 GB translating.
+  auto shedParsed = [&] {
+    if (!memLimit)
+      return;
+    std::vector<ParsedModulePtr> drop; // freed outside the lock
+    {
+      std::lock_guard<std::mutex> l(admitMu);
+      uint64_t kept = parsedBytes.load(), est = (kept + admitted) * kParseCost;
+      uint64_t mem = processMemory(), soft = memLimit / 100 * 60;
+      uint64_t excess = 0;
+      if (est > memBudget)
+        excess = (est - memBudget) / kParseCost;
+      if (mem > soft)
+        excess = std::max(excess, (mem - soft) / kParseCost);
+      if (!excess)
+        return;
+      std::vector<unsigned> cand;
+      for (unsigned j = 0; j < mods.size(); ++j)
+        if (mods[j].parsed && !running[j])
+          cand.push_back(j);
+      llvm::sort(cand, [&](unsigned a, unsigned b) { return inputSize[a] > inputSize[b]; });
+      uint64_t freed = 0;
+      for (unsigned j : cand) {
+        if (freed >= excess)
+          break;
+        drop.push_back(std::move(mods[j].parsed));
+        parsedBytes -= inputSize[j];
+        freed += inputSize[j];
+      }
+    }
+  };
+  releaseHook = [&](unsigned i) {
+    releaseParsed(i, false);
+    shedParsed();
+  };
   auto moduleOp = [&](unsigned i) {
     return mlir::ModuleOp::getFromOpaquePointer(parsedModuleOp(*mods[i].parsed));
   };
