@@ -495,6 +495,48 @@ patches and changes nothing:
 | `-test` | Keep a fix only if its package's tests still pass. |
 | `-upgrade go1.N` | Raise the module's go version first. |
 
+## Verify
+
+`marmot verify [packages]` looks at every operation of the named packages (default: the
+workspace) that can panic at run time: index and slice bounds, nil dereferences and writes to nil
+maps, division by zero, negative shifts and sizes, failed type assertions, and the others. Each one
+is proved safe, or reported with code `M0120`. `marmot check -verify` runs the same check with the
+others. Results are cached per package.
+
+Two kinds of finding:
+
+- **manifest**: the operation panics for an input that the code's own guards let through (the code
+  tests `len(b) < 2` and then reads `b[2]`), or on every input that reaches it, or a call gives a
+  function of the same package arguments that make it panic. The message names the condition
+  (`when len(b) == 2`) and the guard is shown in the snippet.
+- **latent**: the operation panics for some inputs of its function, a precondition its callers must
+  meet (`func At(s []int, i int) int { return s[i] }`). Shown with `-latent`; in JSON mode, for the
+  files with uncommitted changes.
+
+Findings are notes for now. Each carries a `verify` object in JSON: the obligation, the panic
+kind, the class, the condition, the status (`counterexample`, `latent`), the input that panics
+when confirmed, and the assumptions the result depends on (always `no-races`).
+
+`-confirm=sandbox` runs the package's functions with generated inputs to confirm findings: under
+gc, three times, and under marmot (a difference between the two is reported as a likely marmot
+bug). The runs are sandboxed (no network, no writes outside a temporary directory, no new
+processes: `sandbox-exec` on macOS, `bwrap` on Linux; without one nothing runs), and functions
+whose calls reach files, processes or the network are skipped unless `-confirm=effects`.
+`-search` also searches every function for inputs that make it panic. `-tests` writes a
+regression test per confirmed panic reachable through the API to `zz_marmot_verify_test.go` in its
+package. With `MARMOT_VERIFY_SMT=on` and `z3` on `PATH`, a solver also tries what the first engine
+leaves open.
+
+### Exploring schedules
+
+`marmot test -explore` runs the tests that use `testing/synctest` under many schedules: one
+goroutine of a bubble runs at a time, and at every channel operation, select, `go` statement and
+`sync` lock or unlock a seeded strategy picks which runs next. `-explore=random:N` (the default is
+`random:1000`) or `-explore=pct:N` (probabilistic priorities, better at bugs that need a few
+specific preemptions). It stops at the first failing schedule (a failed test, a panic, or a
+deadlock of the bubble) and prints how to run it again: `marmot test -run TestX -schedule=random:17`.
+In JSON the failing test line carries `"schedule"`.
+
 ## Coding agents
 
 `marmot mcp` is a Model Context Protocol server on stdin and stdout. Its tools `build`, `run`,
