@@ -551,11 +551,51 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
   return true;
 }
 
+// A card barrier, llvm.call @marmot.card(%slot, %on), becomes
+//   llvm.cond_br %on, ^mark, ^rest
+//   ^mark: llvm.call @rt_card_x0(%slot) (rt_card_rdi on x86-64); llvm.br ^rest
+// The stub takes the slot in the first argument register and preserves every
+// register; tier0 treats it as an ordinary call, which is safe, and the call
+// sits in a block of its own as the cold path did before.
+static void lowerCards(ModuleOp module, bool x64) {
+  std::vector<LL::CallOp> cards;
+  module.walk([&](LL::CallOp c) {
+    if (auto callee = c.getCallee(); callee && *callee == "marmot.card" && c.getNumOperands() == 2) cards.push_back(c);
+  });
+  if (cards.empty()) return;
+  OpBuilder b(module.getContext());
+  StringRef stub = x64 ? "rt_card_rdi" : "rt_card_x0";
+  auto ptr = LL::LLVMPointerType::get(module.getContext());
+  auto voidTy = LL::LLVMVoidType::get(module.getContext());
+  auto fnTy = LL::LLVMFunctionType::get(voidTy, {ptr});
+  if (!module.lookupSymbol(stub)) {
+    b.setInsertionPointToEnd(module.getBody());
+    LL::LLVMFuncOp::create(b, module.getLoc(), stub, fnTy);
+  }
+  for (LL::CallOp c : cards) {
+    Location loc = c.getLoc();
+    Value slot = c.getOperand(0), on = c.getOperand(1);
+    Block *head = c->getBlock();
+    Block *rest = head->splitBlock(c->getIterator());
+    Block *mark = new Block();
+    head->getParent()->getBlocks().insert(rest->getIterator(), mark);
+    b.setInsertionPointToEnd(head);
+    LL::CondBrOp::create(b, loc, on, mark, ValueRange{}, rest, ValueRange{});
+    b.setInsertionPointToEnd(mark);
+    LL::CallOp::create(b, loc, TypeRange{}, stub, ValueRange{slot});
+    LL::BrOp::create(b, loc, ValueRange{}, rest);
+    c.erase();
+  }
+  if (Operation *d = module.lookupSymbol("marmot.card"))
+    if (auto f = dyn_cast<LL::LLVMFuncOp>(d); f && f.isExternal()) f.erase();
+}
+
 bool emit(ModuleOp module, const std::string &unit, const std::string &outObject, std::string &fragment,
           std::vector<std::string> &fallback, std::vector<std::string> &reasons, Stats &stats,
           std::string &err, Target target, unsigned threads) {
-  dropUnused(module);
   bool x64 = target == Target::X64Elf;
+  lowerCards(module, x64);
+  dropUnused(module);
   elfNames = x64;
   ModuleGen mg(module, unit, x64);
   mg.threads = threads ? threads : 1;
