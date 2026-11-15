@@ -73,6 +73,124 @@ func TestParseStatusZ(t *testing.T) {
 	}
 }
 
+// TestVerifyPolicy writes a policy, then removes a guard: the function
+// that now leaves an index open must be a policy error.
+func TestVerifyPolicy(t *testing.T) {
+	if testing.Short() {
+		t.Skip("loads packages with go list")
+	}
+	dir := t.TempDir()
+	good := "package codec\n\nfunc At(s []int, i int) int {\n\tif i < 0 || i >= len(s) {\n\t\treturn 0\n\t}\n\treturn s[i]\n}\n"
+	bad := "package codec\n\nfunc At(s []int, i int) int {\n\treturn s[i]\n}\n"
+	run := func(src string) []fnStat {
+		for name, text := range map[string]string{"go.mod": "module example.com/codec\n\ngo 1.22\n", "codec.go": src} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		res, err := Run(Options{Dir: dir, Only: []string{"verify"}, Offline: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range res.Checks {
+			if c.Name == "verify" {
+				return c.fnstats
+			}
+		}
+		return nil
+	}
+	if err := writePolicy(dir, run(good), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	p, err := readPolicy(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ds := checkPolicy(p, run(good)); len(ds) != 0 {
+		t.Errorf("unchanged code: %v", ds)
+	}
+	ds := checkPolicy(p, run(bad))
+	if len(ds) == 0 || !strings.Contains(ds[0].Message, "example.com/codec.At") || ds[0].Severity != diag.Error {
+		t.Fatalf("regression not reported: %v", ds)
+	}
+	if sp := ds[0].Span; filepath.Base(sp.File) != "codec.go" || sp.Line != 3 {
+		t.Errorf("policy error at %s:%d, want codec.go:3 (the function)", sp.File, sp.Line)
+	}
+}
+
+// TestVerifyPolicyMain runs marmot verify with the package cache and the
+// run memo on: an unchanged rerun of a failing tree must fail again, and
+// -write-policy on one package must keep the baseline of the others.
+func TestVerifyPolicyMain(t *testing.T) {
+	if testing.Short() {
+		t.Skip("loads packages with go list")
+	}
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MARMOT_OUTPUT", "plain") // JSON runs skip the memo; plain runs use it
+	t.Chdir(dir)
+	good := "package codec\n\nfunc At(s []int, i int) int {\n\tif i < 0 || i >= len(s) {\n\t\treturn 0\n\t}\n\treturn s[i]\n}\n"
+	bad := "package codec\n\nfunc At(s []int, i int) int {\n\treturn s[i]\n}\n"
+	sub := "package sub\n\nfunc Get(s []int) int {\n\tif len(s) == 0 {\n\t\treturn 0\n\t}\n\treturn s[0]\n}\n"
+	put := func(name, text string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("go.mod", "module example.com/codec\n\ngo 1.22\n")
+	put("codec.go", good)
+	put("sub/sub.go", sub)
+	main := func(args ...string) int {
+		t.Helper()
+		stdout, stderr := os.Stdout, os.Stderr
+		null, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.Stdout, os.Stderr = null, null
+		defer func() { os.Stdout, os.Stderr = stdout, stderr; null.Close() }()
+		return VerifyMain(args, "test")
+	}
+	if code := main("-write-policy", "./..."); code != 0 {
+		t.Fatalf("-write-policy: exit %d", code)
+	}
+	p, err := readPolicy(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.Baseline["example.com/codec.At"]; !ok {
+		t.Fatalf("baseline has no codec.At: %v", p.Baseline)
+	}
+	if code := main("./..."); code != 0 {
+		t.Errorf("unchanged tree: exit %d", code)
+	}
+	put("codec.go", bad)
+	for run := 1; run <= 2; run++ {
+		if code := main("./..."); code != 1 {
+			t.Errorf("regression, run %d: exit %d, want 1", run, code)
+		}
+	}
+	put("codec.go", good)
+	main("./...") // memoize the good tree
+	if code := main("-write-policy", "./sub"); code != 0 {
+		t.Fatalf("-write-policy ./sub: exit %d", code)
+	}
+	p, err = readPolicy(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fn := range []string{"example.com/codec.At", "example.com/codec/sub.Get"} {
+		if _, ok := p.Baseline[fn]; !ok {
+			t.Errorf("after -write-policy ./sub, baseline has no %s: %v", fn, p.Baseline)
+		}
+	}
+}
+
 // TestVerifySearchHintsCached runs the verify check twice on an unchanged
 // tree with the package cache: both runs must have the search hints that
 // confirmation needs (they ride in the cached findings).

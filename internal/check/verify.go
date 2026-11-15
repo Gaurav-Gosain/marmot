@@ -33,6 +33,16 @@ func verifyDiag(r *CheckResult, d *diag.Diagnostic, fd finding, latent bool) boo
 				r.Verify = &vfy.Summary{}
 			}
 			r.Verify.Add(s)
+			if r.verified == nil {
+				r.verified = map[string]bool{}
+			}
+			r.verified[d.Package] = true
+		}
+		return false
+	case vfy.CategoryFn:
+		var s vfy.FnStat
+		if json.Unmarshal(payload, &s) == nil {
+			r.fnstats = append(r.fnstats, fnStat{policyFn: policyFn{Pkg: d.Package, FnStat: s}, span: d.Span})
 		}
 		return false
 	case vfy.CategorySearch:
@@ -209,6 +219,27 @@ func marmotBin() string {
 	return ""
 }
 
+// moduleRoot is the directory of the main module's go.mod (or go.work),
+// "" when there is none.
+func moduleRoot() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for {
+		for _, f := range []string{"go.work", "go.mod"} {
+			if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
+				return dir
+			}
+		}
+		up := filepath.Dir(dir)
+		if up == dir {
+			return ""
+		}
+		dir = up
+	}
+}
+
 func shortName(full string) string {
 	if i := strings.LastIndex(full, "."); i >= 0 {
 		return full[i+1:]
@@ -375,6 +406,16 @@ func VerifyMain(args []string, version string) int {
 	if *vf.Verbose && rep.Mode != diag.ModeJSON {
 		opts.Progress = os.Stderr
 	}
+	// The policy needs the per-function statistics, which a memoized
+	// run does not keep.
+	root := moduleRoot()
+	pol, perr := (*verifyPolicy)(nil), error(nil)
+	if root != "" {
+		pol, perr = readPolicy(root)
+		if *vf.WritePolicy || !errors.Is(perr, os.ErrNotExist) {
+			opts.NoMemo = true
+		}
+	}
 	start := time.Now()
 	res, err := Run(opts)
 	if err != nil {
@@ -405,6 +446,19 @@ func VerifyMain(args []string, version string) int {
 		c.Verify.Notes = append(c.Verify.Notes, notes...)
 		if *vf.Tests {
 			c.Notes = append(c.Notes, writeVerifyTests(c)...)
+		}
+	}
+	if root != "" {
+		switch {
+		case *vf.WritePolicy:
+			if err := writePolicy(root, c.fnstats, c.verified, pol); err != nil {
+				return rep.Usage("marmot verify: " + err.Error())
+			}
+			c.Notes = append(c.Notes, "policy written to "+filepath.Join(root, policyFile))
+		case perr == nil:
+			c.Findings = append(c.Findings, checkPolicy(pol, c.fnstats)...)
+		case !errors.Is(perr, os.ErrNotExist):
+			return rep.Usage("marmot verify: " + perr.Error())
 		}
 	}
 	ds := c.Findings
@@ -438,4 +492,106 @@ func VerifyMain(args []string, version string) int {
 			sum.Functions, sum.Obligations, sum.Proved+sum.ProvedAssuming, sum.Manifest, sum.Latent, sum.Unknown, sum.Recovered, sum.Counterexamples, time.Since(start).Seconds())
 	}
 	return code
+}
+
+// verifyPolicy is the committed policy of marmot verify: the functions'
+// counts and assumptions at the time it was written, and assumptions
+// allowed anywhere. CI reruns verify against it; agent output is never
+// trusted. A function is known by its full name, so a renamed function
+// has no baseline until the policy is written again.
+type verifyPolicy struct {
+	Comment  string              `json:"comment,omitempty"`
+	Allow    []string            `json:"allowAssumptions,omitempty"`
+	Baseline map[string]policyFn `json:"baseline"`
+}
+
+// policyFn is one function's baseline: its statistics and its package.
+type policyFn struct {
+	Pkg string `json:"pkg,omitempty"`
+	vfy.FnStat
+}
+
+// fnStat is one function's statistics in a run, with its position.
+type fnStat struct {
+	policyFn
+	span diag.Span
+}
+
+const policyFile = ".marmot/verify.json"
+
+// writePolicy records the current counts. Functions of the packages this
+// run analyzed (verified) are replaced; the baseline of every other
+// package stays, so a run on part of the module keeps the rest.
+func writePolicy(root string, stats []fnStat, verified map[string]bool, old *verifyPolicy) error {
+	p := verifyPolicy{Comment: "marmot verify policy: reviewed by a person; CI fails when a function proves less, has more open operations, or gains an assumption not allowed here", Baseline: map[string]policyFn{}}
+	if old != nil {
+		p.Allow = old.Allow
+		for fn, b := range old.Baseline {
+			if !verified[b.Pkg] {
+				p.Baseline[fn] = b
+			}
+		}
+	}
+	for _, s := range stats {
+		p.Baseline[s.Fn] = s.policyFn
+	}
+	b, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(root, policyFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(b, '\n'), 0o644)
+}
+
+func readPolicy(root string) (*verifyPolicy, error) {
+	b, err := os.ReadFile(filepath.Join(root, policyFile))
+	if err != nil {
+		return nil, err
+	}
+	var p verifyPolicy
+	if err := json.Unmarshal(b, &p); err != nil {
+		return nil, fmt.Errorf("%s: %v", policyFile, err)
+	}
+	return &p, nil
+}
+
+// checkPolicy compares the run with the policy: an error per function
+// that got worse, at the function.
+func checkPolicy(p *verifyPolicy, stats []fnStat) []diag.Diagnostic {
+	allowed := map[string]bool{}
+	for _, a := range p.Allow {
+		allowed[a] = true
+	}
+	var ds []diag.Diagnostic
+	add := func(s fnStat, msg string) {
+		ds = append(ds, diag.Diagnostic{Kind: "diagnostic", Severity: diag.Error, Code: diag.CodeVerify,
+			Message: fmt.Sprintf("verify policy: %s: %s", s.Fn, msg), Span: s.span, Package: s.Pkg, Check: "verify", Analyzer: "policy",
+			Help: []string{"fix the regression, or rewrite the policy with marmot verify -write-policy and have it reviewed"}})
+	}
+	for _, s := range stats {
+		b, ok := p.Baseline[s.Fn]
+		if !ok {
+			continue // a new function: no baseline yet
+		}
+		if s.Proved < b.Proved {
+			add(s, fmt.Sprintf("proves %d operations, %d in the policy", s.Proved, b.Proved))
+		}
+		if s.Open > b.Open {
+			add(s, fmt.Sprintf("leaves %d operations open, %d in the policy", s.Open, b.Open))
+		}
+		had := map[string]bool{}
+		for _, a := range b.Assumes {
+			had[a] = true
+		}
+		for _, a := range s.Assumes {
+			if !had[a] && !allowed[a] {
+				add(s, "new assumption "+a)
+			}
+		}
+	}
+	slices.SortFunc(ds, func(a, b diag.Diagnostic) int { return strings.Compare(a.Message, b.Message) })
+	return ds
 }

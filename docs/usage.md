@@ -527,6 +527,14 @@ regression test per confirmed panic reachable through the API to `zz_marmot_veri
 package. With `MARMOT_VERIFY_SMT=on` and `z3` on `PATH`, a solver also tries what the first engine
 leaves open.
 
+`-write-policy` writes `.marmot/verify.json`, the policy. The policy records, for each function,
+the operations proved, the operations left open, and the assumptions. Commit the policy and have a
+person review it. When the policy exists, each run compares against it. A function that proves
+fewer operations, leaves more open, or gains an assumption is an error (exit 1). Add an assumption
+to `allowAssumptions` to allow it in every function. `-write-policy` on some packages replaces the
+baseline of those packages only. A new function has no baseline. The policy knows a function by
+its full name, so a renamed function also has no baseline until you write the policy again.
+
 ### Exploring schedules
 
 `marmot test -explore` runs the tests that use `testing/synctest` under many schedules: one

@@ -55,32 +55,34 @@ func NewCheck() (*flag.FlagSet, *Check) {
 
 // Verify are the flags of marmot verify.
 type Verify struct {
-	JSON    *bool
-	Color   *string
-	Latent  *bool
-	Tags    *string
-	Jobs    *int
-	NoCache *bool
-	Verbose *bool
-	Search  *bool
-	Confirm *string
-	Tests   *bool
+	JSON        *bool
+	Color       *string
+	Latent      *bool
+	Tags        *string
+	Jobs        *int
+	NoCache     *bool
+	Verbose     *bool
+	Search      *bool
+	Confirm     *string
+	Tests       *bool
+	WritePolicy *bool
 }
 
 // NewVerify returns the flag set of marmot verify.
 func NewVerify() (*flag.FlagSet, *Verify) {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	v := &Verify{
-		JSON:    fs.Bool("json", false, "machine readable output: JSON Lines on stderr (also $MARMOT_OUTPUT=json, and the default under coding agents)"),
-		Color:   fs.String("color", "auto", "color in human output: auto, always or never (NO_COLOR turns auto off)"),
-		Latent:  fs.Bool("latent", false, "also report latent panics: operations that panic for some inputs of their function (preconditions)"),
-		Tags:    fs.String("tags", "", "comma separated build tags"),
-		Jobs:    fs.Int("j", 0, "parallel analysis jobs (default: the number of CPUs)"),
-		NoCache: fs.Bool("nocache", false, "analyze everything again, ignoring cached results"),
-		Verbose: fs.Bool("v", false, "print timing and cache statistics"),
-		Search:  fs.Bool("search", false, "also search every function for inputs that make it panic (needs -confirm)"),
-		Tests:   fs.Bool("tests", false, "write a regression test for every confirmed panic reachable through the API to zz_marmot_verify_test.go in its package (needs -confirm)"),
-		Confirm: fs.String("confirm", "off", "run the package's functions with generated inputs to confirm findings: off, sandbox (in a sandbox: sandbox-exec on macOS, bwrap on Linux; functions that reach files, processes or the network are skipped) or effects (those too, in the sandbox)"),
+		JSON:        fs.Bool("json", false, "machine readable output: JSON Lines on stderr (also $MARMOT_OUTPUT=json, and the default under coding agents)"),
+		Color:       fs.String("color", "auto", "color in human output: auto, always or never (NO_COLOR turns auto off)"),
+		Latent:      fs.Bool("latent", false, "also report latent panics: operations that panic for some inputs of their function (preconditions)"),
+		Tags:        fs.String("tags", "", "comma separated build tags"),
+		Jobs:        fs.Int("j", 0, "parallel analysis jobs (default: the number of CPUs)"),
+		NoCache:     fs.Bool("nocache", false, "analyze everything again, ignoring cached results"),
+		Verbose:     fs.Bool("v", false, "print timing and cache statistics"),
+		Search:      fs.Bool("search", false, "also search every function for inputs that make it panic (needs -confirm)"),
+		WritePolicy: fs.Bool("write-policy", false, "record the counts of every function in .marmot/verify.json, the policy later runs (CI) are checked against"),
+		Tests:       fs.Bool("tests", false, "write a regression test for every confirmed panic reachable through the API to zz_marmot_verify_test.go in its package (needs -confirm)"),
+		Confirm:     fs.String("confirm", "off", "run the package's functions with generated inputs to confirm findings: off, sandbox (in a sandbox: sandbox-exec on macOS, bwrap on Linux; functions that reach files, processes or the network are skipped) or effects (those too, in the sandbox)"),
 	}
 	return fs, v
 }

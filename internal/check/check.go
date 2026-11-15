@@ -108,7 +108,11 @@ type CheckResult struct {
 	// Verify sums the verify statistics of the analyzed packages.
 	Verify *vfy.Summary `json:"verify,omitempty"`
 	// search are the verify search hints of the analyzed packages.
-	search   []searchHint
+	search []searchHint
+	// fnstats are the per-function verify statistics.
+	fnstats []fnStat
+	// verified are the packages verify analyzed (they sent statistics).
+	verified map[string]bool
 	Duration time.Duration `json:"-"`
 	Cached   bool          `json:"cached,omitempty"`
 }
