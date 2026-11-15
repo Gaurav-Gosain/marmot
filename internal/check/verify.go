@@ -41,6 +41,17 @@ func verifyDiag(r *CheckResult, d *diag.Diagnostic, fd finding, latent bool) boo
 		}
 		d.Verify = payload
 		d.Severity = diag.Note
+		// The guard and the call are labels in the snippet when they are
+		// in the finding's file.
+		var rel []diag.Related
+		for _, r := range d.Related {
+			if r.Span.File == d.Span.File {
+				d.Labels = append(d.Labels, diag.Label{Span: r.Span, Text: r.Message})
+			} else {
+				rel = append(rel, r)
+			}
+		}
+		d.Related = rel
 		return true
 	}
 	return true
