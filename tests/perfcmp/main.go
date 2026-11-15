@@ -18,8 +18,12 @@
 // line, each side against itself (its odd runs over its even ones); with A=B
 // the whole result is noise too. When a noise line is above 1.02, or the load
 // went above half the CPUs at any point, the verdict is INCONCLUSIVE instead
-// of WORSE or ok. Exit status: 0 ok, 1 WORSE, 4 INCONCLUSIVE, 3 no quiet
-// window in -wait, 2 usage.
+// of WORSE or ok. A build or run that fails on either side, a ratio that is
+// not a number, or a -programs name that is not here makes it FAILED, which
+// comes before everything else: a comparison with a hole in it is never ok.
+//
+// Exit status: 0 ok, 1 WORSE, 2 usage, 3 no quiet window in -wait,
+// 4 INCONCLUSIVE, 5 FAILED.
 package main
 
 import (
@@ -80,7 +84,7 @@ func main() {
 	flag.Parse()
 	if *flA == "" || *flB == "" {
 		fmt.Fprintln(os.Stderr, "perfcmp: -a and -b are required")
-		os.Exit(2)
+		os.Exit(exitUsage)
 	}
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -109,7 +113,7 @@ func main() {
 	if *flWait > 0 {
 		if !takeLock(*flWait) {
 			fmt.Fprintf(os.Stderr, "perfcmp: no quiet window with %s free in %v: not timing\n", timingLock, *flWait)
-			exit(3)
+			exit(exitNoWindow)
 		}
 		atExit(dropLock)
 	}
@@ -117,7 +121,11 @@ func main() {
 		sides[0].root, strings.Join(sides[0].env, " "), sides[1].root, strings.Join(sides[1].env, " "))
 	fmt.Printf("load at start: %s\n", loadavg())
 	same := sides[0].root == sides[1].root && slices.Equal(sides[0].env, sides[1].env)
-	worse, loaded, noisy := false, false, false
+	var o outcome
+	o.same = same
+	for _, m := range missingProgs {
+		o.failed = append(o.failed, m+": no such program here")
+	}
 	maxLoad := load1()
 	sampleLoad := func() {
 		if l := load1(); l > maxLoad {
@@ -138,6 +146,7 @@ func main() {
 				bin, dur, err := build(s, p, mode, work)
 				if err != nil {
 					fmt.Printf("%-12s build %s failed: %v\n", p.name, s.label, err)
+					o.failed = append(o.failed, fmt.Sprintf("%s %s: build %s failed", p.name, mode, s.label))
 					ok = false
 					break
 				}
@@ -165,6 +174,7 @@ func main() {
 					sm, err := runOnce(sides[i], p, bins[i])
 					if err != nil {
 						fmt.Printf("%-12s run %s failed: %v\n", p.name, sides[i].label, err)
+						o.failed = append(o.failed, fmt.Sprintf("%s %s: run %s failed", p.name, mode, sides[i].label))
 						ok = false
 						break
 					}
@@ -191,6 +201,9 @@ func main() {
 			}
 			a, b := median(got[0]), median(got[1])
 			rw, rc, rr := ratio(b.wall, a.wall), ratio(b.cpu, a.cpu), float64(b.rss)/float64(a.rss)
+			if bad := notFinite(rw, rc, rr); bad != "" {
+				o.failed = append(o.failed, fmt.Sprintf("%s %s: %s ratio is not a number", p.name, mode, bad))
+			}
 			lw, lc, lr = append(lw, rw), append(lc, rc), append(lr, rr)
 			mark := verdict(rw, rc, rr)
 			fmt.Printf("%-12s %10s %10s %7.3f %10s %10s %7.3f %9s %9s %7.3f %9s %9s %7.3f %s%s\n", p.name,
@@ -198,9 +211,14 @@ func main() {
 				mb(sizes[0]), mb(sizes[1]), float64(sizes[1])/float64(max(sizes[0], 1)), mark, note)
 		}
 		gw, gc, gr := geomean(lw), geomean(lc), geomean(lr)
+		if len(lw) == 0 {
+			o.failed = append(o.failed, fmt.Sprintf("%s: no program measured on both sides", mode))
+		} else if bad := notFinite(gw, gc, gr); bad != "" {
+			o.failed = append(o.failed, fmt.Sprintf("%s: the %s geomean is not a number", mode, bad))
+		}
 		mark := verdict(gw, gc, gr)
 		if mark == "WORSE" {
-			worse = true
+			o.worse = true
 		}
 		fmt.Printf("%-12s %10s %10s %7.3f %10s %10s %7.3f %9s %9s %7.3f %s\n", "geomean", "", "", gw, "", "", gc, "", "", gr, mark)
 		// The noise of this mode: each side against itself, the odd runs over the even
@@ -212,40 +230,83 @@ func main() {
 		}
 		fmt.Printf("%-12s %10s %10s %7.3f %10s %10s %7.3f\n", "noise", "", "", ew, "", "", ec)
 		if ew > 1.02 || ec > 1.02 {
-			noisy = true
+			o.noisy = true
 		}
 	}
 	fmt.Printf("\nload at end: %s\n", loadavg())
 	sampleLoad()
-	if maxLoad > float64(runtime.NumCPU())/2 {
-		loaded = true
-		fmt.Printf("warning: load reached %.1f, above half the %d CPUs: timings are noisy, rerun on a quiet machine\n", maxLoad, runtime.NumCPU())
+	o.maxLoad, o.cpus = maxLoad, runtime.NumCPU()
+	if o.maxLoad > float64(o.cpus)/2 {
+		fmt.Printf("warning: load reached %.1f, above half the %d CPUs: timings are noisy, rerun on a quiet machine\n", o.maxLoad, o.cpus)
 	}
-	if loaded || noisy {
+	line, code := o.verdict()
+	fmt.Println(line)
+	exit(code)
+}
+
+// Exit statuses.
+const (
+	exitOK           = 0
+	exitWorse        = 1
+	exitUsage        = 2
+	exitNoWindow     = 3
+	exitInconclusive = 4
+	exitFailed       = 5
+)
+
+// outcome is what a run found; verdict turns it into the last line and the exit status.
+type outcome struct {
+	failed             []string // builds or runs that failed, ratios that are not numbers
+	worse, noisy, same bool
+	maxLoad            float64
+	cpus               int
+}
+
+// verdict: FAILED before anything else (a comparison with a hole in it is never ok), then
+// INCONCLUSIVE (too loaded or too noisy to judge 2%), then WORSE, then ok.
+func (o outcome) verdict() (string, int) {
+	if len(o.failed) > 0 {
+		return fmt.Sprintf("verdict: FAILED (%d %s, so B was not judged against A: %s)", len(o.failed), plural(len(o.failed), "failure", "failures"), strings.Join(o.failed, "; ")), exitFailed
+	}
+	loaded := o.maxLoad > float64(o.cpus)/2
+	if loaded || o.noisy {
 		why := []string{}
 		if loaded {
-			why = append(why, fmt.Sprintf("the load reached %.1f on %d CPUs", maxLoad, runtime.NumCPU()))
+			why = append(why, fmt.Sprintf("the load reached %.1f on %d CPUs", o.maxLoad, o.cpus))
 		}
-		if noisy {
+		if o.noisy {
 			why = append(why, "the noise line of a mode is above 1.02, the 2% the rule judges")
 		}
 		would := "ok"
-		if worse {
+		if o.worse {
 			would = "WORSE"
 		}
-		fmt.Printf("verdict: INCONCLUSIVE (%s; this run cannot judge the 2%% rule, it would have said %s; rerun on a quiet machine, the Linux host through at.sh)\n", strings.Join(why, ", and "), would)
-		exit(4)
+		return fmt.Sprintf("verdict: INCONCLUSIVE (%s; this run cannot judge the 2%% rule, it would have said %s; rerun on a quiet machine, the Linux host through at.sh)", strings.Join(why, ", and "), would), exitInconclusive
 	}
-	if same {
-		fmt.Println("verdict: ok (A=B: the noise is within the rule, this machine can judge it now)")
-		exit(0)
+	if o.same {
+		return "verdict: ok (A=B: the noise is within the rule, this machine can judge it now)", exitOK
 	}
-	if worse {
-		fmt.Println("verdict: WORSE (a geomean of B is more than 2% slower or 3% bigger in memory than A; lines marked WORSE show where)")
-		exit(1)
+	if o.worse {
+		return "verdict: WORSE (a geomean of B is more than 2% slower or 3% bigger in memory than A; lines marked WORSE show where)", exitWorse
 	}
-	fmt.Println("verdict: ok (no line worse than the noise rule)")
-	exit(0)
+	return "verdict: ok (no line worse than the noise rule)", exitOK
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// notFinite names the first of wall, cpu, rss that is NaN or infinite, or "".
+func notFinite(w, c, r float64) string {
+	for i, x := range []float64{w, c, r} {
+		if math.IsNaN(x) || math.IsInf(x, 0) || x <= 0 {
+			return [...]string{"wall", "cpu", "rss"}[i]
+		}
+	}
+	return ""
 }
 
 // cleanups run on every exit: the end of main, exit, check and a signal.
@@ -280,6 +341,10 @@ func dropLock() {
 
 func lockOwner() string { return fmt.Sprintf("perfcmp pid %d\n", os.Getpid()) }
 
+// missingProgs are -programs names perfcmp cannot find (no such bench program, or
+// sketch and tuios without a tuios tree); each makes the verdict FAILED.
+var missingProgs []string
+
 func programs(repo string) []program {
 	tu := abs(*flTuios)
 	all := []program{{name: "hello", dir: repo, pkg: "./bench/programs/hello", kind: "startup"}}
@@ -305,8 +370,12 @@ func programs(repo string) []program {
 		}
 	}
 	for _, w := range want {
-		if !slices.ContainsFunc(all, func(p program) bool { return p.name == w }) && slices.Contains(benchNames(repo), w) {
-			out = append(out, program{name: w, dir: repo, pkg: "./bench/programs/" + w, kind: "time"})
+		if !slices.ContainsFunc(all, func(p program) bool { return p.name == w }) {
+			if slices.Contains(benchNames(repo), w) {
+				out = append(out, program{name: w, dir: repo, pkg: "./bench/programs/" + w, kind: "time"})
+			} else {
+				missingProgs = append(missingProgs, w)
+			}
 		}
 	}
 	return out
@@ -477,7 +546,8 @@ func lastLines(b []byte, n int) string {
 func check(err error) {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "perfcmp:", err)
-		exit(1)
+		fmt.Println("verdict: FAILED (perfcmp stopped: " + err.Error() + ")")
+		exit(exitFailed)
 	}
 }
 
