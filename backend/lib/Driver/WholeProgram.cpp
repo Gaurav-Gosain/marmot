@@ -563,6 +563,10 @@ std::string fingerprint(const CompileOptions &opts) {
   if (opts.rtBitcode)
     os << opts.rtBitcode->fileHash();
   os << "|opts:" << opts.optionKey << "|loopopts:" << loops::cacheKey();
+  // Backend switches read from the environment that change objects.
+  for (const char *e : {"MARMOT_PARKCLEAR"})
+    if (const char *v = std::getenv(e))
+      os << "|" << e << "=" << v;
   // Only when not the default, so the default keeps its keys.
   if (opts.wpoImportBudget != 400 || !opts.wpoImportTransitive)
     os << "|ib" << opts.wpoImportBudget << "t" << opts.wpoImportTransitive;
