@@ -5,10 +5,10 @@
 // loaded bounds ([][]T row lengths), row disjointness checks, reduction
 // interchange (matmul, bit identical), and loops that must stay serial.
 // RUN: MARMOT_BACKEND_FLAGS="-par -loops-all-rules" %marmot build -nocache -o %t %S/Inputs/par.go
-// RUN: %t > %t.out 2>&1 && diff %t.out %S/Inputs/par.expected
-// RUN: GOMAXPROCS=1 %t > %t.out1 2>&1 && diff %t.out1 %S/Inputs/par.expected
+// RUN: %t > %t.out 2>&1 && diff %t.out %S/Inputs/par.$(uname -m).expected
+// RUN: GOMAXPROCS=1 %t > %t.out1 2>&1 && diff %t.out1 %S/Inputs/par.$(uname -m).expected
 // RUN: MARMOT_BACKEND_FLAGS="-par -type-alias" %marmot build -nocache -o %t.ta %S/Inputs/par.go
-// RUN: %t.ta > %t.ta.out 2>&1 && diff %t.ta.out %S/Inputs/par.expected
+// RUN: %t.ta > %t.ta.out 2>&1 && diff %t.ta.out %S/Inputs/par.$(uname -m).expected
 // Inputs/envp.go (probe7): its output depends on the environment, so compare
 // against a build without the loop passes.
 // RUN: MARMOT_BACKEND_FLAGS="-par -type-alias -loops-all-rules" %marmot build -nocache -o %t.env %S/Inputs/envp.go

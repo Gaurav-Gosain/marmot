@@ -1,5 +1,6 @@
 // par.go: loops that loop-parallelize transforms, and loops it must not.
-// Output must equal stock Go's (par.expected).
+// Output must equal stock Go's (par.ARCH.expected, ARCH from uname -m: Go fuses
+// multiply-adds on arm64 and not on amd64, so float results differ).
 package main
 
 import "math"
