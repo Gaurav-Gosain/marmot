@@ -55,6 +55,7 @@ Release builds never use tier 0.
 | `-release` | Release mode: whole program optimization at `-O3`. |
 | `-O level` | Optimization level: `0`, `1`, `2`, `3`, `s` or `z`. `z` gives the smallest binary. |
 | `-s` | Leave out file and line tables. Smaller binary, but panics show no source lines. |
+| `-trimpath` | Record no directory of the build machine: standard library files as `runtime/proc.go`, module files as the module path plus the file (`example.com/app/main.go`, with `@version` for a dependency), as `go build -trimpath` does. Use it for binaries you publish. |
 | `-static` | Link a static Linux executable with musl (needs `marmot sysroot add -libc musl linux/ARCH`). |
 | `-target triple` | Build for another platform, for example `linux/amd64`. |
 | `-tags a,b` | Build tags. |

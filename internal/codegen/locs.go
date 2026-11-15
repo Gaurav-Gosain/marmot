@@ -134,6 +134,9 @@ func (f *funcGen) wrapperNoLocs() bool {
 // links to, so tracebacks name $GOROOT/src/... or lib/src/... as the
 // source really is.
 func (p *Program) locFile(name string) string {
+	if r, ok := p.opts.FileNames[name]; ok {
+		return r
+	}
 	if p.opts.MergedGOROOT == "" || !strings.HasPrefix(name, p.opts.MergedGOROOT+string(os.PathSeparator)) {
 		return name
 	}

@@ -40,7 +40,7 @@ func main() {
 type buildFlags struct {
 	out, opt, trace, pgo, emit, tags, gc, target, dialect                       *string
 	strip, pgoGen, release, work, verbose, printCmd, nocache, allocs, allocsAll *bool
-	static                                                                      *bool
+	static, trimpath                                                            *bool
 	output                                                                      outputFlags
 }
 
@@ -53,6 +53,7 @@ func newBuildFlags(name string) (*flag.FlagSet, *buildFlags) {
 	b.opt = fs.String("O", "", "optimization level: 0, 1, 2, 3, s, z (default 2, 3 with -release)")
 	b.trace = fs.String("trace", "", "traceback detail of -release builds: full keeps the inlined frames of each call site apart (as dev builds do)")
 	b.strip = fs.Bool("s", false, "omit the pc table (tracebacks without file:line)")
+	b.trimpath = fs.Bool("trimpath", false, "record no directory of this machine in the output: standard library files as runtime/proc.go, module files as module path plus file (as go build -trimpath)")
 	b.pgoGen = fs.Bool("pgo-gen", false, "build an instrumented binary that writes marmot-<id>.profraw next to itself")
 	b.pgo = fs.String("pgo", "", "profile guided optimization with this indexed profile (llvm-profdata merge -o FILE *.profraw)")
 	b.release = fs.Bool("release", os.Getenv("MARMOT_RELEASE") == "1", "release build: whole program optimization, -O3, all specializations (default from $MARMOT_RELEASE=1)")
@@ -145,7 +146,7 @@ func cmdBuild(args []string, run bool) int {
 		Root: root, Dir: wd, Output: *out, OptLevel: *opt, OptSet: optSet, Emit: *emit, Work: *work,
 		Verbose: *verbose, PrintCmd: *printCmd, NoCache: *nocache, GC: *gc, Target: *target,
 		Dialect: *dialect, Patterns: patterns, Stderr: os.Stderr, Release: *release, PGOGen: *pgoGen, PGO: *pgo, Strip: *strip, Trace: *trace,
-		Static: *b.static,
+		Static: *b.static, TrimPath: *b.trimpath,
 	}
 	if *tags != "" {
 		cfg.Tags = strings.Split(*tags, ",")

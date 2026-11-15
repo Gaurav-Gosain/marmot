@@ -58,6 +58,22 @@ void uvarint(std::string &out, uint64_t v) {
   }
   out.push_back(char(v));
 }
+// lineFile is the name of file index idx of a unit's line table as the pc table records it:
+// the absolute path, except that a relative name (marmot build -trimpath: runtime/proc.go,
+// example.com/app/main.go) stays relative instead of joining "/marmot", the directory the
+// backend gives every compile unit (Pipeline.cpp). Only Go files directly in a real /marmot
+// directory would lose it.
+bool lineFile(const DWARFDebugLine::LineTable *lt, uint64_t idx, StringRef compDir, std::string &out) {
+  if (!lt->getFileNameByIndex(idx, compDir, DILineInfoSpecifier::FileLineInfoKind::AbsoluteFilePath, out))
+    return false;
+  if (compDir == "/marmot" && StringRef(out).starts_with("/marmot/")) {
+    std::string rel;
+    if (lt->getFileNameByIndex(idx, compDir, DILineInfoSpecifier::FileLineInfoKind::RelativeFilePath, rel) &&
+        !rel.empty() && rel[0] != '/')
+      out = std::move(rel);
+  }
+  return true;
+}
 void svarint(std::string &out, int64_t v) { uvarint(out, (uint64_t(v) << 1) ^ uint64_t(v >> 63)); }
 void u32(std::string &out, uint32_t v) {
   for (int i = 0; i < 4; ++i)
@@ -118,11 +134,7 @@ void readUnits(DWARFContext &dwarf, unsigned version, std::vector<Raw> &raws,
             uint32_t cf = 0, cl = 0, cc = 0, cd = 0;
             c.getCallerFrame(cf, cl, cc, cd);
             std::string fname;
-            in.callFile = cf && lt->getFileNameByIndex(
-                                    cf, cu->getCompilationDir(),
-                                    DILineInfoSpecifier::FileLineInfoKind::AbsoluteFilePath, fname)
-                              ? fileId(fname)
-                              : 0;
+            in.callFile = cf && lineFile(lt, cf, cu->getCompilationDir(), fname) ? fileId(fname) : 0;
             in.callLine = cl;
             if (auto rs = c.getAddressRanges()) {
               for (auto &rg : *rs)
@@ -160,8 +172,7 @@ void readUnits(DWARFContext &dwarf, unsigned version, std::vector<Raw> &raws,
       if (!r && !orphans)
         continue;
       std::string fname;
-      lt->getFileNameByIndex(row.File, cu->getCompilationDir(),
-                             DILineInfoSpecifier::FileLineInfoKind::AbsoluteFilePath, fname);
+      lineFile(lt, row.File, cu->getCompilationDir(), fname);
       if (r)
         r->f.rows.push_back({row.Address.Address, row.Line, fileId(fname)});
       else

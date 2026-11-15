@@ -71,7 +71,7 @@ func (b *build) buildStamp(goos, goarch string) string {
 	for _, f := range files {
 		fileSig(h, f)
 	}
-	fmt.Fprintf(h, "pgo-gen=%v strip=%v static=%v %s trace=%s\n", b.cfg.PGOGen, b.cfg.Strip, b.cfg.Static, os.Getenv("MARMOT_STRIP"), b.cfg.Trace)
+	fmt.Fprintf(h, "pgo-gen=%v strip=%v static=%v %s trace=%s trimpath=%v\n", b.cfg.PGOGen, b.cfg.Strip, b.cfg.Static, os.Getenv("MARMOT_STRIP"), b.cfg.Trace, b.cfg.TrimPath)
 	if b.cfg.PGO != "" {
 		fileSig(h, b.cfg.PGO)
 	}
@@ -213,7 +213,7 @@ func (b *build) initKeyBase() {
 		if exe, err := os.Executable(); err == nil {
 			fileSig(exeSig, exe)
 		}
-		fmt.Fprintf(exeSig, "%s %s %s %s %v tier0=%v %s/%s\n", b.cfg.OptLevel, b.cfg.Emit, b.cfg.Dialect, b.cfg.GC, b.cfg.Release, b.tier0(), b.goos, b.goarch)
+		fmt.Fprintf(exeSig, "%s %s %s %s %v tier0=%v %s/%s trimpath=%v\n", b.cfg.OptLevel, b.cfg.Emit, b.cfg.Dialect, b.cfg.GC, b.cfg.Release, b.tier0(), b.goos, b.goarch, b.cfg.TrimPath)
 		for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_DIALECT", "MARMOT_SPEC"} {
 			fmt.Fprintf(exeSig, "%s=%s\n", k, os.Getenv(k))
 		}

@@ -47,6 +47,7 @@ type Config struct {
 	PGOGen   bool   // instrument for profile generation
 	PGO      string // indexed profile to optimize with
 	Strip    bool   // -s: no pc table
+	TrimPath bool   // -trimpath: no directory of this machine in the output (trimNames)
 	Static   bool   // -static: a static executable (Linux: musl)
 	Trace    string // -trace=full: release builds keep the inlined frames of each call site apart
 	Tags     []string
@@ -321,7 +322,11 @@ func (b *build) run1() (string, error) {
 			filePkgs[f] = p.PkgPath
 		}
 	}
-	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, FilePkgs: filePkgs, GoDialect: cfg.Dialect == "go", Release: cfg.Release, NoptrSections: b.noptr(), MergedGOROOT: lp.GOROOT, XDefs: b.xdefs(),
+	var fileNames map[string]string
+	if cfg.TrimPath {
+		fileNames = trimNames(lp.GOROOT, lp.All)
+	}
+	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, FilePkgs: filePkgs, FileNames: fileNames, GoDialect: cfg.Dialect == "go", Release: cfg.Release, NoptrSections: b.noptr(), MergedGOROOT: lp.GOROOT, XDefs: b.xdefs(),
 		Separate: b.incr, Facts: incrementalFacts(lp), KeepExported: keepExported, ReflectCall: reflectCall,
 		AllocReport: b.allocReport()})
 	if err != nil {

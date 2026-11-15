@@ -30,6 +30,9 @@ type Options struct {
 	// to its package path; separate compilation keeps positions by it
 	// (locs.go), whether the package was loaded from source or not.
 	FilePkgs map[string]string
+	// FileNames, when set, maps a source file (as positions name it) to the
+	// name its locations record (-trimpath: no directory of this machine).
+	FileNames map[string]string
 	// GoDialect emits the go dialect instead of the
 	// equivalent llvm dialect sequences (Phase B, -dialect=go).
 	GoDialect bool
