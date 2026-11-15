@@ -478,7 +478,7 @@ func (m *moduleGen) global(g *ssa.Global) {
 		return
 	}
 	if img := m.static.images[g]; img != nil && !m.static.dynamic[g] {
-		m.constGlobal(sym, "external", false, m.static.value(img))
+		m.constGlobalIn(sym, "external", false, m.static.value(img), m.noptrSection(g, sym, false))
 		return
 	}
 	// libc_X_trampoline_addr: assembly (DATA) stores the address of the
@@ -505,8 +505,13 @@ func (m *moduleGen) global(g *ssa.Global) {
 			linkage = "weak" // wasm objects have no common symbols
 		}
 	}
-	fmt.Fprintf(&m.defs, "  llvm.mlir.global %s %s() {addr_space = 0 : i32} : %s {\n    %%0 = llvm.mlir.zero : %s\n    llvm.return %%0 : %s\n  }\n",
-		linkage, mlir.Symbol(sym), mlir.Data(t), mlir.Data(t), mlir.Data(t))
+	attrs := "addr_space = 0 : i32"
+	// A common symbol has no section: the linker places it.
+	if sec := m.noptrSection(g, sym, true); sec != "" && linkage == "external" {
+		attrs += ", section = " + mlir.Quote(sec)
+	}
+	fmt.Fprintf(&m.defs, "  llvm.mlir.global %s %s() {%s} : %s {\n    %%0 = llvm.mlir.zero : %s\n    llvm.return %%0 : %s\n  }\n",
+		linkage, mlir.Symbol(sym), attrs, mlir.Data(t), mlir.Data(t), mlir.Data(t))
 }
 
 func (m *moduleGen) globalSym(g *ssa.Global) string {

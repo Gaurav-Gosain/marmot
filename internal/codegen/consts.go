@@ -81,22 +81,31 @@ func (m *moduleGen) sharedStringData(s string) string {
 
 // constGlobal defines a global initialized with c.
 func (m *moduleGen) constGlobal(sym, linkage string, constant bool, c cv) {
+	m.constGlobalIn(sym, linkage, constant, c, "")
+}
+
+// constGlobalIn is constGlobal with the global in section sec ("": none).
+func (m *moduleGen) constGlobalIn(sym, linkage string, constant bool, c cv, sec string) {
 	m.defined[sym] = true
 	b := &m.defs
 	k := ""
 	if constant {
 		k = "constant "
 	}
+	attrs := "addr_space = 0 : i32"
+	if sec != "" {
+		attrs += ", section = " + mlir.Quote(sec)
+	}
 	var init []byte
 	if init = appendInit(init, c); init == nil {
-		fmt.Fprintf(b, "  llvm.mlir.global %s %s%s() {addr_space = 0 : i32} : %s {\n", linkage, k, mlir.Symbol(sym), mlir.Data(c.typ))
+		fmt.Fprintf(b, "  llvm.mlir.global %s %s%s() {%s} : %s {\n", linkage, k, mlir.Symbol(sym), attrs, mlir.Data(c.typ))
 		n := 0
 		v := writeCV(b, &n, c)
 		fmt.Fprintf(b, "    llvm.return %s : %s\n  }\n", v, mlir.Data(c.typ))
 		return
 	}
-	fmt.Fprintf(b, "  llvm.mlir.global %s %s%s() {addr_space = 0 : i32, go.init = %s} : %s\n",
-		linkage, k, mlir.Symbol(sym), mlir.Quote(string(init)), mlir.Data(c.typ))
+	fmt.Fprintf(b, "  llvm.mlir.global %s %s%s() {%s, go.init = %s} : %s\n",
+		linkage, k, mlir.Symbol(sym), attrs, mlir.Quote(string(init)), mlir.Data(c.typ))
 }
 
 // appendInit appends c in the go.init form, which the backend expands into

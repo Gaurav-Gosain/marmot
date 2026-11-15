@@ -321,7 +321,7 @@ func (b *build) run1() (string, error) {
 			filePkgs[f] = p.PkgPath
 		}
 	}
-	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, FilePkgs: filePkgs, GoDialect: cfg.Dialect == "go", Release: cfg.Release, MergedGOROOT: lp.GOROOT, XDefs: b.xdefs(),
+	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, FilePkgs: filePkgs, GoDialect: cfg.Dialect == "go", Release: cfg.Release, NoptrSections: b.noptr(), MergedGOROOT: lp.GOROOT, XDefs: b.xdefs(),
 		Separate: b.incr, Facts: incrementalFacts(lp), KeepExported: keepExported, ReflectCall: reflectCall,
 		AllocReport: b.allocReport()})
 	if err != nil {
@@ -740,6 +740,7 @@ func (b *build) link1(objs []string, rt, out string, extra []string) error {
 		// SHF_LINK_ORDER on that descriptor's section).
 		args = append(args, "-Wl,--gc-sections", "-Wl,-z,start-stop-gc")
 		args = append(args, linuxLinker()...)
+		args = append(args, b.noptrLinkArgs()...)
 		if !b.wantPcln() {
 			args = append(args, "-s")
 		}
@@ -968,6 +969,13 @@ func (b *build) linkBundle(objs []string, rt, out string) error {
 	if err := copyFile(rt, filepath.Join(out, "librtcore.a")); err != nil {
 		return err
 	}
+	noptr := ""
+	if b.noptr() && b.goos != "darwin" {
+		if err := os.WriteFile(filepath.Join(out, "noptr.ld"), []byte(noptrScript), 0o644); err != nil {
+			return err
+		}
+		noptr = " -Wl,-T,noptr.ld"
+	}
 	exe := filepath.Base(out)
 	script := fmt.Sprintf(`#!/bin/sh
 # Link the %s/%s program built by marmot: sh link.sh [output]
@@ -984,8 +992,8 @@ ld=
 if command -v ld.lld >/dev/null 2>&1; then ld=-fuse-ld=lld
 elif command -v ld.bfd >/dev/null 2>&1; then ld=-fuse-ld=bfd
 fi
-${CC:-clang} $ld -o "$out" %s librtcore.a -lpthread -Wl,--gc-sections -Wl,-z,start-stop-gc -s%s
-`, b.goos, b.goarch, exe, exe, strings.Join(names, " "), shellArgs(b.cgoLDFLAGS))
+${CC:-clang} $ld -o "$out" %s librtcore.a -lpthread -Wl,--gc-sections -Wl,-z,start-stop-gc%s -s%s
+`, b.goos, b.goarch, exe, exe, strings.Join(names, " "), noptr, shellArgs(b.cgoLDFLAGS))
 	return os.WriteFile(filepath.Join(out, "link.sh"), []byte(script), 0o755)
 }
 

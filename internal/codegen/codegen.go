@@ -35,6 +35,9 @@ type Options struct {
 	GoDialect bool
 	// Release enables release-only transforms (more devirtualization).
 	Release bool
+	// NoptrSections puts package variables without pointers in sections the
+	// collector does not scan (noptr.go).
+	NoptrSections bool
 	// MergedGOROOT is where the loader's GOROOT symlinks live; source
 	// locations resolve them.
 	MergedGOROOT string

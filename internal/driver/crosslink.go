@@ -83,6 +83,9 @@ func (b *build) linkCross(objs []string, rt, out string) (ok bool, err error) {
 		args = append(args, "-o", o)
 		args = append(args, objs...)
 		args = append(args, rt, "-lpthread", "-Wl,--gc-sections", "-Wl,-z,start-stop-gc")
+		if b.goos != "darwin" {
+			args = append(args, b.noptrLinkArgs()...)
+		}
 		if b.cfg.Static {
 			args = append(args, "-static")
 		}
