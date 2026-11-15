@@ -32,7 +32,20 @@ import (
 // as roots). wasm has no card table and uses the flag barrier.
 var wbMode = os.Getenv("MARMOT_WB")
 
-var optWB = wbMode == "1" || wbMode == "cards"
+var optWB = wbMode == "1" || wbMode == "cards" || wbMode == "cardflag" || wbMode == "cardstub"
+
+// cardFlag (MARMOT_WB=cardflag, a size experiment): a card is marked only
+// while marking runs (cards are cleared at a cycle's first stop and read at
+// its second), so each site inlines only the flag test, and the mark is a
+// call to rt_card_range in the function's cold blocks.
+var cardFlag = wbMode == "cardflag"
+
+// cardStub (MARMOT_WB=cardstub): each mark is a call
+// @marmot.card(slot, on), where on is the marking flag loaded once per
+// stretch between calls. The backend lowers it after register allocation to
+// "cbz on, 1f; bl rt_card_<reg of slot>; 1:" (a stub per register in the
+// runtime, preserving all registers): two instructions and no cold block.
+var cardStub = wbMode == "cardstub"
 
 // smallObject is the largest object the collector rescans whole when a
 // card it overlaps is dirty (runtime/core 1134f480: size classes up to
@@ -41,7 +54,9 @@ var optWB = wbMode == "1" || wbMode == "cards"
 const smallObject = 32 << 10
 
 // cards reports whether this module marks cards instead of calling rt_wb.
-func (m *moduleGen) cards() bool { return wbMode == "cards" && m.p.opts.GOARCH != "wasm" }
+func (m *moduleGen) cards() bool {
+	return (wbMode == "cards" || cardFlag || cardStub) && m.p.opts.GOARCH != "wasm"
+}
 
 // trackAddr: whether funcGen records address spaces and stack slots.
 var trackAddr = optGCPtr || optWB
@@ -85,6 +100,21 @@ func (f *funcGen) noBarrier(p string, t types.Type) bool {
 
 // card marks the card of address a dirty.
 func (f *funcGen) card(a string) {
+	if cardFlag {
+		f.wbCheck(func() { f.cardRange(a, 1) })
+		return
+	}
+	if cardStub {
+		if _, ok := f.m.decls["marmot.card"]; !ok {
+			f.m.decls["marmot.card"] = "  llvm.func @marmot.card(" + tP + ", i1) attributes {memory_effects = #llvm.memory_effects<other = none, argMem = none, inaccessibleMem = readwrite, errnoMem = none, targetMem0 = none, targetMem1 = none>, no_unwind}\n"
+		}
+		on := f.markingOn()
+		// Written directly, not through emit: the mark is not a call that
+		// can reach a safepoint, so fresh objects, the flag and the marked
+		// small objects stay valid after it.
+		fmt.Fprintf(f.b, "    llvm.call @marmot.card(%s, %s) : (%s, i1) -> ()%s\n", f.gcv(a), on, tP, f.opLoc())
+		return
+	}
 	if f.cardBase == "" {
 		f.m.declareCards()
 		base, ref := f.newVal(), f.newVal()
@@ -118,26 +148,32 @@ const (
 	cardMask  = 1<<27 - 1
 )
 
-// wbCheck emits the flag test and runs cold in a cold block that branches
-// back; code after it continues in a new block.
-func (f *funcGen) wbCheck(cold func()) {
+// markingOn returns an i1 that is true while marking runs. The flag
+// changes only at a safepoint, and safepoints are calls: one load serves
+// every store up to the next call in the block. The load is volatile: a
+// thread stopped by signal between calls must see the flag the stop set.
+func (f *funcGen) markingOn() string {
 	f.m.declareMarking()
-	// The flag changes only at a safepoint, and safepoints are calls: one
-	// load serves every store up to the next call in the block.
 	if f.wbFlag == "" {
 		flag := f.op("llvm.load volatile %s {alignment = 1 : i64} : !llvm.ptr -> i8", f.addressOf("rt_gc_marking"))
 		f.wbFlag = f.op("llvm.icmp \"ne\" %s, %s : i8", flag, f.constInt(0, mlir.I8))
 	}
-	on := f.wbFlag
+	return f.wbFlag
+}
+
+// wbCheck emits the flag test and runs cold in a cold block that branches
+// back; code after it continues in a new block.
+func (f *funcGen) wbCheck(cold func()) {
+	on := f.markingOn()
 	wb, cont := f.newBlock(), f.newBlock()
 	f.emit("llvm.cond_br %s weights([1, 2000]), %s, %s", on, wb, cont)
-	saved, savedFresh := f.b, f.fresh
+	saved, savedFresh, savedDone := f.b, f.fresh, f.cardDone
 	f.b = &f.cold
 	f.b.WriteString("  " + wb + ":\n")
 	cold()
 	f.emit("llvm.br %s", cont)
 	// The barrier calls in the cold block are not safepoints.
-	f.b, f.fresh, f.wbFlag = saved, savedFresh, on
+	f.b, f.fresh, f.wbFlag, f.cardDone = saved, savedFresh, on, savedDone
 	f.b.WriteString("  " + cont + ":\n")
 }
 

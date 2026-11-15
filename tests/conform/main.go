@@ -428,6 +428,10 @@ func buildConfigs() []config {
 				// every cycle verified: a store that needed a card and got none
 				// leaves a reachable object unmarked
 				cs = append(cs, config{label: "cards", o: "2", env: []string{"MARMOT_WB=cards", "MARMOT_GC_CONC=1", "MARMOT_GC_VERIFY=1", "GOGC=10"}})
+			case m == "cardstub", m == "cardstub-release":
+				// the card barrier as a call of the backend's register stub
+				// (tier0 lowers it in dev, LLVM in -release), verified as cards
+				cs = append(cs, config{label: m, release: m == "cardstub-release", env: []string{"MARMOT_WB=cardstub", "MARMOT_GC_CONC=1", "MARMOT_GC_VERIFY=1", "GOGC=10"}})
 			case m == "stress":
 				cs = append(cs, config{label: "stress", env: []string{"MARMOT_GCSTRESS=1", "MARMOT_POISON=1"}})
 			case strings.HasPrefix(m, "O"):
