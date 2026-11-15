@@ -414,6 +414,18 @@ func (b *build) run1() (string, error) {
 		}
 		return nil
 	}
+	if b.frontEnd() {
+		// Only the root package's module.
+		root := slices.Index(pkgs, mainSSA)
+		if err := gen(func(i int) bool { return i == root }); err != nil {
+			return "", err
+		}
+		out := cfg.Output
+		if out == "" {
+			out = defaultOutput(lp.Packages[0], cfg.Emit)
+		}
+		return out, os.WriteFile(out, []byte(mods[root].Text), 0o644)
+	}
 	// Modules without a package key (file arguments, the entry module) are
 	// always generated; they are small.
 	if err := gen(func(i int) bool { return !cacheable(i) }); err != nil {

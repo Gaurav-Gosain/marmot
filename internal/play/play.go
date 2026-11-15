@@ -531,6 +531,9 @@ func (s *Server) build(ctx context.Context, dir, mode string, extra ...string) (
 	args = append(args, ".")
 	env := []string{"MARMOT_OUTPUT=json", "MARMOT_ROOT=" + s.opt.Root,
 		"GOPROXY=off", "GOFLAGS=-mod=mod", "GONOSUMDB=*", "GOTOOLCHAIN=local", "CGO_ENABLED=0"}
+	if s.opt.FrontEnd {
+		env = append(env, "MARMOT_FRONTEND=1")
+	}
 	if s.opt.Run != nil {
 		out, err := s.opt.Run(ctx, dir, args, env)
 		diags, other := parseDiagnostics(out)
@@ -636,7 +639,7 @@ func (s *Server) stage(ctx context.Context, dir, mode, stage string) Stage {
 	var st Stage
 	switch stage {
 	case "ssa":
-		text, lines, err := ssaText(s.opt.Root, dir)
+		text, lines, err := ssaText(s.opt.Root, dir, s.opt.FrontEnd)
 		if err != nil {
 			return Stage{Error: err.Error()}
 		}

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 
 	"github.com/Gaurav-Gosain/marmot/internal/binsize"
@@ -47,9 +48,18 @@ func requestFiles(dir string) fileNamer {
 }
 
 // ssaText is package main's SSA, function by function in source order.
-func ssaText(root, dir string) (string, []srcLoc, error) {
-	lp, err := loader.Load(loader.Config{Dir: dir, Root: root, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Patterns: []string{"."},
-		CC: driver.LLVMTool("clang")})
+func ssaText(root, dir string, frontEnd bool) (string, []srcLoc, error) {
+	cfg := loader.Config{Dir: dir, Root: root, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Patterns: []string{"."},
+		CC: driver.LLVMTool("clang")}
+	if frontEnd {
+		// As the front end's MLIR build loads (MARMOT_FRONTEND): std from export data.
+		cfg.Incremental = true
+		cfg.CacheDir = filepath.Join(root, "build", "cache", "types")
+		cfg.NeedSource = func(p *packages.Package, _ string) bool {
+			return p.PkgPath == "command-line-arguments" || p.Module != nil && p.Module.Main
+		}
+	}
+	lp, err := loader.Load(cfg)
 	if err != nil {
 		return "", nil, err
 	}

@@ -36,6 +36,9 @@ func (b *build) incremental() bool {
 	if b.noIncr || os.Getenv("MARMOT_INCREMENTAL") == "0" {
 		return false
 	}
+	if b.frontEnd() {
+		return true
+	}
 	c := b.cfg
 	return !c.Release && !b.wpo() && c.Dialect != "go" && !c.Test && !c.NoCache &&
 		(c.Emit == "exe" || c.Emit == "obj") && !specialize.Enabled(false)
@@ -121,6 +124,20 @@ func (b *build) incrementalConfig(cfg *loader.Config) {
 	cfg.NeedSource = func(p *packages.Package, base string) bool {
 		return !b.moduleCached(p, base)
 	}
+	if b.frontEnd() {
+		// Only the program's own packages from source; std from its export data.
+		cfg.NeedSource = func(p *packages.Package, _ string) bool { return mainModule(p) }
+	}
+}
+
+// frontEnd: MARMOT_FRONTEND=1 with -emit mlir, the browser playground's build (no backend):
+// the standard library from export data (an incremental load), and only the root package's
+// module generated. Its MLIR is the separate compilation's, as dev builds have it.
+func (b *build) frontEnd() bool { return b.cfg.Emit == "mlir" && os.Getenv("MARMOT_FRONTEND") == "1" }
+
+// mainModule reports whether p is the program's own: named files or the main module.
+func mainModule(p *packages.Package) bool {
+	return p.PkgPath == "command-line-arguments" || p.Module != nil && p.Module.Main
 }
 
 // incrementalFacts returns the facts of the packages loaded without syntax.
