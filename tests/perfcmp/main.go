@@ -127,7 +127,7 @@ func main() {
 	for _, m := range missingProgs {
 		o.failed = append(o.failed, m+": no such program here")
 	}
-	maxLoad := load1()
+	maxLoad := 0.0
 	sampleLoad := func() {
 		if l := load1(); l > maxLoad {
 			maxLoad = l
@@ -138,28 +138,38 @@ func main() {
 			"program", "wall A", "wall B", "B/A", "cpu A", "cpu B", "B/A", "rss A", "rss B", "B/A", "size A", "size B", "B/A")
 		var lw, lc, lr []float64
 		var nw, nc []float64 // per side and program: median of the odd runs over the even ones
-		for _, p := range progs {
-			sampleLoad()
-			var bins [2]string
-			var sizes [2]int64
-			ok := true
+		// Build everything first, then let the load of the builds (the compiler uses
+		// every core) decay before timing: the load sampled during the runs is the
+		// machine's, not perfcmp's own.
+		type built struct {
+			bins  [2]string
+			sizes [2]int64
+			ok    bool
+		}
+		bs := make([]built, len(progs))
+		for k, p := range progs {
+			bs[k].ok = true
 			for i, s := range sides {
-				bin, dur, err := build(s, p, mode, work)
+				bin, _, err := build(s, p, mode, work)
 				if err != nil {
 					fmt.Printf("%-12s build %s failed: %v\n", p.name, s.label, err)
 					o.failed = append(o.failed, fmt.Sprintf("%s %s: build %s failed", p.name, mode, s.label))
-					ok = false
+					bs[k].ok = false
 					break
 				}
-				bins[i] = bin
+				bs[k].bins[i] = bin
 				if st, err := os.Stat(bin); err == nil {
-					sizes[i] = st.Size()
+					bs[k].sizes[i] = st.Size()
 				}
-				_ = dur
 			}
-			if !ok {
+		}
+		settle()
+		for k, p := range progs {
+			sampleLoad()
+			if !bs[k].ok {
 				continue
 			}
+			bins, sizes, ok := bs[k].bins, bs[k].sizes, true
 			var got [2][]sample
 			runs := *flRuns
 			if p.kind == "startup" {
@@ -616,6 +626,19 @@ func healLock() {
 	}
 	os.RemoveAll(aside)
 	fmt.Fprintf(os.Stderr, "perfcmp: took over the stale timing lock %s: %s\n", timingLock, why)
+}
+
+// settle waits, at most 5 minutes, until the 1 minute load average is below a quarter of
+// the CPUs, so the timing does not start inside the load of perfcmp's own builds.
+func settle() {
+	limit := float64(runtime.NumCPU()) / 4
+	end := time.Now().Add(5 * time.Minute)
+	if l := load1(); l >= limit {
+		fmt.Fprintf(os.Stderr, "perfcmp: builds done, waiting for the load to fall below %.0f (now %.1f)\n", limit, l)
+	}
+	for load1() >= limit && time.Now().Before(end) {
+		time.Sleep(5 * time.Second)
+	}
 }
 
 // takeLock waits until the load is below half the CPUs and the shared
