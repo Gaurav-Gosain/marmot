@@ -48,6 +48,17 @@ func (b *build) linkWasm(objs []string, rt, out string) error {
 	raw := filepath.Join(b.work, "link.wasm")
 	args := append([]string{"-o", raw}, objs...)
 	args = append(args, rt)
+	hostCallers := os.Getenv("MARMOT_WASM_HOSTCALLERS") == "1"
+	if hostCallers {
+		// The host's stack and pc table imports (marmot.callers,
+		// marmot.pcln) for tracebacks: only hosts that provide them (the
+		// playground) ask for this.
+		cl := b.rtLib("wasm-callers.o")
+		if !fileExists(cl) {
+			return fmt.Errorf("MARMOT_WASM_HOSTCALLERS=1 needs %s (the runtime build for wasip1/wasm)", cl)
+		}
+		args = append(args, cl)
+	}
 	if err := b.run(ld, args...); err != nil {
 		return err
 	}
@@ -62,7 +73,31 @@ func (b *build) linkWasm(objs []string, rt, out string) error {
 	if err := b.run(opt, oargs...); err != nil {
 		return err
 	}
-	return cleanWasm(out, b.cfg.Strip)
+	// The pc table from the final code (wasm-opt -g keeps the DWARF up
+	// to date), before -s strips the DWARF.
+	var tbl []byte
+	if hostCallers && !b.cfg.Strip && fileExists(b.pclnTool()) {
+		p := filepath.Join(b.work, "pcln.bin")
+		if err := b.run(b.pclnTool(), append(b.pclnArgs(p), out)...); err != nil {
+			b.logf("pcln: %v (no table)", err)
+		} else if tbl, err = os.ReadFile(p); err != nil {
+			return err
+		}
+	}
+	if err := cleanWasm(out, b.cfg.Strip); err != nil {
+		return err
+	}
+	if tbl == nil {
+		return nil
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		return err
+	}
+	if data, err = wasmfile.AppendPcln(data, tbl); err != nil {
+		return fmt.Errorf("%s: %v", out, err)
+	}
+	return os.WriteFile(out, data, 0o755)
 }
 
 // cleanWasm rewrites the linked module: only _start and the memory stay
