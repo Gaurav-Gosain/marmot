@@ -523,7 +523,22 @@ bool ModuleGen::run(std::string &fragment, std::vector<std::string> &fallback,
     }
   }
   emitFunctions(fallback, reasons, stats);
-  stats.codeBytes = w.size(Sect::Text);
+  // Package init functions (a section attribute naming init text, as the
+  // frontend gives them) go to their own section, so the linker packs them
+  // together instead of across the whole text.
+  {
+    llvm::DenseMap<unsigned, uint64_t> sizes;
+    for (const Lines &l : lines) sizes[l.sym] = l.size;
+    std::vector<std::pair<unsigned, uint64_t>> init;
+    for (Operation &op : module.getBody()->getOperations())
+      if (auto f = dyn_cast<LL::LLVMFuncOp>(op); f && !f.isExternal())
+        if (auto sa = f->getAttrOfType<StringAttr>("section");
+            sa && (sa.getValue().starts_with(".text.startup") || sa.getValue().starts_with("__TEXT,__StaticInit")))
+          if (auto it = sizes.find(w.symbol(machoName(f.getSymName()))); it != sizes.end())
+            init.push_back({it->first, it->second});
+    w.moveText(std::move(init), Sect::InitText);
+  }
+  stats.codeBytes = w.size(Sect::Text) + w.size(Sect::InitText);
   llvm::DenseMap<StringAttr, StringAttr> renamed;
   if (!fallback.empty()) {
     renamed = localNames(module, unit);

@@ -19,6 +19,14 @@ sed -e "s/DATASECT/$nd/" -e "s/BSSSECT/$nb/" "$src/noptr.mlir" > noptr.mlir
 s=$("$L/llvm-objdump" -h noptr.o)
 echo "$s" | grep -q noptrdata && echo "$s" | grep -q noptr || { echo "noptr: sections missing"; echo "$s"; exit 1; }
 "$L/clang" -O1 -w "$src/noptr_main.c" noptr.o -o noptr && ./noptr && echo "noptr: ok"
+if [ "$(uname)" = Darwin ]; then is=__TEXT,__StaticInit,regular,pure_instructions; else is=.text.startup.pkg.init; fi
+sed "s/INITSECT/$is/" "$src/initsect.mlir" > initsect.mlir
+for m in 0 1; do
+  MARMOT_TIER0_MIR=$m "$T0" initsect.mlir initsect$m.o > /dev/null
+  "$L/llvm-objdump" -t initsect$m.o | grep -E "(StaticInit|text.startup).*pkg.init" > /dev/null || { echo "initsect: pkg.init not in the init section"; "$L/llvm-objdump" -t initsect$m.o; exit 1; }
+  "$L/clang" -O1 -w "$src/initsect_main.c" initsect$m.o -o initsect$m && ./initsect$m
+done
+echo "initsect: ok"
 "$L/clang" -O1 -w "$src/tlinks_main.c" tlinks.o -Wl,$gc -o tlinks && ./tlinks && echo "tlinks: ok"
 for s in $SEEDS; do
   python3 "$src/abi_gen.py" $s 80

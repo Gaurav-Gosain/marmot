@@ -58,7 +58,7 @@ struct Strtab {
 };
 
 const char *elfSectName(unsigned i) {
-  static const char *n[] = {".text", ".data", ".rodata", "marmot_tlinks", ".bss", "marmot_noptrdata", ".bss.marmot.noptr"};
+  static const char *n[] = {".text", ".data", ".rodata", "marmot_tlinks", ".bss", "marmot_noptrdata", ".bss.marmot.noptr", ".text.startup"};
   return n[i];
 }
 
@@ -83,7 +83,7 @@ std::string MachOWriter::serializeELF() const {
   const unsigned TL = unsigned(Sect::TLinks);
   static const uint64_t flags[kNumSect] = {SHF_ALLOC | SHF_EXECINSTR, SHF_ALLOC | SHF_WRITE, SHF_ALLOC,
                                            SHF_ALLOC | SHF_WRITE, SHF_ALLOC | SHF_WRITE, SHF_ALLOC | SHF_WRITE,
-                                           SHF_ALLOC | SHF_WRITE};
+                                           SHF_ALLOC | SHF_WRITE, SHF_ALLOC | SHF_EXECINSTR};
   struct Chunk {
     uint64_t lo, hi;
     unsigned shndx;
@@ -92,7 +92,7 @@ std::string MachOWriter::serializeELF() const {
   for (unsigned i = 0; i < kNumSect; i++) {
     const Section &x = sec_[i];
     uint64_t total = isZeroFill(i) ? x.bssSize : x.data.size();
-    if ((i == TL || i == unsigned(Sect::NoPtrData) || i == unsigned(Sect::NoPtrBss)) && total == 0) continue;
+    if ((i == TL || i == unsigned(Sect::NoPtrData) || i == unsigned(Sect::NoPtrBss) || i == unsigned(Sect::InitText)) && total == 0) continue;
     std::vector<uint64_t> starts, kept;
     for (const Sym &y : syms_)
       if (y.defined && unsigned(y.sect) == i) {
@@ -171,7 +171,7 @@ std::string MachOWriter::serializeELF() const {
     const Sym &s = syms_[order[k]];
     finalIdx[order[k]] = k + 1;
     uint8_t bind = !s.defined ? STB_GLOBAL : !s.global ? STB_LOCAL : s.weak ? STB_WEAK : STB_GLOBAL;
-    uint8_t type = s.commonSize ? STT_OBJECT : !s.defined ? STT_NOTYPE : s.sect == Sect::Text ? STT_FUNC : STT_OBJECT;
+    uint8_t type = s.commonSize ? STT_OBJECT : !s.defined ? STT_NOTYPE : isCode(unsigned(s.sect)) ? STT_FUNC : STT_OBJECT;
     symtab.u32(str.add(s.name));
     symtab.u8(uint8_t(bind << 4 | type));
     symtab.u8(s.hidden ? STV_HIDDEN : 0);

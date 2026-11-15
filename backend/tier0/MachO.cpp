@@ -44,10 +44,10 @@ struct Out {
 };
 
 const char *sectName(unsigned i) {
-  static const char *n[] = {"__text", "__data", "__const", "__marmot_tlinks", "__bss", "__noptrdata", "__noptrbss"};
+  static const char *n[] = {"__text", "__data", "__const", "__marmot_tlinks", "__bss", "__noptrdata", "__noptrbss", "__StaticInit"};
   return n[i];
 }
-const char *segName(unsigned i) { return i == 0 || i == 2 ? "__TEXT" : "__DATA"; }
+const char *segName(unsigned i) { return i == 0 || i == 2 || i == 7 ? "__TEXT" : "__DATA"; }
 
 } // namespace
 
@@ -132,7 +132,7 @@ std::string MachOWriter::serialize() const {
   // n_sect of a symbol is its section's position here, from 1.
   unsigned present[kNumSect], nsect = 0, posOf[kNumSect];
   for (unsigned i = 0; i < kNumSect; i++) {
-    bool opt = i == unsigned(Sect::NoPtrData) || i == unsigned(Sect::NoPtrBss);
+    bool opt = i == unsigned(Sect::NoPtrData) || i == unsigned(Sect::NoPtrBss) || i == unsigned(Sect::InitText);
     posOf[i] = nsect;
     if (!opt || size(Sect(i)) != 0 || !sec_[i].rels.empty()) present[nsect++] = i;
   }
@@ -238,7 +238,7 @@ std::string MachOWriter::serialize() const {
     o.u32(sec_[i].align);
     o.u32(uint32_t(reloff[i]));
     o.u32(nreloc[i]);
-    uint32_t flags = i == 0 ? S_REGULAR | S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
+    uint32_t flags = isCode(i) ? S_REGULAR | S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
                      : isZeroFill(i) ? S_ZEROFILL
                      : i == unsigned(Sect::TLinks) ? S_REGULAR | S_ATTR_LIVE_SUPPORT
                               : S_REGULAR;
@@ -348,6 +348,63 @@ void MachOWriter::appendText(const MachOWriter &part, std::vector<unsigned> &sym
     if (s.sect != Sect::Text) continue;  // parts hold functions only
     define(s.name, Sect::Text, base + s.offset, s.global, s.weak, s.hidden);
   }
+}
+
+void MachOWriter::moveText(std::vector<std::pair<unsigned, uint64_t>> fns, Sect s) {
+  if (fns.empty()) return;
+  Section &ts = sec_[unsigned(Sect::Text)], &ds = sec_[unsigned(s)];
+  std::sort(fns.begin(), fns.end(), [&](auto &a, auto &b) { return syms_[a.first].offset < syms_[b.first].offset; });
+  struct Span {
+    uint64_t lo, hi, to;
+    bool moved;
+  };
+  std::vector<Span> spans;  // text in order: kept and moved pieces
+  const uint64_t a = uint64_t(1) << ts.align, end = ts.data.size();
+  uint64_t at = 0;
+  for (auto &[sym, size] : fns) {
+    const Sym &y = syms_[sym];
+    uint64_t lo = y.offset, hi = std::min(lo + size, end);
+    if (!y.defined || y.sect != Sect::Text || lo < at || hi <= lo) continue;
+    if (lo > at) spans.push_back({at, lo, 0, false});
+    spans.push_back({lo, hi, 0, true});
+    at = hi;
+  }
+  if (at < end || spans.empty()) spans.push_back({at, end, 0, false});
+  std::vector<uint8_t> nt;
+  for (Span &p : spans) {
+    std::vector<uint8_t> &d = p.moved ? ds.data : nt;
+    while (d.size() % a != p.lo % a) d.push_back(0);
+    p.to = d.size();
+    d.insert(d.end(), ts.data.begin() + p.lo, ts.data.begin() + p.hi);
+  }
+  setAlign(s, ts.align);
+  // Where an old text offset went (the end of text stays the end).
+  auto where = [&](uint64_t off, bool &moved) -> uint64_t {
+    size_t lo = 0, hi = spans.size();
+    while (hi - lo > 1) {
+      size_t mid = (lo + hi) / 2;
+      if (spans[mid].lo <= off) lo = mid;
+      else hi = mid;
+    }
+    const Span &p = spans[lo];
+    moved = p.moved && off < p.hi;
+    if (off >= p.hi && !p.moved) return nt.size();
+    return p.to + (off - p.lo);
+  };
+  std::vector<Rel> kept;
+  for (const Rel &r : ts.rels) {
+    bool mv;
+    uint64_t o = where(r.offset, mv);
+    (mv ? ds.rels : kept).push_back(Rel{o, r.kind, r.sym, r.addend});
+  }
+  ts.rels = std::move(kept);
+  for (Sym &y : syms_) {
+    if (!y.defined || y.sect != Sect::Text) continue;
+    bool mv;
+    y.offset = where(y.offset, mv);
+    if (mv) y.sect = s;
+  }
+  ts.data = std::move(nt);
 }
 
 bool MachOWriter::write(const std::string &path, std::string &err) const {

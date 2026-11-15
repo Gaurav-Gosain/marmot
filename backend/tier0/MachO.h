@@ -19,8 +19,11 @@ namespace tier0 {
 // NoPtrData, NoPtrBss: globals without pointers, which the garbage collector
 // does not scan (Mach-O __DATA,__noptrdata and __DATA,__noptrbss; ELF
 // marmot_noptrdata and .bss.marmot.noptr). Bss and NoPtrBss are zero fill.
-enum class Sect : uint8_t { Text, Data, Const, TLinks, Bss, NoPtrData, NoPtrBss };
-constexpr unsigned kNumSect = 7;
+// InitText: package init code, packed together by the linker (Mach-O
+// __TEXT,__StaticInit; ELF .text.startup).
+enum class Sect : uint8_t { Text, Data, Const, TLinks, Bss, NoPtrData, NoPtrBss, InitText };
+constexpr unsigned kNumSect = 8;
+inline bool isCode(unsigned i) { return i == 0 || i == 7; }
 inline bool isZeroFill(Sect s) { return s == Sect::Bss || s == Sect::NoPtrBss; }
 inline bool isZeroFill(unsigned i) { return isZeroFill(Sect(i)); }
 
@@ -82,6 +85,12 @@ public:
   // merging the parts of a module in order gives the same object as
   // emitting all its functions into one writer.
   void appendText(const MachOWriter &part, std::vector<unsigned> &symMap);
+
+  // Moves whole functions (symbol, code size) from text to sect: their
+  // bytes, relocations and symbols. The rest of text closes up, every byte
+  // keeping its offset modulo the text alignment. Code reaches other
+  // functions only through relocations, so nothing else changes.
+  void moveText(std::vector<std::pair<unsigned, uint64_t>> fns, Sect sect);
 
   // Text size and relocation count, to drop a function that turned out
   // unsupported (symbols it referenced stay, undefined and unused).
