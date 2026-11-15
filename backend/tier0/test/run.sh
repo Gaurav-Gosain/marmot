@@ -28,6 +28,16 @@ for m in 0 1; do
   "$L/clang" -O1 -w "$src/initsect_main.c" initsect$m.o -o initsect$m && ./initsect$m
 done
 echo "initsect: ok"
+# Checks decided by dominating compares, with MIR and MARMOT_TIER0_DOMCHECKS=1:
+# same results, the nil path still panics, fewer calls to the panic.
+for d in 0 1; do
+  MARMOT_TIER0_MIR=1 MARMOT_TIER0_DOMCHECKS=$d "$T0" "$src/domchecks.mlir" dc$d.o > /dev/null
+  "$L/clang" -O1 -w "$src/domchecks_main.c" dc$d.o -o dc$d && ./dc$d
+  rc=0; ./dc$d nil || rc=$?; [ $rc = 11 ] || { echo "domchecks $d: nil exit $rc"; exit 1; }
+  rc=0; ./dc$d neg || rc=$?; [ $rc = 14 ] || { echo "domchecks $d: neg exit $rc"; exit 1; }
+done
+n0=$("$L/llvm-objdump" -r dc0.o | grep -c panic_hit); n1=$("$L/llvm-objdump" -r dc1.o | grep -c panic_hit)
+[ "$n1" -lt "$n0" ] && echo "domchecks: ok ($n0 -> $n1 panic calls)" || { echo "domchecks: $n0 -> $n1 panic calls"; exit 1; }
 "$L/clang" -O1 -w "$src/tlinks_main.c" tlinks.o -Wl,$gc -o tlinks && ./tlinks && echo "tlinks: ok"
 for s in $SEEDS; do
   python3 "$src/abi_gen.py" $s 80

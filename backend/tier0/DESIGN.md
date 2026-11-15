@@ -145,6 +145,17 @@ The second code generator, on its own IR (`Mir.h`), for both targets:
   is read, cycles broken through one scratch register per class.
 - `MirArm64.cpp`, `MirX64.cpp`: the emitters. Floats live in FP registers.
 
+`MARMOT_TIER0_DOMCHECKS=1` (default off) decides a conditional branch on a compare that a
+dominating branch already decided: a block with one predecessor knows the compare of the edge
+into it, every block knows what its dominators knew, and a compare with the same predicate and
+operands (or swapped operands, or the inverse predicate) is decided; constants match by value.
+A signed order whose smaller side is nonnegative also gives the unsigned order, so the
+unsigned bounds check after a signed loop test is decided. Nonnegative: constants with the
+sign bit clear, values narrower than 64 bits, and a block parameter whose incoming values are
+such values, itself, or itself plus 1 computed where it is signed less than something.
+The nil and bounds checks in loop bodies on values checked before the loop go away with their
+panic blocks. Without it, only a nil check whose block has one earlier predecessor is decided.
+
 `MARMOT_TIER0_MIR_BISECT=LO-HI` limits MIR to the functions whose name hash (FNV-1a mod 4096)
 falls in the range, to find a miscompiled function; `TIER0_MIR_WHY=1` prints why a function
 did not take MIR, `TIER0_MIR_STATS=1` the coverage, `TIER0_MIR_DUMP=1` the MIR,

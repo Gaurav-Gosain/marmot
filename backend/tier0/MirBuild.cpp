@@ -12,8 +12,11 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/Hashing.h"
 
+#include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <tuple>
+#include <unordered_set>
 
 namespace marmot {
 namespace tier0 {
@@ -372,6 +375,8 @@ private:
   void wide(Operation &o);
   bool fuseLoadStore(LL::LoadOp l);
   void decideNilChecks();
+  bool decideByDominators();
+  void removeDead();
   void dce();
 };
 
@@ -421,6 +426,14 @@ void Builder::run() {
 // already found non-nil goes straight to the non-nil side; blocks then
 // reached by no live edge are dead (their instructions removed).
 void Builder::decideNilChecks() {
+  static const bool dom = [] {
+    const char *e = getenv("MARMOT_TIER0_DOMCHECKS");
+    return e && *e == '1';
+  }();
+  if (dom) {
+    if (decideByDominators()) removeDead();
+    return;
+  }
   const uint32_t nb = uint32_t(f.blocks.size());
   // The pointer a block's terminator checks against nil: (value, is eq,
   // non-nil edge).
@@ -463,7 +476,331 @@ void Builder::decideNilChecks() {
     t.extra = e;
     any = true;
   }
-  if (!any) return;
+  if (any) removeDead();
+}
+
+// Facts from dominating compares (MARMOT_TIER0_DOMCHECKS=1): a compare
+// with the same predicate and operands as one whose branch dominates this
+// block on one side is decided. A block with one predecessor learns the
+// compare of the edge into it; every block knows what its dominators knew.
+// Compares are over SSA values, so a fact holds wherever its block
+// dominates. Constants match by value. Returns whether any branch changed.
+bool Builder::decideByDominators() {
+  using P = LL::ICmpPredicate;
+  const uint32_t nb = uint32_t(f.blocks.size());
+  // Reverse postorder from the entry over the terminators' edges.
+  auto succs = [&](uint32_t b, llvm::SmallVectorImpl<uint32_t> &out) {
+    const BB &bl = f.blocks[b];
+    if (bl.end == bl.begin) return;
+    const Inst &t = f.insts[bl.end - 1];
+    if (t.op == Op::Br) out.push_back(f.edges[t.extra].block);
+    if (t.op == Op::CondBr) {
+      out.push_back(f.edges[t.extra].block);
+      out.push_back(f.edges[t.aux2].block);
+    }
+    if (t.op == Op::Switch)
+      for (uint32_t e : f.switches[t.extra].edges) out.push_back(f.edges[e].block);
+  };
+  std::vector<uint32_t> rpo, order(nb, ~0u);
+  {
+    std::vector<char> seen(nb, 0);
+    std::vector<std::pair<uint32_t, uint32_t>> stack{{0, 0}};
+    std::vector<llvm::SmallVector<uint32_t, 4>> ss(nb);
+    seen[0] = 1;
+    succs(0, ss[0]);
+    while (!stack.empty()) {
+      auto &[b, i] = stack.back();
+      if (i < ss[b].size()) {
+        uint32_t s = ss[b][i++];
+        if (!seen[s]) {
+          seen[s] = 1;
+          succs(s, ss[s]);
+          stack.push_back({s, 0});
+        }
+        continue;
+      }
+      rpo.push_back(b);
+      stack.pop_back();
+    }
+    std::reverse(rpo.begin(), rpo.end());
+    for (uint32_t i = 0; i < rpo.size(); i++) order[rpo[i]] = i;
+  }
+  // Immediate dominators (Cooper, Harvey and Kennedy), as rpo indices.
+  std::vector<uint32_t> idom(rpo.size(), ~0u);
+  idom[0] = 0;
+  for (bool changed = true; changed;) {
+    changed = false;
+    for (uint32_t i = 1; i < rpo.size(); i++) {
+      uint32_t nd = ~0u;
+      for (uint32_t p : f.blocks[rpo[i]].preds) {
+        uint32_t pi = order[p];
+        if (pi == ~0u || idom[pi] == ~0u) continue;
+        if (nd == ~0u) {
+          nd = pi;
+          continue;
+        }
+        uint32_t a = pi, b = nd;
+        while (a != b) {
+          while (a > b) a = idom[a];
+          while (b > a) b = idom[b];
+        }
+        nd = a;
+      }
+      if (nd != idom[i]) {
+        idom[i] = nd;
+        changed = true;
+      }
+    }
+  }
+  // A fact: the compare (pred, width, a, b) is true. An operand is a value
+  // or a constant (by its bits).
+  struct Key {
+    uint8_t pred, w, ka, kb;
+    uint64_t a, b;
+    bool operator==(const Key &o) const {
+      return pred == o.pred && w == o.w && ka == o.ka && kb == o.kb && a == o.a && b == o.b;
+    }
+  };
+  struct KeyHash {
+    size_t operator()(const Key &k) const { return llvm::hash_combine(k.pred, k.w, k.ka, k.kb, k.a, k.b); }
+  };
+  auto inv = [](P p) {
+    switch (p) {
+    case P::eq: return P::ne;
+    case P::ne: return P::eq;
+    case P::slt: return P::sge;
+    case P::sge: return P::slt;
+    case P::sle: return P::sgt;
+    case P::sgt: return P::sle;
+    case P::ult: return P::uge;
+    case P::uge: return P::ult;
+    case P::ule: return P::ugt;
+    case P::ugt: return P::ule;
+    }
+    return p;
+  };
+  auto swp = [](P p) {
+    switch (p) {
+    case P::slt: return P::sgt;
+    case P::sgt: return P::slt;
+    case P::sle: return P::sge;
+    case P::sge: return P::sle;
+    case P::ult: return P::ugt;
+    case P::ugt: return P::ult;
+    case P::ule: return P::uge;
+    case P::uge: return P::ule;
+    default: return p;
+    }
+  };
+  auto opnd = [&](VId v, uint8_t &k, uint64_t &x) {
+    uint64_t c;
+    if (isConst(v, c)) {
+      k = 1;
+      x = c;
+    } else {
+      k = 0;
+      x = v;
+    }
+  };
+  auto key = [&](P p, const Inst &c, bool swapped) {
+    Key k;
+    k.pred = uint8_t(swapped ? swp(p) : p);
+    k.w = c.w;
+    opnd(swapped ? c.b : c.a, k.ka, k.a);
+    opnd(swapped ? c.a : c.b, k.kb, k.b);
+    return k;
+  };
+  // The compare a block's conditional branch tests, or null.
+  auto condOf = [&](uint32_t b) -> const Inst * {
+    const BB &bl = f.blocks[b];
+    if (bl.end == bl.begin) return nullptr;
+    const Inst &t = f.insts[bl.end - 1];
+    if (t.op != Op::CondBr) return nullptr;
+    const Inst *c = defOf(t.a);
+    return c && c->op == Op::ICmp ? c : nullptr;
+  };
+  std::unordered_set<Key, KeyHash> facts;
+  std::vector<Key> undo;
+  auto add = [&](const Key &k) {
+    if (facts.insert(k).second) undo.push_back(k);
+  };
+  // The edge fact of block b: the compare its only predecessor branched
+  // on, as the side that leads here.
+  auto edgeKey = [&](uint32_t b, Key &out) {
+    const BB &bl = f.blocks[b];
+    uint32_t pb = ~0u;
+    for (uint32_t p : bl.preds)
+      if (order[p] != ~0u) {
+        if (pb != ~0u) return false;
+        pb = p;
+      }
+    if (pb == ~0u) return false;
+    const Inst *c = condOf(pb);
+    if (!c) return false;
+    const Inst &t = f.insts[f.blocks[pb].end - 1];
+    uint32_t tb = f.edges[t.extra].block, fb = f.edges[t.aux2].block;
+    if (tb == fb) return false;
+    P p = P(c->aux);
+    if (b == fb) p = inv(p);
+    else if (b != tb) return false;
+    out = key(p, *c, false);
+    return true;
+  };
+  // Values known to be at least 0 as signed 64-bit integers: constants
+  // with the sign bit clear, values narrower than 64 bits (canonical, zero
+  // extended), and a block parameter all of whose incoming values are such
+  // constants, the parameter itself, or the parameter plus 1 computed where
+  // the parameter is signed less than something (so the add cannot wrap).
+  std::vector<uint32_t> paramBlock;
+  llvm::DenseMap<VId, char> nn;  // 1 yes, 0 no, 2 in progress (assumed yes)
+  std::vector<VId> trail;        // parameters in the order first asked
+  auto blockOfInst = [&](uint32_t ix) {
+    uint32_t lo = 0, hi = nb;
+    while (hi - lo > 1) {
+      uint32_t mid = (lo + hi) / 2;
+      if (f.blocks[mid].begin <= ix) lo = mid;
+      else hi = mid;
+    }
+    return lo;
+  };
+  // Whether v <s something holds on entry to block b: a fact on the edge
+  // into b or into one of its dominators (at most 64 up).
+  auto guardedBelow = [&](VId v, uint32_t b) {
+    uint32_t i = order[b];
+    for (int n = 0; i != ~0u && n < 64; n++) {
+      Key k;
+      if (edgeKey(rpo[i], k) && k.w == 64 &&
+          ((P(k.pred) == P::slt && k.ka == 0 && k.a == v) || (P(k.pred) == P::sgt && k.kb == 0 && k.b == v)))
+        return true;
+      if (i == 0) break;
+      i = idom[i];
+    }
+    return false;
+  };
+  std::function<bool(VId)> nonneg = [&](VId v) -> bool {
+    uint64_t k;
+    if (isConst(v, k)) return int64_t(k) >= 0;
+    const Val &x = f.vals[v];
+    if (x.cls != Cls::Int) return false;
+    if (x.width < 64) return true;
+    if (x.def != ~0u) return false;
+    if (paramBlock.empty()) {
+      paramBlock.assign(f.vals.size(), ~0u);
+      for (uint32_t b = 0; b < nb; b++)
+        for (VId p : f.blocks[b].params) paramBlock[p] = b;
+    }
+    uint32_t h = paramBlock[v];
+    if (h == ~0u || h == 0 || order[h] == ~0u) return false;
+    auto [it, fresh] = nn.try_emplace(v, 2);
+    if (!fresh) return it->second != 0;
+    size_t mark0 = trail.size();
+    trail.push_back(v);
+    uint32_t idx = 0;
+    while (f.blocks[h].params[idx] != v) idx++;
+    bool ok = true;
+    auto arg = [&](uint32_t e) {
+      const Edge &ed = f.edges[e];
+      if (ed.block != h || !ok) return;
+      VId a = f.edgeArgs[ed.argBegin + idx];
+      if (a == v) return;
+      if (const Inst *d = defOf(a); d && d->op == Op::Add && d->w == 64 && d->a == v && isConst(d->b, k) && k == 1) {
+        ok = guardedBelow(v, blockOfInst(f.vals[a].def));
+        return;
+      }
+      ok = nonneg(a);
+    };
+    for (uint32_t p : f.blocks[h].preds) {
+      if (order[p] == ~0u) continue;
+      const Inst &t = f.insts[f.blocks[p].end - 1];
+      if (t.op == Op::Br) arg(t.extra);
+      else if (t.op == Op::CondBr) {
+        arg(t.extra);
+        arg(t.aux2);
+      } else if (t.op == Op::Switch) {
+        for (uint32_t e : f.switches[t.extra].edges) arg(e);
+      } else ok = false;
+    }
+    nn[v] = ok;
+    // A no: answers given while v was assumed yes may rest on it.
+    if (!ok)
+      for (size_t i = mark0; i < trail.size(); i++) nn[trail[i]] = 0;
+    return ok;
+  };
+  // A signed order between a nonnegative smaller side and anything is the
+  // same unsigned order (the larger side is then nonnegative too).
+  auto addWithUnsigned = [&](const Key &k) {
+    add(k);
+    if (k.w != 64) return;
+    P p = P(k.pred), u;
+    bool smallA;
+    switch (p) {
+    case P::slt: u = P::ult; smallA = true; break;
+    case P::sle: u = P::ule; smallA = true; break;
+    case P::sgt: u = P::ugt; smallA = false; break;
+    case P::sge: u = P::uge; smallA = false; break;
+    default: return;
+    }
+    uint8_t ks = smallA ? k.ka : k.kb;
+    uint64_t vs = smallA ? k.a : k.b;
+    if (ks ? int64_t(vs) >= 0 : nonneg(VId(vs))) {
+      Key q = k;
+      q.pred = uint8_t(u);
+      add(q);
+    }
+  };
+  auto edgeFact = [&](uint32_t b) {
+    Key k;
+    if (edgeKey(b, k)) addWithUnsigned(k);
+  };
+  // Dominator tree children, then a preorder walk with an undo log.
+  std::vector<std::vector<uint32_t>> kids(rpo.size());
+  for (uint32_t i = 1; i < rpo.size(); i++)
+    if (idom[i] != ~0u) kids[idom[i]].push_back(i);
+  bool any = false;
+  std::vector<std::pair<uint32_t, size_t>> walk{{0, 0}};
+  std::vector<size_t> mark;
+  auto enter = [&](uint32_t i) {
+    mark.push_back(undo.size());
+    uint32_t b = rpo[i];
+    edgeFact(b);
+    const Inst *c = condOf(b);
+    if (!c) return;
+    P p = P(c->aux);
+    int decided = -1;
+    if (facts.count(key(p, *c, false)) || facts.count(key(p, *c, true))) decided = 1;
+    else if (facts.count(key(inv(p), *c, false)) || facts.count(key(inv(p), *c, true))) decided = 0;
+    if (decided < 0) return;
+    Inst &t = f.insts[f.blocks[b].end - 1];
+    uint32_t keep = decided ? t.extra : t.aux2, drop = decided ? t.aux2 : t.extra;
+    f.vals[t.a].uses--;
+    const Edge &de = f.edges[drop];
+    for (uint32_t j = de.argBegin; j < de.argEnd; j++) f.vals[f.edgeArgs[j]].uses--;
+    t.op = Op::Br;
+    t.a = None;
+    t.extra = keep;
+    t.aux2 = 0;
+    any = true;
+  };
+  enter(0);
+  while (!walk.empty()) {
+    auto &[i, k] = walk.back();
+    if (k < kids[i].size()) {
+      uint32_t c = kids[i][k++];
+      enter(c);
+      walk.push_back({c, 0});
+      continue;
+    }
+    for (size_t n = mark.back(); undo.size() > n; undo.pop_back()) facts.erase(undo.back());
+    mark.pop_back();
+    walk.pop_back();
+  }
+  return any;
+}
+
+// Blocks reached by no live edge are dead: their instructions removed and
+// their edges forgotten by their successors.
+void Builder::removeDead() {
+  const uint32_t nb = uint32_t(f.blocks.size());
   // Reachability from the entry over the terminators.
   std::vector<char> live(nb, 0);
   std::vector<uint32_t> work{0};
