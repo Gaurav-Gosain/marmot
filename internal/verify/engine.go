@@ -24,6 +24,8 @@ type engine struct {
 	// liveness.
 	reach  map[*ssa.BasicBlock]map[*ssa.BasicBlock]bool
 	visits int
+	// sums gives callee summaries (nil: none).
+	sums func(*ssa.Function) *FnSummary
 }
 
 // liveOut reports whether v may be used after block b: a use in a block
@@ -459,6 +461,17 @@ func hasCap(t types.Type) bool {
 // refine adds what cond == truth implies; false means the edge is
 // infeasible.
 func refine(s *state, cond ssa.Value, truth bool, pos token.Pos) bool {
+	if cf := s.cond[cond]; cf != nil {
+		fs := cf.onFalse
+		if truth {
+			fs = cf.onTrue
+		}
+		for _, f := range fs {
+			if !s.assume(f.a, f.b, f.c, token.NoPos) {
+				return false
+			}
+		}
+	}
 	switch c := cond.(type) {
 	case *ssa.Const:
 		if c.Value != nil && c.Value.Kind() == constant.Bool {
@@ -520,6 +533,11 @@ func refineCompare(s *state, op token.Token, x, y ssa.Value, truth bool, pos tok
 				return false
 			}
 			s.isnil[y] = pos
+			if cf := s.cond[y]; cf != nil {
+				for _, v := range cf.nonNilOnNil {
+					s.nn[v] = token.NoPos
+				}
+			}
 			if hasLen(y.Type()) {
 				return s.setRange(lenNode(y), 0, 0, pos)
 			}
@@ -645,7 +663,9 @@ func (e *engine) transfer(b *ssa.BasicBlock, s *state, check func(ssa.Instructio
 // step applies one instruction; false when it always panics.
 func (e *engine) step(in ssa.Instruction, s *state) bool {
 	if v, ok := in.(ssa.Value); ok {
-		s.kill(v)
+		if _, isExtract := in.(*ssa.Extract); !isExtract {
+			s.kill(v)
+		}
 	}
 	switch in := in.(type) {
 	case *ssa.BinOp:
@@ -654,6 +674,15 @@ func (e *engine) step(in ssa.Instruction, s *state) bool {
 		switch in.Op {
 		case token.MUL:
 			s.nn[in.X] = token.NoPos
+			// A load from an address loaded from (or stored to) before,
+			// with no store or call since, yields the same value.
+			if k := addrKey(in.X, 0); k != "" {
+				if prev, ok := s.mem[k]; ok && prev != in {
+					copyValue(s, prev, in)
+				} else {
+					s.mem[k] = in
+				}
+			}
 		case token.SUB:
 			if isIntType(in.Type()) {
 				lo, hi := s.interval(valNode(in.X))
@@ -701,14 +730,25 @@ func (e *engine) step(in ssa.Instruction, s *state) bool {
 		s.nn[in.X] = token.NoPos
 	case *ssa.Store:
 		s.nn[in.Addr] = token.NoPos
+		clear(s.mem)
+		if k := addrKey(in.Addr, 0); k != "" {
+			s.mem[k] = in.Val
+		}
 	case *ssa.MapUpdate:
 		s.nn[in.Map] = token.NoPos
+		clear(s.mem)
 	case *ssa.Panic:
 		return false
 	case *ssa.Call:
+		if !pureCall(in) {
+			clear(s.mem)
+		}
 		e.call(s, in)
 	case *ssa.Defer:
 	case *ssa.Go:
+		clear(s.mem)
+	case *ssa.Send, *ssa.Select:
+		clear(s.mem)
 	}
 	return true
 }
@@ -836,6 +876,19 @@ func sliceOp(s *state, in *ssa.Slice) {
 			return
 		}
 	}
+	// len(v) = hi - lo exactly (no wrap: 0 <= lo <= hi): bounds from
+	// the relation between hi and lo.
+	if c, _ := s.upper(hi, lo); c != inf {
+		s.setRange(lenNode(in), ninf, c, token.NoPos)
+	}
+	if c, _ := s.upper(lo, hi); c != inf {
+		s.setRange(lenNode(in), neg(c), inf, token.NoPos)
+	}
+	if !isStr {
+		if c, _ := s.upper(mx, lo); c != inf {
+			s.setRange(capNode(in), ninf, c, token.NoPos)
+		}
+	}
 	// lo >= 0, so len(v) <= hi; and the interval of hi - lo.
 	s.assume(lenNode(in), hi, 0, token.NoPos)
 	if !isStr {
@@ -875,6 +928,17 @@ func binop(s *state, in *ssa.BinOp) {
 	switch in.Op {
 	case token.ADD, token.SUB:
 		if in.Op == token.SUB {
+			// v = x - y: bounds of v from the relation between x and y,
+			// when the difference cannot wrap (both in [0, maxLen], as
+			// lengths and indexes are).
+			if xlo >= 0 && ylo >= 0 && xhi != inf && yhi != inf && xhi <= maxLen && yhi <= maxLen {
+				if c, _ := s.upper(x, y); c != inf {
+					s.setRange(v, ninf, c, token.NoPos)
+				}
+				if c, _ := s.upper(y, x); c != inf {
+					s.setRange(v, neg(c), inf, token.NoPos)
+				}
+			}
 			ylo, yhi = neg(yhi), neg(ylo)
 		}
 		if xlo == ninf || ylo == ninf || xhi == inf || yhi == inf {
@@ -1057,8 +1121,19 @@ func (e *engine) call(s *state, in *ssa.Call) {
 		builtin(s, in, f.Name(), c.Args)
 		return
 	case *ssa.Function:
+		// The results' facts from the previous iteration are stale.
+		for _, r := range resultValues(in) {
+			if r != nil && r != ssa.Value(in) {
+				s.kill(r)
+			}
+		}
+		// The inliner looks at the state before the call; the summary
+		// is what holds after it returns.
 		if e.inline != nil {
 			e.inline.call(e, s, in, f)
+		}
+		if e.sums != nil {
+			applySummary(s, in, e.sums(f))
 		}
 		return
 	case *ssa.MakeClosure:
@@ -1124,6 +1199,20 @@ func builtin(s *state, in *ssa.Call, name string, args []ssa.Value) {
 		}
 	case "recover":
 	}
+}
+
+// pureCall is a call that writes no memory the function can load:
+// builtins that only read.
+func pureCall(c *ssa.Call) bool {
+	if b, ok := c.Call.Value.(*ssa.Builtin); ok {
+		switch b.Name() {
+		case "len", "cap", "min", "max", "real", "imag", "complex", "append":
+			// append writes only past the length of its first argument,
+			// into memory no other value of the function has loaded.
+			return b.Name() != "append"
+		}
+	}
+	return false
 }
 
 // reversePostorder orders fn's blocks for the worklist.

@@ -83,6 +83,12 @@ type state struct {
 	// (through calls and element reads too), with the branch: a must
 	// set, intersected at joins.
 	tested map[ssa.Value]token.Pos
+	// mem maps an address expression to the value last loaded from or
+	// stored at it, valid until a store or call may change memory.
+	mem map[string]ssa.Value
+	// cond holds what a later branch on a bool or error value learns,
+	// from a callee's summary.
+	cond map[ssa.Value]*condFact
 }
 
 // ctx is shared by the states of one analysis: value numbers for a
@@ -142,14 +148,14 @@ func (c *ctx) implicitEdges(n node) []edge {
 }
 
 func newState(cx *ctx) *state {
-	return &state{cx: cx, d: map[pair]bound{}, nn: map[ssa.Value]token.Pos{}, isnil: map[ssa.Value]token.Pos{}, guards: map[node]token.Pos{}, tested: map[ssa.Value]token.Pos{}}
+	return &state{cx: cx, d: map[pair]bound{}, nn: map[ssa.Value]token.Pos{}, isnil: map[ssa.Value]token.Pos{}, guards: map[node]token.Pos{}, tested: map[ssa.Value]token.Pos{}, mem: map[string]ssa.Value{}, cond: map[ssa.Value]*condFact{}}
 }
 
 func (s *state) clone() *state {
 	if s == nil {
 		return nil
 	}
-	return &state{cx: s.cx, d: maps.Clone(s.d), g: s.g, nn: maps.Clone(s.nn), isnil: maps.Clone(s.isnil), guards: maps.Clone(s.guards), tested: maps.Clone(s.tested)}
+	return &state{cx: s.cx, d: maps.Clone(s.d), g: s.g, nn: maps.Clone(s.nn), isnil: maps.Clone(s.isnil), guards: maps.Clone(s.guards), tested: maps.Clone(s.tested), mem: maps.Clone(s.mem), cond: maps.Clone(s.cond)}
 }
 
 func (s *state) set(p pair, bd bound) {
@@ -161,7 +167,7 @@ func (s *state) equal(t *state) bool {
 	if s == nil || t == nil {
 		return s == t
 	}
-	return maps.Equal(s.d, t.d) && maps.Equal(s.nn, t.nn) && maps.Equal(s.isnil, t.isnil) && maps.Equal(s.guards, t.guards) && maps.Equal(s.tested, t.tested)
+	return maps.Equal(s.d, t.d) && maps.Equal(s.nn, t.nn) && maps.Equal(s.isnil, t.isnil) && maps.Equal(s.guards, t.guards) && maps.Equal(s.tested, t.tested) && maps.Equal(s.mem, t.mem) && maps.Equal(s.cond, t.cond)
 }
 
 // satAdd adds two finite upper bounds, clamping on overflow (a clamped
@@ -662,6 +668,28 @@ func (s *state) kill(v ssa.Value) {
 		}
 	}
 	delete(s.tested, v)
+	for k, x := range s.mem {
+		if x == v || strings.Contains(k, memID(v)) {
+			delete(s.mem, k)
+		}
+	}
+	delete(s.cond, v)
+	for k, cf := range s.cond {
+		if cf.mentions(v) {
+			delete(s.cond, k)
+		}
+	}
+}
+
+func (cf *condFact) mentions(v ssa.Value) bool {
+	for _, fs := range [][]pair2{cf.onTrue, cf.onFalse} {
+		for _, f := range fs {
+			if f.a.v == v || f.b.v == v {
+				return true
+			}
+		}
+	}
+	return slices.Contains(cf.nonNilOnNil, v)
 }
 
 func (s *state) nonNil(v ssa.Value) bool {
@@ -755,6 +783,16 @@ func join(s, t *state) *state {
 			r.tested[v] = min(w, w2)
 		}
 	}
+	for k, v := range s.mem {
+		if t.mem[k] == v {
+			r.mem[k] = v
+		}
+	}
+	for k, v := range s.cond {
+		if t.cond[k] == v {
+			r.cond[k] = v
+		}
+	}
 	return r
 }
 
@@ -787,6 +825,16 @@ func widen(old, cur *state) *state {
 	for v, w := range old.tested {
 		if _, ok := cur.tested[v]; ok {
 			r.tested[v] = w
+		}
+	}
+	for k, v := range old.mem {
+		if cur.mem[k] == v {
+			r.mem[k] = v
+		}
+	}
+	for k, v := range old.cond {
+		if cur.cond[k] == v {
+			r.cond[k] = v
 		}
 	}
 	return r
@@ -826,10 +874,17 @@ func (s *state) String() string {
 // project eliminates the nodes live rejects: every bound through such a
 // node is replaced by the bounds between its neighbors (Fourier-Motzkin
 // for difference constraints), then its facts are dropped.
-func (s *state) project(live func(ssa.Value) bool) {
+func (s *state) project(isLive func(ssa.Value) bool) {
 	if s == nil {
 		return
 	}
+	// Values remembered as the contents of an address stay: a later load
+	// of the address is made equal to them.
+	keep := map[ssa.Value]bool{}
+	for _, v := range s.mem {
+		keep[v] = true
+	}
+	live := func(v ssa.Value) bool { return keep[v] || isLive(v) }
 	deadV := map[ssa.Value]bool{}
 	var order []node
 	seen := map[node]bool{}
@@ -863,6 +918,24 @@ func (s *state) project(live func(ssa.Value) bool) {
 	for v := range s.tested {
 		if !live(v) {
 			delete(s.tested, v)
+		}
+	}
+	for k, v := range s.mem {
+		if !live(v) {
+			delete(s.mem, k)
+		}
+	}
+	for k, cf := range s.cond {
+		if !live(k) {
+			delete(s.cond, k)
+			continue
+		}
+		for _, fs := range [][]pair2{cf.onTrue, cf.onFalse} {
+			for _, f := range fs {
+				if f.a.v != nil && !live(f.a.v) || f.b.v != nil && !live(f.b.v) {
+					delete(s.cond, k)
+				}
+			}
 		}
 	}
 	if len(order) == 0 {
@@ -935,4 +1008,62 @@ func seenBefore(order []node, d, n node) bool {
 		}
 	}
 	return false
+}
+
+// memID names a value inside address keys.
+func memID(v ssa.Value) string {
+	return fmt.Sprintf("<%p>", v)
+}
+
+// addrKey is a structural key of an address: a global, or a chain of
+// field and constant index selections from a value. "" when the address
+// has no stable key.
+func addrKey(a ssa.Value, depth int) string {
+	if depth > 6 {
+		return ""
+	}
+	switch a := a.(type) {
+	case *ssa.Global:
+		return "g:" + a.RelString(nil)
+	case *ssa.FieldAddr:
+		base := baseKey(a.X, depth+1)
+		if base == "" {
+			return ""
+		}
+		return fmt.Sprintf("%s.f%d", base, a.Field)
+	case *ssa.IndexAddr:
+		c, ok := a.Index.(*ssa.Const)
+		if !ok {
+			return ""
+		}
+		k, ok := constInt(c)
+		if !ok {
+			return ""
+		}
+		base := baseKey(a.X, depth+1)
+		if base == "" {
+			return ""
+		}
+		return fmt.Sprintf("%s[%d]", base, k)
+	case *ssa.Parameter, *ssa.FreeVar, *ssa.Alloc:
+		return "p:" + memID(a)
+	}
+	return ""
+}
+
+// baseKey keys the pointer an address is computed from.
+func baseKey(x ssa.Value, depth int) string {
+	switch x := x.(type) {
+	case *ssa.FieldAddr, *ssa.IndexAddr, *ssa.Global:
+		return addrKey(x, depth)
+	case *ssa.UnOp:
+		if x.Op == token.MUL {
+			k := addrKey(x.X, depth+1)
+			if k == "" {
+				return ""
+			}
+			return "*(" + k + ")"
+		}
+	}
+	return "v:" + memID(x)
 }

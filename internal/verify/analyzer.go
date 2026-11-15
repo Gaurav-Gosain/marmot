@@ -2,7 +2,10 @@ package verify
 
 import (
 	"fmt"
+	"go/types"
 	"reflect"
+
+	"golang.org/x/tools/go/ssa"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/buildssa"
@@ -20,11 +23,29 @@ var Analyzer = &analysis.Analyzer{
 	Run:        run,
 	Requires:   []*analysis.Analyzer{buildssa.Analyzer},
 	ResultType: reflect.TypeFor[*Result](),
+	FactTypes:  []analysis.Fact{new(FnSummary)},
 }
 
 func run(pass *analysis.Pass) (any, error) {
 	prog := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA)
-	r := AnalyzePackage(pass.Fset, pass.Files, prog.SrcFuncs, DefaultOptions)
+	opts := DefaultOptions
+	opts.Summaries = func(f *ssa.Function) *FnSummary {
+		obj, ok := f.Object().(*types.Func)
+		if !ok || f.Parent() != nil || obj.Pkg() == nil || obj.Pkg() == pass.Pkg {
+			return nil
+		}
+		var s FnSummary
+		if pass.ImportObjectFact(obj, &s) {
+			return &s
+		}
+		return nil
+	}
+	r := AnalyzePackage(pass.Fset, pass.Files, prog.SrcFuncs, opts)
+	for f, s := range r.Summaries {
+		if obj, ok := f.Object().(*types.Func); ok && f.Parent() == nil && obj.Pkg() == pass.Pkg && s != nil {
+			pass.ExportObjectFact(obj, s)
+		}
+	}
 	idx := newSpanIndex(pass.Files)
 	for _, f := range r.Funcs {
 		for _, o := range f.Obligations {

@@ -2,6 +2,7 @@ package verify
 
 import (
 	"encoding/json"
+	"go/types"
 	"testing"
 
 	"golang.org/x/tools/go/analysis"
@@ -43,6 +44,8 @@ var manifestOnly = &analysis.Analyzer{
 	Run: func(pass *analysis.Pass) (any, error) {
 		var out []analysis.Diagnostic
 		inner := *pass
+		inner.ExportObjectFact = func(types.Object, analysis.Fact) {}
+		inner.ImportObjectFact = func(types.Object, analysis.Fact) bool { return false }
 		inner.Report = func(d analysis.Diagnostic) {
 			kind, payload := DecodeCategory(d.Category)
 			if kind != CategoryFinding {

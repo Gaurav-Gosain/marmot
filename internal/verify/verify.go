@@ -17,6 +17,8 @@ import (
 // Result is the outcome for one package.
 type Result struct {
 	Funcs []*FuncResult
+	// Summaries are the package's function summaries, for callers.
+	Summaries map[*ssa.Function]*FnSummary
 }
 
 // FuncResult is the outcome for one function.
@@ -67,6 +69,9 @@ type Options struct {
 	// Inline is the size limit, in SSA instructions, of same-package
 	// callees analyzed in their caller's context (0: no inlining).
 	Inline int
+	// Summaries gives the summaries of functions of other packages (from
+	// analysis facts); nil: none.
+	Summaries func(*ssa.Function) *FnSummary
 }
 
 // DefaultOptions are the options of marmot verify.
@@ -76,17 +81,68 @@ var DefaultOptions = Options{Inline: 30}
 func AnalyzePackage(fset *token.FileSet, files []*ast.File, funcs []*ssa.Function, opts Options) *Result {
 	idx := newSpanIndex(files)
 	_ = idx
-	r := &Result{}
+	r := &Result{Summaries: map[*ssa.Function]*FnSummary{}}
+	own := map[*ssa.Function]bool{}
 	for _, fn := range funcs {
+		own[fn] = true
+	}
+	sums := func(f *ssa.Function) *FnSummary {
+		if own[f] {
+			return r.Summaries[f] // nil until analyzed: cycles get none
+		}
+		if opts.Summaries != nil {
+			return opts.Summaries(f)
+		}
+		return nil
+	}
+	for _, fn := range calleesFirst(funcs) {
 		if fn.Blocks == nil || fn.Synthetic != "" {
 			continue
 		}
-		r.Funcs = append(r.Funcs, analyzeFunc(fset, fn, opts))
+		fr, sum := analyzeFunc(fset, fn, opts, sums)
+		r.Funcs = append(r.Funcs, fr)
+		if sum != nil {
+			r.Summaries[fn] = sum
+		}
 	}
+	slices.SortStableFunc(r.Funcs, func(a, b *FuncResult) int { return int(a.Fn.Pos() - b.Fn.Pos()) })
 	return r
 }
 
-func analyzeFunc(fset *token.FileSet, fn *ssa.Function, opts Options) *FuncResult {
+// calleesFirst orders funcs so that static callees in the list come
+// before their callers (cycles in source order).
+func calleesFirst(funcs []*ssa.Function) []*ssa.Function {
+	in := map[*ssa.Function]bool{}
+	for _, f := range funcs {
+		in[f] = true
+	}
+	state := map[*ssa.Function]int{} // 1 visiting, 2 done
+	var out []*ssa.Function
+	var visit func(f *ssa.Function)
+	visit = func(f *ssa.Function) {
+		if state[f] != 0 {
+			return
+		}
+		state[f] = 1
+		for _, b := range f.Blocks {
+			for _, ins := range b.Instrs {
+				if c, ok := ins.(ssa.CallInstruction); ok {
+					if g := c.Common().StaticCallee(); g != nil && in[g] {
+						visit(g)
+					}
+				}
+			}
+		}
+		state[f] = 2
+		out = append(out, f)
+	}
+	for _, f := range funcs {
+		visit(f)
+	}
+	return out
+}
+
+func analyzeFunc(fset *token.FileSet, fn *ssa.Function, opts Options, sums func(*ssa.Function) *FnSummary) (*FuncResult, *FnSummary) {
 	fr := &FuncResult{Fn: fn, Name: fn.String(), Recovers: recovers(fn), Assumes: assumptions(fn)}
 	obs := obligations(fn)
 	byInstr := map[ssa.Instruction][]*Obligation{}
@@ -98,6 +154,7 @@ func analyzeFunc(fset *token.FileSet, fn *ssa.Function, opts Options) *FuncResul
 		inl = &inliner{limit: opts.Inline, caller: fn}
 	}
 	e := newEngine(fn, inl, 0)
+	e.sums = sums
 	cx := newCtx()
 	t0 := time.Now()
 	e.run(newState(cx))
@@ -120,7 +177,7 @@ func analyzeFunc(fset *token.FileSet, fn *ssa.Function, opts Options) *FuncResul
 		for _, o := range obs {
 			fr.Obligations = append(fr.Obligations, &ObResult{Ob: o, Status: Unknown, Reason: "budget"})
 		}
-		return fr
+		return fr, nil
 	}
 	verdicts := map[*Obligation]verdict{}
 	debug := os.Getenv("MARMOT_VERIFY_DEBUG") != "" && os.Getenv("MARMOT_VERIFY_DEBUG") == fn.Name()
@@ -132,7 +189,11 @@ func analyzeFunc(fset *token.FileSet, fn *ssa.Function, opts Options) *FuncResul
 			fmt.Fprintf(os.Stderr, "in[%d]: %v\n", b.Index, e.in[b])
 		}
 	}
+	var rets []retState
 	e.evaluate(func(in ssa.Instruction, s *state) {
+		if r, ok := in.(*ssa.Return); ok {
+			rets = append(rets, e.returnStates(r, s)...)
+		}
 		for _, o := range byInstr[in] {
 			verdicts[o] = checkObligation(o, s)
 			if debug {
@@ -150,7 +211,11 @@ func analyzeFunc(fset *token.FileSet, fn *ssa.Function, opts Options) *FuncResul
 	if inl != nil {
 		fr.Obligations = append(fr.Obligations, inl.found...)
 	}
-	return fr
+	var sum *FnSummary
+	if fn.Recover == nil {
+		sum = summarize(fn, rets)
+	}
+	return fr, sum
 }
 
 // classify turns engine A's verdict into a status.
@@ -424,6 +489,34 @@ func assumptions(fn *ssa.Function) []string {
 	return out
 }
 
+// retState is the state at a return; for a return block of phis only,
+// one per incoming edge (pred >= 0), so a phi result is known per edge.
+type retState struct {
+	r    *ssa.Return
+	s    *state
+	pred int
+}
+
+func (e *engine) returnStates(r *ssa.Return, s *state) []retState {
+	b := r.Block()
+	onlyPhis := len(b.Preds) > 1
+	for _, in := range b.Instrs[:len(b.Instrs)-1] {
+		if _, ok := in.(*ssa.Phi); !ok {
+			onlyPhis = false
+		}
+	}
+	if !onlyPhis {
+		return []retState{{r, s.clone(), -1}}
+	}
+	var out []retState
+	for i, p := range b.Preds {
+		if es := e.edge(p, b); es != nil {
+			out = append(out, retState{r, es, i})
+		}
+	}
+	return out
+}
+
 // evaluate re-runs every reachable block from its fixpoint state, calling
 // check before each instruction.
 func (e *engine) evaluate(check func(ssa.Instruction, *state)) {
@@ -470,6 +563,7 @@ func (in *inliner) call(e *engine, s *state, call *ssa.Call, f *ssa.Function) {
 		}
 	}
 	sub := newEngine(f, &inliner{limit: in.limit, caller: in.caller, seen: in.seen}, e.depth+1)
+	sub.sums = e.sums
 	sub.inline.found = nil
 	sub.run(init)
 	obs := obligations(f)
