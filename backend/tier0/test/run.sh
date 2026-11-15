@@ -13,11 +13,12 @@ done
 if [ "$(uname)" = Darwin ]; then sec=__DATA,__marmot_tlinks,regular,live_support; gc=-dead_strip; else sec=marmot_tlinks; gc=--gc-sections,-z,start-stop-gc; fi
 sed "s/SECTION/$sec/" "$src/tlinks.mlir" > tlinks.mlir
 "$T0" tlinks.mlir tlinks.o > /dev/null
-if [ "$(uname)" = Darwin ]; then nd=__DATA,__noptrdata; nb=__DATA,__noptrbss,zerofill; else nd=marmot_noptrdata; nb=.bss.marmot.noptr; fi
-sed -e "s/DATASECT/$nd/" -e "s/BSSSECT/$nb/" "$src/noptr.mlir" > noptr.mlir
+if [ "$(uname)" = Darwin ]; then nd=__DATA,__noptrdata; nb=__DATA,__noptrbss,zerofill; nz=$nb; else nd=marmot_noptrdata; nb=.bss.marmot.noptr; nz=.bss.marmot.noptr.zero; fi
+sed -e "s/DATASECT/$nd/" -e "s/BSSSECT/$nb/" -e "s/ZEROSECT/$nz/" "$src/noptr.mlir" > noptr.mlir
 "$T0" noptr.mlir noptr.o > /dev/null
 s=$("$L/llvm-objdump" -h noptr.o)
 echo "$s" | grep -q noptrdata && echo "$s" | grep -q noptr || { echo "noptr: sections missing"; echo "$s"; exit 1; }
+"$L/llvm-objdump" -t noptr.o | grep -E "np_zero" | grep -qE "noptr" || { echo "noptr: np_zero not in noptrbss"; "$L/llvm-objdump" -t noptr.o; exit 1; }
 "$L/clang" -O1 -w "$src/noptr_main.c" noptr.o -o noptr && ./noptr && echo "noptr: ok"
 if [ "$(uname)" = Darwin ]; then is=__TEXT,__StaticInit,regular,pure_instructions; else is=.text.startup.pkg.init; fi
 sed "s/INITSECT/$is/" "$src/initsect.mlir" > initsect.mlir

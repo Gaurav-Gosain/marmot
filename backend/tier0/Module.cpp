@@ -187,15 +187,17 @@ void ModuleGen::emitGlobal(LL::GlobalOp g) {
       named = Sect::TLinks;
     else if (n == "marmot_noptrdata" || n == "__DATA,__noptrdata" || n.starts_with("__DATA,__noptrdata,"))
       named = Sect::NoPtrData;
-    else if (n == ".bss.marmot.noptr" || n == "__DATA,__noptrbss" || n.starts_with("__DATA,__noptrbss,"))
+    else if (n == ".bss.marmot.noptr" || n.starts_with(".bss.marmot.noptr.") || n == "__DATA,__noptrbss" ||
+             n.starts_with("__DATA,__noptrbss,"))
       named = Sect::NoPtrBss;
     else
       unsupported("section " + n.str());
   }
   if (named == Sect::NoPtrBss) {
-    if (!zero || weak || g.getConstant()) unsupported("non-zero or weak global in the noptrbss section");
+    // Weak (linkonce_odr) zero values are weak definitions there.
+    if (!zero) unsupported("non-zero global in the noptrbss section");
     w.reserveBss(0, unsigned(align), Sect::NoPtrBss);
-    w.define(name, Sect::NoPtrBss, w.size(Sect::NoPtrBss), !local, false, isHidden(g));
+    w.define(name, Sect::NoPtrBss, w.size(Sect::NoPtrBss), !local, weak, isHidden(g));
     w.reserveBss(std::max<uint64_t>(cv.bytes.size(), 1), 1, Sect::NoPtrBss);
     return;
   }

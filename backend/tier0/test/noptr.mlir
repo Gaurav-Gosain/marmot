@@ -5,7 +5,12 @@ module {
     %z = llvm.mlir.zero : !llvm.array<4 x i64>
     llvm.return %z : !llvm.array<4 x i64>
   }
-  // np_data += 1; np_bss[3] += 2; returns np_data + np_bss[3].
+  // A zero value of a big type: linkonce_odr, a weak definition.
+  llvm.mlir.global linkonce_odr constant @np_zero() {addr_space = 0 : i32, alignment = 8 : i64, section = "ZEROSECT"} : !llvm.array<64 x i64> {
+    %z = llvm.mlir.zero : !llvm.array<64 x i64>
+    llvm.return %z : !llvm.array<64 x i64>
+  }
+  // np_data += 1; np_bss[3] += 2; returns np_data + np_bss[3] + np_zero[63].
   llvm.func @np_bump() -> i64 {
     %d = llvm.mlir.addressof @np_data : !llvm.ptr
     %b = llvm.mlir.addressof @np_bss : !llvm.ptr
@@ -18,7 +23,11 @@ module {
     %y = llvm.load %p : !llvm.ptr -> i64
     %y1 = llvm.add %y, %two : i64
     llvm.store %y1, %p : i64, !llvm.ptr
-    %r = llvm.add %x1, %y1 : i64
+    %zp = llvm.mlir.addressof @np_zero : !llvm.ptr
+    %zq = llvm.getelementptr %zp[0, 63] : (!llvm.ptr) -> !llvm.ptr, !llvm.array<64 x i64>
+    %zv = llvm.load %zq : !llvm.ptr -> i64
+    %r0 = llvm.add %x1, %y1 : i64
+    %r = llvm.add %r0, %zv : i64
     llvm.return %r : i64
   }
 }
