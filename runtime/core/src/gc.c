@@ -25,6 +25,8 @@ static uint64_t pause_total_ns;
 // first stop of a cycle to the second: pointer stores call rt_wb and new
 // objects are allocated black.
 volatile uint8_t rt_gc_marking;  // hidden (rt.h)
+// Weak: package main of a program with a barrier defines it (rt.h).
+__attribute__((weak)) const uint8_t rt_wb_kind = RT_WB_NONE;
 static int gc_conc;              // MARMOT_GC_CONC=1
 static _Atomic int32_t gc_cycle; // a concurrent cycle is between its two stops
 uint64_t gc_conc_cycles;         // cycles that marked beside the program (tests)
@@ -1791,6 +1793,11 @@ void gc_init(void) {
 #if !RT_OS_WASI
   const char *c = rt_getenv("MARMOT_GC_CONC");
   gc_conc = c && *c == '1';
+  // Read through volatile: the weak 0 seen here may be replaced at link time.
+  if (gc_conc && *(const volatile uint8_t *)&rt_wb_kind == RT_WB_NONE) {
+    rt_print("marmot: MARMOT_GC_CONC=1 is ignored: the program has no write barrier. Build it with MARMOT_WB=cards.\n");
+    gc_conc = 0;
+  }
 #endif
   const char *a = rt_getenv("MARMOT_GC_ADAPT");
   pace_adapt = !(a && *a == '0');

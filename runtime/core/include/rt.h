@@ -139,6 +139,16 @@ void rt_set_waitreason(uint32_t reason);
 #define RT_PRESERVE_ALL
 #endif
 extern volatile uint8_t rt_gc_marking __attribute__((visibility("hidden")));
+// Which barrier the compiled code has. The runtime holds a weak definition
+// of 0 (no barrier); a program built with one defines it strongly, once
+// (the module of package main): RT_WB_FLAG for rt_wb (MARMOT_WB=1),
+// RT_WB_CARDS for card marking (MARMOT_WB=cards, cardflag, cardstub).
+// MARMOT_GC_CONC=1 is ignored, with a warning, while it is 0: marking beside
+// a program without a barrier frees live objects.
+#define RT_WB_NONE 0
+#define RT_WB_FLAG 1
+#define RT_WB_CARDS 2
+extern const uint8_t rt_wb_kind;
 RT_PRESERVE_ALL void rt_wb(void **slot, void *new_value);
 RT_PRESERVE_ALL void rt_wb_range(void *dst, const void *src, uintptr_t n);
 // Card marking, the barrier of macOS and Linux builds: after every store of

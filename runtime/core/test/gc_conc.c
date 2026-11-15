@@ -10,6 +10,9 @@
 // wasm: skip (threads)
 #include "gcgraph.h"
 
+// This program's stores go through the barrier by hand (rt.h).
+const uint8_t rt_wb_kind = RT_WB_FLAG;
+
 extern uint64_t gc_conc_cycles;
 extern uint64_t gc_verify_missed;
 
