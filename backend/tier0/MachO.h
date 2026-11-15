@@ -104,6 +104,12 @@ public:
     sec_[0].rels.resize(c.rels);
   }
 
+  // Maps the offsets of the text relocations from index first on (those of
+  // the function being emitted, when its code is rewritten).
+  template <class F> void remapTextRelocs(size_t first, F map) {
+    for (size_t i = first; i < sec_[0].rels.size(); i++) sec_[0].rels[i].offset = map(sec_[0].rels[i].offset);
+  }
+
   // Writes the object: Mach-O arm64, or ELF x86-64 after setElf(). False
   // with err set on failure.
   bool write(const std::string &path, std::string &err) const;

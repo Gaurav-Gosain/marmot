@@ -11,7 +11,7 @@ if(NOT TARGET MLIRLLVMDialect)
   set(CMAKE_CXX_STANDARD 17)
 endif()
 
-add_library(MarmotTier0 STATIC MachO.cpp ELF.cpp Common.cpp Abi.cpp Module.cpp Middle.cpp EmitArm64.cpp EmitX64.cpp Reader.cpp)
+add_library(MarmotTier0 STATIC MachO.cpp ELF.cpp Common.cpp Abi.cpp Module.cpp Middle.cpp EmitArm64.cpp EmitX64.cpp MirBuild.cpp MirAlloc.cpp MirEmit.cpp MirArm64.cpp MirX64.cpp Reader.cpp)
 # Unsupported constructs unwind out of the code generator with an exception
 # (caught inside it, never across LLVM frames).
 target_compile_options(MarmotTier0 PRIVATE -fexceptions -fno-rtti)

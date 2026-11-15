@@ -62,6 +62,7 @@ public:
     return d && d.get("llvm.signext");
   }
   bool isDefinedData(StringRef name) const;
+  bool isX64() const { return x64; }
 
   // Line rows of the functions emitted, for the pc table fragment.
   using Row = std::tuple<uint64_t, uint32_t, uint32_t>;  // offset, line, file
@@ -94,6 +95,10 @@ private:
 // The function generators, one per target (EmitArm64.cpp, EmitX64.cpp).
 void runX64(ModuleGen &mg, LL::LLVMFuncOp f);
 void runArm64(ModuleGen &mg, LL::LLVMFuncOp f);
+// MIR path (MirArm64.cpp): false, with nothing emitted, when MIR does not
+// cover the function.
+bool mirArm64(ModuleGen &mg, LL::LLVMFuncOp f);
+bool mirX64(ModuleGen &mg, LL::LLVMFuncOp f);
 
 } // namespace tier0
 } // namespace marmot

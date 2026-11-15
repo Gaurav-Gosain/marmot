@@ -41,3 +41,4 @@ for s in $SEEDS; do
   ./ref > ref.txt; ./t0 > t0.txt
   cmp -s ref.txt t0.txt && echo "abi seed $s: ok" || { echo "abi seed $s: differs"; diff ref.txt t0.txt | head; exit 1; }
 done
+"$L/clang++" -std=c++17 -O2 -I"$src/.." "$src/limm_test.cpp" -o limm && ./limm > /dev/null && echo "limm: ok"

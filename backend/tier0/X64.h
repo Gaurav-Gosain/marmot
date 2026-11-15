@@ -249,6 +249,21 @@ public:
   void xchg(unsigned s, unsigned base, unsigned size) { plainOp({size == 1 ? uint8_t(0x86) : uint8_t(0x87)}, s, base, size); }
   void lockCmpxchg(unsigned s, unsigned base, unsigned size) { lockOp({0x0F, size == 1 ? uint8_t(0xB0) : uint8_t(0xB1)}, s, base, size); }
 
+  // Scalar floats between memory and an xmm register (movsd / movss).
+  void loadF(unsigned x, unsigned base, int32_t disp, bool dbl) {
+    u8(dbl ? 0xF2 : 0xF3);
+    rm(false, {0x0F, 0x10}, x, base, disp);
+  }
+  void storeF(unsigned x, unsigned base, int32_t disp, bool dbl) {
+    u8(dbl ? 0xF2 : 0xF3);
+    rm(false, {0x0F, 0x11}, x, base, disp);
+  }
+  // xmm to xmm, the whole register (movaps).
+  void movaps(unsigned d, unsigned s) { sse(0, false, 0x28, d, s); }
+  // 16 bytes between memory and an xmm register (no alignment needed).
+  void movupsLoad(unsigned x, unsigned base, int32_t disp) { rm(false, {0x0F, 0x10}, x, base, disp); }
+  void movupsStore(unsigned x, unsigned base, int32_t disp) { rm(false, {0x0F, 0x11}, x, base, disp); }
+
   // --- SSE scalar (dbl: sd, else ss) ---
   void movqToX(unsigned x, unsigned r) { u8(0x66); rex(true, x, r); u8(0x0F); u8(0x6E); modrmReg(x, r); }
   void movqFromX(unsigned r, unsigned x) { u8(0x66); rex(true, x, r); u8(0x0F); u8(0x7E); modrmReg(x, r); }

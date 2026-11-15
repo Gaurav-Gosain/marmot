@@ -1,5 +1,6 @@
 // Module.cpp: see Module.h.
 #include "Module.h"
+#include "Mir.h"
 
 #include "mlir/IR/AttrTypeSubElements.h"
 #include "llvm/Support/Format.h"
@@ -272,6 +273,52 @@ void ModuleGen::checkFunction(LL::LLVMFuncOp fn) {
 // operation count), merged in module order: the object is the same as from
 // one thread. Functions only read the module and the read-only tables of
 // this ModuleGen; each part has its own writer, line rows and type cache.
+// TIER0_MIR_STATS: builds the MIR of every function (no code), and counts
+// the functions it covers, the reasons of the others, and the operations of
+// both forms; printed at exit.
+static const bool mirStatsOn = getenv("TIER0_MIR_STATS") != nullptr;
+// MARMOT_TIER0_MIR=1: functions go through MIR (Mir.h) where it covers
+// them, the others through the older emitters.
+static const bool mirOn = [] {
+  const char *e = getenv("MARMOT_TIER0_MIR");
+  return e && *e == '1';
+}();
+namespace {
+struct MirStats {
+  std::mutex mu;
+  uint64_t ok = 0, fail = 0, llvmOps = 0, mirInsts = 0;
+  std::map<std::string, uint64_t> reasons;
+  ~MirStats() {
+    if (!mirStatsOn) return;
+    fprintf(stderr, "mir: %llu functions built, %llu not; %llu llvm operations -> %llu mir instructions\n",
+            (unsigned long long)ok, (unsigned long long)fail, (unsigned long long)llvmOps, (unsigned long long)mirInsts);
+    std::vector<std::pair<uint64_t, std::string>> rs;
+    for (auto &[k, v] : reasons) rs.push_back({v, k});
+    std::sort(rs.rbegin(), rs.rend());
+    for (size_t i = 0; i < rs.size() && i < 15; i++) fprintf(stderr, "  %6llu %s\n", (unsigned long long)rs[i].first, rs[i].second.c_str());
+  }
+} mirStats;
+} // namespace
+static void mirProbe(ModuleGen &g, LL::LLVMFuncOp f) {
+  mir::Func mf;
+  uint64_t n = 0;
+  for (Block &b : f.getBody()) n += b.getOperations().size();
+  try {
+    mir::build(g, f, mf, g.isX64());
+    uint64_t k = 0;
+    for (const mir::Inst &in : mf.insts) k += !in.dead;
+    std::lock_guard<std::mutex> l(mirStats.mu);
+    mirStats.ok++;
+    mirStats.llvmOps += n;
+    mirStats.mirInsts += k;
+    if (getenv("TIER0_MIR_DUMP")) fprintf(stderr, "%s", mir::print(mf).c_str());
+  } catch (const Unsupported &u) {
+    std::lock_guard<std::mutex> l(mirStats.mu);
+    mirStats.fail++;
+    mirStats.reasons[u.why]++;
+  }
+}
+
 void ModuleGen::emitFunctions(std::vector<std::string> &fallback, std::vector<std::string> &reasons,
                               Stats &stats) {
   std::vector<LL::LLVMFuncOp> fns;
@@ -289,10 +336,11 @@ void ModuleGen::emitFunctions(std::vector<std::string> &fallback, std::vector<st
                  Stats &st) {
     // A function that falls back leaves no code or relocations behind.
     auto cp = g.w.checkpoint();
+    if (mirStatsOn) mirProbe(g, f);
     try {
-      if (x64)
-        runX64(g, f);
-      else
+      if (x64) {
+        if (!mirOn || !mirX64(g, f)) runX64(g, f);
+      } else if (!mirOn || !mirArm64(g, f))
         runArm64(g, f);
       st.functions++;
     } catch (const Unsupported &u) {

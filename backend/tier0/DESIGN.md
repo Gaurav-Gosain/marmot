@@ -122,6 +122,34 @@ Single pass per function, no IR of its own:
 - `EmitArm64.cpp`, `EmitX64.cpp`: the emitters, deriving from `FuncPlan`; they own instruction
   selection, encoding and target peepholes only.
 
+## MIR (MARMOT_TIER0_MIR=1)
+
+The second code generator, on its own IR (`Mir.h`), for both targets:
+
+- `MirBuild.cpp`: the llvm dialect function to MIR. Every aggregate value (struct, array, i128)
+  becomes its scalar pieces in flatten order, so `extractvalue` and `insertvalue` cost nothing,
+  an aggregate load turns into a load per piece that is used, calls and returns pass pieces
+  where the calling convention wants them, and an aggregate load whose only use is a store is
+  one memory copy. On the way: copies forwarded, constants folded, identities applied, pure
+  operations shared within a block (CSE), constant offsets folded into loads and stores,
+  unused pure operations removed. Functions with an aggregate of more than 32 pieces, i128 in
+  calls or compares, or an operation MIR lacks take the older emitters (per function).
+- `MirAlloc.cpp`: liveness over the blocks and one interval per value; a linear scan gives
+  each interval a caller saved register when no call lies strictly inside it, else a callee
+  saved one, else an 8-byte spill slot (slots shared by intervals that do not overlap).
+  Constants and frame addresses are made again at each use. Compares used only by the branch
+  of their block are emitted at the branch. Functions that call `rt_setjmp` keep every value
+  in memory.
+- `MirEmit.*`: the parallel move (edges, call arguments and results, returns, incoming
+  parameters) shared by the emitters: moves ordered so that no source is overwritten before it
+  is read, cycles broken through one scratch register per class.
+- `MirArm64.cpp`, `MirX64.cpp`: the emitters. Floats live in FP registers.
+
+`MARMOT_TIER0_MIR_BISECT=LO-HI` limits MIR to the functions whose name hash (FNV-1a mod 4096)
+falls in the range, to find a miscompiled function; `TIER0_MIR_WHY=1` prints why a function
+did not take MIR, `TIER0_MIR_STATS=1` the coverage, `TIER0_MIR_DUMP=1` the MIR,
+`TIER0_MIR_TIME=1` the time per phase (arm64).
+
 ## Fallback and rollout
 
 Every function either compiles completely in tier0 or is listed for LLVM. Coverage grows by

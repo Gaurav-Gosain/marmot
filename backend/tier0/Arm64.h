@@ -178,6 +178,52 @@ inline uint32_t nop() { return 0xD503201Fu; }
 inline uint32_t ubfx0(unsigned rd, unsigned rn, unsigned width) {
   return 0xD3400000u | ((width - 1) << 10) | (rn << 5) | rd;
 }
+// Logical immediates (64-bit): v as N:immr:imms when it is a repeated,
+// rotated run of ones (not 0, not all ones).
+inline bool logicalImm(uint64_t v, uint32_t &enc) {
+  if (v == 0 || v == ~uint64_t(0)) return false;
+  unsigned size = 64;
+  while (size > 2) {
+    unsigned half = size / 2;
+    uint64_t mask = (uint64_t(1) << half) - 1;
+    if ((v & mask) != ((v >> half) & mask)) break;
+    size = half;
+  }
+  uint64_t mask = size == 64 ? ~uint64_t(0) : (uint64_t(1) << size) - 1;
+  uint64_t e = v & mask;
+  // Rotate e right until it is a run of ones starting at bit 0.
+  unsigned rot = 0;
+  auto rotr = [&](uint64_t x, unsigned r) { return r == 0 ? x : ((x >> r) | (x << (size - r))) & mask; };
+  // Find a rotation where bit 0 is 1 and the top bit is 0.
+  for (rot = 0; rot < size; rot++) {
+    uint64_t x = rotr(e, rot);
+    if ((x & 1) && !(x >> (size - 1) & 1)) {
+      e = x;
+      break;
+    }
+  }
+  if (rot == size) return false;
+  unsigned ones = 0;
+  while (ones < size && (e >> ones & 1)) ones++;
+  if (ones == size || (e >> ones) != 0) return false;
+  unsigned immr = (size - rot) % size;
+  unsigned N = size == 64 ? 1 : 0;
+  unsigned imms = ((~(size - 1) << 1) & 0x3F) | (ones - 1);
+  enc = (N << 12) | (immr << 6) | (imms & 0x3F);
+  return true;
+}
+inline uint32_t logicalImmOp(uint32_t base, unsigned rd, unsigned rn, uint32_t enc) {
+  return base | (((enc >> 12) & 1) << 22) | (((enc >> 6) & 0x3F) << 16) | ((enc & 0x3F) << 10) | (rn << 5) | rd;
+}
+inline uint32_t andImm(unsigned rd, unsigned rn, uint32_t enc) { return logicalImmOp(0x92000000u, rd, rn, enc); }
+inline uint32_t orrImm(unsigned rd, unsigned rn, uint32_t enc) { return logicalImmOp(0xB2000000u, rd, rn, enc); }
+inline uint32_t eorImm(unsigned rd, unsigned rn, uint32_t enc) { return logicalImmOp(0xD2000000u, rd, rn, enc); }
+// Shifts by a constant (UBFM / SBFM aliases), 64-bit, s in [1, 63].
+inline uint32_t lslImm(unsigned rd, unsigned rn, unsigned s) {
+  return 0xD3400000u | (((64 - s) & 63) << 16) | ((63 - s) << 10) | (rn << 5) | rd;
+}
+inline uint32_t lsrImm(unsigned rd, unsigned rn, unsigned s) { return 0xD3400000u | (s << 16) | (63u << 10) | (rn << 5) | rd; }
+inline uint32_t asrImm(unsigned rd, unsigned rn, unsigned s) { return 0x93400000u | (s << 16) | (63u << 10) | (rn << 5) | rd; }
 inline uint32_t sbfx0(unsigned rd, unsigned rn, unsigned width) {
   return 0x93400000u | ((width - 1) << 10) | (rn << 5) | rd;
 }
@@ -194,6 +240,20 @@ inline uint32_t mvn(unsigned rd, unsigned rm, bool x64 = true) {
 }
 
 // Floating point (d: double, s: single). Registers are v0..v31.
+// SIMD&FP loads and stores of s (size 2) and d (size 3) registers:
+// unsigned scaled offset, or unscaled signed 9 bits.
+inline uint32_t ldrFImm(unsigned rt, unsigned rn, uint32_t off, unsigned size) {
+  return (size << 30) | 0x3D400000u | (((off >> size) & 0xFFF) << 10) | (rn << 5) | rt;
+}
+inline uint32_t strFImm(unsigned rt, unsigned rn, uint32_t off, unsigned size) {
+  return (size << 30) | 0x3D000000u | (((off >> size) & 0xFFF) << 10) | (rn << 5) | rt;
+}
+inline uint32_t ldurF(unsigned rt, unsigned rn, int32_t off, unsigned size) {
+  return (size << 30) | 0x3C400000u | ((uint32_t(off) & 0x1FF) << 12) | (rn << 5) | rt;
+}
+inline uint32_t sturF(unsigned rt, unsigned rn, int32_t off, unsigned size) {
+  return (size << 30) | 0x3C000000u | ((uint32_t(off) & 0x1FF) << 12) | (rn << 5) | rt;
+}
 inline uint32_t fpType(bool dbl) { return dbl ? 0x00400000u : 0; }
 inline uint32_t fadd(unsigned d, unsigned n, unsigned m, bool dbl) { return 0x1E202800u | fpType(dbl) | (m << 16) | (n << 5) | d; }
 // FMAX/FMIN propagate NaN (llvm.maximum/minimum); FMAXNM/FMINNM prefer the number (maxnum/minnum).
@@ -204,6 +264,10 @@ inline uint32_t fminnm(unsigned d, unsigned n, unsigned m, bool dbl) { return 0x
 inline uint32_t fsub(unsigned d, unsigned n, unsigned m, bool dbl) { return 0x1E203800u | fpType(dbl) | (m << 16) | (n << 5) | d; }
 inline uint32_t fmul(unsigned d, unsigned n, unsigned m, bool dbl) { return 0x1E200800u | fpType(dbl) | (m << 16) | (n << 5) | d; }
 inline uint32_t fdiv(unsigned d, unsigned n, unsigned m, bool dbl) { return 0x1E201800u | fpType(dbl) | (m << 16) | (n << 5) | d; }
+inline uint32_t fmovReg(unsigned d, unsigned n, bool dbl) { return 0x1E204000u | fpType(dbl) | (n << 5) | d; }
+inline uint32_t fcsel(unsigned d, unsigned n, unsigned m, Cond c, bool dbl) {
+  return 0x1E200C00u | fpType(dbl) | (m << 16) | (unsigned(c) << 12) | (n << 5) | d;
+}
 inline uint32_t fneg(unsigned d, unsigned n, bool dbl) { return 0x1E214000u | fpType(dbl) | (n << 5) | d; }
 inline uint32_t fabs_(unsigned d, unsigned n, bool dbl) { return 0x1E20C000u | fpType(dbl) | (n << 5) | d; }
 inline uint32_t fsqrt(unsigned d, unsigned n, bool dbl) { return 0x1E21C000u | fpType(dbl) | (n << 5) | d; }
