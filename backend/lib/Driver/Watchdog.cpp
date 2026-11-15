@@ -16,6 +16,7 @@
 
 #if defined(__APPLE__)
 #include <mach/mach.h>
+#include <malloc/malloc.h>
 #elif defined(__linux__)
 #include <csignal>
 #include <fstream>
@@ -139,6 +140,14 @@ void startWatchdog(bool background) {
         _exit(3); // parent died, we were reparented
       if (maxMB) {
         uint64_t mb = memoryInUse() >> 20;
+#if defined(__APPLE__)
+        // The footprint counts pages malloc holds from freed memory; give
+        // them back before judging (glibc builds trim after each job).
+        if (mb > maxMB) {
+          malloc_zone_pressure_relief(nullptr, 0);
+          mb = memoryInUse() >> 20;
+        }
+#endif
         if (mb > maxMB)
           die("memory", mb, maxMB, "MB", "MARMOT_MAX_MEM_MB");
       }

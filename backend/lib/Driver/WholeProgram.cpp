@@ -530,14 +530,26 @@ std::pair<uint64_t, uint64_t> heapStats() {
 // malloc cannot say. The watchdog still limits process memory.
 uint64_t liveMemory() {
   uint64_t inUse = heapStats().first;
+#if defined(__APPLE__)
+  // macOS: the watchdog's phys_footprint runs well above the heap in use
+  // even after pressure relief (cold tuios -O 2: 3.0 GB with 1.26 GB in
+  // use), and it is what the limit kills on, so admit by the larger.
+  return std::max(inUse, processMemory());
+#else
   return inUse ? inUse : processMemory();
+#endif
 }
 
-// Gives what malloc holds from freed memory back to the system after a job
-// (glibc keeps freed arenas; the macOS allocator returns large blocks).
+// Gives what malloc holds from freed memory back to the system after a job.
+// glibc keeps freed arenas; the macOS allocator keeps freed pages too, and
+// the watchdog's phys_footprint counts them (a cold tuios -O 2 build held
+// 4.4 GB with 1 GB in use and passed the 3 GB limit while admission, which
+// reads the heap in use, still saw room).
 void releaseFreed() {
 #if defined(__linux__)
   malloc_trim(0);
+#elif defined(__APPLE__)
+  malloc_zone_pressure_relief(nullptr, 0);
 #endif
 }
 
@@ -1657,11 +1669,10 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     if (drop.empty())
       return;
     drop.clear();
-#if defined(__linux__)
-    // glibc keeps freed memory in its heaps, so the process memory the
-    // limit and the checks above read would not fall: give it back.
-    malloc_trim(0);
-#endif
+    // malloc keeps freed memory (glibc in its heaps, macOS as held pages),
+    // so the process memory the limit and the checks above read would not
+    // fall: give it back.
+    releaseFreed();
   };
   releaseHook = [&](unsigned i) {
     releaseParsed(i, false);
