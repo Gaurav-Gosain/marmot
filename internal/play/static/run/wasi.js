@@ -1,7 +1,8 @@
 // A WASI preview 1 host for one Go program in a browser (or Node): stdout and stderr go to
 // callbacks as they are written, no files (no preopened directories), no network; time,
 // sleep and random work. Enough for programs built for wasip1/wasm, by marmot or gc.
-// runWasi(bytes, { args, env, onStdout(text), onStderr(text) }) resolves to the exit code.
+// runWasi(bytes, { args, env, onStdout(text), onStderr(text), fs, preopens }) resolves to the
+// exit code; fs (a MemFS of memfs.js) gives the program files under the preopened paths.
 // The docs site's /play runs programs with this same file (and run-worker.js), and
 // tests/wasm/run.mjs uses it with MARMOT_WASM_HOST=browser, so the conformance programs
 // check it.
@@ -118,10 +119,17 @@ export async function runWasi(bytes, opt = {}) {
       return ESUCCESS;
     },
   };
+  // Files: an in-memory file system (memfs.js), its preopened directories as fds 3, 4, ...
+  if (opt.fs) {
+    const { wasiFiles } = await import('./memfs.js');
+    Object.assign(wasi, wasiFiles(opt.fs, opt.preopens || ['/'], { ...wasi }, () => memory));
+  }
   const imports = { wasi_snapshot_preview1: new Proxy(wasi, {
     get: (t, k) => t[k] || (() => ENOSYS), // a call not listed: not supported
   }) };
-  const { instance } = await WebAssembly.instantiate(bytes, imports);
+  // bytes: the module's bytes, or a compiled WebAssembly.Module (compile once, run often)
+  const inst = await WebAssembly.instantiate(bytes, imports);
+  const instance = inst instanceof WebAssembly.Instance ? inst : inst.instance;
   memory = instance.exports.memory;
   try {
     instance.exports._start();
