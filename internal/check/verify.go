@@ -216,7 +216,9 @@ func VerifyMain(args []string, version string) int {
 	if *vf.Search && *vf.Confirm == "off" {
 		return rep.Usage("marmot verify: -search runs the package's functions with generated inputs; add -confirm=sandbox to allow it")
 	}
-	opts := Options{Patterns: fs.Args(), Jobs: *vf.Jobs, Only: []string{"verify"}, Latent: *vf.Latent, Offline: true}
+	// A memoized run has no search hints: confirmation needs the
+	// package results (cached per package all the same).
+	opts := Options{Patterns: fs.Args(), Jobs: *vf.Jobs, Only: []string{"verify"}, Latent: *vf.Latent, Offline: true, NoMemo: *vf.Confirm != "off"}
 	if *vf.Tags != "" {
 		opts.Tags = strings.Split(*vf.Tags, ",")
 	}

@@ -82,6 +82,7 @@ type Options struct {
 	Offline  bool     // no network (vuln is skipped)
 	Verify   bool     // also run verify
 	Latent   bool     // verify: report latent findings too
+	NoMemo   bool     // do not answer from the memo of an unchanged run
 	Progress io.Writer
 }
 
@@ -204,7 +205,7 @@ func Run(opts Options) (*Result, error) {
 	}
 	defer st.saveStats()
 	memo := ""
-	if st != nil && !opts.Changed {
+	if st != nil && !opts.Changed && !opts.NoMemo {
 		var checks []string
 		for _, n := range Names {
 			if results[n] != nil {
