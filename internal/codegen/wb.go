@@ -26,9 +26,9 @@ import (
 
 // MARMOT_WB=1: the flag test and rt_wb above. MARMOT_WB=cards: card
 // marking (runtime/core, RT_CARD_SHIFT): every store that may put a pointer
-// into the heap marks its 512-byte card dirty, one byte store with no test
-// and no call; the collector rescans the marked objects on dirty cards
-// when marking ends. Stores to globals need no card (globals are rescanned
+// into the heap marks its 512-byte card dirty when it is clean (a load, a
+// test and a byte store, no call); the collector rescans the marked
+// objects on dirty cards when marking ends. Stores to globals need no card (globals are rescanned
 // as roots). wasm has no card table and uses the flag barrier.
 var wbMode = os.Getenv("MARMOT_WB")
 
@@ -85,7 +85,17 @@ func (f *funcGen) card(a string) {
 	n := f.op("llvm.lshr %s, %s : i64", i, f.constInt(cardShift, mlir.I64))
 	n = f.op("llvm.and %s, %s : i64", n, f.constInt(cardMask, mlir.I64))
 	c := f.op("llvm.getelementptr %s[%s] : (!llvm.ptr, i64) -> !llvm.ptr, i8", f.cardBase, n)
+	// Write the card only when it is clean (rtcore 42a576a2): an
+	// unconditional store to an already dirty card makes cores storing
+	// near each other bounce its cache line.
+	cur := f.op("llvm.load %s {alignment = 1 : i64} : !llvm.ptr -> i8", c)
+	clean := f.op("llvm.icmp \"ne\" %s, %s : i8", cur, f.constInt(0, mlir.I8))
+	mark, cont := f.newBlock(), f.newBlock()
+	f.emit("llvm.cond_br %s, %s, %s", clean, mark, cont)
+	f.b.WriteString("  " + mark + ":\n")
 	f.emit("llvm.store %s, %s {alignment = 1 : i64} : i8, !llvm.ptr", f.constInt(0, mlir.I8), c)
+	f.emit("llvm.br %s", cont)
+	f.b.WriteString("  " + cont + ":\n")
 }
 
 // cardShift and cardMask are RT_CARD_SHIFT and RT_CARD_MASK: 512-byte
