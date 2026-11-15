@@ -587,8 +587,10 @@ wrong, right, fix}` to stdout: the description, code with the mistake, the same 
 the usual fix.
 
 `marmot test --json` writes one `{"kind":"test", "package", "name", "status", "durationMs",
-"file", "line", "message", "output"}` line per test and subtest, a `diagnostic` (code `M0022`)
-per failure with its source context, and the result.
+"file", "line", "message", "output", "schedule"}` line per test and subtest, a `diagnostic`
+(code `M0022`) per failure with its source context, and the result. `schedule` is set on a test
+that failed under an explored schedule (`marmot test -explore`); `-schedule=` with that value
+runs it again.
 
 ### Runtime errors
 
