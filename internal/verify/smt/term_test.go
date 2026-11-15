@@ -75,6 +75,11 @@ func TestZ3(t *testing.T) {
 		t.Fatalf("got %+v", r)
 	}
 	t.Logf("%s", s.Version)
+	// The same three queries in one process.
+	rs := s.CheckMany(context.Background(), nil, []*T{SLt(Add(x, BV(1, 64)), x), Eq(Mul(y, BV(2, 8)), BV(1, 8)), Eq(Mul(y, BV(3, 8)), BV(1, 8))})
+	if rs[0].Answer != Sat || rs[0].Model["x"] != 1<<63-1 || rs[1].Answer != Unsat || rs[2].Answer != Sat || Eval(Mul(y, BV(3, 8)), &Env{BV: rs[2].Model}) != 1 {
+		t.Fatalf("CheckMany: %+v", rs)
+	}
 }
 
 func TestScript(t *testing.T) {

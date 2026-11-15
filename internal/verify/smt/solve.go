@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -158,5 +159,112 @@ func selects(ts []*T) []*T {
 	for _, t := range ts {
 		walk(t)
 	}
+	return out
+}
+
+// CheckMany checks base together with each query in one solver process:
+// declarations and base once, then a push, the query, check-sat, the
+// values, and a pop per query.
+func (s *Solver) CheckMany(ctx context.Context, base []*T, queries []*T) []Result {
+	all := append(append([]*T(nil), base...), queries...)
+	full := Script(all, s.RLimit)
+	// The declarations of every variable, then base, then the queries.
+	head, _, _ := strings.Cut(full, "(assert ")
+	var b strings.Builder
+	b.WriteString(head)
+	for _, a := range base {
+		fmt.Fprintf(&b, "(assert %s)\n", String(a))
+	}
+	sels := make([][]*T, len(queries))
+	for i, q := range queries {
+		vars := varNames(append(append([]*T(nil), base...), q))
+		sels[i] = selects([]*T{q})
+		b.WriteString("(push 1)\n")
+		for k, t := range sels[i] {
+			fmt.Fprintf(&b, "(declare-const sel%d_i (_ BitVec 64))\n(declare-const sel%d_v (_ BitVec 8))\n(assert (= sel%d_i %s))\n(assert (= sel%d_v %s))\n", k, k, k, String(t.Args[1]), k, String(t))
+			vars = append(vars, fmt.Sprintf("sel%d_i", k), fmt.Sprintf("sel%d_v", k))
+		}
+		fmt.Fprintf(&b, "(assert %s)\n(check-sat)\n", String(q))
+		if len(vars) > 0 {
+			fmt.Fprintf(&b, "(get-value (%s))\n", strings.Join(vars, " "))
+		}
+		b.WriteString("(pop 1)\n")
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.Wall*time.Duration(1+len(queries)/4))
+	defer cancel()
+	cmd := exec.CommandContext(ctx, s.Path, "-in", "-smt2")
+	cmd.Stdin = strings.NewReader(b.String())
+	var out bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &out
+	_ = cmd.Run()
+	// Answers in order; a sat answer is followed by its values. A
+	// get-value after unsat or unknown prints an error line, skipped.
+	res := make([]Result, len(queries))
+	for i := range res {
+		res[i] = Result{Answer: Unknown, Reason: "no answer"}
+	}
+	lines := strings.Split(out.String(), "\n")
+	qi := 0
+	for li := 0; li < len(lines) && qi < len(queries); li++ {
+		l := strings.TrimSpace(lines[li])
+		switch l {
+		case "sat", "unsat", "unknown":
+		default:
+			continue
+		}
+		r := Result{Answer: Answer(l)}
+		if l == "unknown" {
+			r.Reason = "budget"
+		}
+		if l == "sat" {
+			// The values follow, possibly over several lines, up to the
+			// next answer.
+			var vals strings.Builder
+			for li+1 < len(lines) {
+				n := strings.TrimSpace(lines[li+1])
+				if n == "sat" || n == "unsat" || n == "unknown" {
+					break
+				}
+				vals.WriteString(n + " ")
+				li++
+			}
+			m := map[string]uint64{}
+			for _, g := range reValue.FindAllStringSubmatch(vals.String(), -1) {
+				if v, err := parseValue(g[2], g[3]); err == nil {
+					m[g[1]] = v
+				}
+			}
+			for k, t := range sels[qi] {
+				idx, ok1 := m[fmt.Sprintf("sel%d_i", k)]
+				v, ok2 := m[fmt.Sprintf("sel%d_v", k)]
+				if ok1 && ok2 {
+					m[fmt.Sprintf("%s[%d]", t.Args[0].Name, idx)] = v
+				}
+			}
+			r.Model = m
+		}
+		res[qi] = r
+		qi++
+	}
+	return res
+}
+
+func varNames(ts []*T) []string {
+	seen := map[string]bool{}
+	var out []string
+	var walk func(t *T)
+	walk = func(t *T) {
+		if t.Op == OpVar && !seen[t.Name] {
+			seen[t.Name] = true
+			out = append(out, t.Name)
+		}
+		for _, a := range t.Args {
+			walk(a)
+		}
+	}
+	for _, t := range ts {
+		walk(t)
+	}
+	slices.Sort(out)
 	return out
 }

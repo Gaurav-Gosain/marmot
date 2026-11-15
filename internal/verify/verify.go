@@ -348,19 +348,21 @@ func engineB(fn *ssa.Function, fr *FuncResult, s *smt.Solver, heads map[*ssa.Bas
 	if err != nil {
 		return
 	}
-	start := time.Now()
+	var qs []*smt.T
+	var qo []*ObResult
 	for _, o := range open {
-		if time.Since(start) > engineBBudget {
-			return
+		if v := enc.Viol[o.Ob.Key]; v != nil {
+			qs, qo = append(qs, v), append(qo, o)
 		}
-		v := enc.Viol[o.Ob.Key]
-		if v == nil {
-			continue
-		}
-		res := s.Check(context.Background(), append(append([]*smt.T(nil), enc.Assumes...), v))
-		if os.Getenv("MARMOT_VERIFY_DEBUG") == fn.Name() {
-			fmt.Fprintf(os.Stderr, "engine B %s: %s %v\n%s\n", o.Ob.Key, res.Answer, res.Model, smt.Script(append(append([]*smt.T(nil), enc.Assumes...), v), 0))
-		}
+	}
+	if len(qs) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), engineBBudget)
+	defer cancel()
+	results := s.CheckMany(ctx, enc.Assumes, qs)
+	for i, res := range results {
+		o := qo[i]
 		switch res.Answer {
 		case smt.Unsat:
 			// No input reaches the operation with the check failing:
