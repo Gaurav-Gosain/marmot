@@ -305,6 +305,12 @@ func classify(fn *ssa.Function, fr *FuncResult, o *Obligation, v verdict) *ObRes
 			return m
 		}
 	}
+	if o.Receiver {
+		// A method called on a nil receiver: the caller's precondition,
+		// counted but not reported.
+		r.Status, r.Reason = Unknown, "receiver"
+		return r
+	}
 	reason := sourceReason(fn, o)
 	if reason == "" {
 		r.Status, r.Class = Latent, "latent"
