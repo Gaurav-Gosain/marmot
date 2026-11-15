@@ -13,6 +13,10 @@
 //                                            3 and the size needed on stdout if
 //                                            the placeholder is too small
 //   marmot-pcln -frags LIST -binary BINARY -o table.bin
+// From a final wasm module (after wasm-opt, whose DWARF is stale):
+//   marmot-pcln -wasm-final -o table.bin MODULE.wasm   functions from the code
+//                                                     section, names from the
+//                                                     name section, no lines
 #include "marmot/Driver/Pcln.h"
 
 #include "llvm/ADT/StringMap.h"
@@ -58,6 +62,9 @@ static cl::opt<bool> stripLocals("strip-locals",
                                  cl::desc("With -patch: also drop the local symbols (as ld -x)"));
 static cl::opt<std::string> binaryOpt("binary",
                                       cl::desc("With -frags -o: the linked binary"));
+static cl::opt<bool> wasmFinal(
+    "wasm-final", cl::desc("Input is a final wasm module: functions from its code section and "
+                           "name section, without DWARF or lines"));
 static cl::opt<bool> namesOnly("names", cl::desc("Print the table name of each symbol read "
                                                  "from stdin, one per line (tests)"));
 
@@ -405,6 +412,143 @@ int fromFragments() {
   return 0;
 }
 
+// readWasmFinal fills t with one function per code section body: lo is the
+// body's offset in the code section contents (where its size starts, as
+// LLVM's symbol addresses and wasm DWARF count), hi its end, the name from
+// the name section. A parser of its own: LLVM's reader rejects the custom
+// section order binaryen writes ("out of order section type: 0").
+bool readWasmFinal(StringRef data, pcln::Table &t, std::string &err) {
+  const uint8_t *p = data.bytes_begin(), *end = data.bytes_end();
+  bool bad = false;
+  auto u8 = [&](const uint8_t *&q, const uint8_t *e) -> uint8_t {
+    if (q >= e) {
+      bad = true;
+      return 0;
+    }
+    return *q++;
+  };
+  auto leb = [&](const uint8_t *&q, const uint8_t *e) -> uint64_t {
+    uint64_t v = 0;
+    for (unsigned shift = 0; shift < 64; shift += 7) {
+      uint8_t b = u8(q, e);
+      v |= uint64_t(b & 0x7f) << shift;
+      if (!(b & 0x80) || bad)
+        return v;
+    }
+    bad = true;
+    return v;
+  };
+  auto skip = [&](const uint8_t *&q, const uint8_t *e, uint64_t n) {
+    if (n > uint64_t(e - q))
+      bad = true;
+    else
+      q += n;
+  };
+  auto str = [&](const uint8_t *&q, const uint8_t *e) -> StringRef {
+    uint64_t n = leb(q, e);
+    const uint8_t *s = q;
+    skip(q, e, n);
+    return bad ? StringRef() : StringRef(reinterpret_cast<const char *>(s), n);
+  };
+  auto limits = [&](const uint8_t *&q, const uint8_t *e) {
+    uint8_t flags = u8(q, e);
+    leb(q, e);
+    if (flags & 1)
+      leb(q, e);
+  };
+  auto valType = [&](const uint8_t *&q, const uint8_t *e) {
+    uint8_t v = u8(q, e);
+    if (v == 0x63 || v == 0x64) // (ref null? ht): a heap type follows
+      leb(q, e);
+  };
+  if (data.size() < 8 || memcmp(p, "\0asm", 4) != 0)
+    return err = "not a wasm module", false;
+  p += 8;
+  uint64_t imported = 0;
+  std::vector<std::pair<uint64_t, uint64_t>> bodies; // [lo, hi) in code section contents
+  std::map<uint64_t, std::string> names;              // function index -> name
+  while (p < end && !bad) {
+    uint8_t id = u8(p, end);
+    uint64_t size = leb(p, end);
+    if (bad || size > uint64_t(end - p))
+      break;
+    const uint8_t *s = p, *e = p + size;
+    p = e;
+    if (id == 2) { // imports: function indices start after the imported functions
+      for (uint64_t n = leb(s, e); n-- && !bad;) {
+        str(s, e);
+        str(s, e);
+        switch (u8(s, e)) {
+        case 0:
+          leb(s, e);
+          imported++;
+          break;
+        case 1:
+          valType(s, e);
+          limits(s, e);
+          break;
+        case 2:
+          limits(s, e);
+          break;
+        case 3:
+          valType(s, e);
+          u8(s, e);
+          break;
+        case 4:
+          u8(s, e);
+          leb(s, e);
+          break;
+        default:
+          bad = true;
+        }
+      }
+    } else if (id == 10) {
+      const uint8_t *start = s;
+      for (uint64_t n = leb(s, e); n-- && !bad;) {
+        uint64_t lo = s - start;
+        uint64_t len = leb(s, e);
+        skip(s, e, len);
+        bodies.push_back({lo, uint64_t(s - start)});
+      }
+    } else if (id == 0 && str(s, e) == "name") {
+      while (s < e && !bad) {
+        uint8_t sub = u8(s, e);
+        uint64_t len = leb(s, e);
+        if (bad || len > uint64_t(e - s)) {
+          bad = true;
+          break;
+        }
+        const uint8_t *ss = s, *se = s + len;
+        s = se;
+        if (sub != 1) // function names
+          continue;
+        for (uint64_t n = leb(ss, se); n-- && !bad;) {
+          uint64_t idx = leb(ss, se);
+          StringRef nm = str(ss, se);
+          if (!bad)
+            names[idx] = nm.str();
+        }
+      }
+    }
+  }
+  if (bad)
+    return err = "malformed wasm module", false;
+  if (bodies.empty())
+    return err = "no code section", false;
+  for (size_t i = 0; i < bodies.size(); ++i) {
+    // A function without a name still ends the range of the one before it;
+    // it gets the name browsers show for it.
+    auto it = names.find(imported + i);
+    pcln::Func &f = t.funcs[bodies[i].first];
+    f.lo = bodies[i].first;
+    f.hi = bodies[i].second;
+    f.name = it != names.end() && !it->second.empty()
+                 ? it->second
+                 : "wasm-function[" + std::to_string(imported + i) + "]";
+  }
+  return true;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -424,6 +568,25 @@ int main(int argc, char **argv) {
   }
   if (!fragsList.empty())
     return fromFragments();
+  if (wasmFinal) {
+    if (input.empty() || output.empty())
+      return fail("usage: marmot-pcln -wasm-final -o table.bin MODULE.wasm");
+    auto buf = MemoryBuffer::getFile(input, false, false);
+    if (!buf)
+      return fail(input + ": " + buf.getError().message());
+    pcln::Table t;
+    std::string err;
+    if (!readWasmFinal((*buf)->getBuffer(), t, err))
+      return fail(input + ": " + err);
+    std::string table = pcln::encode(t, 0, 1, version, renameMain);
+    std::error_code ec;
+    raw_fd_ostream os(output, ec);
+    if (ec)
+      return fail(output + ": " + ec.message());
+    os << table;
+    errs() << "marmot-pcln: " << t.funcs.size() << " functions, " << table.size() << " bytes\n";
+    return 0;
+  }
   if (input.empty() || output.empty())
     return fail("usage: marmot-pcln -o table.bin [-base-from BINARY] DWARF_FILE");
   auto objOr = ObjectFile::createObjectFile(input);
