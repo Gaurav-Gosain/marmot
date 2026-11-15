@@ -40,7 +40,7 @@ func TestMCPServer(t *testing.T) {
 		t.Errorf("protocol %v", v)
 	}
 	tools := r[1]["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 6 { // build, run, test, fix, explain, check
+	if len(tools) != 7 { // build, run, test, check, verify, fix, explain
 		t.Errorf("%d tools", len(tools))
 	}
 	res := r[2]["result"].(map[string]any)
