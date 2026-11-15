@@ -411,8 +411,16 @@ func (s *Server) Compile(ctx context.Context, q *Request) (*Response, error) {
 	default:
 		return nil, errBusy
 	}
-	dir, err := workspace(files)
-	defer func() { _ = os.RemoveAll(dir) }() // the request's temporary directory
+	var dir string
+	if s.opt.FrontEnd {
+		// One request at a time in one process (the browser): the same directory
+		// every time, so the loader's package list and the flags cached for it are
+		// found again on the next edit.
+		dir, err = frontWorkspace(files)
+	} else {
+		dir, err = workspace(files)
+		defer func() { _ = os.RemoveAll(dir) }() // the request's temporary directory
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -509,6 +517,46 @@ func workspace(files map[string][]byte) (string, error) {
 	}
 	for name, data := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+			return dir, err
+		}
+	}
+	return dir, nil
+}
+
+// frontWorkspace is workspace for the front-end mode: a fixed directory that keeps
+// its contents between requests. Files whose contents did not change are left as
+// they are (their times too), and Go files the request does not have are removed.
+func frontWorkspace(files map[string][]byte) (string, error) {
+	dir := filepath.Join(os.TempDir(), "marmot-play-front")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = real
+	}
+	put := func(name string, data []byte) error {
+		p := filepath.Join(dir, name)
+		if old, err := os.ReadFile(p); err == nil && bytes.Equal(old, data) {
+			return nil
+		}
+		return os.WriteFile(p, data, 0o644)
+	}
+	if err := put("go.mod", []byte("module play\n\ngo 1.24\n")); err != nil {
+		return dir, err
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return dir, err
+	}
+	for _, e := range ents {
+		if _, keep := files[e.Name()]; !keep && strings.HasSuffix(e.Name(), ".go") {
+			if err := os.Remove(filepath.Join(dir, e.Name())); err != nil {
+				return dir, err
+			}
+		}
+	}
+	for name, data := range files {
+		if err := put(name, data); err != nil {
 			return dir, err
 		}
 	}
