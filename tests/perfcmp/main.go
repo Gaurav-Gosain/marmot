@@ -11,7 +11,15 @@
 // A line is WORSE when B is slower than A by more than 2% in wall or CPU
 // time, or uses more than 3% more memory; the geomean line gives the
 // verdict for the whole set. Programs: hello and a subset of bench/programs
-// (time), sketch rendering its README (time), tuios --version (startup).
+// (time), sketch rendering its pinned diagrams (time), tuios --version
+// (startup).
+//
+// A verdict needs a machine quiet enough to see 2%. Each mode prints a noise
+// line, each side against itself (its odd runs over its even ones); with A=B
+// the whole result is noise too. When a noise line is above 1.02, or the load
+// went above half the CPUs at any point, the verdict is INCONCLUSIVE instead
+// of WORSE or ok. Exit status: 0 ok, 1 WORSE, 4 INCONCLUSIVE, 3 no quiet
+// window in -wait, 2 usage.
 package main
 
 import (
@@ -25,6 +33,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -45,7 +54,7 @@ var (
 	flWait  = flag.Duration("wait", 2*time.Hour, "how long to wait for the timing lock and a load below half the CPUs before giving up (0: no wait, no lock)")
 )
 
-const timingLock = "/tmp/marmot-timing.lock"
+var timingLock = "/tmp/marmot-timing.lock" // a var for the tests
 
 // benchSubset is the bench programs in the default set: compute, memory,
 // maps, interfaces, goroutines and strings.
@@ -107,12 +116,21 @@ func main() {
 	fmt.Printf("perfcmp %s/%s, %d runs; A=%s %s; B=%s %s\n", runtime.GOOS, runtime.GOARCH, *flRuns,
 		sides[0].root, strings.Join(sides[0].env, " "), sides[1].root, strings.Join(sides[1].env, " "))
 	fmt.Printf("load at start: %s\n", loadavg())
-	worse := false
+	same := sides[0].root == sides[1].root && slices.Equal(sides[0].env, sides[1].env)
+	worse, loaded, noisy := false, false, false
+	maxLoad := load1()
+	sampleLoad := func() {
+		if l := load1(); l > maxLoad {
+			maxLoad = l
+		}
+	}
 	for _, mode := range strings.Split(*flModes, ",") {
 		fmt.Printf("\n== %s\n%-12s %10s %10s %7s %10s %10s %7s %9s %9s %7s %9s %9s %7s\n", mode,
 			"program", "wall A", "wall B", "B/A", "cpu A", "cpu B", "B/A", "rss A", "rss B", "B/A", "size A", "size B", "B/A")
 		var lw, lc, lr []float64
+		var nw, nc []float64 // per side and program: median of the odd runs over the even ones
 		for _, p := range progs {
+			sampleLoad()
 			var bins [2]string
 			var sizes [2]int64
 			ok := true
@@ -164,6 +182,13 @@ func main() {
 			if !ok {
 				continue
 			}
+			sampleLoad()
+			for i := range got {
+				if len(got[i]) >= 4 {
+					ev, od := halves(got[i])
+					nw, nc = append(nw, ratio(od.wall, ev.wall)), append(nc, ratio(od.cpu, ev.cpu))
+				}
+			}
 			a, b := median(got[0]), median(got[1])
 			rw, rc, rr := ratio(b.wall, a.wall), ratio(b.cpu, a.cpu), float64(b.rss)/float64(a.rss)
 			lw, lc, lr = append(lw, rw), append(lc, rc), append(lr, rr)
@@ -178,10 +203,42 @@ func main() {
 			worse = true
 		}
 		fmt.Printf("%-12s %10s %10s %7.3f %10s %10s %7.3f %9s %9s %7.3f %s\n", "geomean", "", "", gw, "", "", gc, "", "", gr, mark)
+		// The noise of this mode: each side against itself, the odd runs over the even
+		// ones, geomean over programs, scaled to the full medians the verdict compares
+		// (half the runs a side: sqrt 2 more spread). With A=B the result is noise too.
+		ew, ec := noiseOf(nw), noiseOf(nc)
+		if same {
+			ew, ec = max(ew, spread(gw)), max(ec, spread(gc))
+		}
+		fmt.Printf("%-12s %10s %10s %7.3f %10s %10s %7.3f\n", "noise", "", "", ew, "", "", ec)
+		if ew > 1.02 || ec > 1.02 {
+			noisy = true
+		}
 	}
 	fmt.Printf("\nload at end: %s\n", loadavg())
-	if l := load1(); l > float64(runtime.NumCPU())/2 {
-		fmt.Printf("warning: load %.1f is above half the %d CPUs: timings are noisy, rerun on a quiet machine\n", l, runtime.NumCPU())
+	sampleLoad()
+	if maxLoad > float64(runtime.NumCPU())/2 {
+		loaded = true
+		fmt.Printf("warning: load reached %.1f, above half the %d CPUs: timings are noisy, rerun on a quiet machine\n", maxLoad, runtime.NumCPU())
+	}
+	if loaded || noisy {
+		why := []string{}
+		if loaded {
+			why = append(why, fmt.Sprintf("the load reached %.1f on %d CPUs", maxLoad, runtime.NumCPU()))
+		}
+		if noisy {
+			why = append(why, "the noise line of a mode is above 1.02, the 2% the rule judges")
+		}
+		would := "ok"
+		if worse {
+			would = "WORSE"
+		}
+		fmt.Printf("verdict: INCONCLUSIVE (%s; this run cannot judge the 2%% rule, it would have said %s; rerun on a quiet machine, the Linux host through at.sh)\n", strings.Join(why, ", and "), would)
+		exit(4)
+	}
+	if same {
+		fmt.Println("verdict: ok (A=B: the noise is within the rule, this machine can judge it now)")
+		exit(0)
 	}
 	if worse {
 		fmt.Println("verdict: WORSE (a geomean of B is more than 2% slower or 3% bigger in memory than A; lines marked WORSE show where)")
@@ -330,6 +387,35 @@ func median(ss []sample) sample {
 	return sample{w[len(w)/2], c[len(c)/2], r[len(r)/2]}
 }
 
+// halves splits a side's runs into the even and odd ones and returns their medians.
+func halves(ss []sample) (even, odd sample) {
+	var e, o []sample
+	for i, s := range ss {
+		if i%2 == 0 {
+			e = append(e, s)
+		} else {
+			o = append(o, s)
+		}
+	}
+	return median(e), median(o)
+}
+
+// noiseOf turns self ratios into a noise factor at least 1: the geomean of their
+// spread, scaled by 1/sqrt 2 since each half has half the runs.
+func noiseOf(rs []float64) float64 {
+	if len(rs) == 0 {
+		return 1
+	}
+	s := 0.0
+	for _, r := range rs {
+		s += math.Abs(math.Log(r))
+	}
+	return math.Exp(s / float64(len(rs)) / math.Sqrt2)
+}
+
+// spread is a ratio's distance from 1 as a factor at least 1.
+func spread(r float64) float64 { return math.Exp(math.Abs(math.Log(r))) }
+
 func ratio(b, a time.Duration) float64 { return float64(b) / float64(max(a, 1)) }
 
 func verdict(w, c, r float64) string {
@@ -416,6 +502,47 @@ func load1() float64 {
 	return l
 }
 
+// healLock clears a timing lock its owner left behind: the owner file's last
+// word is the holder's pid, and when no such process exists (kill -0 fails)
+// the lock is moved aside and the takeover logged. A lock with no owner file
+// is stale after a minute (the holder writes it right after mkdir). The move
+// is a rename, so of two runs healing at once only one moves it; a run that
+// finds it moved a lock someone took meanwhile puts it back.
+func healLock() {
+	fi, err := os.Stat(timingLock)
+	if err != nil {
+		return
+	}
+	owner, err := os.ReadFile(filepath.Join(timingLock, "owner"))
+	why := ""
+	switch {
+	case err != nil && time.Since(fi.ModTime()) > time.Minute:
+		why = "no owner file for " + time.Since(fi.ModTime()).Round(time.Second).String()
+	case err == nil:
+		f := strings.Fields(string(owner))
+		if len(f) == 0 {
+			return
+		}
+		pid, perr := strconv.Atoi(f[len(f)-1])
+		if perr != nil || pid <= 0 || syscall.Kill(pid, 0) != syscall.ESRCH {
+			return // not a pid, or the process exists (or belongs to someone else)
+		}
+		why = fmt.Sprintf("owner %q is gone", strings.TrimSpace(string(owner)))
+	default:
+		return
+	}
+	aside := fmt.Sprintf("%s.stale.%d", timingLock, os.Getpid())
+	if os.Rename(timingLock, aside) != nil {
+		return // someone else moved or released it first
+	}
+	if now, _ := os.ReadFile(filepath.Join(aside, "owner")); string(now) != string(owner) {
+		_ = os.Rename(aside, timingLock) // a fresh lock replaced the stale one: not ours to move
+		return
+	}
+	os.RemoveAll(aside)
+	fmt.Fprintf(os.Stderr, "perfcmp: took over the stale timing lock %s: %s\n", timingLock, why)
+}
+
 // takeLock waits until the load is below half the CPUs and the shared
 // timing lock can be created (mkdir), then holds it: timing runs on this
 // machine never overlap.
@@ -423,6 +550,7 @@ func takeLock(wait time.Duration) bool {
 	end := time.Now().Add(wait)
 	said := false
 	for time.Now().Before(end) {
+		healLock()
 		if load1() < float64(runtime.NumCPU())/2 && os.Mkdir(timingLock, 0o755) == nil {
 			_ = os.WriteFile(filepath.Join(timingLock, "owner"), []byte(lockOwner()), 0o644)
 			return true
