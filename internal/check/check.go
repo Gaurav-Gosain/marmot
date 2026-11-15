@@ -83,7 +83,10 @@ type Options struct {
 	Verify   bool     // also run verify
 	Latent   bool     // verify: report latent findings too
 	NoMemo   bool     // do not answer from the memo of an unchanged run
-	Progress io.Writer
+	// LatentFiles are files whose latent verify findings are reported
+	// even without Latent: the files an agent changed.
+	LatentFiles map[string]bool
+	Progress    io.Writer
 }
 
 // Status of one check.

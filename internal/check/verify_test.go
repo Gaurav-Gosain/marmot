@@ -26,6 +26,38 @@ func Header(b []byte) (kind byte, n uint16) {
 }
 `
 
+// TestVerifyLatentFiles checks that LatentFiles reports latent findings
+// in those files only.
+func TestVerifyLatentFiles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("loads packages with go list")
+	}
+	dir := t.TempDir()
+	files := map[string]string{
+		"go.mod": "module example.com/codec\n\ngo 1.22\n",
+		"a.go":   "package codec\n\nfunc At(s []int, i int) int { return s[i] }\n",
+		"b.go":   "package codec\n\nfunc B(s []int) int { return s[0] }\n",
+	}
+	for name, text := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, _ := filepath.EvalSymlinks(filepath.Join(dir, "a.go"))
+	res, err := Run(Options{Dir: dir, Only: []string{"verify"}, Offline: true, LatentFiles: map[string]bool{a: true, filepath.Join(dir, "a.go"): true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range res.Checks {
+		if c.Name != "verify" {
+			continue
+		}
+		if len(c.Findings) != 1 || filepath.Base(c.Findings[0].Span.File) != "a.go" {
+			t.Errorf("findings %v, want one in a.go", c.Findings)
+		}
+	}
+}
+
 // TestVerifySearchHintsCached runs the verify check twice on an unchanged
 // tree with the package cache: both runs must have the search hints that
 // confirmation needs (they ride in the cached findings).

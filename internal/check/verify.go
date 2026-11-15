@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -184,6 +185,33 @@ func shortName(full string) string {
 	return full
 }
 
+// changedFiles are the files with uncommitted changes (modified, added
+// or untracked) in the git work tree of the current directory, as
+// absolute paths; nil outside git.
+func changedFiles() map[string]bool {
+	top, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return nil
+	}
+	root := strings.TrimSpace(string(top))
+	out, err := exec.Command("git", "-C", root, "status", "--porcelain", "-uall", "-z").Output()
+	if err != nil {
+		return nil
+	}
+	files := map[string]bool{}
+	for _, e := range strings.Split(string(out), "\x00") {
+		if len(e) < 4 || !strings.HasSuffix(e, ".go") {
+			continue
+		}
+		p := filepath.Join(root, e[3:])
+		files[p] = true
+		if r, err := filepath.EvalSymlinks(p); err == nil {
+			files[r] = true
+		}
+	}
+	return files
+}
+
 // writeVerifyJSON writes schema 1: the diagnostics, then one result
 // line carrying the verify summary.
 func writeVerifyJSON(w io.Writer, ds []diag.Diagnostic, sum *vfy.Summary, code int, took time.Duration) {
@@ -221,6 +249,12 @@ func VerifyMain(args []string, version string) int {
 	opts := Options{Patterns: fs.Args(), Jobs: *vf.Jobs, Only: []string{"verify"}, Latent: *vf.Latent, Offline: true, NoMemo: *vf.Confirm != "off"}
 	if *vf.Tags != "" {
 		opts.Tags = strings.Split(*vf.Tags, ",")
+	}
+	// Agents see the latent panics (preconditions) of the files they
+	// changed: files with uncommitted changes in git.
+	if rep.Mode == diag.ModeJSON && !*vf.Latent {
+		opts.LatentFiles = changedFiles()
+		opts.NoMemo = true
 	}
 	if !*vf.NoCache {
 		opts.CacheDir = checkCacheDir()

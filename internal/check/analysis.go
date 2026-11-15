@@ -239,7 +239,7 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 					continue
 				}
 				d := toDiag(n, x.linter, x.fd, p.path)
-				if n == "verify" && !verifyDiag(results[n], &d, x.fd, opts.Latent) {
+				if n == "verify" && !verifyDiag(results[n], &d, x.fd, opts.Latent || opts.LatentFiles[d.Span.File]) {
 					continue
 				}
 				if len(p.CgoFiles) > 0 {
