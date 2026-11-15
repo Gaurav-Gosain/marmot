@@ -1,6 +1,7 @@
 package verify
 
 import (
+	"cmp"
 	"fmt"
 	"go/constant"
 	"go/token"
@@ -410,25 +411,25 @@ func (s *state) graph() *graph {
 		return s.g
 	}
 	cx := s.cx
-	ps := make([]pair, 0, len(s.d))
-	for p := range s.d {
-		ps = append(ps, p)
+	// Sort by value numbers, computed once per pair, not per comparison.
+	type keyed struct {
+		ka, kb int64
+		p      pair
 	}
-	slices.SortFunc(ps, func(x, y pair) int {
-		if x.a != y.a {
-			if cx.less(x.a, y.a) {
-				return -1
-			}
-			return 1
+	ks := make([]keyed, 0, len(s.d))
+	for p := range s.d {
+		ks = append(ks, keyed{int64(cx.id(p.a.v))<<2 | int64(p.a.k), int64(cx.id(p.b.v))<<2 | int64(p.b.k), p})
+	}
+	slices.SortFunc(ks, func(x, y keyed) int {
+		if x.ka != y.ka {
+			return cmp.Compare(x.ka, y.ka)
 		}
-		if x.b == y.b {
-			return 0
-		}
-		if cx.less(x.b, y.b) {
-			return -1
-		}
-		return 1
+		return cmp.Compare(x.kb, y.kb)
 	})
+	ps := make([]pair, len(ks))
+	for i, k := range ks {
+		ps[i] = k.p
+	}
 	g := &graph{idx: map[node]int{}}
 	id := func(n node) int32 {
 		if i, ok := g.idx[n]; ok {
