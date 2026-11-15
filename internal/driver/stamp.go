@@ -238,6 +238,12 @@ func (b *build) srcKeyLocked(p *packages.Package) string {
 	files = append(files, p.EmbedFiles...)
 	sort.Strings(files)
 	for _, f := range files {
+		if src, ok := b.cfg.Overlay[f]; ok {
+			// Not on disk (or not as built): its contents, not its file.
+			s := sha256.Sum256(src)
+			fmt.Fprintf(h, "%s overlay %x\n", f, s[:16])
+			continue
+		}
 		fileSig(h, f)
 	}
 	deps := make([]string, 0, len(p.Imports))
