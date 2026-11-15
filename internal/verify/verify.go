@@ -305,6 +305,10 @@ func classify(fn *ssa.Function, fr *FuncResult, o *Obligation, v verdict) *ObRes
 			return m
 		}
 	}
+	if v.fails && o.Kind != KPanic {
+		r.Status, r.Class, r.Rule = Counterexample, "manifest", "always"
+		return r
+	}
 	if o.Receiver {
 		// A method called on a nil receiver: the caller's precondition,
 		// counted but not reported.

@@ -57,6 +57,8 @@ func run(pass *analysis.Pass) (any, error) {
 			msg := Message(f.Fn, o.Ob)
 			if o.Condition != "" {
 				msg += fmt.Sprintf(" when %s", o.Condition)
+			} else if o.Rule == "always" {
+				msg += " on every input"
 			}
 			in := info(f, o)
 			in.Label = primaryLabel(idx, o)

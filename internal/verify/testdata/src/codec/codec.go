@@ -153,3 +153,24 @@ func Skip(b []byte, n int) []byte {
 	}
 	return b[n:]
 }
+
+func NilMap(k string) {
+	var m map[string]int
+	m[k] = 1 // want "`NilMap` can panic: assignment to entry in nil map on every input"
+}
+
+func AfterNilCheck(p *T) int {
+	if p == nil {
+		return p.x // want "`AfterNilCheck` can panic: nil pointer dereference on every input"
+	}
+	return 0
+}
+
+func PastEnd(s []int) int {
+	return s[len(s)] // want "`PastEnd` can panic: index out of range on every input"
+}
+
+func ZeroDiv(a int) int {
+	d := 0
+	return a / d // want "`ZeroDiv` can panic: integer divide by zero on every input"
+}

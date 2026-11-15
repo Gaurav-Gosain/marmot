@@ -28,6 +28,9 @@ type verdict struct {
 	// mismatch is set when a guard tested the quantity the obligation
 	// needs with a weaker bound (manifest rule 1).
 	mismatch *mismatch
+	// fails is set when the obligation fails on every execution that
+	// reaches it, whatever the inputs (manifest rule "always").
+	fails bool
 }
 
 // mismatch describes a guard mismatch: quantity q is guarded at guard,
@@ -52,6 +55,66 @@ func proveLE(s *state, a, b node, c int64) bool {
 // checkObligation runs engine A's test for o in state s (nil when
 // unreachable).
 func checkObligation(o *Obligation, s *state) verdict {
+	v := checkObligation1(o, s)
+	if !v.proved && s != nil && alwaysFails(o, s) {
+		v.fails = true
+	}
+	return v
+}
+
+// alwaysFails reports whether s implies that o fails.
+func alwaysFails(o *Obligation, s *state) bool {
+	switch o.Kind {
+	case KIndex:
+		i := valNode(o.I)
+		if proveLE(s, i, zeroNode, -1) {
+			return true
+		}
+		if n, ok := arrayLen(o.X); ok {
+			return proveLE(s, zeroNode, i, -n)
+		}
+		return proveLE(s, lenNode(o.X), i, 0)
+	case KSlice:
+		capX := capNode(o.X)
+		if _, ok := arrayLen(o.X); ok {
+			capX = lenNode(o.X)
+		} else if b, ok := coreType(o.X.Type()).(*types.Basic); ok && b.Info()&types.IsString != 0 {
+			capX = lenNode(o.X)
+		}
+		if o.I != nil && proveLE(s, valNode(o.I), zeroNode, -1) {
+			return true
+		}
+		if o.Max != nil && proveLE(s, capX, valNode(o.Max), -1) {
+			return true
+		}
+		if o.Hi != nil {
+			if o.Max == nil && proveLE(s, capX, valNode(o.Hi), -1) {
+				return true
+			}
+			if o.I != nil && proveLE(s, valNode(o.Hi), valNode(o.I), -1) {
+				return true
+			}
+		}
+	case KNil, KMap, KIface:
+		_, isNil := s.isnil[o.X]
+		return isNil || isNilConst(o.X)
+	case KDivide:
+		if s.nonNil(o.X) {
+			return false
+		}
+		lo, hi := s.interval(valNode(o.X))
+		return lo == 0 && hi == 0
+	case KShift:
+		return proveLE(s, valNode(o.X), zeroNode, -1)
+	case KMake:
+		return proveLE(s, valNode(o.I), zeroNode, -1)
+	case KConvert:
+		return proveLE(s, lenNode(o.X), zeroNode, o.N-1)
+	}
+	return false
+}
+
+func checkObligation1(o *Obligation, s *state) verdict {
 	if s == nil {
 		return verdict{proved: true, dead: true}
 	}
@@ -64,7 +127,7 @@ func checkObligation(o *Obligation, s *state) verdict {
 		if s.nonNil(o.X) {
 			return verdict{proved: true}
 		}
-	case KIface:
+	case KIface, KMap:
 		if s.nonNil(o.X) {
 			return verdict{proved: true}
 		}

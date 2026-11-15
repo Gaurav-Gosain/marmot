@@ -705,7 +705,9 @@ func alwaysNonNil(v ssa.Value) bool {
 	case *ssa.MakeInterface, *ssa.MakeSlice:
 		return true
 	case *ssa.Const:
-		if v.Value != nil {
+		// A constant string, func or interface is not nil; an integer
+		// constant says nothing here (zero is a constant too).
+		if v.Value != nil && !isIntType(v.Type()) {
 			return true
 		}
 	case *ssa.Slice:

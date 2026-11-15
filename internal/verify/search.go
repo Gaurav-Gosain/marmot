@@ -884,7 +884,7 @@ func Search(ctx context.Context, dir, pkgName string, hints []*Hint, opts Search
 				}
 			}
 			if h.MarmotRuns == 0 && h.MarmotOther == "" {
-				h.MarmotOther = "does not panic"
+				h.MarmotOther = "returned normally"
 			}
 		}
 	}

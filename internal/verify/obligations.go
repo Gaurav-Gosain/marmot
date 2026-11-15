@@ -163,7 +163,9 @@ func obligations(fn *ssa.Function) []*Obligation {
 			case *ssa.FieldAddr:
 				nilObl(in, in.X)
 			case *ssa.MapUpdate:
-				nilObl(in, in.Map)
+				if mayBeNilValue(in.Map) {
+					add(KMap, in, Obligation{X: in.Map})
+				}
 				if m, ok := coreType(in.Map.Type()).(*types.Map); ok && types.IsInterface(m.Key()) {
 					add(KCompare, in, Obligation{X: in.Key})
 				}
