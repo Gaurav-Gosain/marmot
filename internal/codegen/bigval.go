@@ -112,7 +112,12 @@ func (m *moduleGen) zeroGlobal(t types.Type) string {
 	sym := "zero:" + m.p.canonical(t)
 	if !m.defined[sym] {
 		mt := m.tm.memType(t)
-		m.constGlobal(sym, "linkonce_odr", false, cZero(mt))
+		// Always zero, so it never holds a pointer the collector must see.
+		sec := ""
+		if m.p.opts.NoptrSections {
+			sec = noptrSectionName(m.p.opts.GOOS, sym, true)
+		}
+		m.constGlobalIn(sym, "linkonce_odr", false, cZero(mt), sec)
 	}
 	return sym
 }

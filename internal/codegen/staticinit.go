@@ -566,7 +566,9 @@ func (s *staticInit) emitObjects() {
 		if s.dynamic[a] {
 			continue // referenced only by stores that stayed dynamic
 		}
-		s.m.constGlobal(sym, "private", false, s.value(s.images[a]))
+		t := a.Type().(*types.Pointer).Elem()
+		s.m.constGlobalIn(sym, "private", false, s.value(s.images[a]), s.m.noptrSectionOf(t, sym, false))
+		s.m.noteGCVarOf(t, sym)
 	}
 }
 

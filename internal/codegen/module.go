@@ -32,6 +32,7 @@ type moduleGen struct {
 	used         []cv              // llvm.used entries
 	compilerUsed []cv              // llvm.compiler.used entries (kept by LLVM, not by ld)
 	tlinks       []string          // unnamed composite type descriptors defined here
+	gcvars       []gcvar           // package variables with pointers, for their scan records (noptr.go)
 	locs         map[locKey]int    // location aliases (locs.go)
 	locPos       map[token.Pos]int // position -> index in locs
 	locRef       []string          // index -> " loc(#locN)"
@@ -261,6 +262,7 @@ func (m *moduleGen) finish(name string) (Module, error) {
 		return Module{}, fmt.Errorf("%s", strings.Join(sb, "\n"))
 	}
 	m.emitTypelinks()
+	m.emitGCVars()
 	m.emitUsed()
 	keys := make([]string, 0, len(m.decls))
 	size := m.defs.Len() + m.locDefs.Len() + 128
@@ -479,6 +481,7 @@ func (m *moduleGen) global(g *ssa.Global) {
 	}
 	if img := m.static.images[g]; img != nil && !m.static.dynamic[g] {
 		m.constGlobalIn(sym, "external", false, m.static.value(img), m.noptrSection(g, sym, false))
+		m.noteGCVar(g, sym)
 		return
 	}
 	// libc_X_trampoline_addr: assembly (DATA) stores the address of the
@@ -509,6 +512,9 @@ func (m *moduleGen) global(g *ssa.Global) {
 	// A common symbol has no section: the linker places it.
 	if sec := m.noptrSection(g, sym, true); sec != "" && linkage == "external" {
 		attrs += ", section = " + mlir.Quote(sec)
+	}
+	if linkage == "external" {
+		m.noteGCVar(g, sym)
 	}
 	fmt.Fprintf(&m.defs, "  llvm.mlir.global %s %s() {%s} : %s {\n    %%0 = llvm.mlir.zero : %s\n    llvm.return %%0 : %s\n  }\n",
 		linkage, mlir.Symbol(sym), attrs, mlir.Data(t), mlir.Data(t), mlir.Data(t))

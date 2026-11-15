@@ -41,6 +41,9 @@ type Options struct {
 	// NoptrSections puts package variables without pointers in sections the
 	// collector does not scan (noptr.go).
 	NoptrSections bool
+	// GCVars gives each package variable with pointers a scan record
+	// (noptr.go).
+	GCVars bool
 	// MergedGOROOT is where the loader's GOROOT symlinks live; source
 	// locations resolve them.
 	MergedGOROOT string
