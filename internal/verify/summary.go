@@ -22,6 +22,9 @@ type FnSummary struct {
 	// whose nil means result i is not nil.
 	NonNil        []int
 	NonNilIfNoErr map[int]int
+	// Effects: the function's calls reach files, processes, the network
+	// or system calls.
+	Effects bool
 }
 
 func (*FnSummary) AFact() {}
@@ -42,7 +45,7 @@ type SumNode struct {
 }
 
 func (s *FnSummary) empty() bool {
-	return s == nil || len(s.Always) == 0 && len(s.When) == 0 && len(s.NonNil) == 0 && len(s.NonNilIfNoErr) == 0
+	return s == nil || len(s.Always) == 0 && len(s.When) == 0 && len(s.NonNil) == 0 && len(s.NonNilIfNoErr) == 0 && !s.Effects
 }
 
 // summarize builds fn's summary from the states at its returns.

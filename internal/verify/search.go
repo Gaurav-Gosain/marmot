@@ -35,12 +35,15 @@ type Hint struct {
 	// Recv is the receiver of a method: "T" or "*T" for a named type of
 	// the package, called on its zero value; RecvExported says whether
 	// any importer can make that value (var v T).
-	Recv         string   `json:"recv,omitempty"`
-	RecvExported bool     `json:"recvExported,omitempty"`
-	Params       []Param  `json:"params"`
-	Ints         []int64  `json:"ints,omitempty"`
-	Strs         []string `json:"strs,omitempty"`
-	Obls         []OblRef `json:"obls"`
+	Recv         string `json:"recv,omitempty"`
+	RecvExported bool   `json:"recvExported,omitempty"`
+	// Effects is set when the function's calls reach files, processes,
+	// the network or system calls: it is run only on request.
+	Effects bool     `json:"effects,omitempty"`
+	Params  []Param  `json:"params"`
+	Ints    []int64  `json:"ints,omitempty"`
+	Strs    []string `json:"strs,omitempty"`
+	Obls    []OblRef `json:"obls"`
 }
 
 // Param is one parameter: its Go type as written in the package, and its
@@ -155,7 +158,7 @@ func makeHint(fn *ssa.Function, fr *FuncResult, fset *token.FileSet) *Hint {
 			return nil
 		}
 	}
-	h := &Hint{PkgName: fn.Pkg.Pkg.Name(), Fn: fn.Name(), Full: fn.String(), Exported: fn.Object() != nil && fn.Object().Exported(), Recv: recv, RecvExported: recvExported}
+	h := &Hint{PkgName: fn.Pkg.Pkg.Name(), Fn: fn.Name(), Full: fn.String(), Exported: fn.Object() != nil && fn.Object().Exported(), Recv: recv, RecvExported: recvExported, Effects: fr.Effects}
 	params := fn.Params
 	if recv != "" {
 		params = params[1:]
@@ -576,28 +579,62 @@ type Hit struct {
 
 // SearchOptions control the runs.
 type SearchOptions struct {
-	Limit    int           // combinations per function
-	Timeout  time.Duration // wall clock per function
-	Sandbox  string        // "auto", "off" (no runs), "none" (run unsandboxed, tests only)
-	Scratch  string        // temporary directory root ("" = os.TempDir)
-	GoBin    string        // "go"
+	Limit   int           // combinations per function
+	Timeout time.Duration // wall clock per function
+	Sandbox string        // "off": no runs; anything else: runs in the sandbox
+	// Effects also runs functions whose calls reach files, processes or
+	// the network (in the sandbox all the same).
+	Effects  bool
+	Scratch  string // temporary directory root ("" = os.TempDir)
+	GoBin    string // "go"
 	Progress func(string)
 }
 
 // SandboxAvailable reports whether confirmation runs can be sandboxed
-// here.
+// here: sandbox-exec on macOS, bwrap on Linux (a read-only root with
+// every namespace unshared). Without one nothing is run.
 func SandboxAvailable() bool {
 	switch runtime.GOOS {
 	case "darwin":
 		_, err := exec.LookPath("sandbox-exec")
 		return err == nil
 	case "linux":
-		if _, err := exec.LookPath("unshare"); err != nil {
+		if _, err := exec.LookPath("bwrap"); err != nil {
 			return false
 		}
-		return exec.Command("unshare", "-r", "-n", "true").Run() == nil
+		return exec.Command("bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--unshare-all", "--die-with-parent", "true").Run() == nil
 	}
 	return false
+}
+
+// SandboxCommand returns the command that runs argv confined to work:
+// no network, no writes outside work, and on macOS no new processes (on
+// Linux children stay in the same confinement). The environment is
+// cleared but for HOME and TMPDIR (work), PATH and env.
+func SandboxCommand(ctx context.Context, work string, cpuSeconds int, env []string, argv ...string) (*exec.Cmd, error) {
+	real, err := filepath.EvalSymlinks(work)
+	if err != nil {
+		return nil, err
+	}
+	cpu := strconv.Itoa(cpuSeconds)
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.CommandContext(ctx, "/bin/sh", append([]string{"-c", "ulimit -t " + cpu + "; exec sandbox-exec -p \"$0\" \"$@\"", sandboxProfile(real)}, argv...)...)
+	case "linux":
+		args := []string{"-c", "ulimit -t " + cpu + "; ulimit -v 4194304; exec bwrap --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --bind \"$0\" \"$0\" --chdir \"$0\" --unshare-all --die-with-parent --new-session \"$@\"", real}
+		cmd = exec.CommandContext(ctx, "/bin/sh", append(args, argv...)...)
+	default:
+		return nil, fmt.Errorf("no sandbox on %s", runtime.GOOS)
+	}
+	cmd.Dir = real
+	e := []string{"HOME=" + real, "TMPDIR=" + real}
+	if p := os.Getenv("PATH"); p != "" {
+		e = append(e, "PATH="+p)
+	}
+	cmd.Env = append(e, env...)
+	cmd.WaitDelay = time.Second
+	return cmd, nil
 }
 
 // Search builds the generated test for the package in dir and runs it
@@ -606,8 +643,8 @@ func Search(ctx context.Context, dir, pkgName string, hints []*Hint, opts Search
 	if len(hints) == 0 || opts.Sandbox == "off" {
 		return nil, nil
 	}
-	if opts.Sandbox != "none" && !SandboxAvailable() {
-		return nil, fmt.Errorf("no sandbox available: confirmation runs are skipped")
+	if !SandboxAvailable() {
+		return nil, fmt.Errorf("no sandbox available (sandbox-exec on macOS, bwrap on Linux): nothing was run")
 	}
 	if opts.Limit == 0 {
 		opts.Limit = 2000
@@ -623,6 +660,18 @@ func Search(ctx context.Context, dir, pkgName string, hints []*Hint, opts Search
 		return nil, err
 	}
 	defer os.RemoveAll(tmp)
+	if !opts.Effects {
+		var keep []*Hint
+		for _, h := range hints {
+			if !h.Effects {
+				keep = append(keep, h)
+			}
+		}
+		hints = keep
+		if len(hints) == 0 {
+			return nil, nil
+		}
+	}
 	p := makePlan(hints, opts.Limit)
 	src := filepath.Join(tmp, "zz_marmot_verify_search_test.go")
 	if err := os.WriteFile(src, []byte(p.testSource(pkgName)), 0o644); err != nil {
@@ -776,36 +825,19 @@ func sandboxProfile(work string) string {
 `, work)
 }
 
-// runSandboxed runs one search process: cleared environment, work as
-// working directory, HOME and TMPDIR, a CPU limit and a wall clock kill.
+// runSandboxed runs one search process in the sandbox with a CPU limit
+// and a wall clock kill. A run that cannot be sandboxed does not happen.
 func runSandboxed(ctx context.Context, opts SearchOptions, bin, work string, fn, in int) []byte {
 	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
-	args := []string{"-test.run=^TestMarmotVerifySearch$", "-test.count=1"}
-	var cmd *exec.Cmd
-	cpu := strconv.Itoa(int(opts.Timeout.Seconds()) + 1)
-	switch {
-	case opts.Sandbox == "none":
-		cmd = exec.CommandContext(ctx, bin, args...)
-	case runtime.GOOS == "darwin":
-		real, err := filepath.EvalSymlinks(work)
-		if err != nil {
-			real = work
-		}
-		cmd = exec.CommandContext(ctx, "/bin/sh", append([]string{"-c", "ulimit -t " + cpu + "; exec sandbox-exec -p \"$0\" \"$@\"", sandboxProfile(real), bin}, args...)...)
-	default:
-		cmd = exec.CommandContext(ctx, "/bin/sh", append([]string{"-c", "ulimit -t " + cpu + "; ulimit -v 4194304; exec unshare -r -n \"$@\"", bin}, args...)...)
-	}
-	cmd.Dir = work
-	env := []string{"HOME=" + work, "TMPDIR=" + work, "GOMEMLIMIT=1GiB", "GOTRACEBACK=none", "MARMOT_SEARCH=" + strconv.Itoa(fn)}
-	if p := os.Getenv("PATH"); p != "" {
-		env = append(env, "PATH="+p)
-	}
+	env := []string{"GOMEMLIMIT=1GiB", "GOTRACEBACK=none", "MARMOT_SEARCH=" + strconv.Itoa(fn)}
 	if in >= 0 {
 		env = append(env, "MARMOT_INPUT="+strconv.Itoa(in))
 	}
-	cmd.Env = env
-	cmd.WaitDelay = time.Second
+	cmd, err := SandboxCommand(ctx, work, int(opts.Timeout.Seconds())+1, env, bin, "-test.run=^TestMarmotVerifySearch$", "-test.count=1")
+	if err != nil {
+		return nil
+	}
 	out, _ := cmd.Output()
 	return out
 }

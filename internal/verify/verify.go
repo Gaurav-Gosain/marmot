@@ -36,6 +36,10 @@ type FuncResult struct {
 	// and never re-panics.
 	Recovers    bool
 	Obligations []*ObResult
+	// Effects is set when the function's calls reach files, processes,
+	// the network or system calls (directly, through same-package
+	// callees, or through other packages' functions by their summary).
+	Effects bool
 }
 
 // ObResult is the outcome for one obligation.
@@ -96,11 +100,20 @@ func AnalyzePackage(fset *token.FileSet, files []*ast.File, funcs []*ssa.Functio
 		}
 		return nil
 	}
+	effects := map[*ssa.Function]bool{}
 	for _, fn := range calleesFirst(funcs) {
 		if fn.Blocks == nil || fn.Synthetic != "" {
 			continue
 		}
 		fr, sum := analyzeFunc(fset, fn, opts, sums)
+		fr.Effects = hasEffects(fn, sums, effects)
+		effects[fn] = fr.Effects
+		if fr.Effects {
+			if sum == nil {
+				sum = &FnSummary{}
+			}
+			sum.Effects = true
+		}
 		r.Funcs = append(r.Funcs, fr)
 		if sum != nil {
 			r.Summaries[fn] = sum
@@ -108,6 +121,58 @@ func AnalyzePackage(fset *token.FileSet, files []*ast.File, funcs []*ssa.Functio
 	}
 	slices.SortStableFunc(r.Funcs, func(a, b *FuncResult) int { return int(a.Fn.Pos() - b.Fn.Pos()) })
 	return r
+}
+
+// effectPkgs are packages whose functions touch files, processes, the
+// network or the system.
+var effectPkgs = map[string]bool{"os": true, "os/exec": true, "os/signal": true, "os/user": true, "syscall": true, "net": true, "net/http": true, "net/rpc": true, "net/smtp": true, "plugin": true, "io/ioutil": true, "golang.org/x/sys/unix": true, "golang.org/x/sys/windows": true, "runtime/debug": true}
+
+// hasEffects reports whether fn's calls reach effectPkgs: a call into
+// one of them, a same-package callee with effects, or a callee whose
+// summary says so. Closures defined in fn count as fn.
+func hasEffects(fn *ssa.Function, sums func(*ssa.Function) *FnSummary, done map[*ssa.Function]bool) bool {
+	seen := map[*ssa.Function]bool{}
+	var visit func(f *ssa.Function) bool
+	visit = func(f *ssa.Function) bool {
+		if seen[f] {
+			return false
+		}
+		seen[f] = true
+		for _, b := range f.Blocks {
+			for _, in := range b.Instrs {
+				var g *ssa.Function
+				switch in := in.(type) {
+				case ssa.CallInstruction:
+					g = in.Common().StaticCallee()
+				case *ssa.MakeClosure:
+					g, _ = in.Fn.(*ssa.Function)
+				}
+				if g == nil {
+					continue
+				}
+				if p := g.Pkg; p != nil && effectPkgs[p.Pkg.Path()] {
+					return true
+				}
+				if g.Pkg == fn.Pkg {
+					if e, ok := done[g]; ok {
+						if e {
+							return true
+						}
+						continue
+					}
+					if g.Parent() != nil && visit(g) {
+						return true
+					}
+					continue
+				}
+				if s := sums(g); s != nil && s.Effects {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return visit(fn)
 }
 
 // calleesFirst orders funcs so that static callees in the list come
