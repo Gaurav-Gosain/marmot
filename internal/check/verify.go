@@ -112,7 +112,7 @@ func verifySearch(c *CheckResult, search, show, effects bool, progress func(stri
 			hints = append(hints, h.hint)
 		}
 		slices.SortFunc(hints, func(a, b *vfy.Hint) int { return strings.Compare(a.Full, b.Full) })
-		hits, err := vfy.Search(context.Background(), dir, hints[0].PkgName, hints, vfy.SearchOptions{Progress: progress, Effects: effects})
+		hits, err := vfy.Search(context.Background(), dir, hints[0].PkgName, hints, vfy.SearchOptions{Progress: progress, Effects: effects, MarmotBin: marmotBin()})
 		if err != nil {
 			notes = append(notes, fmt.Sprintf("search in %s: %v", hs[0].pkg, err))
 			continue
@@ -133,6 +133,11 @@ func verifySearch(c *CheckResult, search, show, effects bool, progress func(stri
 				confirmed = "none"
 			}
 			call := hit.Call
+			if hit.Runs == 3 && hit.MarmotRuns >= 0 && hit.MarmotRuns < 3 {
+				// gc is the reference: a different outcome under marmot is a
+				// marmot bug, reported as such and not to the user's code.
+				notes = append(notes, fmt.Sprintf("marmot differs from gc on %s: gc panics (%s), the marmot build %s; a marmot bug unless the program depends on behavior the language leaves open (map order, capacities)", call, hit.PanicMessage, hit.MarmotOther))
+			}
 			note := fmt.Sprintf("confirmed under gc: %s panics: %s", call, hit.PanicMessage)
 			if hit.Runs < 3 {
 				note = fmt.Sprintf("flaky: %s panicked in %d of 3 runs: %s", call, hit.Runs, hit.PanicMessage)
@@ -145,9 +150,7 @@ func verifySearch(c *CheckResult, search, show, effects bool, progress func(stri
 				if hit.Runs == 3 {
 					in.Status = "counterexample"
 				}
-				if hit.Runs == 3 {
-					in.ReproducedBy = []string{"gc"}
-				}
+				in.ReproducedBy = reproducedBy(hit)
 				in.Engine = "pentagon+search"
 				d.Verify, _ = json.Marshal(in)
 				d.Notes = append(d.Notes, note)
@@ -162,9 +165,7 @@ func verifySearch(c *CheckResult, search, show, effects bool, progress func(stri
 				continue
 			}
 			in := vfy.Info{Obligation: hit.Obligation, Fn: hit.Fn, Panic: hit.Kind, Class: "latent", Status: "counterexample", Confirmed: confirmed, Engine: "search", Input: hit.Input, PanicMessage: hit.PanicMessage, Assumes: []string{"no-races"}, Label: "panics for " + call}
-			if hit.Runs == 3 {
-				in.ReproducedBy = []string{"gc"}
-			}
+			in.ReproducedBy = reproducedBy(hit)
 			payload, _ := json.Marshal(in)
 			c.Findings = append(c.Findings, diag.Diagnostic{
 				Kind: "diagnostic", Severity: diag.Note, Code: diag.CodeVerify,
@@ -176,6 +177,36 @@ func verifySearch(c *CheckResult, search, show, effects bool, progress func(stri
 	}
 	diag.Sort(c.Findings)
 	return notes
+}
+
+// reproducedBy lists the toolchains under which the hit panicked in
+// every confirmation run.
+func reproducedBy(h vfy.Hit) []string {
+	var out []string
+	if h.Runs == 3 {
+		out = append(out, "gc")
+	}
+	if h.MarmotRuns == 3 {
+		out = append(out, "marmot")
+	}
+	return out
+}
+
+// marmotBin is the marmot command next to this marmot-check, or
+// $MARMOT_BIN; "" when there is none (confirmation is then gc only).
+func marmotBin() string {
+	if p := os.Getenv("MARMOT_BIN"); p != "" {
+		return p
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	p := filepath.Join(filepath.Dir(exe), "marmot")
+	if st, err := os.Stat(p); err == nil && !st.IsDir() {
+		return p
+	}
+	return ""
 }
 
 func shortName(full string) string {
