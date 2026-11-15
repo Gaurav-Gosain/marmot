@@ -108,6 +108,10 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 	if lc != nil {
 		cfgHash = fileHash(lc.path)
 	}
+	if fams["verify"] != nil {
+		// Engine B's results depend on the solver on PATH.
+		cfgHash += "|solver=" + vfy.SolverKey()
+	}
 	s := newSuite(all, toolID(), cfgHash)
 
 	t0 := time.Now()
