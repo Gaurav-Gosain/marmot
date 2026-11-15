@@ -41,11 +41,15 @@ type Hint struct {
 	// the network or system calls: it is run only on request.
 	Effects bool `json:"effects,omitempty"`
 	// Variadic: the last parameter is ...T, passed with ... in calls.
-	Variadic bool     `json:"variadic,omitempty"`
-	Params   []Param  `json:"params"`
-	Ints     []int64  `json:"ints,omitempty"`
-	Strs     []string `json:"strs,omitempty"`
-	Obls     []OblRef `json:"obls"`
+	Variadic bool `json:"variadic,omitempty"`
+	// ZeroAPI: every zero value the call uses (receiver, *T parameters)
+	// is of an exported type that no function of the package returns, so
+	// a zero value is how importers get one.
+	ZeroAPI bool     `json:"zeroAPI,omitempty"`
+	Params  []Param  `json:"params"`
+	Ints    []int64  `json:"ints,omitempty"`
+	Strs    []string `json:"strs,omitempty"`
+	Obls    []OblRef `json:"obls"`
 }
 
 // Param is one parameter: its Go type as written in the package, and its
@@ -179,8 +183,10 @@ func makeHint(fn *ssa.Function, fr *FuncResult, fset *token.FileSet) *Hint {
 	}
 	h := &Hint{PkgName: fn.Pkg.Pkg.Name(), Fn: fn.Name(), Full: fn.String(), Exported: fn.Object() != nil && fn.Object().Exported(), Recv: recv, RecvExported: recvExported, Effects: fr.Effects, Variadic: fn.Signature.Variadic()}
 	params := fn.Params
+	h.ZeroAPI = true
 	if recv != "" {
 		params = params[1:]
+		h.ZeroAPI = recvExported && !madeByPackage(fn.Pkg, strings.TrimPrefix(recv, "*"))
 	}
 	for _, p := range params {
 		pr := paramOf(p.Type(), fn.Pkg.Pkg, 0)
@@ -188,6 +194,12 @@ func makeHint(fn *ssa.Function, fr *FuncResult, fset *token.FileSet) *Hint {
 			return nil
 		}
 		pr.Name = p.Name()
+		if pr.Kind == "zero" {
+			name := pr.Elem.Type
+			if !token.IsExported(name) || madeByPackage(fn.Pkg, name) {
+				h.ZeroAPI = false
+			}
+		}
 		h.Params = append(h.Params, *pr)
 	}
 	for _, o := range fr.Obligations {
@@ -613,9 +625,46 @@ func (h *Hint) Call(args []string) string {
 }
 
 // API reports whether every caller can make this call: an exported
-// function, or an exported method on an exported type's zero value.
+// function or method whose zero-valued arguments are of exported types
+// importers can only get as zero values.
 func (h *Hint) API() bool {
-	return h.Exported && (h.Recv == "" || h.RecvExported)
+	return h.Exported && h.ZeroAPI
+}
+
+// madeByPackage reports whether a function or method of pkg returns the
+// named type (or a pointer to it): then its zero value is likely not a
+// valid state, and a panic on it is not reached through the API.
+func madeByPackage(pkg *ssa.Package, name string) bool {
+	returns := func(sig *types.Signature) bool {
+		for v := range sig.Results().Variables() {
+			t := v.Type()
+			if p, ok := t.(*types.Pointer); ok {
+				t = p.Elem()
+			}
+			if n, ok := types.Unalias(t).(*types.Named); ok && n.Obj().Pkg() == pkg.Pkg && n.Obj().Name() == name {
+				return true
+			}
+		}
+		return false
+	}
+	for _, m := range pkg.Members {
+		switch m := m.(type) {
+		case *ssa.Function:
+			if returns(m.Signature) {
+				return true
+			}
+		case *ssa.Type:
+			for _, t := range []types.Type{m.Type(), types.NewPointer(m.Type())} {
+				ms := pkg.Prog.MethodSets.MethodSet(t)
+				for sel := range ms.Methods() {
+					if sig, ok := sel.Type().(*types.Signature); ok && returns(sig) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 // Hit is a confirmed panic: the obligation it violates and the input.
@@ -761,6 +810,11 @@ func Search(ctx context.Context, dir, pkgName string, hints []*Hint, opts Search
 		for _, r := range raws {
 			o := matchObligation(h, r)
 			if o == nil || done[o.Key] {
+				continue
+			}
+			if o.Kind == string(KPanic) {
+				// An explicit panic is the function's own choice (Must
+				// functions, invariant checks): not a counterexample.
 				continue
 			}
 			done[o.Key] = true
