@@ -64,6 +64,7 @@ type Verify struct {
 	Verbose *bool
 	Search  *bool
 	Confirm *string
+	Tests   *bool
 }
 
 // NewVerify returns the flag set of marmot verify.
@@ -78,6 +79,7 @@ func NewVerify() (*flag.FlagSet, *Verify) {
 		NoCache: fs.Bool("nocache", false, "analyze everything again, ignoring cached results"),
 		Verbose: fs.Bool("v", false, "print timing and cache statistics"),
 		Search:  fs.Bool("search", false, "also search every function for inputs that make it panic (needs -confirm)"),
+		Tests:   fs.Bool("tests", false, "write a regression test for every confirmed panic reachable through the API to zz_marmot_verify_test.go in its package (needs -confirm)"),
 		Confirm: fs.String("confirm", "off", "run the package's functions with generated inputs to confirm findings: off, sandbox (in a sandbox: sandbox-exec on macOS, bwrap on Linux; functions that reach files, processes or the network are skipped) or effects (those too, in the sandbox)"),
 	}
 	return fs, v

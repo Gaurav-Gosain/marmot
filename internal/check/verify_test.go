@@ -58,6 +58,21 @@ func TestVerifyLatentFiles(t *testing.T) {
 	}
 }
 
+func TestParseStatusZ(t *testing.T) {
+	out := " M a.go\x00R  new.go\x00old.go\x00?? x/c.go\x00 D gone.txt\x00C  copy.go\x00orig.go\x00"
+	got := parseStatusZ("/r", []byte(out))
+	for _, want := range []string{"/r/a.go", "/r/new.go", "/r/x/c.go", "/r/copy.go"} {
+		if !got[want] {
+			t.Errorf("missing %s in %v", want, got)
+		}
+	}
+	for _, not := range []string{"/r/old.go", "/r/orig.go", "/r/ld.go", "/r/rig.go"} {
+		if got[not] {
+			t.Errorf("has %s", not)
+		}
+	}
+}
+
 // TestVerifySearchHintsCached runs the verify check twice on an unchanged
 // tree with the package cache: both runs must have the search hints that
 // confirmation needs (they ride in the cached findings).

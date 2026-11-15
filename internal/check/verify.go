@@ -185,6 +185,66 @@ func shortName(full string) string {
 	return full
 }
 
+// writeVerifyTests writes, per package directory, a test file with one
+// test per confirmed panic reachable through the API (manifest findings
+// and API counterexamples), and records the test in the finding.
+func writeVerifyTests(c *CheckResult) []string {
+	type pkgTests struct {
+		name  string
+		tests []vfy.GenTest
+		idx   []int
+	}
+	byDir := map[string]*pkgTests{}
+	names := map[string]int{}
+	for _, h := range c.search {
+		if byDir[h.dir] == nil {
+			byDir[h.dir] = &pkgTests{name: h.hint.PkgName}
+		}
+	}
+	for i := range c.Findings {
+		d := &c.Findings[i]
+		var in vfy.Info
+		if json.Unmarshal(d.Verify, &in) != nil || in.Status != "counterexample" || in.Confirmed != "api" || len(in.ReproducedBy) == 0 {
+			continue
+		}
+		call := ""
+		for _, n := range d.Notes {
+			if s, ok := strings.CutPrefix(n, "confirmed under gc: "); ok {
+				call, _, _ = strings.Cut(s, " panics: ")
+			}
+		}
+		pt := byDir[filepath.Dir(d.Span.File)]
+		if call == "" || pt == nil {
+			continue
+		}
+		names[in.Fn]++
+		name := vfy.TestName(in.Fn, names[in.Fn])
+		comment := fmt.Sprintf("%s:%d:%d: %s", filepath.Base(d.Span.File), d.Span.Line, d.Span.Col, strings.ReplaceAll(d.Message, "`", ""))
+		pt.tests = append(pt.tests, vfy.GenTest{Name: name, Comment: comment, Call: call})
+		pt.idx = append(pt.idx, i)
+	}
+	var notes []string
+	for dir, pt := range byDir {
+		if len(pt.tests) == 0 {
+			continue
+		}
+		path := filepath.Join(dir, "zz_marmot_verify_test.go")
+		if err := os.WriteFile(path, []byte(vfy.TestFile(pt.name, pt.tests)), 0o644); err != nil {
+			notes = append(notes, fmt.Sprintf("writing %s: %v", path, err))
+			continue
+		}
+		for k, i := range pt.idx {
+			d := &c.Findings[i]
+			var in vfy.Info
+			_ = json.Unmarshal(d.Verify, &in)
+			in.Test = &vfy.TestRef{File: path, Name: pt.tests[k].Name}
+			d.Verify, _ = json.Marshal(in)
+			d.Help = append(d.Help, fmt.Sprintf("test written to %s (%s)", path, pt.tests[k].Name))
+		}
+	}
+	return notes
+}
+
 // changedFiles are the files with uncommitted changes (modified, added
 // or untracked) in the git work tree of the current directory, as
 // absolute paths; nil outside git.
@@ -198,9 +258,24 @@ func changedFiles() map[string]bool {
 	if err != nil {
 		return nil
 	}
+	return parseStatusZ(root, out)
+}
+
+// parseStatusZ reads git status --porcelain -z: entries "XY path"; a
+// rename or copy (X or Y is R or C) is followed by a field with the old
+// path, which is skipped.
+func parseStatusZ(root string, out []byte) map[string]bool {
 	files := map[string]bool{}
-	for _, e := range strings.Split(string(out), "\x00") {
-		if len(e) < 4 || !strings.HasSuffix(e, ".go") {
+	fields := strings.Split(string(out), "\x00")
+	for i := 0; i < len(fields); i++ {
+		e := fields[i]
+		if len(e) < 4 {
+			continue
+		}
+		if strings.ContainsAny(e[:2], "RC") {
+			i++ // the old path
+		}
+		if !strings.HasSuffix(e, ".go") {
 			continue
 		}
 		p := filepath.Join(root, e[3:])
@@ -240,6 +315,9 @@ func VerifyMain(args []string, version string) int {
 	case "off", "sandbox", "effects":
 	default:
 		return rep.Usage("marmot verify: -confirm is off, sandbox or effects")
+	}
+	if *vf.Tests && *vf.Confirm == "off" {
+		return rep.Usage("marmot verify: -tests writes tests for confirmed panics; add -confirm=sandbox")
 	}
 	if *vf.Search && *vf.Confirm == "off" {
 		return rep.Usage("marmot verify: -search runs the package's functions with generated inputs; add -confirm=sandbox to allow it")
@@ -290,6 +368,9 @@ func VerifyMain(args []string, version string) int {
 			c.Verify = &vfy.Summary{}
 		}
 		c.Verify.Notes = append(c.Verify.Notes, notes...)
+		if *vf.Tests {
+			c.Notes = append(c.Notes, writeVerifyTests(c)...)
+		}
 	}
 	ds := c.Findings
 	errs, _ := diag.Counts(ds)
