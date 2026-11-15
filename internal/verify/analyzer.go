@@ -32,7 +32,7 @@ var Analyzer = &analysis.Analyzer{
 // SolverKey identifies the solver engine B would use ("none" without
 // one): results depend on it, so caches key on it.
 func SolverKey() string {
-	if os.Getenv("MARMOT_VERIFY_SMT") == "off" {
+	if os.Getenv("MARMOT_VERIFY_SMT") != "on" {
 		return "smt-off"
 	}
 	if s := smt.Z3(); s != nil {
@@ -44,7 +44,9 @@ func SolverKey() string {
 func run(pass *analysis.Pass) (any, error) {
 	prog := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA)
 	opts := DefaultOptions
-	if os.Getenv("MARMOT_VERIFY_SMT") != "off" {
+	if os.Getenv("MARMOT_VERIFY_SMT") == "on" {
+		// Off by default until its proofs are re-checked (a cut-loop
+		// proof was wrong on uint256's udivrem).
 		opts.Solver = smt.Z3()
 	}
 	opts.Summaries = func(f *ssa.Function) *FnSummary {
