@@ -952,7 +952,85 @@ static void weak_clear(void) {
   }
 }
 
-static void scan_data_segment(void *lo, void *hi) { gc_scan_range((uintptr_t)lo, (uintptr_t)hi); }
+// ---- package variable maps (MARMOT_GCVARS=1 builds) ----
+//
+// The compiler emits a record for each pointerful package variable of 8 to
+// 4096 words (not all pointers): bit i of bits (LSB first, as type gcdata)
+// is set when word i may hold a pointer. The records come in any order;
+// the first collection sorts them by address. Data outside every record is
+// scanned conservatively, as before.
+typedef struct {
+  uintptr_t addr;
+  uint64_t nwords;
+  const uint8_t *bits;
+} gcvar;
+static gcvar *gv;
+static uintptr_t ngv;
+static bool gv_ready;
+
+static void gcvars_sift(gcvar *a, uintptr_t i, uintptr_t n) {
+  for (;;) {
+    uintptr_t c = 2 * i + 1;
+    if (c >= n) return;
+    if (c + 1 < n && a[c + 1].addr > a[c].addr) c++;
+    if (a[c].addr <= a[i].addr) return;
+    gcvar t = a[i];
+    a[i] = a[c];
+    a[c] = t;
+    i = c;
+  }
+}
+
+// Sorted in place (heapsort: no allocation, the world is stopped); records
+// of dead variables (address 0) and any overlapping a previous one are
+// dropped, so their memory stays conservative.
+static void gcvars_init(void) {
+  gv_ready = true;
+  uintptr_t bytes = 0;
+  gv = (gcvar *)os_gcvars(&bytes);
+  ngv = gv ? bytes / sizeof(gcvar) : 0;
+  for (uintptr_t i = ngv / 2; i-- > 0;) gcvars_sift(gv, i, ngv);
+  for (uintptr_t n = ngv; n > 1; n--) {
+    gcvar t = gv[0];
+    gv[0] = gv[n - 1];
+    gv[n - 1] = t;
+    gcvars_sift(gv, 0, n - 1);
+  }
+  uintptr_t k = 0, end = 0;
+  for (uintptr_t i = 0; i < ngv; i++) {
+    if (!gv[i].addr || !gv[i].bits || (gv[i].addr & (WORDSZ - 1)) || gv[i].addr < end) continue;
+    gv[k++] = gv[i];
+    end = gv[i].addr + gv[i].nwords * WORDSZ;
+  }
+  ngv = k;
+}
+
+// [lo, hi): records precisely by their bits, the rest conservatively.
+NO_SANITIZE static void scan_data_segment(void *vlo, void *vhi) {
+  uintptr_t lo = (uintptr_t)vlo, hi = (uintptr_t)vhi;
+  if (UNLIKELY(!gv_ready)) gcvars_init();
+  // The first record that ends after lo.
+  uintptr_t a = 0, b = ngv;
+  while (a < b) {
+    uintptr_t m = (a + b) / 2;
+    if (gv[m].addr + gv[m].nwords * WORDSZ <= lo)
+      a = m + 1;
+    else
+      b = m;
+  }
+  for (uintptr_t i = a; i < ngv && lo < hi; i++) {
+    uintptr_t s = gv[i].addr, e = s + gv[i].nwords * WORDSZ;
+    if (s >= hi) break;
+    if (s > lo) gc_scan_range(lo, s);
+    uintptr_t from = s > lo ? s : lo, to = e < hi ? e : hi;
+    for (uintptr_t p = (from + WORDSZ - 1) & ~(uintptr_t)(WORDSZ - 1); p + WORDSZ <= to; p += WORDSZ) {
+      uintptr_t k = (p - s) / WORDSZ;
+      if ((gv[i].bits[k / 8] >> (k % 8)) & 1) gc_scan_range(p, p + WORDSZ);
+    }
+    lo = to;
+  }
+  if (lo < hi) gc_scan_range(lo, hi);
+}
 
 // ---- cards ----
 

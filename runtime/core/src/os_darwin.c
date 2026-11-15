@@ -203,8 +203,17 @@ static void noptr_add(const struct mach_header_64 *mh, const char *sect) {
   nnoptr++;
 }
 
+static void *gcvars;
+static unsigned long gcvars_size;
+
+void *os_gcvars(uintptr_t *bytes) {
+  *bytes = gcvars_size;
+  return gcvars_size ? gcvars : NULL;
+}
+
 void os_data_segments_init(void) {
   const struct mach_header_64 *mh = (const struct mach_header_64 *)_dyld_get_image_header(0);
+  gcvars = getsectiondata(mh, "__DATA", "__marmot_gcvars", &gcvars_size);
   noptr_add(mh, "__noptrdata");
   noptr_add(mh, "__noptrbss");
   intptr_t slide = _dyld_get_image_vmaddr_slide(0);

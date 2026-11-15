@@ -207,6 +207,17 @@ static void noptr_add(uintptr_t a, uintptr_t b) {
   nnoptr++;
 }
 
+extern char __start_marmot_gcvars[] __attribute__((weak));
+extern char __stop_marmot_gcvars[] __attribute__((weak));
+
+void *os_gcvars(uintptr_t *bytes) {
+  uintptr_t a = (uintptr_t)__start_marmot_gcvars, b = (uintptr_t)__stop_marmot_gcvars;
+  __asm__("" : "+r"(a), "+r"(b));
+  if (!a || b <= a) return NULL;
+  *bytes = b - a;
+  return (void *)a;
+}
+
 void os_data_segments_init(void) {
   dl_iterate_phdr(phdr_cb, NULL);
   noptr_add((uintptr_t)marmot_noptrdata_start, (uintptr_t)marmot_noptrdata_end);

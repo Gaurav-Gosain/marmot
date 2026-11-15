@@ -119,6 +119,9 @@ void os_yield(void);
 // Iterate writable data segments of the main executable.
 void os_data_segments_init(void);  // at startup: os_data_segments asks no loader
 void os_data_segments(void (*fn)(void *start, void *end));
+// The image's package variable records (gc.c, MARMOT_GCVARS=1 builds), or
+// NULL; *bytes their size.
+void *os_gcvars(uintptr_t *bytes);
 
 // Calls scan for each piece of [lo, hi) outside the nex sorted, disjoint
 // ranges ex (the package variables without pointers, which the collector
