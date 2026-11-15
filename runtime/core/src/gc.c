@@ -1095,6 +1095,10 @@ static bool mark_finalizers(void) {
 // lists, marking every entry whether or not the entry before it was
 // already marked (a marked entry's link may have changed without a card).
 static uintptr_t sg_gcache, sg_gwait, sg_next, sg_link;
+
+// First stops of a concurrent cycle retried because a thread was stopped by
+// signal between calls, and cycles that marked with the world stopped for it.
+uint64_t gc_sigstop_retries, gc_sigstop_fallbacks;
 static bool sg_set;
 
 RT_API void rt_gc_sudogs(uintptr_t gcache, uintptr_t gwaiting, uintptr_t snext, uintptr_t swaitlink) {
@@ -1539,13 +1543,35 @@ static NOINLINE void gc_collect_body(bool forced, void *sp, void *fp) {
   int64_t pause1 = 0, tconc = 0;
   bool conc = gc_conc && !rt_poison && gc_trace < 3;
   uint64_t mark_live0 = 0;
+  int64_t c0 = 0;
   if (conc) {
     pace_idle = atomic_load(&sched.npidle);
     pace_procs = atomic_load(&sched.nprocs);
     // First stop: roots into the mark stack, the barrier on. Marking then
     // runs beside the program, this goroutine off its P as in a syscall.
-    int64_t c0 = os_nanotime();
+    c0 = os_nanotime();
     stop_the_world();
+    // Compiled code may keep rt_gc_marking in a register between calls, so
+    // marking starts only when no thread was stopped by signal between two
+    // calls: it would go on with the flag clear, and its stores would mark
+    // no card. The world starts again and the stop is retried, and after
+    // three tries this cycle marks with the world stopped.
+    for (uint32_t tries = 0; sched_any_sigstop(); tries++) {
+      start_the_world();
+      gc_sigstop_retries++;
+      if (tries == 3) {
+        gc_sigstop_fallbacks++;
+        conc = false;
+        break;
+      }
+      rt_entersyscall();
+      os_usleep(20u << (2 * tries));  // 20, 80, 320 us
+      rt_exitsyscall();
+      c0 = os_nanotime();
+      stop_the_world();
+    }
+  }
+  if (conc) {
     m = getm();
     m->stop_sp = sp;
     m->stop_hi = m->curg->stack_hi;

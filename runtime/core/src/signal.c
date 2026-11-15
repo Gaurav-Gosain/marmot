@@ -201,7 +201,9 @@ static void sigurg(int sig, siginfo_t *info, void *ctx) {
       // with all registers of the interrupted code, is then above sp.
       if (sp > g->stack_lo && sp < g->stack_hi) {
         atomic_fetch_add_explicit(&m->nsigstop, 1, memory_order_relaxed);
+        m->stop_sig = true;
         sched_stop_self((void *)sp, g->stack_hi, NULL);
+        m->stop_sig = false;
       } else {
         why = 7;
       }

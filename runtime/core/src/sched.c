@@ -2369,6 +2369,18 @@ void sched_scan_roots(void (*scan)(uintptr_t lo, uintptr_t hi)) {
   gc_root_goroutine(NULL);
 }
 
+bool sched_any_sigstop(void) {
+  rt_m *self = getm();
+  int32_t n = atomic_load(&sched.nallp);
+  for (int32_t i = 0; i < n; i++) {
+    rt_p *p = sched.allp[i];
+    if (atomic_load(&p->status) != P_GCSTOP) continue;
+    rt_m *pm = __atomic_load_n(&p->m, __ATOMIC_RELAXED);
+    if (pm && pm != self && pm->stop_sig) return true;
+  }
+  return false;
+}
+
 void sched_each_slot(void (*f)(void *v)) {
   uint32_t n = __atomic_load_n(&nallg, __ATOMIC_ACQUIRE);
   for (uint32_t c = 0; c * GCHUNK < n; c++) {

@@ -321,6 +321,7 @@ struct rt_m {
   void *stop_sp;             // stack pointer at the stop point
   void *stop_fp;             // a frame of the call chain to the stop point, NULL when stopped by
                              // a signal (frames there may be mid-instruction: no stack maps)
+  bool stop_sig;             // stopped by signal, between calls (sched_any_sigstop)
   uintptr_t stop_hi;         // top of the stack stop_sp is on
   struct wbuf *wbq;          // objects the write barrier shaded, not yet handed to the mark
   void *thread;              // pthread_t
@@ -516,6 +517,8 @@ typedef struct {
 } sm_excl;
 // The goroutines' slot values, world stopped (sched.c).
 void sched_each_slot(void (*f)(void *v));
+// World stopped: some running thread stopped by signal, not at a call.
+bool sched_any_sigstop(void);
 extern bool sm_check;
 extern sm_excl *sm_ex;
 extern uint32_t sm_nex;
