@@ -116,10 +116,8 @@ func verifySearch(c *CheckResult, search, show bool, progress func(string)) []st
 			notes = append(notes, fmt.Sprintf("search in %s: %v", hs[0].pkg, err))
 			continue
 		}
-		exported := map[string]bool{}
 		obls := map[key]vfy.OblRef{}
 		for _, h := range hints {
-			exported[h.Full] = h.Exported
 			for _, o := range h.Obls {
 				obls[key{h.Full, o.Key}] = o
 			}
@@ -127,13 +125,13 @@ func verifySearch(c *CheckResult, search, show bool, progress func(string)) []st
 		for _, hit := range hits {
 			k := key{hit.Fn, hit.Obligation}
 			confirmed := "function-level"
-			if exported[hit.Fn] {
+			if hit.API {
 				confirmed = "api"
 			}
 			if hit.Runs < 3 {
 				confirmed = "none"
 			}
-			call := fmt.Sprintf("%s(%s)", shortName(hit.Fn), strings.Join(hit.Args, ", "))
+			call := hit.Call
 			note := fmt.Sprintf("confirmed under gc: %s panics: %s", call, hit.PanicMessage)
 			if hit.Runs < 3 {
 				note = fmt.Sprintf("flaky: %s panicked in %d of 3 runs: %s", call, hit.Runs, hit.PanicMessage)
