@@ -28,14 +28,19 @@ import (
 // obligations. The analyzer emits one per function it can search, in a
 // diagnostic of category CategorySearch.
 type Hint struct {
-	PkgName  string   `json:"pkg"`
-	Fn       string   `json:"fn"`   // name in the package
-	Full     string   `json:"full"` // full SSA name
-	Exported bool     `json:"exported"`
-	Params   []Param  `json:"params"`
-	Ints     []int64  `json:"ints,omitempty"`
-	Strs     []string `json:"strs,omitempty"`
-	Obls     []OblRef `json:"obls"`
+	PkgName  string `json:"pkg"`
+	Fn       string `json:"fn"`   // name in the package
+	Full     string `json:"full"` // full SSA name
+	Exported bool   `json:"exported"`
+	// Recv is the receiver of a method: "T" or "*T" for a named type of
+	// the package, called on its zero value; RecvExported says whether
+	// any importer can make that value (var v T).
+	Recv         string   `json:"recv,omitempty"`
+	RecvExported bool     `json:"recvExported,omitempty"`
+	Params       []Param  `json:"params"`
+	Ints         []int64  `json:"ints,omitempty"`
+	Strs         []string `json:"strs,omitempty"`
+	Obls         []OblRef `json:"obls"`
 }
 
 // Param is one parameter: its Go type as written in the package, and its
@@ -116,8 +121,31 @@ func makeHint(fn *ssa.Function, fr *FuncResult, fset *token.FileSet) *Hint {
 		return ps.Filename, ps.Line
 	}
 	col := func(p token.Pos) int { return fset.Position(p).Column }
-	if fn.Signature.Recv() != nil || fn.Parent() != nil || fn.TypeParams().Len() > 0 || fn.Pkg == nil || fn.Name() == "init" || fn.Name() == "main" || strings.HasPrefix(fn.Name(), "init#") {
+	if fn.Parent() != nil || fn.TypeParams().Len() > 0 || fn.Pkg == nil || fn.Name() == "init" || fn.Name() == "main" || strings.HasPrefix(fn.Name(), "init#") {
 		return nil
+	}
+	recv, recvExported := "", false
+	if r := fn.Signature.Recv(); r != nil {
+		t := r.Type()
+		ptr := false
+		if p, ok := t.(*types.Pointer); ok {
+			t, ptr = p.Elem(), true
+		}
+		n, ok := types.Unalias(t).(*types.Named)
+		if !ok || n.Obj().Pkg() != fn.Pkg.Pkg || n.TypeParams().Len() > 0 {
+			return nil
+		}
+		// Zero values only of structs and basic types: a nil map, slice
+		// or func receiver is rarely meaningful.
+		switch n.Underlying().(type) {
+		case *types.Struct, *types.Basic:
+		default:
+			return nil
+		}
+		recv, recvExported = n.Obj().Name(), n.Obj().Exported()
+		if ptr {
+			recv = "*" + recv
+		}
 	}
 	if strings.HasPrefix(fn.Name(), "Test") || strings.HasPrefix(fn.Name(), "Benchmark") || strings.HasPrefix(fn.Name(), "Fuzz") || strings.HasPrefix(fn.Name(), "Example") {
 		return nil
@@ -127,8 +155,12 @@ func makeHint(fn *ssa.Function, fr *FuncResult, fset *token.FileSet) *Hint {
 			return nil
 		}
 	}
-	h := &Hint{PkgName: fn.Pkg.Pkg.Name(), Fn: fn.Name(), Full: fn.String(), Exported: fn.Object() != nil && fn.Object().Exported()}
-	for _, p := range fn.Params {
+	h := &Hint{PkgName: fn.Pkg.Pkg.Name(), Fn: fn.Name(), Full: fn.String(), Exported: fn.Object() != nil && fn.Object().Exported(), Recv: recv, RecvExported: recvExported}
+	params := fn.Params
+	if recv != "" {
+		params = params[1:]
+	}
+	for _, p := range params {
 		pr := paramOf(p.Type(), fn.Pkg.Pkg, 0)
 		if pr == nil {
 			return nil
@@ -479,10 +511,11 @@ func TestMarmotVerifySearch(t *marmottesting.T) {
 				flat = append(flat, strconv.Itoa(x))
 			}
 		}
-		fmt.Fprintf(&b, "\tcs := []uint16{%s}\n", strings.Join(flat, ","))
+		fmt.Fprintf(&b, "\tcs := []uint16{%s}\n\t_ = cs\n", strings.Join(flat, ","))
 		k := len(h.Params)
+		callee := h.callee()
 		if k == 0 {
-			fmt.Fprintf(&b, "\tmarmotRun(fn, 0, func() { %s() })\n}\n", h.Fn)
+			fmt.Fprintf(&b, "\tmarmotRun(fn, 0, func() { %s() })\n}\n", callee)
 			continue
 		}
 		fmt.Fprintf(&b, "\tfor i := 0; i+%d <= len(cs); i += %d {\n", k, k)
@@ -491,14 +524,46 @@ func TestMarmotVerifySearch(t *marmottesting.T) {
 		for j := range h.Params {
 			args = append(args, fmt.Sprintf("p%d[cs[i+%d]]", j, j))
 		}
-		fmt.Fprintf(&b, "\t\tmarmotRun(fn, n, func() { %s(%s) })\n\t}\n}\n", h.Fn, strings.Join(args, ", "))
+		fmt.Fprintf(&b, "\t\tmarmotRun(fn, n, func() { %s(%s) })\n\t}\n}\n", callee, strings.Join(args, ", "))
 	}
 	return b.String()
+}
+
+// callee is the expression called: the function, or the method on a
+// fresh zero value of its receiver type.
+func (h *Hint) callee() string {
+	switch {
+	case h.Recv == "":
+		return h.Fn
+	case strings.HasPrefix(h.Recv, "*"):
+		return "new(" + h.Recv[1:] + ")." + h.Fn
+	}
+	return "(*new(" + h.Recv + "))." + h.Fn
+}
+
+// Call is the call of h with args as Go source.
+func (h *Hint) Call(args []string) string {
+	c := h.Fn
+	switch {
+	case strings.HasPrefix(h.Recv, "*"):
+		c = "new(" + h.Recv[1:] + ")." + h.Fn
+	case h.Recv != "":
+		c = h.Recv + "{}." + h.Fn
+	}
+	return c + "(" + strings.Join(args, ", ") + ")"
+}
+
+// API reports whether every caller can make this call: an exported
+// function, or an exported method on an exported type's zero value.
+func (h *Hint) API() bool {
+	return h.Exported && (h.Recv == "" || h.RecvExported)
 }
 
 // Hit is a confirmed panic: the obligation it violates and the input.
 type Hit struct {
 	Fn           string
+	Call         string // the call as Go source
+	API          bool   // the call is possible from other packages
 	Obligation   string
 	Kind         string
 	Input        map[string]string
@@ -610,7 +675,7 @@ func Search(ctx context.Context, dir, pkgName string, hints []*Hint, opts Search
 				args[j] = p.cands[i][j][p.combos[i][r.in][j]]
 				input[pr.Name] = args[j]
 			}
-			hits = append(hits, Hit{Fn: h.Full, Obligation: o.Key, Kind: o.Kind, Input: input, Args: args, PanicMessage: r.msg, File: r.file, Line: r.line, Runs: n})
+			hits = append(hits, Hit{Fn: h.Full, Call: h.Call(args), API: h.API(), Obligation: o.Key, Kind: o.Kind, Input: input, Args: args, PanicMessage: r.msg, File: r.file, Line: r.line, Runs: n})
 		}
 	}
 	return hits, nil
