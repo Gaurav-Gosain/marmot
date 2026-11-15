@@ -280,11 +280,7 @@ func (m *moduleGen) finish(name string) (Module, error) {
 	// Location aliases come first: the parser then resolves each op's
 	// loc(#locN) at once instead of through a forward reference.
 	m.locDefs.writeTo(&out)
-	if optGCPtr && m.p.conservativeStack(m.pkg) {
-		out.WriteString("module attributes {marmot.conservative_stack = true} {\n")
-	} else {
-		out.WriteString("module {\n")
-	}
+	out.WriteString("module {\n")
 	for _, k := range keys {
 		out.WriteString(m.decls[k])
 	}
@@ -444,6 +440,9 @@ func (m *moduleGen) funcAttrs(fn *ssa.Function, sym string, decl bool) string {
 			// Frame records are required by the Darwin ABI and by recover.
 			pass = append(pass, `["frame-pointer", "non-leaf"]`)
 		}
+	}
+	if optGCPtr && local && len(fn.Blocks) > 0 && m.p.conservativeFunc(fn) {
+		pass = append(pass, `"marmot-conservative-stack"`)
 	}
 	if len(pass) > 0 {
 		attrs = append(attrs, "passthrough = ["+strings.Join(pass, ", ")+"]")

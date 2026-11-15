@@ -1,9 +1,11 @@
 package codegen
 
 import (
+	"go/types"
 	"os"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
+	"golang.org/x/tools/go/ssa"
 )
 
 // GC pointers for statepoints (MARMOT_GCPTR=1, off by default). Every Go
@@ -105,4 +107,73 @@ func (f *funcGen) asVal(v, vt string) string {
 		return f.gcv(v)
 	}
 	return v
+}
+
+// conservativeFunc reports whether fn's frame must be scanned
+// conservatively even when the backend makes stack maps (MARMOT_GCPTR=1):
+// it may hold heap pointers the address spaces do not show. Its function
+// gets the attribute "marmot-conservative-stack". That is: a linknamed
+// function (it follows another package's conventions), a conversion
+// between unsafe.Pointer and uintptr, unsafe.Add, Slice, String,
+// SliceData or StringData, or a parameter, result or value whose type is a
+// struct holding an unsafe.Pointer (reflect.Value style).
+func (p *Program) conservativeFunc(fn *ssa.Function) bool {
+	if _, ok := p.linkname[fn]; ok {
+		return true
+	}
+	for _, v := range fn.Params {
+		if unsafeAggregate(v.Type()) {
+			return true
+		}
+	}
+	if r := fn.Signature.Results(); r != nil {
+		for i := 0; i < r.Len(); i++ {
+			if unsafeAggregate(r.At(i).Type()) {
+				return true
+			}
+		}
+	}
+	for _, b := range fn.Blocks {
+		for _, instr := range b.Instrs {
+			switch x := instr.(type) {
+			case *ssa.Convert:
+				if isUnsafePointer(x.Type()) != isUnsafePointer(x.X.Type()) &&
+					(isUintptr(x.Type()) || isUintptr(x.X.Type())) {
+					return true
+				}
+			case ssa.CallInstruction:
+				if bi, ok := x.Common().Value.(*ssa.Builtin); ok {
+					switch bi.Name() {
+					case "Add", "Slice", "String", "SliceData", "StringData":
+						return true
+					}
+				}
+			}
+			if v, ok := instr.(ssa.Value); ok && unsafeAggregate(v.Type()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// unsafeAggregate reports whether t is a struct with an unsafe.Pointer
+// field (at any depth).
+func unsafeAggregate(t types.Type) bool {
+	st, ok := t.Underlying().(*types.Struct)
+	if !ok {
+		return false
+	}
+	for i := 0; i < st.NumFields(); i++ {
+		ft := st.Field(i).Type()
+		if isUnsafePointer(ft) || unsafeAggregate(ft) {
+			return true
+		}
+	}
+	return false
+}
+
+func isUintptr(t types.Type) bool {
+	b, ok := t.Underlying().(*types.Basic)
+	return ok && b.Kind() == types.Uintptr
 }

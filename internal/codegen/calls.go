@@ -507,6 +507,7 @@ func (f *funcGen) devirtualize(c *ssa.CallCommon) (string, bool) {
 	for _, a := range c.Args {
 		args = append(args, f.value(a))
 	}
+	args = f.gcArgs(args)
 	done := f.newBlock()
 	for _, t := range cands {
 		mset := f.m.p.prog.MethodSets.MethodSet(t)

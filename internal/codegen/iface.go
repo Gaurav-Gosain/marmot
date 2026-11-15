@@ -1,6 +1,8 @@
 package codegen
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"go/constant"
 	"go/types"
@@ -170,7 +172,16 @@ func (m *moduleGen) constBox(c *ssa.Const) string {
 		return sym
 	}
 	sym := fmt.Sprintf(".box.%d", m.nstr)
-	m.nstr++
+	linkage := "private"
+	if m.p.opts.Release && !m.p.opts.GoDialect {
+		// Whole program -release in the llvm dialect imports function
+		// bodies into other modules: the box must be reachable from them,
+		// so it is named by content and shared (as go:str. data).
+		h := sha256.Sum256([]byte(key))
+		sym, linkage = "go:box."+hex.EncodeToString(h[:12]), "linkonce_odr"
+	} else {
+		m.nstr++
+	}
 	m.strs["box:"+key] = sym
 	t := c.Type()
 	mt := m.tm.memType(t)
@@ -205,7 +216,7 @@ func (m *moduleGen) constBox(c *ssa.Const) string {
 	default:
 		val = cZero(mt)
 	}
-	m.constGlobal(sym, "private", true, val)
+	m.constGlobal(sym, linkage, true, val)
 	return sym
 }
 

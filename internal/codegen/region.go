@@ -355,6 +355,7 @@ func (f *funcGen) callRegionClone(c *ssa.CallCommon, fn *ssa.Function, r string)
 		args = append(args, f.value(a))
 	}
 	args = append(args, r)
+	args = f.gcArgs(args)
 	if ret == "" {
 		f.emit("llvm.call %s(%s) : (%s) -> ()", mlir.Symbol(sym), joinArgs(args), joinArgs(params))
 		return ""
