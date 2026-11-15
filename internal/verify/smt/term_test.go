@@ -1,6 +1,7 @@
 package smt
 
 import (
+	"context"
 	"math/rand/v2"
 	"strings"
 	"testing"
@@ -51,6 +52,29 @@ func TestEvalMatchesGo(t *testing.T) {
 			check("ult", Eval(ULt(a, b), env), b2u(xa < ya))
 		}
 	}
+}
+
+func TestZ3(t *testing.T) {
+	s := Z3()
+	if s == nil {
+		t.Skip("z3 not on PATH")
+	}
+	x, y := Var("x", 64), Var("y", 8)
+	// x + 1 < x (signed) holds only for MaxInt64.
+	r := s.Check(context.Background(), []*T{SLt(Add(x, BV(1, 64)), x)})
+	if r.Answer != Sat || r.Model["x"] != 1<<63-1 {
+		t.Fatalf("got %+v", r)
+	}
+	// y * 2 == 1 has no 8-bit solution.
+	if r := s.Check(context.Background(), []*T{Eq(Mul(y, BV(2, 8)), BV(1, 8))}); r.Answer != Unsat {
+		t.Fatalf("got %+v", r)
+	}
+	// A model checks out on the evaluator.
+	r = s.Check(context.Background(), []*T{Eq(Mul(y, BV(3, 8)), BV(1, 8))})
+	if r.Answer != Sat || Eval(Mul(y, BV(3, 8)), &Env{BV: r.Model}) != 1 {
+		t.Fatalf("got %+v", r)
+	}
+	t.Logf("%s", s.Version)
 }
 
 func TestScript(t *testing.T) {

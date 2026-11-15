@@ -46,11 +46,14 @@ type Hint struct {
 	// ZeroAPI: every zero value the call uses (receiver, *T parameters)
 	// is of an exported type that no function of the package returns, so
 	// a zero value is how importers get one.
-	ZeroAPI bool     `json:"zeroAPI,omitempty"`
-	Params  []Param  `json:"params"`
-	Ints    []int64  `json:"ints,omitempty"`
-	Strs    []string `json:"strs,omitempty"`
-	Obls    []OblRef `json:"obls"`
+	ZeroAPI bool `json:"zeroAPI,omitempty"`
+	// Models are engine B's inputs (Go arguments) for open obligations:
+	// tried first.
+	Models [][]string `json:"models,omitempty"`
+	Params []Param    `json:"params"`
+	Ints   []int64    `json:"ints,omitempty"`
+	Strs   []string   `json:"strs,omitempty"`
+	Obls   []OblRef   `json:"obls"`
 }
 
 // Param is one parameter: its Go type as written in the package, and its
@@ -212,6 +215,11 @@ func makeHint(fn *ssa.Function, fr *FuncResult, fset *token.FileSet) *Hint {
 	}
 	if len(h.Obls) == 0 {
 		return nil
+	}
+	for _, o := range fr.Obligations {
+		if len(o.Model) == len(h.Params) && h.Recv == "" {
+			h.Models = append(h.Models, o.Model)
+		}
 	}
 	ints := map[int64]bool{}
 	strs := map[string]bool{}
@@ -494,8 +502,25 @@ func makePlan(hints []*Hint, limit int) *plan {
 			cs = append(cs, c)
 			sz = append(sz, len(c))
 		}
+		// Engine B's models first: their literals join the candidates.
+		var first [][]int
+		for _, m := range h.Models {
+			combo := make([]int, len(m))
+			for j, lit := range m {
+				k := slices.Index(cs[j], lit)
+				if k < 0 {
+					cs[j] = append(cs[j], lit)
+					k = len(cs[j]) - 1
+				}
+				combo[j] = k
+			}
+			first = append(first, combo)
+		}
+		for j := range sz {
+			sz[j] = len(cs[j])
+		}
 		p.cands = append(p.cands, cs)
-		p.combos = append(p.combos, combos(sz, limit, uint64(i)+1))
+		p.combos = append(p.combos, append(first, combos(sz, limit, uint64(i)+1)...))
 	}
 	return p
 }

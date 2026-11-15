@@ -21,16 +21,17 @@ import (
 
 // encoding is the result for one function.
 type encoding struct {
-	Params  []encParam // the inputs, in order
-	Assumes []*smt.T   // facts about the inputs (0 <= len <= cap <= maxLen)
-	Viol    map[*Obligation]*smt.T
-	Result  *smt.T // the first result when it is an integer, nil otherwise
+	Params  []encParam        // the inputs, in order
+	Assumes []*smt.T          // facts about the inputs (0 <= len <= cap <= maxLen)
+	Viol    map[string]*smt.T // by obligation key
+	Result  *smt.T            // the first result when it is an integer, nil otherwise
 }
 
 type encParam struct {
 	Name string
-	Kind string // int, uint, bool, bytes, string
+	Kind string // int, uint, bool, bytes, string, slice, opaque
 	Bits int
+	Type string // the Go type of a slice parameter, as written in its package
 }
 
 type encoder struct {
@@ -49,16 +50,21 @@ type seqT struct {
 	arr, off, len, cap *smt.T
 }
 
+// EncodeReason is why fn cannot be encoded, "" when it can (for
+// measurements).
+func EncodeReason(fn *ssa.Function) string {
+	if _, err := encodeFunc(fn); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
 // encodable reports why fn cannot be encoded ("" when it can).
 func encodable(fn *ssa.Function) string {
-	for _, b := range fn.Blocks {
-		if isLoopHeader(b) {
-			return "loop"
-		}
+	if len(fn.Blocks) == 0 {
+		return "no body"
 	}
-	if fn.Recover != nil {
-		return "recover"
-	}
+
 	return ""
 }
 
@@ -75,22 +81,44 @@ func isBool(t types.Type) bool {
 	return ok && b.Info()&types.IsBoolean != 0
 }
 
+// isSeq: strings and slices, the values with a length.
 func isSeq(t types.Type) bool {
 	switch u := coreType(t).(type) {
 	case *types.Basic:
 		return u.Info()&types.IsString != 0
 	case *types.Slice:
-		return isByteSlice(t)
+		return true
 	}
 	return false
 }
 
-// encodeFunc encodes fn, or reports why it cannot.
-func encodeFunc(fn *ssa.Function) (*encoding, error) {
+// hasBytes: strings and byte slices, whose contents are encoded.
+func hasBytes(t types.Type) bool {
+	if b, ok := coreType(t).(*types.Basic); ok {
+		return b.Info()&types.IsString != 0
+	}
+	return isByteSlice(t)
+}
+
+// encodeFunc encodes fn, or reports why it cannot. Loops are cut at
+// their headers with the invariant engine A computed there (heads: its
+// state at each header): the header's phis are any values satisfying it,
+// and back edges are not followed. Without a state for a header the
+// function is not encoded.
+func encodeFunc(fn *ssa.Function, heads ...map[*ssa.BasicBlock]*state) (*encoding, error) {
 	if why := encodable(fn); why != "" {
 		return nil, fmt.Errorf("not encoded: %s", why)
 	}
-	e := &encoder{fn: fn, vals: map[ssa.Value]*smt.T{}, seqs: map[ssa.Value]*seqT{}, reach: map[*ssa.BasicBlock]*smt.T{}, edges: map[[2]*ssa.BasicBlock]*smt.T{}, enc: &encoding{Viol: map[*Obligation]*smt.T{}}}
+	var hs map[*ssa.BasicBlock]*state
+	if len(heads) > 0 {
+		hs = heads[0]
+	}
+	for _, b := range fn.Blocks {
+		if isLoopHeader(b) && hs[b] == nil {
+			return nil, fmt.Errorf("not encoded: loop")
+		}
+	}
+	e := &encoder{fn: fn, vals: map[ssa.Value]*smt.T{}, seqs: map[ssa.Value]*seqT{}, reach: map[*ssa.BasicBlock]*smt.T{}, edges: map[[2]*ssa.BasicBlock]*smt.T{}, enc: &encoding{Viol: map[string]*smt.T{}}}
 	for i, p := range fn.Params {
 		name := fmt.Sprintf("p%d_%s", i, p.Name())
 		switch {
@@ -103,15 +131,20 @@ func encodeFunc(fn *ssa.Function) (*encoding, error) {
 			if b, ok := coreType(p.Type()).(*types.Basic); ok && b.Info()&types.IsString != 0 {
 				kind = "string"
 				s.cap = s.len
+			} else if !isByteSlice(p.Type()) {
+				kind = "slice"
 			}
 			e.seqs[p] = s
 			lim := smt.BV(maxLen, 64)
 			e.enc.Assumes = append(e.enc.Assumes, smt.SLe(smt.BV(0, 64), s.len), smt.SLe(s.len, s.cap), smt.SLe(s.cap, lim))
-			e.enc.Params = append(e.enc.Params, encParam{Name: name, Kind: kind})
+			e.enc.Params = append(e.enc.Params, encParam{Name: name, Kind: kind, Type: types.TypeString(p.Type(), types.RelativeTo(fn.Pkg.Pkg))})
 		default:
 			w, signed, ok := intWidth(p.Type())
 			if !ok {
-				return nil, fmt.Errorf("not encoded: parameter %s of type %s", p.Name(), p.Type())
+				// Pointers, interfaces, structs: opaque; loads through
+				// them give fresh values.
+				e.enc.Params = append(e.enc.Params, encParam{Name: name, Kind: "opaque"})
+				continue
 			}
 			e.vals[p] = smt.Var(name, w)
 			k := "uint"
@@ -129,16 +162,20 @@ func encodeFunc(fn *ssa.Function) (*encoding, error) {
 	var results []struct{ reach, v *smt.T }
 	for _, b := range reversePostorder(fn) {
 		e.reach[b] = e.blockReach(b)
+		if isLoopHeader(b) {
+			e.cutLoop(b, hs[b])
+		}
 		for _, in := range b.Instrs {
+			if _, isPhi := in.(*ssa.Phi); isPhi && isLoopHeader(b) {
+				continue // made fresh by cutLoop
+			}
 			for _, o := range byInstr[in] {
 				if v := e.violation(o); v != nil {
-					e.enc.Viol[o] = smt.LAnd(e.reach[b], v)
-				} else if e.failure == "" {
-					e.failure = "obligation " + string(o.Kind)
+					e.enc.Viol[o.Key] = smt.LAnd(e.reach[b], v)
 				}
 			}
 			e.instr(b, in)
-			if r, ok := in.(*ssa.Return); ok && len(r.Results) > 0 && !isSeq(r.Results[0].Type()) {
+			if r, ok := in.(*ssa.Return); ok && len(r.Results) > 0 && e.scalar(r.Results[0].Type()) {
 				results = append(results, struct{ reach, v *smt.T }{e.reach[b], e.val(r.Results[0])})
 			}
 			if e.failure != "" {
@@ -162,6 +199,9 @@ func (e *encoder) blockReach(b *ssa.BasicBlock) *smt.T {
 	}
 	var ins []*smt.T
 	for _, p := range b.Preds {
+		if b.Dominates(p) {
+			continue // a back edge: the header's invariant covers it
+		}
 		if c, ok := e.edges[[2]*ssa.BasicBlock{p, b}]; ok {
 			ins = append(ins, c)
 		} else if r, ok := e.reach[p]; ok {
@@ -169,6 +209,67 @@ func (e *encoder) blockReach(b *ssa.BasicBlock) *smt.T {
 		}
 	}
 	return smt.LOr(ins...)
+}
+
+// cutLoop makes the phis of loop header h fresh values and assumes
+// engine A's invariant at h about them and the values before the loop.
+func (e *encoder) cutLoop(h *ssa.BasicBlock, st *state) {
+	for _, in := range h.Instrs {
+		phi, ok := in.(*ssa.Phi)
+		if !ok {
+			break
+		}
+		switch {
+		case isSeq(phi.Type()):
+			s := e.freshSeq()
+			e.seqs[phi] = s
+		case e.scalar(phi.Type()):
+			e.vals[phi] = e.freshOf(phi.Type())
+		}
+	}
+	// a - b <= c, in 66-bit arithmetic: no wrap for 64-bit operands.
+	term := func(n node) *smt.T {
+		switch n.k {
+		case nZero:
+			return smt.BV(0, 66)
+		case nVal:
+			if _, ok := n.v.(*ssa.Const); !ok {
+				if _, ok := e.vals[n.v]; !ok {
+					return nil
+				}
+			}
+			t := e.val(n.v)
+			if t.W == 0 {
+				return nil
+			}
+			if _, signed, _ := intWidth(n.v.Type()); signed {
+				return smt.SExt(t, 66)
+			}
+			return smt.ZExt(t, 66)
+		case nLen, nCap:
+			s, ok := e.seqs[n.v]
+			if !ok {
+				return nil
+			}
+			if n.k == nLen {
+				return smt.SExt(s.len, 66)
+			}
+			return smt.SExt(s.cap, 66)
+		}
+		return nil
+	}
+	for p, bd := range st.d {
+		a, b := term(p.a), term(p.b)
+		if a == nil || b == nil {
+			continue
+		}
+		c := bd.c
+		cterm := smt.BV(uint64(c), 66)
+		if c < 0 {
+			cterm = smt.Neg(smt.BV(uint64(-c), 66))
+		}
+		e.enc.Assumes = append(e.enc.Assumes, smt.SLe(smt.Sub(a, b), cterm))
+	}
 }
 
 // val is the term of an integer or boolean value.
@@ -192,10 +293,47 @@ func (e *encoder) val(v ssa.Value) *smt.T {
 			return smt.BV(u, w)
 		}
 	}
+	if t := e.freshOf(v.Type()); t != nil {
+		// A value the encoder does not follow (a field, an element, a
+		// global): any value of its type.
+		e.vals[v] = t
+		return t
+	}
 	if e.failure == "" {
 		e.failure = fmt.Sprintf("value %v of type %s", v, v.Type())
 	}
 	return smt.BV(0, 64)
+}
+
+// scalar: integers and booleans, the types with terms.
+func (e *encoder) scalar(t types.Type) bool {
+	if isBool(t) {
+		return true
+	}
+	_, _, ok := intWidth(t)
+	return ok
+}
+
+// freshOf is a fresh term of an integer or boolean type, nil otherwise.
+func (e *encoder) freshOf(t types.Type) *smt.T {
+	e.fresh++
+	name := fmt.Sprintf("f%d", e.fresh)
+	if isBool(t) {
+		return smt.Var(name, 0)
+	}
+	if w, _, ok := intWidth(t); ok {
+		return smt.Var(name, w)
+	}
+	return nil
+}
+
+// freshSeq is a fresh string or byte slice within the address space.
+func (e *encoder) freshSeq() *seqT {
+	e.fresh++
+	n := fmt.Sprintf("f%d", e.fresh)
+	s := &seqT{arr: smt.ArrVar(n + "_arr"), off: smt.BV(0, 64), len: smt.Var(n+"_len", 64), cap: smt.Var(n+"_cap", 64)}
+	e.enc.Assumes = append(e.enc.Assumes, smt.SLe(smt.BV(0, 64), s.len), smt.SLe(s.len, s.cap), smt.SLe(s.cap, smt.BV(maxLen, 64)))
+	return s
 }
 
 func (e *encoder) seq(v ssa.Value) *seqT {
@@ -211,6 +349,11 @@ func (e *encoder) seq(v ssa.Value) *seqT {
 		// encoded; lengths are what the obligations need).
 		e.fresh++
 		return &seqT{arr: smt.ArrVar(fmt.Sprintf("k%d_arr", e.fresh)), off: smt.BV(0, 64), len: smt.BV(n, 64), cap: smt.BV(n, 64)}
+	}
+	if isSeq(v.Type()) {
+		s := e.freshSeq()
+		e.seqs[v] = s
+		return s
 	}
 	if e.failure == "" {
 		e.failure = fmt.Sprintf("sequence %v", v)
@@ -231,7 +374,14 @@ func (e *encoder) i64(v ssa.Value) *smt.T {
 	return smt.ZExt(t, 64)
 }
 
-func (e *encoder) violation(o *Obligation) *smt.T {
+func (e *encoder) violation(o *Obligation) (res *smt.T) {
+	// An operand the encoder has no term for leaves the obligation out.
+	saved := e.failure
+	defer func() {
+		if e.failure != saved {
+			e.failure, res = saved, nil
+		}
+	}()
 	zero := smt.BV(0, 64)
 	switch o.Kind {
 	case KIndex:
@@ -301,6 +451,9 @@ func (e *encoder) instr(b *ssa.BasicBlock, in ssa.Instruction) {
 			e.seqs[in] = s
 			return
 		}
+		if !e.scalar(in.Type()) {
+			return // an opaque phi
+		}
 		var t *smt.T
 		for i := len(in.Edges) - 1; i >= 0; i-- {
 			x := e.val(in.Edges[i])
@@ -323,30 +476,27 @@ func (e *encoder) instr(b *ssa.BasicBlock, in ssa.Instruction) {
 			e.vals[in] = smt.BNot(e.val(in.X))
 		case token.MUL:
 			// A load of a byte through &s[i].
-			if ia, ok := in.X.(*ssa.IndexAddr); ok && isSeq(ia.X.Type()) {
+			if ia, ok := in.X.(*ssa.IndexAddr); ok && hasBytes(ia.X.Type()) {
 				s := e.seq(ia.X)
 				e.vals[in] = smt.Select(s.arr, smt.Add(s.off, e.i64(ia.Index)))
 				return
 			}
-			e.failure = "load"
+			// Any other load: a fresh value of its type, when the
+			// encoder needs it (val and seq make one on demand).
 		default:
 			e.failure = "unary " + in.Op.String()
 		}
 	case *ssa.IndexAddr:
-		if !isSeq(in.X.Type()) {
-			e.failure = "index address of a non-byte slice"
-		}
+		// The address itself is opaque; loads through it of a byte
+		// sequence read the array (see the load above).
 	case *ssa.Index:
-		if isSeq(in.X.Type()) {
+		if hasBytes(in.X.Type()) {
 			s := e.seq(in.X)
 			e.vals[in] = smt.Select(s.arr, smt.Add(s.off, e.i64(in.Index)))
-			return
 		}
-		e.failure = "index"
 	case *ssa.Slice:
 		if !isSeq(in.X.Type()) {
-			e.failure = "slice of a non-byte sequence"
-			return
+			return // its length is not followed: fresh when needed
 		}
 		s := e.seq(in.X)
 		lo, hi, mx := smt.BV(0, 64), s.len, s.cap
@@ -361,7 +511,7 @@ func (e *encoder) instr(b *ssa.BasicBlock, in ssa.Instruction) {
 		}
 		e.seqs[in] = &seqT{arr: s.arr, off: smt.Add(s.off, lo), len: smt.Sub(hi, lo), cap: smt.Sub(mx, lo)}
 	case *ssa.Convert:
-		if isSeq(in.Type()) && isSeq(in.X.Type()) {
+		if hasBytes(in.Type()) && hasBytes(in.X.Type()) {
 			s := e.seq(in.X)
 			e.seqs[in] = &seqT{arr: s.arr, off: s.off, len: s.len, cap: s.len}
 			return
@@ -392,8 +542,11 @@ func (e *encoder) instr(b *ssa.BasicBlock, in ssa.Instruction) {
 		}
 	case *ssa.Call:
 		e.call(in)
+	case *ssa.Store, *ssa.MapUpdate:
+		// Memory is not followed: later loads are fresh values.
 	default:
-		e.failure = fmt.Sprintf("instruction %T", in)
+		// Allocations, fields, interfaces, closures, maps: opaque values;
+		// an integer or sequence the encoder needs from them is fresh.
 	}
 }
 
@@ -418,6 +571,8 @@ func (e *encoder) call(in *ssa.Call) {
 				e.vals[in] = e.seq(c.Args[0]).cap
 				return
 			}
+		case "recover", "print", "println", "copy", "append", "delete", "clear", "close", "panic":
+			return
 		case "min", "max":
 			_, signed, ok := intWidth(in.Type())
 			if !ok {
@@ -439,29 +594,21 @@ func (e *encoder) call(in *ssa.Call) {
 			e.vals[in] = t
 			return
 		}
-		e.failure = "builtin " + bi.Name()
 		return
 	}
-	// Any other call: a fresh value of an integer or bool result.
-	if in.Type() == nil || types.Identical(in.Type(), types.NewTuple()) {
-		return
-	}
-	e.fresh++
-	name := fmt.Sprintf("c%d", e.fresh)
-	if isBool(in.Type()) {
-		e.vals[in] = smt.Var(name, 0)
-		return
-	}
-	if w, _, ok := intWidth(in.Type()); ok {
-		e.vals[in] = smt.Var(name, w)
-		return
-	}
-	e.failure = "call result of type " + in.Type().String()
+	// Any other call: its results are any values of their types (made
+	// on demand, also for Extracts of a tuple).
 }
 
 func (e *encoder) binop(in *ssa.BinOp) {
-	if isSeq(in.X.Type()) {
-		e.failure = "string operation"
+	if isSeq(in.X.Type()) || !isBool(in.X.Type()) && func() bool { _, _, ok := intWidth(in.X.Type()); return !ok }() {
+		// Comparisons of strings, pointers, interfaces: any boolean;
+		// string concatenation: any string.
+		if isBool(in.Type()) {
+			e.vals[in] = e.freshOf(in.Type())
+		} else if isSeq(in.Type()) {
+			e.seqs[in] = e.freshSeq()
+		}
 		return
 	}
 	x, y := e.val(in.X), e.val(in.Y)

@@ -2,15 +2,18 @@ package verify
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Gaurav-Gosain/marmot/internal/verify/smt"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -61,6 +64,12 @@ type ObResult struct {
 	Via *Obligation
 	// Assumes the result depends on, besides no-races.
 	Assumes []string
+	// Engine is the engine that decided: "" for engine A, "smt" when
+	// engine B proved the obligation or found a model for it.
+	Engine string
+	// Model is engine B's input that violates the obligation, as Go
+	// arguments of the function (to confirm by running).
+	Model []string
 }
 
 // Label is a secondary span with a text.
@@ -77,6 +86,9 @@ type Options struct {
 	// Summaries gives the summaries of functions of other packages (from
 	// analysis facts); nil: none.
 	Summaries func(*ssa.Function) *FnSummary
+	// Solver, when set, runs engine B on what engine A leaves open in
+	// loop-free functions.
+	Solver *smt.Solver
 }
 
 // DefaultOptions are the options of marmot verify.
@@ -282,11 +294,127 @@ func analyzeFunc(fset *token.FileSet, fn *ssa.Function, opts Options, sums func(
 	if inl != nil {
 		fr.Obligations = append(fr.Obligations, inl.found...)
 	}
+	if opts.Solver != nil {
+		heads := map[*ssa.BasicBlock]*state{}
+		for b, s := range e.in {
+			if isLoopHeader(b) && s != nil {
+				heads[b] = s
+			}
+		}
+		engineB(fn, fr, opts.Solver, heads)
+	}
 	var sum *FnSummary
 	if fn.Recover == nil {
 		sum = summarize(fn, rets)
 	}
 	return fr, sum
+}
+
+// engineBBudget bounds the solver time of one function.
+const engineBBudget = 2 * time.Second
+
+// engineB asks the solver about the obligations engine A left open in a
+// loop-free function: unsat proves them, sat gives an input to confirm.
+func engineB(fn *ssa.Function, fr *FuncResult, s *smt.Solver, heads map[*ssa.BasicBlock]*state) {
+	if os.Getenv("MARMOT_VERIFY_DEBUG") == fn.Name() {
+		fmt.Fprintf(os.Stderr, "engine B on %s:", fn.Name())
+		for _, o := range fr.Obligations {
+			fmt.Fprintf(os.Stderr, " %s=%s/%s", o.Ob.Key, o.Status, o.Reason)
+		}
+		fmt.Fprintln(os.Stderr)
+	}
+	var open []*ObResult
+	for _, o := range fr.Obligations {
+		if o.Via != nil || o.Reason == "budget" || o.Reason == "receiver" {
+			continue
+		}
+		switch o.Status {
+		case Latent, Unknown, Counterexample:
+			open = append(open, o)
+		}
+	}
+	if len(open) == 0 || encodable(fn) != "" {
+		return
+	}
+	enc, err := encodeFunc(fn, heads)
+	if os.Getenv("MARMOT_VERIFY_DEBUG") == fn.Name() {
+		fmt.Fprintf(os.Stderr, "engine B %s: %d open, encode error %v, %d violations\n", fn.Name(), len(open), err, func() int {
+			if enc == nil {
+				return 0
+			}
+			return len(enc.Viol)
+		}())
+	}
+	if err != nil {
+		return
+	}
+	start := time.Now()
+	for _, o := range open {
+		if time.Since(start) > engineBBudget {
+			return
+		}
+		v := enc.Viol[o.Ob.Key]
+		if v == nil {
+			continue
+		}
+		res := s.Check(context.Background(), append(append([]*smt.T(nil), enc.Assumes...), v))
+		if os.Getenv("MARMOT_VERIFY_DEBUG") == fn.Name() {
+			fmt.Fprintf(os.Stderr, "engine B %s: %s %v\n%s\n", o.Ob.Key, res.Answer, res.Model, smt.Script(append(append([]*smt.T(nil), enc.Assumes...), v), 0))
+		}
+		switch res.Answer {
+		case smt.Unsat:
+			// No input reaches the operation with the check failing:
+			// engine A's open result (or guard mismatch) was imprecise.
+			o.Status, o.Class, o.Rule, o.Condition, o.Labels, o.Reason, o.Engine = Proved, "", "", "", nil, "", "smt"
+		case smt.Sat:
+			if args := modelArgs(enc.Params, res.Model); args != nil {
+				o.Model, o.Engine = args, "smt"
+			}
+		}
+	}
+}
+
+// modelArgs turns a model into Go arguments, nil when an input is too
+// large to build.
+func modelArgs(ps []encParam, m map[string]uint64) []string {
+	var out []string
+	for _, p := range ps {
+		switch p.Kind {
+		case "bool":
+			out = append(out, strconv.FormatBool(m[p.Name] != 0))
+		case "int":
+			s := uint(64 - p.Bits)
+			out = append(out, strconv.FormatInt(int64(m[p.Name]<<s)>>s, 10))
+		case "uint":
+			out = append(out, strconv.FormatUint(m[p.Name], 10))
+		case "slice":
+			n, c := m[p.Name+"_len"], m[p.Name+"_cap"]
+			if c > 4096 || n > c {
+				return nil
+			}
+			out = append(out, fmt.Sprintf("make(%s, %d, %d)", p.Type, n, c))
+		case "bytes", "string":
+			n, c := m[p.Name+"_len"], m[p.Name+"_cap"]
+			if p.Kind == "string" {
+				c = n
+			}
+			if c > 4096 || n > c {
+				return nil
+			}
+			data := make([]byte, c)
+			for i := range data {
+				data[i] = byte(m[fmt.Sprintf("%s_arr[%d]", p.Name, i)])
+			}
+			if p.Kind == "string" {
+				out = append(out, strconv.Quote(string(data)))
+			} else {
+				out = append(out, fmt.Sprintf("[]byte(%s)[:%d:%d]", strconv.Quote(string(data)), n, c))
+			}
+		default:
+			return nil
+		}
+	}
+	return out
 }
 
 // classify turns engine A's verdict into a status.

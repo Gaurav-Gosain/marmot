@@ -138,6 +138,9 @@ func info(f *FuncResult, o *ObResult) Info {
 	if in.Class == "" {
 		in.Class = "latent"
 	}
+	if o.Engine == "smt" {
+		in.Engine = "pentagon+smt"
+	}
 	if o.Status == Counterexample {
 		in.Confirmed = "none"
 	}
