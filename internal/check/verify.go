@@ -141,7 +141,9 @@ func verifySearch(c *CheckResult, search, show, effects bool, progress func(stri
 				var in vfy.Info
 				_ = json.Unmarshal(d.Verify, &in)
 				in.Confirmed, in.Input, in.PanicMessage = confirmed, hit.Input, hit.PanicMessage
-				in.Status = "counterexample"
+				if hit.Runs == 3 {
+					in.Status = "counterexample"
+				}
 				if hit.Runs == 3 {
 					in.ReproducedBy = []string{"gc"}
 				}
