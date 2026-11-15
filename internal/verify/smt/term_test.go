@@ -91,3 +91,39 @@ func TestScript(t *testing.T) {
 		}
 	}
 }
+
+// TestScriptShared prints a DAG whose tree doubles per level: each level
+// uses the one before three times. The script must stay linear (shared
+// subterms defined once), and the solver must take it, alone and in
+// CheckMany's push and pop scopes.
+func TestScriptShared(t *testing.T) {
+	x := Var("x", 64)
+	v := Var("v", 64)
+	for range 80 {
+		v = Ite(SLt(v, x), Add(v, BV(1, 64)), Sub(v, BV(1, 64)))
+	}
+	q := Eq(v, BV(7, 64))
+	s := Script([]*T{q}, 0)
+	if len(s) > 64<<10 {
+		t.Fatalf("script of %d bytes for 80 levels", len(s))
+	}
+	if !strings.Contains(s, "(define-fun |t0| () (_ BitVec 64) ") {
+		t.Errorf("no shared definition in\n%s", s[:min(len(s), 2000)])
+	}
+	z := Z3()
+	if z == nil {
+		t.Skip("no z3")
+	}
+	t.Setenv("MARMOT_VERIFY_SMT_CACHE", t.TempDir())
+	if r := z.Check(context.Background(), []*T{q}); r.Answer == Unknown && strings.HasPrefix(r.Reason, "solver:") {
+		t.Errorf("Check: %v", r)
+	}
+	// Two queries that share subterms the base does not have: each push
+	// defines its own, and the pop forgets them.
+	rs := z.CheckMany(context.Background(), []*T{ULt(x, BV(100, 64))}, []*T{q, Eq(v, BV(9, 64))})
+	for i, r := range rs {
+		if r.Answer == Unknown && r.Reason != "budget" {
+			t.Errorf("CheckMany query %d: %v", i, r)
+		}
+	}
+}

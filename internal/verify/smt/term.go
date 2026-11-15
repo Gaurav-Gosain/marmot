@@ -366,9 +366,63 @@ var opNames = map[Op]string{
 // Script is an SMT-LIB2 script: declarations of the variables of the
 // asserted terms, the assertions, check-sat and get-value of vars.
 func Script(asserts []*T, rlimit int) string {
-	vars := map[string]*T{}
+	p := newPrinter(asserts)
+	p.header(asserts, rlimit)
+	for _, a := range asserts {
+		p.assert(a)
+	}
+	p.b.WriteString("(check-sat)\n")
+	if bvs := varNames(asserts); len(bvs) > 0 {
+		fmt.Fprintf(&p.b, "(get-value (%s))\n", strings.Join(bvs, " "))
+	}
+	return p.b.String()
+}
+
+// printer writes terms as SMT-LIB2. Terms are DAGs: the engines share
+// subterms, and a phi of phis printed as a tree doubles per level (a
+// fuzzed program once printed gigabytes). A non-leaf term used more than
+// once is defined once with define-fun and named after that.
+type printer struct {
+	b     strings.Builder
+	refs  map[*T]int
+	names map[*T]string
+	defs  []*T // in definition order, for pop
+	n     int
+}
+
+// newPrinter counts the uses of every subterm of ts (each term's
+// arguments once, however often the term is reached).
+func newPrinter(ts []*T) *printer {
+	p := &printer{refs: map[*T]int{}, names: map[*T]string{}}
+	seen := map[*T]bool{}
 	var walk func(t *T)
 	walk = func(t *T) {
+		p.refs[t]++
+		if seen[t] {
+			return
+		}
+		seen[t] = true
+		for _, a := range t.Args {
+			walk(a)
+		}
+	}
+	for _, t := range ts {
+		walk(t)
+	}
+	return p
+}
+
+// header writes the logic, the options and a declaration per variable
+// of ts.
+func (p *printer) header(ts []*T, rlimit int) {
+	vars := map[string]*T{}
+	seen := map[*T]bool{}
+	var walk func(t *T)
+	walk = func(t *T) {
+		if seen[t] {
+			return
+		}
+		seen[t] = true
 		if t.Op == OpVar || t.Op == OpArrVar {
 			vars[t.Name] = t
 		}
@@ -376,48 +430,76 @@ func Script(asserts []*T, rlimit int) string {
 			walk(a)
 		}
 	}
-	for _, a := range asserts {
-		walk(a)
+	for _, t := range ts {
+		walk(t)
 	}
 	names := make([]string, 0, len(vars))
 	for n := range vars {
 		names = append(names, n)
 	}
 	slices.Sort(names)
-	var b strings.Builder
-	b.WriteString("(set-logic QF_ABV)\n(set-option :produce-models true)\n")
+	p.b.WriteString("(set-logic QF_ABV)\n(set-option :produce-models true)\n")
 	if rlimit > 0 {
-		fmt.Fprintf(&b, "(set-option :rlimit %d)\n", rlimit)
+		fmt.Fprintf(&p.b, "(set-option :rlimit %d)\n", rlimit)
 	}
 	for _, n := range names {
-		v := vars[n]
-		switch {
-		case v.Op == OpArrVar:
-			fmt.Fprintf(&b, "(declare-const %s (Array (_ BitVec 64) (_ BitVec 8)))\n", n)
-		case v.W == 0:
-			fmt.Fprintf(&b, "(declare-const %s Bool)\n", n)
-		default:
-			fmt.Fprintf(&b, "(declare-const %s (_ BitVec %d))\n", n, v.W)
-		}
+		fmt.Fprintf(&p.b, "(declare-const %s %s)\n", n, sortOf(vars[n]))
 	}
-	for _, a := range asserts {
-		fmt.Fprintf(&b, "(assert %s)\n", String(a))
-	}
-	b.WriteString("(check-sat)\n")
-	var bvs []string
-	for _, n := range names {
-		if vars[n].Op == OpVar {
-			bvs = append(bvs, n)
-		}
-	}
-	if len(bvs) > 0 {
-		fmt.Fprintf(&b, "(get-value (%s))\n", strings.Join(bvs, " "))
-	}
-	return b.String()
 }
 
-// String prints t in SMT-LIB2 syntax.
-func String(t *T) string {
+// assert writes the definitions t needs, then (assert t).
+func (p *printer) assert(t *T) {
+	s := p.term(t)
+	fmt.Fprintf(&p.b, "(assert %s)\n", s)
+}
+
+// mark and pop bracket a push and its pop: definitions made in between
+// are gone after the pop.
+func (p *printer) mark() int { return len(p.defs) }
+
+func (p *printer) pop(m int) {
+	for _, t := range p.defs[m:] {
+		delete(p.names, t)
+	}
+	p.defs = p.defs[:m]
+}
+
+func sortOf(t *T) string {
+	switch {
+	case t.W < 0:
+		return "(Array (_ BitVec 64) (_ BitVec 8))"
+	case t.W == 0:
+		return "Bool"
+	}
+	return fmt.Sprintf("(_ BitVec %d)", t.W)
+}
+
+// term is t's text; it writes the definitions of shared subterms that
+// are not defined yet first.
+func (p *printer) term(t *T) string {
+	if n, ok := p.names[t]; ok {
+		return n
+	}
+	if len(t.Args) == 0 {
+		return leaf(t)
+	}
+	args := make([]string, len(t.Args))
+	for i, a := range t.Args {
+		args[i] = p.term(a)
+	}
+	s := apply(t, args)
+	if p.refs[t] > 1 {
+		name := fmt.Sprintf("|t%d|", p.n)
+		p.n++
+		fmt.Fprintf(&p.b, "(define-fun %s () %s %s)\n", name, sortOf(t), s)
+		p.names[t] = name
+		p.defs = append(p.defs, t)
+		return name
+	}
+	return s
+}
+
+func leaf(t *T) string {
 	switch t.Op {
 	case OpConst:
 		if t.W == 0 {
@@ -429,16 +511,33 @@ func String(t *T) string {
 		return fmt.Sprintf("(_ bv%d %d)", t.Val, t.W)
 	case OpVar, OpArrVar:
 		return t.Name
+	}
+	return "(" + opNames[t.Op] + ")"
+}
+
+// apply is t applied to the texts of its arguments.
+func apply(t *T, args []string) string {
+	switch t.Op {
 	case OpZExt:
-		return fmt.Sprintf("((_ zero_extend %d) %s)", t.W-t.Args[0].W, String(t.Args[0]))
+		return fmt.Sprintf("((_ zero_extend %d) %s)", t.W-t.Args[0].W, args[0])
 	case OpSExt:
-		return fmt.Sprintf("((_ sign_extend %d) %s)", t.W-t.Args[0].W, String(t.Args[0]))
+		return fmt.Sprintf("((_ sign_extend %d) %s)", t.W-t.Args[0].W, args[0])
 	case OpExtract:
-		return fmt.Sprintf("((_ extract %d 0) %s)", t.W-1, String(t.Args[0]))
+		return fmt.Sprintf("((_ extract %d 0) %s)", t.W-1, args[0])
 	}
-	parts := []string{opNames[t.Op]}
-	for _, a := range t.Args {
-		parts = append(parts, String(a))
+	return "(" + opNames[t.Op] + " " + strings.Join(args, " ") + ")"
+}
+
+// String prints t in SMT-LIB2 syntax as a tree: shared subterms are
+// printed at every use, so it is for small terms (tests, debugging).
+// Scripts use a printer.
+func String(t *T) string {
+	if len(t.Args) == 0 {
+		return leaf(t)
 	}
-	return "(" + strings.Join(parts, " ") + ")"
+	args := make([]string, len(t.Args))
+	for i, a := range t.Args {
+		args[i] = String(a)
+	}
+	return apply(t, args)
 }

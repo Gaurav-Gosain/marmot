@@ -84,20 +84,29 @@ func (s *Solver) Check(ctx context.Context, asserts []*T) Result {
 }
 
 func (s *Solver) check(ctx context.Context, asserts []*T) Result {
-	script := Script(asserts, s.RLimit)
 	sels := selects(asserts)
+	p := newPrinter(append(append([]*T(nil), asserts...), sels...))
+	p.header(asserts, s.RLimit)
+	for _, a := range asserts {
+		p.assert(a)
+	}
+	// The index and the byte of every select, as named values.
+	for i, t := range sels {
+		idx, v := p.term(t.Args[1]), p.term(t)
+		fmt.Fprintf(&p.b, "(define-fun sel%d_i () (_ BitVec 64) %s)\n(define-fun sel%d_v () (_ BitVec 8) %s)\n", i, idx, i, v)
+	}
+	p.b.WriteString("(check-sat)\n")
+	if bvs := varNames(asserts); len(bvs) > 0 {
+		fmt.Fprintf(&p.b, "(get-value (%s))\n", strings.Join(bvs, " "))
+	}
 	if len(sels) > 0 {
-		// The index and the byte of every select, as named values.
-		var gv strings.Builder
-		for i, t := range sels {
-			fmt.Fprintf(&gv, "(define-fun sel%d_i () (_ BitVec 64) %s)\n(define-fun sel%d_v () (_ BitVec 8) %s)\n", i, String(t.Args[1]), i, String(t))
-		}
 		var names []string
 		for i := range sels {
 			names = append(names, fmt.Sprintf("sel%d_i sel%d_v", i, i))
 		}
-		script = strings.Replace(script, "(check-sat)\n", gv.String()+"(check-sat)\n", 1) + "(get-value (" + strings.Join(names, " ") + "))\n"
+		fmt.Fprintf(&p.b, "(get-value (%s))\n", strings.Join(names, " "))
 	}
+	script := p.b.String()
 	ctx, cancel := context.WithTimeout(ctx, s.Wall)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, s.Path, "-in", "-smt2")
@@ -262,28 +271,36 @@ func (s *Solver) cachePut(key string, r Result) {
 
 func (s *Solver) checkMany(ctx context.Context, base []*T, queries []*T) []Result {
 	all := append(append([]*T(nil), base...), queries...)
-	full := Script(all, s.RLimit)
-	// The declarations of every variable, then base, then the queries.
-	head, _, _ := strings.Cut(full, "(assert ")
-	var b strings.Builder
-	b.WriteString(head)
-	for _, a := range base {
-		fmt.Fprintf(&b, "(assert %s)\n", String(a))
-	}
 	sels := make([][]*T, len(queries))
 	for i, q := range queries {
-		vars := varNames(append(append([]*T(nil), base...), q))
 		sels[i] = selects([]*T{q})
+		all = append(all, sels[i]...)
+	}
+	// The declarations of every variable, then base, then the queries.
+	// Definitions a query needs are made inside its push, so they go
+	// with its pop.
+	p := newPrinter(all)
+	p.header(all, s.RLimit)
+	for _, a := range base {
+		p.assert(a)
+	}
+	b := &p.b
+	for i, q := range queries {
+		vars := varNames(append(append([]*T(nil), base...), q))
+		m := p.mark()
 		b.WriteString("(push 1)\n")
 		for k, t := range sels[i] {
-			fmt.Fprintf(&b, "(declare-const sel%d_i (_ BitVec 64))\n(declare-const sel%d_v (_ BitVec 8))\n(assert (= sel%d_i %s))\n(assert (= sel%d_v %s))\n", k, k, k, String(t.Args[1]), k, String(t))
+			idx, v := p.term(t.Args[1]), p.term(t)
+			fmt.Fprintf(b, "(declare-const sel%d_i (_ BitVec 64))\n(declare-const sel%d_v (_ BitVec 8))\n(assert (= sel%d_i %s))\n(assert (= sel%d_v %s))\n", k, k, k, idx, k, v)
 			vars = append(vars, fmt.Sprintf("sel%d_i", k), fmt.Sprintf("sel%d_v", k))
 		}
-		fmt.Fprintf(&b, "(assert %s)\n(check-sat)\n", String(q))
+		p.assert(q)
+		b.WriteString("(check-sat)\n")
 		if len(vars) > 0 {
-			fmt.Fprintf(&b, "(get-value (%s))\n", strings.Join(vars, " "))
+			fmt.Fprintf(b, "(get-value (%s))\n", strings.Join(vars, " "))
 		}
 		b.WriteString("(pop 1)\n")
+		p.pop(m)
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.Wall*time.Duration(1+len(queries)/4))
 	defer cancel()
@@ -346,9 +363,14 @@ func (s *Solver) checkMany(ctx context.Context, base []*T, queries []*T) []Resul
 
 func varNames(ts []*T) []string {
 	seen := map[string]bool{}
+	visited := map[*T]bool{}
 	var out []string
 	var walk func(t *T)
 	walk = func(t *T) {
+		if visited[t] {
+			return
+		}
+		visited[t] = true
 		if t.Op == OpVar && !seen[t.Name] {
 			seen[t.Name] = true
 			out = append(out, t.Name)
