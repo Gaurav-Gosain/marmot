@@ -65,6 +65,9 @@ func selunlock(cases *scase, lockorder []uint16) {
 // that ran, and recvOK reports, for a receive case, whether a value was
 // received (false if the channel was closed).
 func selectgo(cases *scase, ncases int, block bool) (chosen int, recvOK bool) {
+	if exploreEnabled && exploreActive {
+		exploreYield(getg())
+	}
 	// The poll and lock orders live in a buffer cached on the goroutine:
 	// a goroutine runs one select at a time.
 	gp := getg()

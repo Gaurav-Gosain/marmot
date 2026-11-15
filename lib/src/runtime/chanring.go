@@ -192,7 +192,7 @@ func chansendBuf(c *hchan, ep unsafe.Pointer, block bool) bool {
 			return false
 		}
 		// Spin before parking (see chanrecvBuf).
-		if spin < chanSpinRounds && canSpin(0) {
+		if spin < chanSpinRounds && canSpin(0) && !(exploreEnabled && exploreActive) {
 			spin++
 			procyield(30)
 			continue
@@ -255,7 +255,7 @@ func chanrecvBuf(c *hchan, ep unsafe.Pointer, block bool) (selected, received bo
 		// other threads run goroutines. 16 rounds (longer than the 4 of
 		// sync.Mutex) keep a steady producer from making the receiver
 		// park on every element (quiet Linux and macOS A/B).
-		if spin < chanSpinRounds && canSpin(0) {
+		if spin < chanSpinRounds && canSpin(0) && !(exploreEnabled && exploreActive) {
 			spin++
 			procyield(30)
 			continue

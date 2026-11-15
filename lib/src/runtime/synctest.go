@@ -114,6 +114,9 @@ func newprocBubble(fn func(), b *bubble, join bool) {
 	if join {
 		atomicXadd32(&b.pending, 1)
 	}
+	if exploreEnabled {
+		exploreNewMember(b, s)
+	}
 	rt_go(gostartBubblePC, unsafe.Pointer(s))
 }
 
@@ -126,7 +129,13 @@ func gostartBubble(p unsafe.Pointer) {
 		rt_group_join(s.b.grp)
 		atomicXadd32(&s.b.pending, -1)
 	}
+	if exploreEnabled {
+		exploreStarted(gp, s)
+	}
 	s.fn()
+	if exploreEnabled {
+		exploreExit(gp)
+	}
 }
 
 //go:linkname synctest_Run internal/synctest.Run
@@ -140,6 +149,9 @@ func synctest_Run(f func()) {
 	}
 	b := &bubble{driver: gp, now: bubbleEpoch}
 	b.grp = rt_group_new(bubbleIdlePC, unsafe.Pointer(b))
+	if exploreEnabled {
+		exploreBubble(b) // before any member starts
+	}
 	newprocBubble(func() {
 		f()
 		atomicStore32(&b.rootDone, 1)
@@ -176,9 +188,18 @@ func synctest_Run(f func()) {
 		}
 		unlock(&b.mu)
 		if atomicLoad32(&b.rootDone) != 0 {
+			if exploreEnabled {
+				panic(plainError("deadlock: main bubble goroutine has exited but blocked goroutines remain" + exploreReport(b)))
+			}
 			panic(plainError("deadlock: main bubble goroutine has exited but blocked goroutines remain"))
 		}
+		if exploreEnabled {
+			panic(plainError("deadlock: all goroutines in bubble are blocked" + exploreReport(b)))
+		}
 		panic(plainError("deadlock: all goroutines in bubble are blocked"))
+	}
+	if exploreEnabled {
+		exploreBubbleDone(b)
 	}
 	rt_group_free(b.grp)
 	b.grp = nil
@@ -189,6 +210,9 @@ func synctest_Run(f func()) {
 // timer starts (AfterFunc) join the bubble.
 func (b *bubble) fire(bt bubbleTimer) {
 	if bt.sleeper != nil {
+		if exploreEnabled {
+			exploreReady(bt.sleeper)
+		}
 		rt_ready(bt.sleeper.handle)
 		return
 	}

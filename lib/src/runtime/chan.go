@@ -95,6 +95,9 @@ func chansend1(c *hchan, elem unsafe.Pointer) {
 // blocking. A send on a nil channel blocks forever; a send on a closed
 // channel panics.
 func chansend(c *hchan, ep unsafe.Pointer, block bool) bool {
+	if exploreEnabled && exploreActive {
+		exploreYield(getg())
+	}
 	if c == nil {
 		if !block {
 			return false
@@ -164,6 +167,9 @@ func send(c *hchan, sg *sudog, ep unsafe.Pointer) {
 
 // closechan implements close(c).
 func closechan(c *hchan) {
+	if exploreEnabled && exploreActive {
+		exploreYield(getg())
+	}
 	if c == nil {
 		panic(plainError("close of nil channel"))
 	}
@@ -233,6 +239,9 @@ func chanrecv2(c *hchan, elem unsafe.Pointer) bool {
 // received (false when the channel is closed and drained, in which case
 // *ep is zeroed).
 func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool) {
+	if exploreEnabled && exploreActive {
+		exploreYield(getg())
+	}
 	if c == nil {
 		if !block {
 			return

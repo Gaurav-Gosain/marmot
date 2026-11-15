@@ -59,6 +59,9 @@ func newproc(fn func()) {
 	if gp := getg(); gp.bubble != nil || gp.bubbleStart != nil {
 		if gp.bubble != nil {
 			newprocBubble(fn, gp.bubble, false)
+			if exploreEnabled {
+				exploreYield(gp)
+			}
 		} else {
 			newprocBubble(fn, gp.bubbleStart, true)
 		}

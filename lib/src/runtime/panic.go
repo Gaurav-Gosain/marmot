@@ -146,6 +146,9 @@ func goexit() {
 		fn()
 	}
 	gp._panic = p.link
+	if exploreEnabled {
+		exploreExit(gp)
+	}
 	rt_goexit()
 }
 

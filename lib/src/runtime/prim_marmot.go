@@ -206,6 +206,14 @@ func lazyPC(pc *unsafe.Pointer, f func() unsafe.Pointer) unsafe.Pointer {
 // its stack, so a waker that takes l cannot miss the park.
 func goparkunlock(l *mutex, reason waitReason) {
 	rt_set_waitreason(uint32(reason))
+	if exploreEnabled && exploreActive && getg().bubble != nil {
+		// Under exploration every member wait is durable, so that a
+		// mutex deadlock is reported.
+		exploreRelease(getg())
+		rt_park_durable(parkunlockPC, unsafe.Pointer(l))
+		exploreArrive(getg())
+		return
+	}
 	rt_park(parkunlockPC, unsafe.Pointer(l))
 }
 
@@ -215,7 +223,13 @@ func goparkunlock(l *mutex, reason waitReason) {
 func goparkunlockDurable(l *mutex, reason waitReason) {
 	rt_set_waitreason(uint32(reason))
 	if getg().bubble != nil {
+		if exploreEnabled {
+			exploreRelease(getg())
+		}
 		rt_park_durable(parkunlockPC, unsafe.Pointer(l))
+		if exploreEnabled {
+			exploreArrive(getg())
+		}
 		return
 	}
 	rt_park(parkunlockPC, unsafe.Pointer(l))
@@ -226,7 +240,13 @@ func goparkunlockDurable(l *mutex, reason waitReason) {
 func goparkselect(gp *g) {
 	rt_set_waitreason(uint32(waitReasonSelect))
 	if gp.bubble != nil {
+		if exploreEnabled {
+			exploreRelease(gp)
+		}
 		rt_park_durable(selparkcommitPC, unsafe.Pointer(gp))
+		if exploreEnabled {
+			exploreArrive(gp)
+		}
 		return
 	}
 	rt_park(selparkcommitPC, unsafe.Pointer(gp))
@@ -240,6 +260,9 @@ func goparkForever(reason waitReason) {
 }
 
 func goready(gp *g) {
+	if exploreEnabled && exploreActive {
+		exploreReady(gp)
+	}
 	rt_ready(gp.handle)
 }
 
