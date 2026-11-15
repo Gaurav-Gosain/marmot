@@ -224,6 +224,13 @@ void rt_goexit(void) __attribute__((noreturn));
 // structure never used), so the Go side can recycle its per-goroutine data;
 // it must check that the data belongs to rt_current().
 void **rt_gslot(void);
+// Layout of the Go runtime's goroutine data (in the slot) and of its sudogs,
+// for a concurrent cycle's second stop: offsets of g.sudogcache and
+// g.waiting, and of sudog.next and sudog.waitlink. With it set, compiled
+// stores of a *g or *sudog need no card: every g is in a slot, and every
+// sudog is on its goroutine's stack, free list or select list, which the
+// second stop walks. The runtime package sets it in its first init.
+void rt_gc_sudogs(uintptr_t gcache, uintptr_t gwaiting, uintptr_t snext, uintptr_t swaitlink);
 // Per-goroutine scratch word used to pass a value across park/ready
 // (channel element pointer, select case index).
 void **rt_gparam(rt_g *g);

@@ -107,6 +107,9 @@ func rt_goexit()
 //go:linkname rt_gslot rt_gslot
 func rt_gslot() *unsafe.Pointer
 
+//go:linkname rt_gc_sudogs rt_gc_sudogs
+func rt_gc_sudogs(gcache, gwaiting, snext, swaitlink uintptr)
+
 //go:linkname rt_gparam rt_gparam
 func rt_gparam(g unsafe.Pointer) *unsafe.Pointer
 

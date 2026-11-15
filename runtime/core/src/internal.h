@@ -514,6 +514,8 @@ typedef struct {
   uintptr_t val, pc, fpoff;
   uint8_t rule;  // 1: not in the frame's map, 2: in a save area skipped by the caller's map
 } sm_excl;
+// The goroutines' slot values, world stopped (sched.c).
+void sched_each_slot(void (*f)(void *v));
 extern bool sm_check;
 extern sm_excl *sm_ex;
 extern uint32_t sm_nex;

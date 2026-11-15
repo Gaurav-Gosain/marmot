@@ -12,6 +12,9 @@ import (
 // first).
 func init() {
 	initParkPCs()
+	var gz g
+	var sz sudog
+	rt_gc_sudogs(unsafe.Offsetof(gz.sudogcache), unsafe.Offsetof(gz.waiting), unsafe.Offsetof(sz.next), unsafe.Offsetof(sz.waitlink))
 	hashkey ^= uintptr(rt_nanotime()) * 0x9e3779b97f4a7c15
 	rt_set_sigpanic(cfuncPC(abi.FuncPCABI0(sigpanic)))
 }

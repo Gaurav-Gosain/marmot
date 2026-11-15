@@ -1084,6 +1084,43 @@ static bool mark_finalizers(void) {
   return queued;
 }
 
+// ---- goroutine data without cards ----
+//
+// Compiled code stores a *runtime.g or *runtime.sudog without a card
+// (rt_gc_sudogs). A g stays in its goroutine's slot for the life of the
+// process, and a sudog is reachable from a heap object only while its
+// goroutine holds it on its stack, its free list (g.sudogcache, chained by
+// next) or its select list (g.waiting, chained by waitlink). The second
+// stop scans slots and stacks again with the roots; here it walks the two
+// lists, marking every entry whether or not the entry before it was
+// already marked (a marked entry's link may have changed without a card).
+static uintptr_t sg_gcache, sg_gwait, sg_next, sg_link;
+static bool sg_set;
+
+RT_API void rt_gc_sudogs(uintptr_t gcache, uintptr_t gwaiting, uintptr_t snext, uintptr_t swaitlink) {
+  sg_gcache = gcache;
+  sg_gwait = gwaiting;
+  sg_next = snext;
+  sg_link = swaitlink;
+  sg_set = true;
+}
+
+NO_SANITIZE static void sg_chain(uintptr_t p, uintptr_t off) {
+  for (uint32_t n = 0; p && n < (1u << 24); n++) {
+    if (!rt_heap_object((void *)p)) return;
+    mark_ptr(&workers[0], p);
+    p = *(uintptr_t *)(p + off);
+  }
+}
+
+NO_SANITIZE static void sg_walk(void *v) {
+  uintptr_t g = (uintptr_t)v;
+  if (!rt_heap_object(v)) return;
+  mark_ptr(&workers[0], g);
+  sg_chain(*(uintptr_t *)(g + sg_gcache), sg_next);
+  sg_chain(*(uintptr_t *)(g + sg_gwait), sg_link);
+}
+
 // ---- stack map check (MARMOT_STACKMAPS_CHECK=1) ----
 
 // After the mark: each word a stack map rule left out whose object is still
@@ -1550,6 +1587,7 @@ static NOINLINE void gc_collect_body(bool forced, void *sp, void *fp) {
   if (conc) {
     // Roots again, and the marked objects on the cards stores dirtied.
     scan_roots();
+    if (sg_set) sched_each_slot(sg_walk);
     scan_dirty_cards();
     mark_parallel();
   } else {

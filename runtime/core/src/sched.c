@@ -2369,6 +2369,22 @@ void sched_scan_roots(void (*scan)(uintptr_t lo, uintptr_t hi)) {
   gc_root_goroutine(NULL);
 }
 
+void sched_each_slot(void (*f)(void *v)) {
+  uint32_t n = __atomic_load_n(&nallg, __ATOMIC_ACQUIRE);
+  for (uint32_t c = 0; c * GCHUNK < n; c++) {
+    gchunk *ch = gchunks[c];
+    for (uint32_t w = 0; w < GCHUNK / 64; w++) {
+      uint64_t bits = atomic_load_explicit(&ch->live[w], memory_order_relaxed);
+      while (bits) {
+        uint32_t b = (uint32_t)__builtin_ctzll(bits);
+        bits &= bits - 1;
+        void *v = ch->g[w * 64 + b]->slot;
+        if (v) f(v);
+      }
+    }
+  }
+}
+
 // ---- init ----
 
 static uintptr_t parse_size(const char *s, uintptr_t def) {
