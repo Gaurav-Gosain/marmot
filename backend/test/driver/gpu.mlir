@@ -1,6 +1,7 @@
 // GPU offload: a "marmot-gpu-body" function becomes an
 // embedded PTX kernel and marmot_gpu_for becomes rt_gpu_for; without -gpu
 // the call is false and the caller's CPU path runs.
+// REQUIRES: nvptx
 // RUN: %backend -O2 -no-loops -gpu=sm_86 -emit=llvm -o %t.ll %s
 // RUN: %FileCheck %s < %t.ll
 // RUN: %FileCheck %s --check-prefix=REG < %t.ll

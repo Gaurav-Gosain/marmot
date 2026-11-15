@@ -22,12 +22,14 @@
 #include <cstdlib>
 #include <mutex>
 
+#if MARMOT_HAVE_NVPTX
 extern "C" {
 void LLVMInitializeNVPTXTargetInfo();
 void LLVMInitializeNVPTXTarget();
 void LLVMInitializeNVPTXTargetMC();
 void LLVMInitializeNVPTXAsmPrinter();
 }
+#endif
 
 using namespace llvm;
 
@@ -38,6 +40,11 @@ namespace {
 constexpr StringLiteral kGpuBody = "marmot-gpu-body";
 
 std::unique_ptr<TargetMachine> nvptxMachine(const std::string &arch, std::string &err) {
+#if !MARMOT_HAVE_NVPTX
+  (void)arch;
+  err = "this marmot-backend was built with an LLVM without the NVPTX target: -gpu needs one (LLVM_TARGETS_TO_BUILD with NVPTX)";
+  return nullptr;
+#else
   static std::once_flag once;
   std::call_once(once, [] {
     LLVMInitializeNVPTXTargetInfo();
@@ -53,6 +60,7 @@ std::unique_ptr<TargetMachine> nvptxMachine(const std::string &arch, std::string
   to.AllowFPOpFusion = FPOpFusion::Strict; // Go: no contraction into fma
   return std::unique_ptr<TargetMachine>(t->createTargetMachine(
       triple, arch, "+ptx80", to, std::nullopt, std::nullopt, CodeGenOptLevel::Aggressive));
+#endif
 }
 
 // Defined functions reachable by calls from root.

@@ -32,6 +32,15 @@ else()
   set(MARMOT_WASM_LIBS)
 endif()
 
+# GPU offload (-gpu, PTX made in-process) only when this LLVM has NVPTX.
+if("NVPTX" IN_LIST LLVM_TARGETS_TO_BUILD)
+  add_compile_definitions(MARMOT_HAVE_NVPTX=1)
+  set(MARMOT_NVPTX_LIBS LLVMNVPTXCodeGen LLVMNVPTXDesc LLVMNVPTXInfo)
+else()
+  message(STATUS "LLVM has no NVPTX target: -gpu is not supported by this build")
+  set(MARMOT_NVPTX_LIBS)
+endif()
+
 # MARMOT_STATIC=ON links the static component libraries instead of the shared
 # libLLVM/libMLIR. Slower to link, but the binary has no dylib dependencies.
 option(MARMOT_STATIC "Link LLVM and MLIR statically" OFF)
@@ -43,6 +52,7 @@ if(MARMOT_STATIC)
     LLVMAArch64CodeGen LLVMAArch64AsmParser LLVMAArch64Desc LLVMAArch64Info
     LLVMX86CodeGen LLVMX86AsmParser LLVMX86Desc LLVMX86Info
     ${MARMOT_WASM_LIBS}
+    ${MARMOT_NVPTX_LIBS}
     LLVMPasses LLVMLinker LLVMIRReader LLVMBitReader LLVMBitWriter LLVMipo
     LLVMTarget LLVMCodeGen LLVMMC LLVMSupport)
 else()

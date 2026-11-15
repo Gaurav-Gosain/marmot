@@ -120,19 +120,19 @@ def run_lines(path):
     return lines
 
 
-_wasm = None
+_targets = None
 
 
-def have_wasm():
-    global _wasm
-    if _wasm is None:
+def have_target(name):
+    global _targets
+    if _targets is None:
         try:
             out = subprocess.run([os.path.join(BIN, "llvm-config"), "--targets-built"],
                                  capture_output=True, text=True).stdout
-            _wasm = "WebAssembly" in out.split()
+            _targets = set(out.split())
         except OSError:
-            _wasm = False
-    return _wasm
+            _targets = set()
+    return name in _targets
 
 
 def run_test(path):
@@ -140,9 +140,11 @@ def run_test(path):
     m = re.search(r"//\s*UNSUPPORTED:\s*(.*)", src)
     if m and platform.machine() in [a.strip() for a in m.group(1).split(",")]:
         return path, "SKIP", ""
-    # REQUIRES: wasm skips a test when this LLVM has no WebAssembly target.
-    if re.search(r"//\s*REQUIRES:\s*wasm", src) and not have_wasm():
-        return path, "SKIP", ""
+    # REQUIRES: wasm (nvptx) skips a test when this LLVM has no WebAssembly
+    # (NVPTX) target.
+    for req, target in (("wasm", "WebAssembly"), ("nvptx", "NVPTX")):
+        if re.search(r"//\s*REQUIRES:\s*" + req, src) and not have_target(target):
+            return path, "SKIP", ""
     need = sorted({MISSING[k] for k in MISSING if k in src})
     if need:
         return path, "SKIP", "needs " + ", ".join(need) + " (not in the LLVM install, its build directory, LLVM_UTILS or PATH)"
