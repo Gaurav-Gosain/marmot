@@ -58,7 +58,7 @@ struct Strtab {
 };
 
 const char *elfSectName(unsigned i) {
-  static const char *n[] = {".text", ".data", ".rodata", "marmot_tlinks", ".bss", "marmot_noptrdata", ".bss.marmot.noptr", ".text.startup"};
+  static const char *n[] = {".text", ".data", ".rodata", "marmot_tlinks", ".bss", ".data.marmot.noptr", ".bss.marmot.noptr", ".text.startup"};
   return n[i];
 }
 
@@ -94,10 +94,15 @@ std::string MachOWriter::serializeELF() const {
     uint64_t total = isZeroFill(i) ? x.bssSize : x.data.size();
     if ((i == TL || i == unsigned(Sect::NoPtrData) || i == unsigned(Sect::NoPtrBss) || i == unsigned(Sect::InitText)) && total == 0) continue;
     std::vector<uint64_t> starts, kept;
+    // The pointer-free sections are named per symbol (.data.marmot.noptr.SYM,
+    // .bss.marmot.noptr.SYM), as the driver's linker script gathers them.
+    const bool perSym = i == unsigned(Sect::NoPtrData) || i == unsigned(Sect::NoPtrBss);
+    std::unordered_map<uint64_t, const std::string *> nameAt;
     for (const Sym &y : syms_)
       if (y.defined && unsigned(y.sect) == i) {
         starts.push_back(y.offset);
         if (y.retain) kept.push_back(y.offset);
+        if (perSym) nameAt.emplace(y.offset, &y.name);
       }
     std::sort(starts.begin(), starts.end());
     starts.erase(std::unique(starts.begin(), starts.end()), starts.end());
@@ -105,7 +110,10 @@ std::string MachOWriter::serializeELF() const {
     for (size_t k = 0; k < starts.size(); k++) {
       uint64_t lo = starts[k], hi = k + 1 < starts.size() ? starts[k + 1] : total;
       if (hi <= lo && !(k == 0 && starts.size() == 1)) continue;
-      Shdr h{shstr.add(elfSectName(i), true), isZeroFill(i) ? SHT_NOBITS : SHT_PROGBITS, flags[i]};
+      std::string sn = elfSectName(i);
+      if (perSym)
+        if (auto it = nameAt.find(lo); it != nameAt.end()) sn += "." + *it->second;
+      Shdr h{shstr.add(sn, true), isZeroFill(i) ? SHT_NOBITS : SHT_PROGBITS, flags[i]};
       h.align = uint64_t(1) << x.align;
       if (std::find(kept.begin(), kept.end(), lo) != kept.end()) h.flags |= SHF_GNU_RETAIN;
       if (isZeroFill(i))

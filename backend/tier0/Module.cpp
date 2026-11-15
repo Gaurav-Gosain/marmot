@@ -186,7 +186,8 @@ void ModuleGen::emitGlobal(LL::GlobalOp g) {
     StringRef n = *sec;
     if (n == "marmot_tlinks" || n.starts_with("__DATA,__marmot_tlinks"))
       named = Sect::TLinks;
-    else if (n == "marmot_noptrdata" || n == "__DATA,__noptrdata" || n.starts_with("__DATA,__noptrdata,"))
+    else if (n == "marmot_noptrdata" || n == ".data.marmot.noptr" || n.starts_with(".data.marmot.noptr.") ||
+             n == "__DATA,__noptrdata" || n.starts_with("__DATA,__noptrdata,"))
       named = Sect::NoPtrData;
     else if (n == ".bss.marmot.noptr" || n.starts_with(".bss.marmot.noptr.") || n == "__DATA,__noptrbss" ||
              n.starts_with("__DATA,__noptrbss,"))

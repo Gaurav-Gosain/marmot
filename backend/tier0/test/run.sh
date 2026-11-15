@@ -13,7 +13,7 @@ done
 if [ "$(uname)" = Darwin ]; then sec=__DATA,__marmot_tlinks,regular,live_support; gc=-dead_strip; else sec=marmot_tlinks; gc=--gc-sections,-z,start-stop-gc; fi
 sed "s/SECTION/$sec/" "$src/tlinks.mlir" > tlinks.mlir
 "$T0" tlinks.mlir tlinks.o > /dev/null
-if [ "$(uname)" = Darwin ]; then nd=__DATA,__noptrdata; nb=__DATA,__noptrbss,zerofill; nz=$nb; else nd=marmot_noptrdata; nb=.bss.marmot.noptr; nz=.bss.marmot.noptr.zero; fi
+if [ "$(uname)" = Darwin ]; then nd=__DATA,__noptrdata; nb=__DATA,__noptrbss,zerofill; nz=$nb; else nd=.data.marmot.noptr.np_data; nb=.bss.marmot.noptr.np_bss; nz=.bss.marmot.noptr.np_zero; fi
 sed -e "s/DATASECT/$nd/" -e "s/BSSSECT/$nb/" -e "s/ZEROSECT/$nz/" "$src/noptr.mlir" > noptr.mlir
 "$T0" noptr.mlir noptr.o > /dev/null
 s=$("$L/llvm-objdump" -h noptr.o)
