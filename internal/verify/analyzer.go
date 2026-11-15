@@ -90,6 +90,18 @@ func run(pass *analysis.Pass) (any, error) {
 		}
 	}
 	for _, f := range r.Funcs {
+		st := FnStat{Fn: f.Name, Assumes: f.Assumes}
+		for _, o := range f.Obligations {
+			if o.Via != nil {
+				continue
+			}
+			if o.Status == Proved || o.Status == ProvedAssuming || o.Status == Recovered {
+				st.Proved++
+			} else {
+				st.Open++
+			}
+		}
+		pass.Report(analysis.Diagnostic{Pos: f.Fn.Pos(), Category: encodeCategory(CategoryFn, st), Message: "verify function statistics"})
 		if h := makeHint(f.Fn, f, pass.Fset); h != nil {
 			pass.Report(analysis.Diagnostic{Pos: f.Fn.Pos(), Category: encodeCategory(CategorySearch, h), Message: "verify search hint"})
 		}

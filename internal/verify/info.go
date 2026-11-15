@@ -94,6 +94,17 @@ func (r *Result) Summary() Summary {
 	return s
 }
 
+// FnStat is one function's counts, for the policy check.
+type FnStat struct {
+	Fn      string   `json:"fn"`
+	Proved  int      `json:"proved"`
+	Open    int      `json:"open"`
+	Assumes []string `json:"assumes,omitempty"`
+}
+
+// CategoryFn is the category of per-function statistics diagnostics.
+const CategoryFn = "verify-fn"
+
 // The categories of the analyzer's diagnostics: a finding carries its
 // Info as JSON after the first line, so it survives the check engine's
 // cache; the statistics diagnostic carries a Summary.
