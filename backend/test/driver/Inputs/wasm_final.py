@@ -3,7 +3,10 @@
 # rejects that order). Imports: env.f (function index 0) and a memory.
 # Code bodies (offsets in the code section contents): main.adder$1 at 1,
 # main.main at 5, an unnamed function at 8; the code ends at 12.
-import sys
+# With a second argument, also writes a source map of the module there:
+# main.adder$1 at a.go:10 (offset 1) and 11 (3); main.main without a source
+# (5), then b.go:20 (6).
+import json, sys
 
 def leb(n):
     out = bytearray()
@@ -39,3 +42,27 @@ module = b"\0asm" + bytes([1, 0, 0, 0]) + custom("producers", leb(0)) \
     + section(1, types) + section(2, imports) + section(3, funcs) \
     + section(10, code) + names + section(11, data) + custom("target_features", leb(0))
 open(sys.argv[1], "wb").write(module)
+
+if len(sys.argv) > 2:
+    B = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    def vlq(v):
+        u = (-v << 1) | 1 if v < 0 else v << 1
+        out = ""
+        while True:
+            d = u & 31
+            u >>= 5
+            out += B[d | 32 if u else d]
+            if not u:
+                return out
+    start = module.index(section(10, code)) + 1 + len(leb(len(code)))
+    rows = [(1, 0, 9), (3, 0, 10), (5, None, None), (6, 1, 19)]  # offset, source, line - 1
+    segs, col, src, line = [], 0, 0, 0
+    for off, s, l in rows:
+        seg = vlq(start + off - col)
+        col = start + off
+        if s is not None:
+            seg += vlq(s - src) + vlq(l - line) + vlq(0)
+            src, line = s, l
+        segs.append(seg)
+    json.dump({"version": 3, "sources": ["/src/a.go", "/src/b.go"], "names": [],
+               "mappings": ",".join(segs)}, open(sys.argv[2], "w"))

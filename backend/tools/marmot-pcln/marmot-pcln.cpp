@@ -17,6 +17,13 @@
 //   marmot-pcln -wasm-final -o table.bin MODULE.wasm   functions from the code
 //                                                     section, names from the
 //                                                     name section, no lines
+//   marmot-pcln -wasm-final -source-map OUT.map -o table.bin MODULE.wasm
+//                                                     lines from the module's
+//                                                     source map
+// A source map for wasm-opt from the DWARF of a linked module (wasm-ld output):
+//   marmot-pcln -emit-source-map IN.map LINK.wasm
+// Generated columns in source maps are byte offsets in the module file, as
+// binaryen and browsers count them.
 #include "marmot/Driver/Pcln.h"
 
 #include "llvm/ADT/StringMap.h"
@@ -25,6 +32,7 @@
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -65,6 +73,15 @@ static cl::opt<std::string> binaryOpt("binary",
 static cl::opt<bool> wasmFinal(
     "wasm-final", cl::desc("Input is a final wasm module: functions from its code section and "
                            "name section, without DWARF or lines"));
+static cl::opt<std::string> sourceMap(
+    "source-map", cl::desc("With -wasm-final: the lines from this source map of the module "
+                           "(wasm-opt --output-source-map)"),
+    cl::value_desc("path"));
+static cl::opt<std::string> emitSourceMap(
+    "emit-source-map",
+    cl::desc("Write the DWARF lines of a linked wasm module as a source map (version 3) to "
+             "this file, for wasm-opt --input-source-map"),
+    cl::value_desc("path"));
 static cl::opt<bool> namesOnly("names", cl::desc("Print the table name of each symbol read "
                                                  "from stdin, one per line (tests)"));
 
@@ -412,6 +429,179 @@ int fromFragments() {
   return 0;
 }
 
+// wasmCodeStart returns the file offset of the code section's contents
+// (where the function count starts): source map columns are file offsets,
+// table offsets count from here.
+bool wasmCodeStart(StringRef data, uint64_t &start, std::string &err) {
+  if (data.size() < 8 || memcmp(data.data(), "\0asm", 4) != 0)
+    return err = "not a wasm module", false;
+  const uint8_t *b = data.bytes_begin();
+  uint64_t i = 8, n = data.size();
+  while (i < n) {
+    uint8_t id = b[i++];
+    uint64_t size = 0;
+    for (unsigned shift = 0;; shift += 7) {
+      if (i >= n || shift > 28)
+        return err = "malformed wasm module", false;
+      uint8_t c = b[i++];
+      size |= uint64_t(c & 0x7f) << shift;
+      if (!(c & 0x80))
+        break;
+    }
+    if (size > n - i)
+      return err = "malformed wasm module", false;
+    if (id == 10) {
+      start = i;
+      return true;
+    }
+    i += size;
+  }
+  return err = "no code section", false;
+}
+
+const char base64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+void vlq(std::string &out, int64_t v) {
+  uint64_t u = v < 0 ? (uint64_t(-v) << 1) | 1 : uint64_t(v) << 1;
+  do {
+    unsigned d = u & 31;
+    u >>= 5;
+    out += base64[u ? d | 32 : d];
+  } while (u);
+}
+
+bool unvlq(StringRef s, size_t &i, int64_t &v) {
+  uint64_t u = 0;
+  for (unsigned shift = 0; i < s.size() && shift < 64; shift += 5) {
+    const char *p = strchr(base64, s[i++]);
+    if (!p || !*p)
+      return false;
+    unsigned d = p - base64;
+    u |= uint64_t(d & 31) << shift;
+    if (!(d & 32)) {
+      v = (u & 1) ? -int64_t(u >> 1) : int64_t(u >> 1);
+      return true;
+    }
+  }
+  return false;
+}
+
+// writeSourceMap writes the DWARF rows of a linked wasm module as a source
+// map: one segment per row (code offset, file, line; column 0), in one
+// generated line, at file offsets. Where several rows share an address,
+// the last one counts.
+int writeSourceMap() {
+  if (input.empty())
+    return fail("usage: marmot-pcln -emit-source-map OUT.map LINK.wasm");
+  auto buf = MemoryBuffer::getFile(input, false, false);
+  if (!buf)
+    return fail(input + ": " + buf.getError().message());
+  uint64_t start;
+  std::string err;
+  if (!wasmCodeStart((*buf)->getBuffer(), start, err))
+    return fail(input + ": " + err);
+  auto objOr = ObjectFile::createObjectFile((*buf)->getMemBufferRef());
+  if (!objOr)
+    return fail(input + ": " + toString(objOr.takeError()));
+  pcln::Table t;
+  pcln::readDwarf(**objOr, 2, t);
+  std::map<uint64_t, std::pair<uint32_t, uint32_t>> rows; // offset -> line, file
+  for (auto &[lo, f] : t.funcs)
+    for (auto &[pc, line, file] : f.rows)
+      rows[pc] = {line, file};
+  for (auto &[pc, line, file] : t.orphans)
+    rows[pc] = {line, file};
+  std::string mappings;
+  int64_t col = 0, file = 0, line = 0;
+  for (auto &[pc, lf] : rows) {
+    if (!mappings.empty())
+      mappings += ',';
+    vlq(mappings, int64_t(start + pc) - col);
+    vlq(mappings, int64_t(lf.second) - file);
+    vlq(mappings, int64_t(lf.first) - 1 - line);
+    vlq(mappings, 0);
+    col = start + pc, file = lf.second, line = lf.first - 1;
+  }
+  std::error_code ec;
+  raw_fd_ostream os(emitSourceMap, ec);
+  if (ec)
+    return fail(emitSourceMap + ": " + ec.message());
+  json::OStream j(os);
+  j.object([&] {
+    j.attribute("version", 3);
+    j.attributeArray("sources", [&] {
+      for (const std::string &f : t.files)
+        j.value(f);
+    });
+    j.attributeArray("names", [] {});
+    j.attribute("mappings", mappings);
+  });
+  os << "\n";
+  errs() << "marmot-pcln: " << rows.size() << " rows, " << t.files.size() << " files\n";
+  return 0;
+}
+
+// readSourceMap adds the rows of a source map of a final module to the
+// functions of t: segments with a source give (offset, line, file), at code
+// section offsets (start is the file offset of the code section contents).
+// A segment without a source ends the row before it (line 0).
+bool readSourceMap(StringRef path, uint64_t start, pcln::Table &t, std::string &err) {
+  auto buf = MemoryBuffer::getFile(path);
+  if (!buf)
+    return err = path.str() + ": " + buf.getError().message(), false;
+  auto v = json::parse((*buf)->getBuffer());
+  if (!v)
+    return err = path.str() + ": " + toString(v.takeError()), false;
+  const json::Object *o = v->getAsObject();
+  const json::Array *srcs = o ? o->getArray("sources") : nullptr;
+  std::optional<StringRef> maps = o ? o->getString("mappings") : std::nullopt;
+  if (!srcs || !maps)
+    return err = path.str() + ": not a source map (no sources or mappings)", false;
+  std::vector<uint32_t> ids;
+  for (const json::Value &s : *srcs) {
+    std::optional<StringRef> n = s.getAsString();
+    ids.push_back(t.fileId(n ? n->str() : ""));
+  }
+  StringRef m = *maps;
+  int64_t col = 0, src = 0, line = 0, scol = 0;
+  size_t i = 0;
+  while (i < m.size()) {
+    if (m[i] == ',' || m[i] == ';') { // binaryen writes one line; columns restart per line
+      if (m[i] == ';')
+        col = 0;
+      i++;
+      continue;
+    }
+    int64_t f[5];
+    int nf = 0;
+    while (i < m.size() && m[i] != ',' && m[i] != ';') {
+      if (nf == 5 || !unvlq(m, i, f[nf]))
+        return err = path.str() + ": malformed mappings", false;
+      nf++;
+    }
+    if (nf != 1 && nf != 4 && nf != 5)
+      return err = path.str() + ": malformed mappings", false;
+    col += f[0];
+    uint32_t lineNo = 0, fileNo = 0;
+    if (nf >= 4) {
+      src += f[1], line += f[2], scol += f[3];
+      if (src < 0 || size_t(src) >= ids.size() || line < 0)
+        return err = path.str() + ": mapping outside the sources", false;
+      lineNo = line + 1, fileNo = ids[src];
+    }
+    if (col < int64_t(start))
+      continue;
+    uint64_t pc = col - start;
+    auto it = t.funcs.upper_bound(pc);
+    if (it == t.funcs.begin())
+      continue;
+    --it;
+    if (pc < it->second.hi)
+      it->second.rows.push_back({pc, lineNo, fileNo});
+  }
+  return true;
+}
+
 // readWasmFinal fills t with one function per code section body: lo is the
 // body's offset in the code section contents (where its size starts, as
 // LLVM's symbol addresses and wasm DWARF count), hi its end, the name from
@@ -568,6 +758,10 @@ int main(int argc, char **argv) {
   }
   if (!fragsList.empty())
     return fromFragments();
+  if (!emitSourceMap.empty())
+    return writeSourceMap();
+  if (!sourceMap.empty() && !wasmFinal)
+    return fail("-source-map needs -wasm-final");
   if (wasmFinal) {
     if (input.empty() || output.empty())
       return fail("usage: marmot-pcln -wasm-final -o table.bin MODULE.wasm");
@@ -578,13 +772,18 @@ int main(int argc, char **argv) {
     std::string err;
     if (!readWasmFinal((*buf)->getBuffer(), t, err))
       return fail(input + ": " + err);
+    uint64_t start;
+    if (!sourceMap.empty() && (!wasmCodeStart((*buf)->getBuffer(), start, err) ||
+                               !readSourceMap(sourceMap, start, t, err)))
+      return fail(err);
     std::string table = pcln::encode(t, 0, 1, version, renameMain);
     std::error_code ec;
     raw_fd_ostream os(output, ec);
     if (ec)
       return fail(output + ": " + ec.message());
     os << table;
-    errs() << "marmot-pcln: " << t.funcs.size() << " functions, " << table.size() << " bytes\n";
+    errs() << "marmot-pcln: " << t.funcs.size() << " functions, " << t.files.size() << " files, "
+           << table.size() << " bytes\n";
     return 0;
   }
   if (input.empty() || output.empty())
