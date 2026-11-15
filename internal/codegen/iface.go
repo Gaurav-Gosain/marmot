@@ -57,6 +57,8 @@ func (f *funcGen) makeInterface(v *ssa.MakeInterface) {
 	// no card when stored (wb.go).
 	if optWB && (f.fresh[data] || f.addr0[data] && !f.stack0[data]) {
 		f.markFresh(f.vals[v])
+	} else if optWB && f.allocd[data] {
+		f.allocd[f.vals[v]] = true
 	}
 }
 

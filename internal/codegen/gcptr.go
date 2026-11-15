@@ -79,6 +79,9 @@ func (f *funcGen) derived(base, v string) string {
 	if optWB && f.fresh[base] {
 		f.fresh[v] = true
 	}
+	if optWB && f.allocd[base] {
+		f.allocd[v] = true
+	}
 	if trackAddr && f.addr0[base] {
 		f.addr0[v] = true
 		if f.stack0[base] {

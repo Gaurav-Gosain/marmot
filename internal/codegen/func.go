@@ -52,6 +52,7 @@ type funcGen struct {
 	slotCast          map[string]string          // stack slot -> its cast to a GC pointer
 	stack0            map[string]bool            // stack slots and addresses computed from them (wb.go)
 	fresh             map[string]bool            // objects allocated since the last call in this block, and their parts (wb.go)
+	allocd            map[string]bool            // values that are an allocation result, for the whole function (wb.go)
 	wbFlag            string                     // the marking flag loaded since the last call in this block (wb.go)
 	cardBase          string                     // the card table, loaded in the entry block (wb.go)
 	cardSkip          bool                       // the value being stored points at no heap object (wb.go)

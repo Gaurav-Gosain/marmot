@@ -66,8 +66,12 @@ func (f *funcGen) markFresh(v string) {
 	}
 	if f.fresh == nil {
 		f.fresh = map[string]bool{}
+		if f.allocd == nil {
+			f.allocd = map[string]bool{}
+		}
 	}
 	f.fresh[v] = true
+	f.allocd[v] = true
 }
 
 // noBarrier reports whether a store at p needs no barrier.
@@ -146,7 +150,13 @@ func (f *funcGen) wbStore(v, p string, t types.Type) {
 	if f.m.cards() {
 		// A pointer to an object allocated since the last call needs no card
 		// either: allocated while marking runs, it is already marked.
-		if !f.cardSkip && !f.fresh[v] {
+		// So does storing an allocation result after calls: held in a
+		// register or stack slot since it was allocated, it was a root at
+		// the first stop of a cycle that started since (marked there), or
+		// it was allocated after that stop (allocated marked). This rule is
+		// about the stored value only; a store into an object allocated
+		// before a call still needs its card.
+		if !f.cardSkip && !f.fresh[v] && !f.allocd[v] {
 			f.cardStore(p, t, mt)
 		}
 		return

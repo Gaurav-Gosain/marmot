@@ -51,6 +51,9 @@ func (g *gen) genDecls() {
 	g.decls = append(g.decls, "type smallKey [3]int16\n")
 	g.decls = append(g.decls, "type lnote struct {\n\ta, b int\n\ts, t string\n}\n\ntype lcfg struct {\n\tn   string\n\tno  lnote\n\tarr [3]lnote\n\tg   [2][2]int\n\tk   int8\n}\n")
 	g.decls = append(g.decls, "var sinkF [][]int\n\n//go:noinline\nfunc junkF(n int) {\n\tj := make([]int, n)\n\tfor i := range j {\n\t\tj[i] = -1 - i\n\t}\n\tsinkF = append(sinkF, j)\n\tif len(sinkF) > 6 {\n\t\tsinkF = sinkF[1:]\n\t}\n}\n")
+	// Composite literals whose elements are calls: codegen (card modes) moves
+	// the allocation and its field stores past the calls.
+	g.decls = append(g.decls, "type sn struct {\n\tl, r *sn\n\tv    int\n\ts    []int\n}\n\n//go:noinline\nfunc snv(n int) int {\n\tjunkF(n%7 + 1)\n\treturn n * 3\n}\n\n//go:noinline\nfunc snt(d int) *sn {\n\tif d == 0 {\n\t\treturn nil\n\t}\n\treturn &sn{l: snt(d - 1), v: snv(d), r: snt(d - 1), s: []int{d, snv(d)}}\n}\n\nfunc snsum(n *sn) int {\n\tif n == nil {\n\t\treturn 0\n\t}\n\treturn n.v + len(n.s) + snsum(n.l) + snsum(n.r)\n}\n\nfunc snbad(n int) *sn {\n\tif n%2 == 1 {\n\t\tpanic(\"odd\")\n\t}\n\treturn nil\n}\n\n//go:noinline\nfunc snp(n int) (r int) {\n\tdefer func() {\n\t\tif recover() != nil {\n\t\t\tr = -1\n\t\t}\n\t}()\n\tq := &sn{v: snv(n), l: snbad(n)}\n\treturn q.v\n}\n")
 	g.decls = append(g.decls, "type tn struct {\n\tv    int\n\tl, r *tn\n\td    []int\n}\n\n//go:noinline\nfunc buildT(d, c int) *tn {\n\tn := &tn{v: d, d: make([]int, 2, c)}\n\tn.d[0], n.d[1] = d, d*2\n\tif d > 0 {\n\t\tn.l, n.r = buildT(d-1, c), buildT(d-1, c)\n\t}\n\treturn n\n}\n\nfunc sumT(n *tn) int {\n\tif n == nil {\n\t\treturn 0\n\t}\n\treturn n.v + n.d[0] + n.d[1] + sumT(n.l) + sumT(n.r)\n}\n")
 }
 
@@ -79,6 +82,10 @@ func (g *gen) ext2Stmt() {
 	k := g.r.Intn(8)
 	if g.r.Intn(6) == 0 {
 		g.litMutate()
+		return
+	}
+	if g.r.Intn(8) == 0 {
+		g.callLit()
 		return
 	}
 	if *flMem && g.r.Intn(3) == 0 {
@@ -399,5 +406,21 @@ func (g *gen) litMutate() {
 	if loop {
 		g.emit("\t}")
 	}
+	g.emit("}")
+}
+
+// callLit builds composite literals whose elements are calls (the calls
+// allocate, so collections run between them), nested and referring to
+// earlier literals, and one whose element call panics and is recovered.
+func (g *gen) callLit() {
+	d := 1 + g.r.Intn(4)
+	g.emit("{")
+	g.emit("\tt := snt(%d)", d)
+	g.emit("\tu := &sn{l: t, v: snv(int(%s) & 63), r: &sn{s: []int{snv(%d)}, v: snv(%d)}}", g.anyVar(), g.r.Intn(9), g.r.Intn(9))
+	if g.r.Intn(2) == 0 {
+		g.emit("\tw := &sn{r: u, l: u.r, v: snsum(u)}")
+		g.emit("\tu = w")
+	}
+	g.emit("\tfmt.Println(snsum(u), snsum(t), snp(%d), snp(%d))", g.r.Intn(9), g.r.Intn(9))
 	g.emit("}")
 }
