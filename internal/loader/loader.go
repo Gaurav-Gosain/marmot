@@ -40,6 +40,9 @@ type Config struct {
 	// it needs for the target (cross builds).
 	CC      string
 	CCFlags []string
+	// Overlay replaces or adds source files: absolute path to contents
+	// (packages.Config.Overlay, as go build -overlay).
+	Overlay map[string][]byte
 	// AllErrors reports every load and type error: no caps per package or
 	// overall, and no "could not import" follow-ons of a package that
 	// already has errors.
@@ -140,6 +143,12 @@ func setup(cfg Config) (pcfg *packages.Config, patterns []string, goroot, realRo
 		patterns = append(patterns, extra)
 	} else {
 		patterns = append(patterns, "runtime")
+	}
+	for k, v := range cfg.Overlay {
+		if pcfg.Overlay == nil {
+			pcfg.Overlay = map[string][]byte{}
+		}
+		pcfg.Overlay[k] = v
 	}
 	return pcfg, patterns, goroot, realRoot, nil
 }

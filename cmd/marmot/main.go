@@ -267,7 +267,7 @@ func cmdTest(args []string) int {
 		buildArgs = append(buildArgs, a)
 		// Build flags with a value.
 		switch name {
-		case "o", "O", "tags", "dialect", "gc", "target", "emit", "pgo", "color":
+		case "o", "O", "tags", "dialect", "gc", "target", "emit", "pgo", "color", "overlay":
 			if !hasVal && i+1 < len(args) {
 				i++
 				buildArgs = append(buildArgs, args[i])
@@ -323,9 +323,9 @@ func expandTestPatterns(pats []string) []testPkg {
 
 // testBuildFlags are the build flags marmot test takes.
 type testBuildFlags struct {
-	opt, tags, dialect, out *string
-	printCmd, work, release *bool
-	output                  outputFlags
+	opt, tags, dialect, out, overlay *string
+	printCmd, work, release, compile *bool
+	output                           outputFlags
 }
 
 func newTestFlags() (*flag.FlagSet, *testBuildFlags) {
@@ -338,6 +338,8 @@ func newTestFlags() (*flag.FlagSet, *testBuildFlags) {
 	t.release = fs.Bool("release", os.Getenv("MARMOT_RELEASE") == "1", "release build")
 	t.dialect = fs.String("dialect", os.Getenv("MARMOT_DIALECT"), "MLIR dialect level: llvm or go")
 	t.out = fs.String("o", "", "write the test binary here and do not run it")
+	t.compile = fs.Bool("c", false, "write the test binary (to -o, default pkg.test) and do not run it, as go test -c")
+	t.overlay = fs.String("overlay", "", "JSON file of source files to replace or add, as go build -overlay ({\"Replace\": {path: file}})")
 	t.output = addOutputFlags(fs)
 	return fs, t
 }
@@ -350,6 +352,24 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 	}
 	opt, tags, printCmd, work, release, dialect, out, of := t.opt, t.tags, t.printCmd, t.work, t.release, t.dialect, t.out, t.output
 	rep := of.reporter("test")
+	if *t.compile && *out == "" {
+		// As go test -c: ELEM.test, ELEM the last element of the package.
+		dir := filepath.Clean(pkg)
+		if dir == "." || dir == ".." {
+			if abs, err := filepath.Abs(dir); err == nil {
+				dir = abs
+			}
+		}
+		*out = filepath.Base(dir) + ".test"
+	}
+	var overlay map[string][]byte
+	if *t.overlay != "" {
+		var err error
+		if overlay, err = readOverlay(*t.overlay); err != nil {
+			fmt.Fprintln(os.Stderr, "marmot:", err)
+			return 2
+		}
+	}
 	optSet := *opt != "" // an explicit -O level selects LLVM over tier0
 	if *opt == "" {
 		*opt = "2"
@@ -383,7 +403,7 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 	cfg := driver.Config{
 		Root: root, Dir: wd, Output: exe, OptLevel: *opt, OptSet: optSet, Emit: "exe", Work: *work,
 		PrintCmd: *printCmd, Dialect: *dialect, Release: *release, Patterns: []string{pkg}, Stderr: os.Stderr,
-		AllErrors: rep.Mode == diag.ModeJSON,
+		AllErrors: rep.Mode == diag.ModeJSON, Overlay: overlay,
 	}
 	if *tags != "" {
 		cfg.Tags = strings.Split(*tags, ",")

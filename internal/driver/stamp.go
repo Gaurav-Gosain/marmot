@@ -32,6 +32,9 @@ func fileSig(h interface{ Write([]byte) (int, error) }, path string) {
 
 // buildStamp returns the stamp of a build, or "" if it cannot be computed.
 func (b *build) buildStamp(goos, goarch string) string {
+	if len(b.cfg.Overlay) > 0 {
+		return "" // overlay contents are not files the stamp can sign
+	}
 	lcfg := loader.Config{
 		Dir: b.cfg.Dir, Root: b.cfg.Root, Tags: b.cfg.Tags, GOOS: goos, GOARCH: goarch, Patterns: b.cfg.Patterns,
 	}

@@ -33,7 +33,7 @@ var errIncrementalMiss = errors.New("incremental: cached module missing")
 // incremental reports whether this build may load packages from export
 // data.
 func (b *build) incremental() bool {
-	if b.noIncr || os.Getenv("MARMOT_INCREMENTAL") == "0" {
+	if b.noIncr || os.Getenv("MARMOT_INCREMENTAL") == "0" || len(b.cfg.Overlay) > 0 {
 		return false
 	}
 	if b.frontEnd() {

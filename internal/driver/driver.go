@@ -52,7 +52,11 @@ type Config struct {
 	Trace    string // -trace=full: release builds keep the inlined frames of each call site apart
 	Tags     []string
 	Patterns []string
-	Stderr   io.Writer
+	// Overlay replaces or adds source files: absolute path to contents (as
+	// go build -overlay). Builds with one skip the stamp and incremental
+	// caches, which read files from disk.
+	Overlay map[string][]byte
+	Stderr  io.Writer
 	// AllErrors reports every load and type error (loader.Config.AllErrors).
 	AllErrors bool
 	// AllocReport receives the code generator's allocation report (one
@@ -269,7 +273,7 @@ func (b *build) run1() (string, error) {
 	defer releaseSlot()
 	lcfg := loader.Config{
 		Dir: cfg.Dir, Root: cfg.Root, Tags: cfg.Tags, GOOS: goos, GOARCH: goarch, Patterns: cfg.Patterns,
-		Log: b.logf, Tests: cfg.Test, AllErrors: cfg.AllErrors, CC: llvmTool("clang"), CCFlags: b.cgoLoaderFlags(),
+		Log: b.logf, Tests: cfg.Test, AllErrors: cfg.AllErrors, Overlay: cfg.Overlay, CC: llvmTool("clang"), CCFlags: b.cgoLoaderFlags(),
 		BeforeSSA: func(all []*packages.Package) error {
 			return specialize.BeforeSSA(&specialize.Input{Packages: all, Release: cfg.Release, GOOS: goos, GOARCH: goarch, Log: b.logf})
 		},
