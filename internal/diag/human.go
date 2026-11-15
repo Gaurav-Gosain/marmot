@@ -222,7 +222,7 @@ func (h *Human) one(d *Diagnostic) {
 	}
 	if d.Check != "" {
 		by := "`" + d.Check + "`"
-		if d.Analyzer != "" {
+		if d.Analyzer != "" && d.Analyzer != d.Check {
 			by += ", analyzer `" + d.Analyzer + "`"
 		}
 		tagged("note", st.Bold, "reported by check "+by)

@@ -247,6 +247,13 @@ func TestCheckDiagnostic(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
 	}
+	// an analyzer named as its check is said once
+	b.Reset()
+	d = Diagnostic{Kind: "diagnostic", Severity: Note, Code: CodeVerify, Message: "x", Check: "verify", Analyzer: "verify"}
+	(&Human{W: &b, Style: Plain}).Render([]Diagnostic{d})
+	if out := b.String(); !strings.Contains(out, "= note: reported by check `verify`\n") {
+		t.Errorf("want the check alone in:\n%s", out)
+	}
 	if Lookup("M0105") == nil || len(AllCodes()) < 39 {
 		t.Errorf("check codes not listed: %d codes", len(AllCodes()))
 	}
