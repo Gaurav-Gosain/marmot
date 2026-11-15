@@ -239,15 +239,19 @@ bool parkClearOn() {
   return on;
 }
 
-// Registered once for every target machine of the process; it adds the pass
-// only when the switch is on.
-RegisterTargetPassConfigCallback parkClearCallback(
-    [](TargetMachine &, PassManagerBase &, TargetPassConfig *pc) {
-      if (parkClearOn())
-        pc->insertPass(&StackSlotColoringID, IdentifyingPassPtr(new ParkClear()));
-    });
-
 } // namespace
 
-// Referenced from Pipeline.cpp so the static registration is linked in.
-bool marmotParkClearLinked() { return parkClearOn(); }
+// Registers the callback (once for every target machine of the process; it
+// adds the pass only when the switch is on). Pipeline.cpp calls this before
+// it builds a code generation pipeline. Not a global object: LLVM keeps the
+// callbacks in a global vector with a dynamic initializer, and with static
+// LLVM libraries that vector can be constructed after a global of ours,
+// which drops the registration (MARMOT_PARKCLEAR=1 did nothing).
+bool marmotParkClearLinked() {
+  static RegisterTargetPassConfigCallback callback(
+      [](TargetMachine &, PassManagerBase &, TargetPassConfig *pc) {
+        if (parkClearOn())
+          pc->insertPass(&StackSlotColoringID, IdentifyingPassPtr(new ParkClear()));
+      });
+  return parkClearOn();
+}
