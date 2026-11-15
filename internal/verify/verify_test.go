@@ -5,6 +5,7 @@ import (
 	"go/types"
 	"testing"
 
+	"github.com/Gaurav-Gosain/marmot/internal/verify/smt"
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/analysistest"
 	"golang.org/x/tools/go/analysis/passes/buildssa"
@@ -74,6 +75,37 @@ var manifestOnly = &analysis.Analyzer{
 
 func TestManifest(t *testing.T) {
 	analysistest.Run(t, analysistest.TestData(), manifestOnly, "codec")
+}
+
+// TestEngineBSound checks with z3 that engine B proves nothing that can
+// fail: the index before the loop of TopThenLoop stays open, and the
+// loop body's index is proved.
+func TestEngineBSound(t *testing.T) {
+	s := smt.Z3()
+	if s == nil {
+		t.Skip("z3 not on PATH")
+	}
+	var r *Result
+	a := &analysis.Analyzer{
+		Name: "verifysmt", Doc: "engine B", Requires: []*analysis.Analyzer{buildssa.Analyzer},
+		Run: func(pass *analysis.Pass) (any, error) {
+			opts := DefaultOptions
+			opts.Solver = s
+			r = AnalyzePackage(pass.Fset, pass.Files, pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA).SrcFuncs, opts)
+			return nil, nil
+		},
+	}
+	analysistest.Run(quiet{}, analysistest.TestData(), a, "codec")
+	for _, f := range r.Funcs {
+		if f.Fn.Name() != "TopThenLoop" {
+			continue
+		}
+		for _, o := range f.Obligations {
+			if o.Ob.Key[len(o.Ob.Key)-4:] == "idx1" && o.Status == Proved {
+				t.Errorf("%s proved (engine %q), but u = nil panics there", o.Ob.Key, o.Engine)
+			}
+		}
+	}
 }
 
 // TestStatuses checks engine A's status per function on the codec

@@ -24,7 +24,14 @@ type encoding struct {
 	Params  []encParam        // the inputs, in order
 	Assumes []*smt.T          // facts about the inputs (0 <= len <= cap <= maxLen)
 	Viol    map[string]*smt.T // by obligation key
-	Result  *smt.T            // the first result when it is an integer, nil otherwise
+	// Heads are the invariants of each loop header, to assume only for
+	// obligations in blocks the header dominates (on every path to them
+	// the header was reached without a panic, where engine A's state
+	// holds).
+	Heads map[*ssa.BasicBlock][]*smt.T
+	// Block is the block of each obligation, by key.
+	Block  map[string]*ssa.BasicBlock
+	Result *smt.T // the first result when it is an integer, nil otherwise
 }
 
 type encParam struct {
@@ -118,7 +125,7 @@ func encodeFunc(fn *ssa.Function, heads ...map[*ssa.BasicBlock]*state) (*encodin
 			return nil, fmt.Errorf("not encoded: loop")
 		}
 	}
-	e := &encoder{fn: fn, vals: map[ssa.Value]*smt.T{}, seqs: map[ssa.Value]*seqT{}, reach: map[*ssa.BasicBlock]*smt.T{}, edges: map[[2]*ssa.BasicBlock]*smt.T{}, enc: &encoding{Viol: map[string]*smt.T{}}}
+	e := &encoder{fn: fn, vals: map[ssa.Value]*smt.T{}, seqs: map[ssa.Value]*seqT{}, reach: map[*ssa.BasicBlock]*smt.T{}, edges: map[[2]*ssa.BasicBlock]*smt.T{}, enc: &encoding{Viol: map[string]*smt.T{}, Heads: map[*ssa.BasicBlock][]*smt.T{}, Block: map[string]*ssa.BasicBlock{}}}
 	for i, p := range fn.Params {
 		name := fmt.Sprintf("p%d_%s", i, p.Name())
 		switch {
@@ -172,6 +179,7 @@ func encodeFunc(fn *ssa.Function, heads ...map[*ssa.BasicBlock]*state) (*encodin
 			for _, o := range byInstr[in] {
 				if v := e.violation(o); v != nil {
 					e.enc.Viol[o.Key] = smt.LAnd(e.reach[b], v)
+					e.enc.Block[o.Key] = b
 				}
 			}
 			e.instr(b, in)
@@ -268,8 +276,25 @@ func (e *encoder) cutLoop(h *ssa.BasicBlock, st *state) {
 		if c < 0 {
 			cterm = smt.Neg(smt.BV(uint64(-c), 66))
 		}
-		e.enc.Assumes = append(e.enc.Assumes, smt.SLe(smt.Sub(a, b), cterm))
+		e.enc.Heads[h] = append(e.enc.Heads[h], smt.SLe(smt.Sub(a, b), cterm))
 	}
+}
+
+// Query is the condition for obligation key: its violation and the
+// invariants of the loop headers that dominate its block.
+func (enc *encoding) Query(key string) *smt.T {
+	v := enc.Viol[key]
+	if v == nil {
+		return nil
+	}
+	b := enc.Block[key]
+	parts := []*smt.T{v}
+	for h, inv := range enc.Heads {
+		if b != nil && h.Dominates(b) {
+			parts = append(parts, inv...)
+		}
+	}
+	return smt.LAnd(parts...)
 }
 
 // val is the term of an integer or boolean value.

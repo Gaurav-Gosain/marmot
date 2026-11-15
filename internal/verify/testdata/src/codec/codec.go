@@ -176,3 +176,14 @@ func ZeroDiv(a int) int {
 	d := 0
 	return a / d // want "`ZeroDiv` can panic: integer divide by zero on every input"
 }
+
+// TopThenLoop reads the last element before a loop: the loop header's
+// invariant (len(u) >= 1) holds only after that read, so it must not be
+// used to prove the read.
+func TopThenLoop(u []uint64) uint64 {
+	r := u[len(u)-1]
+	for j := len(u) - 2; j >= 0; j-- {
+		r += u[j]
+	}
+	return r
+}

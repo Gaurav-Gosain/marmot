@@ -351,8 +351,8 @@ func engineB(fn *ssa.Function, fr *FuncResult, s *smt.Solver, heads map[*ssa.Bas
 	var qs []*smt.T
 	var qo []*ObResult
 	for _, o := range open {
-		if v := enc.Viol[o.Ob.Key]; v != nil {
-			qs, qo = append(qs, v), append(qo, o)
+		if q := enc.Query(o.Ob.Key); q != nil {
+			qs, qo = append(qs, q), append(qo, o)
 		}
 	}
 	if len(qs) == 0 {
