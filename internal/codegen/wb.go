@@ -49,10 +49,17 @@ var trackAddr = optGCPtr || optWB
 // onStack reports whether p is the address of (a part of) a stack slot.
 func (f *funcGen) onStack(p string) bool { return f.stack0[p] }
 
-// markFresh records that v is an object just allocated. Until the next
-// call (a possible safepoint, where a cycle may start) or the end of the
-// block, stores into it need no barrier: its old values are nil, and an
-// object allocated while marking runs is already marked.
+// markFresh records that v is an object just allocated, until the next call
+// (a possible safepoint, where a cycle may start) or the end of the block.
+// Storing v needs no barrier. Storing into v needs none with MARMOT_WB=1:
+// its old values are nil, and the barrier on the store that overwrites a
+// heap slot shades the old pointer. With cards it does need one: an object
+// allocated while marking runs is marked and never scanned again unless its
+// card is dirty, and cards record new values only, so a pointer moved into
+// it from an overwritten heap slot and then dropped from registers would be
+// lost (rtcore; tests/run/gc/card_fresh_move fails gc verify with it). A
+// runtime that dirtied the cards of memory allocated during the mark would
+// make it sound, but made the second stop 8x longer.
 func (f *funcGen) markFresh(v string) {
 	if !optWB {
 		return
@@ -65,7 +72,7 @@ func (f *funcGen) markFresh(v string) {
 
 // noBarrier reports whether a store at p needs no barrier.
 func (f *funcGen) noBarrier(p string, t types.Type) bool {
-	if !optWB || f.onStack(p) || f.fresh[p] || len(ptrWords(t, f.m.p.opts.Sizes)) == 0 {
+	if !optWB || f.onStack(p) || !f.m.cards() && f.fresh[p] || len(ptrWords(t, f.m.p.opts.Sizes)) == 0 {
 		return true
 	}
 	// A global (or a part of one) is a root: no card.
