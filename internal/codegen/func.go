@@ -161,6 +161,9 @@ func (f *funcGen) gen(sym string, shared bool) {
 	if a := f.m.funcAttrs(fn, sym, false); a != "" {
 		attrs = append(attrs, a)
 	}
+	if s := f.m.initSection(fn, sym); s != "" {
+		attrs = append(attrs, "section = "+mlir.Quote(s))
+	}
 	head.WriteString(" attributes {" + strings.Join(attrs, ", ") + "} {\n")
 
 	for i, p := range fn.Params {

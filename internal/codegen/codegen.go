@@ -44,6 +44,9 @@ type Options struct {
 	// GCVars gives each package variable with pointers a scan record
 	// (noptr.go).
 	GCVars bool
+	// InitSections puts package initialization code in its own text
+	// section (initsect.go).
+	InitSections bool
 	// MergedGOROOT is where the loader's GOROOT symlinks live; source
 	// locations resolve them.
 	MergedGOROOT string
