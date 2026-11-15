@@ -76,6 +76,9 @@ func cmdDoctor(args []string) int {
 			add("backend", "ok", "marmot-backend on "+strings.TrimPrefix(first, "Homebrew "), "")
 		}
 		for _, t := range []string{"linux-amd64", "linux-arm64", "darwin-amd64"} {
+			if t == runtime.GOOS+"-"+runtime.GOARCH {
+				continue // the host's own runtime is build/lib/librtcore.a, checked above
+			}
 			if _, err := os.Stat(filepath.Join(root, "build/lib", t, "librtcore.a")); err != nil {
 				add("target "+t, "warn", "no runtime for -target "+strings.Replace(t, "-", "/", 1), "build it with make -C runtime/core GOOS=... GOARCH=..., or skip if you do not cross compile")
 			}
