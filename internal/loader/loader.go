@@ -82,17 +82,23 @@ type Program struct {
 
 // setup returns the go/packages configuration and patterns of a load.
 func setup(cfg Config) (pcfg *packages.Config, patterns []string, goroot, realRoot string, err error) {
-	realRoot, err = goEnv("GOROOT")
-	if err != nil {
-		return nil, nil, "", "", err
-	}
-	libSrc := filepath.Join(cfg.Root, "lib", "src")
-	if v := os.Getenv("MARMOT_LIBSRC"); v != "" {
-		libSrc = v
-	}
-	goroot, err = MergedGOROOT(realRoot, libSrc, filepath.Join(cfg.Root, "build"))
-	if err != nil {
-		return nil, nil, "", "", fmt.Errorf("merged GOROOT: %v", err)
+	if g := os.Getenv("MARMOT_MERGED_GOROOT"); g != "" {
+		// A GOROOT with marmot's lib/src already merged in (the browser playground ships
+		// one): no go command, no merge.
+		goroot, realRoot = g, g
+	} else {
+		realRoot, err = goEnv("GOROOT")
+		if err != nil {
+			return nil, nil, "", "", err
+		}
+		libSrc := filepath.Join(cfg.Root, "lib", "src")
+		if v := os.Getenv("MARMOT_LIBSRC"); v != "" {
+			libSrc = v
+		}
+		goroot, err = MergedGOROOT(realRoot, libSrc, filepath.Join(cfg.Root, "build"))
+		if err != nil {
+			return nil, nil, "", "", fmt.Errorf("merged GOROOT: %v", err)
+		}
 	}
 	// purego selects the pure Go fallbacks of packages with assembly.
 	tags := append([]string{"marmot", "purego", "noasm", "math_big_pure_go"}, cfg.Tags...)

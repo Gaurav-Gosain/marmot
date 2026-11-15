@@ -102,6 +102,9 @@ func listSig(pcfg *packages.Config, patterns []string) string {
 	h := sha256.New()
 	// v2: graphs with errors are no longer cached (older ones may be).
 	fmt.Fprintf(h, "v5\n%s\n%q\n%v\n", pcfg.Dir, patterns, pcfg.Tests)
+	if noGoCommand() {
+		fmt.Fprintln(h, "gobuild v1") // listed by buildList: its own graphs
+	}
 	env := append([]string(nil), pcfg.Env...)
 	sort.Strings(env)
 	for _, e := range env {
@@ -150,7 +153,13 @@ func loadList(light *packages.Config, patterns []string, cacheDir string) ([]*pa
 	if roots, usesC, ok := readListCache(path, sig, light.Dir); ok {
 		return roots, usesC, nil
 	}
-	roots, err := packages.Load(light, patterns...)
+	var roots []*packages.Package
+	var err error
+	if noGoCommand() {
+		roots, err = buildList(light, patterns)
+	} else {
+		roots, err = packages.Load(light, patterns...)
+	}
 	if err != nil {
 		return nil, false, err
 	}

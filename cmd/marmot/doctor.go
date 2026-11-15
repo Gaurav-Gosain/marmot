@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
@@ -165,9 +164,8 @@ func cmdDoctor(args []string) int {
 			status, fix = "warn", "marmot cache trim"
 		}
 		add("cache", status, fmt.Sprintf("%.0f MB in %d files, cap %d MB (MARMOT_CACHE_MAX_MB)", float64(size)/(1<<20), n, cap), fix)
-		var st syscall.Statfs_t
-		if syscall.Statfs(root, &st) == nil {
-			free := float64(st.Bavail) * float64(st.Bsize) / (1 << 30)
+		if freeBytes, ok := diskFree(root); ok {
+			free := float64(freeBytes) / (1 << 30)
 			if free < 5 {
 				add("disk", "warn", fmt.Sprintf("%.1f GB free", free), "free some space, or lower MARMOT_CACHE_MAX_MB")
 			} else {

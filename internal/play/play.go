@@ -41,7 +41,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"golang.org/x/tools/txtar"
@@ -527,8 +526,7 @@ func (s *Server) build(ctx context.Context, dir, mode string, extra ...string) (
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "MARMOT_OUTPUT=json", "MARMOT_ROOT="+s.opt.Root,
 		"GOPROXY=off", "GOFLAGS=-mod=mod", "GONOSUMDB=*", "GOTOOLCHAIN=local", "CGO_ENABLED=0")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	inGroup(cmd)
 	out, err := cmd.CombinedOutput()
 	diags, other := parseDiagnostics(out)
 	if len(diags) > 0 {
@@ -699,8 +697,7 @@ func (LocalRunner) Run(ctx context.Context, dir, exe string, lim Limits) RunResu
 	cmd := exec.CommandContext(ctx, exe)
 	cmd.Dir = dir
 	cmd.Env = []string{"HOME=" + dir, "TMPDIR=" + dir, "PATH=/usr/bin:/bin"}
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	inGroup(cmd)
 	out, errb := &capped{max: lim.MaxOutput}, &capped{max: lim.MaxOutput}
 	cmd.Stdout, cmd.Stderr = out, errb
 	t0 := time.Now()

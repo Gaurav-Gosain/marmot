@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"syscall"
 	"time"
 )
 
@@ -67,7 +66,7 @@ func acquireSlot(logf func(string, ...any)) error {
 			if err != nil {
 				return fmt.Errorf("slots: %v", err)
 			}
-			if syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) == nil {
+			if tryLock(f) {
 				heldSlot = f
 				if noted {
 					logf("got build slot %d after %.1fs", i, time.Since(start).Seconds())

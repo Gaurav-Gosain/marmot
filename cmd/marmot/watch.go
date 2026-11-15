@@ -98,11 +98,11 @@ func cmdWatch(args []string) int {
 		if child == nil {
 			return
 		}
-		_ = syscall.Kill(-child.Process.Pid, syscall.SIGTERM) // fails only when the group has exited
+		signalGroup(child.Process.Pid, syscall.SIGTERM) // fails only when the group has exited
 		select {
 		case <-childDone:
 		case <-time.After(2 * time.Second):
-			_ = syscall.Kill(-child.Process.Pid, syscall.SIGKILL) // as above
+			signalGroup(child.Process.Pid, syscall.SIGKILL) // as above
 			<-childDone
 		}
 		child = nil
@@ -128,7 +128,7 @@ func cmdWatch(args []string) int {
 		child = exec.Command(self, append([]string{action}, rest...)...)
 		child.Env = env
 		child.Stdin, child.Stdout, child.Stderr = os.Stdin, os.Stdout, os.Stderr
-		child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		child.SysProcAttr = groupAttr()
 		if err := child.Start(); err != nil {
 			fmt.Fprintln(os.Stderr, "marmot watch:", err)
 			child = nil

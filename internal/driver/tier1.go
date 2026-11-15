@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 )
 
 // Background tier 1: a dev build (tier0) leaves the modules its backend
@@ -63,7 +62,7 @@ func (b *build) startTier1() {
 	cmd := exec.Command(backend, args...)
 	// Its own session: not killed with the build's process group, and no
 	// terminal signals.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = sessionAttr()
 	if f, err := os.Create(filepath.Join(b.tier1Spool(), "tier1.log")); err == nil {
 		cmd.Stdout, cmd.Stderr = f, f
 		defer func() { _ = f.Close() }() // the child has its own copy of the log file

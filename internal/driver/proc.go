@@ -61,7 +61,7 @@ func genJobs() int {
 // startGroup puts cmd in its own process group so the whole tree can be
 // killed on timeout or when marmot exits.
 func startGroup(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = groupAttr()
 	cmd.Cancel = func() error {
 		killGroup(cmd.Process.Pid)
 		return nil
@@ -70,7 +70,7 @@ func startGroup(cmd *exec.Cmd) {
 
 func killGroup(pid int) {
 	if pid > 0 {
-		_ = syscall.Kill(-pid, syscall.SIGKILL) // fails only when the group has exited
+		killPG(pid)
 	}
 }
 

@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -129,14 +128,10 @@ func TrimCache(root string, force bool) (before, after int64, err error) {
 		return 0, 0, err
 	}
 	defer func() { _ = lf.Close() }() // the lock file holds nothing
-	how := syscall.LOCK_EX
-	if !force {
-		how |= syscall.LOCK_NB
-	}
-	if syscall.Flock(int(lf.Fd()), how) != nil {
+	if !lockFile(lf, !force) {
 		return 0, 0, nil
 	}
-	defer func() { _ = syscall.Flock(int(lf.Fd()), syscall.LOCK_UN) }() // closing the file releases it anyway
+	defer unlockFile(lf) // closing the file releases it anyway
 	Touch(lockPath)
 	entries, total := cacheEntries(dir)
 	before, after = total, total
