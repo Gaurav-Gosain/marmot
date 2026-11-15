@@ -3,13 +3,16 @@
 #
 #   deploy/play/build.sh [IMAGE]       builds it from the committed tree (linux/amd64)
 #
-# LLVM comes from apt.llvm.org (every target, WebAssembly included); Go from go.dev.
+# LLVM comes from apt.llvm.org (every target, WebAssembly included, and wasm-ld in lld); Go
+# from go.dev; binaryen (wasm-opt, for -target wasip1/wasm: Asyncify and -Oz) from its pinned
+# GitHub release.
 
 ARG DEBIAN=trixie
 FROM debian:${DEBIAN}-slim AS toolchain
 ARG DEBIAN
 ARG LLVM=22
 ARG GO_VERSION=1.27.4
+ARG BINARYEN=125
 ARG TARGETARCH=amd64
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
 	&& curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /usr/share/keyrings/llvm.gpg \
@@ -18,6 +21,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 		clang-${LLVM} lld-${LLVM} llvm-${LLVM} libc6-dev libgcc-14-dev make \
 	&& rm -rf /var/lib/apt/lists/*
 RUN curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz | tar -C /usr/local -xz
+# wasm-opt only (binaryen's other tools and its headers are not needed).
+RUN arch=$([ "$TARGETARCH" = arm64 ] && echo aarch64 || echo x86_64) \
+	&& curl -fsSL https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN}/binaryen-version_${BINARYEN}-${arch}-linux.tar.gz \
+		| tar -C /tmp -xz \
+	&& install -m 755 /tmp/binaryen-version_${BINARYEN}/bin/wasm-opt /usr/local/bin/wasm-opt \
+	&& if [ -d /tmp/binaryen-version_${BINARYEN}/lib ]; then cp -a /tmp/binaryen-version_${BINARYEN}/lib/. /usr/local/lib/ && ldconfig; fi \
+	&& rm -rf /tmp/binaryen-version_${BINARYEN} \
+	&& wasm-opt --version
 ENV PATH=/usr/local/go/bin:/usr/lib/llvm-${LLVM}/bin:$PATH \
 	LLVM_PREFIX=/usr/lib/llvm-${LLVM} LLVM_BIN=/usr/lib/llvm-${LLVM}/bin GOTOOLCHAIN=local
 
@@ -35,7 +46,8 @@ WORKDIR /marmot
 RUN go build -o build/bin/marmot ./cmd/marmot
 RUN BACKEND_BIN_DIR=/marmot/build/bin ./backend/build.sh -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
 	&& rm -rf build/backend
-RUN make -s -C runtime/core LLVM=/usr/lib/llvm-${LLVM} -j${JOBS}
+RUN make -s -C runtime/core LLVM=/usr/lib/llvm-${LLVM} -j${JOBS} \
+	&& make -s -C runtime/core LLVM=/usr/lib/llvm-${LLVM} GOOS=wasip1 GOARCH=wasm -j${JOBS}
 
 FROM toolchain
 ARG LLVM=22

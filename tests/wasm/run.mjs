@@ -6,7 +6,8 @@
 // environment, stdin, stdout and stderr, and the directories given with
 // --dir (none by default). Its proc_exit status becomes the exit status;
 // a trap prints the error and exits with status 2, as a Go runtime fatal
-// error does.
+// error does. MARMOT_WASM_HOST=browser runs it under the playground's
+// browser WASI host instead (internal/play/static/run/wasi.js).
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 
@@ -39,6 +40,24 @@ const wasi = new WASI({
 });
 
 let code;
+if (process.env.MARMOT_WASM_HOST === "browser") {
+  // The browser's WASI host (the playground's internal/play/static/run/wasi.js) instead of
+  // Node's: no files, stdin at EOF; what a program run on /play sees.
+  const { writeSync } = await import("node:fs");
+  const { runWasi } = await import(new URL("../../internal/play/static/run/wasi.js", import.meta.url));
+  try {
+    code = await runWasi(await readFile(prog), {
+      args: [basename(prog), ...args],
+      env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith("MARMOT_") || k.startsWith("GO"))),
+      onStdout: (t) => writeSync(1, t),
+      onStderr: (t) => writeSync(2, t),
+    });
+  } catch (e) {
+    process.stderr.write(`wasm: ${e && e.stack ? e.stack : e}\n`);
+    code = 2;
+  }
+  process.exit(code ?? 0);
+}
 try {
   const module = await WebAssembly.compile(await readFile(prog));
   const instance = await WebAssembly.instantiate(module, wasi.getImportObject());

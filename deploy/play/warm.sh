@@ -1,6 +1,6 @@
 #!/bin/sh
-# warm.sh: compile a small program in every mode and to every stage, so that the standard
-# library the playground programs use is in the image's build cache.
+# warm.sh: compile a small program in every mode, to every stage and for wasm, so that the
+# standard library the playground programs use is in the image's build cache.
 set -eu
 d=$(mktemp -d)
 cd "$d"
@@ -46,6 +46,8 @@ for mode in "" "-O 2" "-release"; do
 	$m build $mode -dialect go -emit mlir -o out.mlir .
 	$m build $mode -emit llvm -o out.ll .
 	$m build $mode -emit obj -o out.o .
+	# Run on /play: the program as wasip1/wasm, which the page runs in the browser.
+	$m build $mode -target wasip1/wasm -o prog.wasm .
 done
 ./prog
 cd /
