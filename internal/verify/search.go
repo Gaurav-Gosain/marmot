@@ -765,7 +765,16 @@ func SandboxCommand(ctx context.Context, work string, cpuSeconds int, env []stri
 	case "darwin":
 		cmd = exec.CommandContext(ctx, "/bin/sh", append([]string{"-c", "ulimit -t " + cpu + "; exec sandbox-exec -p \"$0\" \"$@\"", sandboxProfile(real)}, argv...)...)
 	case "linux":
-		args := []string{"-c", "ulimit -t " + cpu + "; ulimit -v 4194304; exec bwrap --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --bind \"$0\" \"$0\" --chdir \"$0\" --unshare-all --die-with-parent --new-session \"$@\"", real}
+		// /tmp is a fresh tmpfs inside, so a program under /tmp but
+		// outside work (the search test binary, with TMPDIR unset) is
+		// bound in read-only.
+		bw := []string{"bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"}
+		if exe, err := filepath.EvalSymlinks(argv[0]); err == nil && filepath.IsAbs(exe) {
+			bw = append(bw, "--ro-bind", exe, exe)
+			argv = append([]string{exe}, argv[1:]...)
+		}
+		bw = append(bw, "--bind", real, real, "--chdir", real, "--unshare-all", "--die-with-parent", "--new-session")
+		args := append([]string{"-c", "ulimit -t " + cpu + "; ulimit -v 4194304; exec \"$@\"", "sh"}, bw...)
 		cmd = exec.CommandContext(ctx, "/bin/sh", append(args, argv...)...)
 	default:
 		return nil, fmt.Errorf("no sandbox on %s", runtime.GOOS)
