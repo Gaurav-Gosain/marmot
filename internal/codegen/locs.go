@@ -13,7 +13,10 @@ import (
 // before the module, so the backend can emit DWARF line tables and
 // marmot-pcln can build the pc -> function, file:line table for
 // tracebacks. Instructions without a position take the last position seen
-// in the function. MARMOT_NO_LOCS=1 turns locations off.
+// in the function. MARMOT_NO_LOCS=1 turns locations off. Optimized builds
+// give every location column 1 with MARMOT_LOC_LINEONLY=1 (Options.LineLocs,
+// set by the driver): on tuios -O 2 about half of the location aliases
+// differ only by column. Off by default until perfcmp passes.
 
 var locsOff = os.Getenv("MARMOT_NO_LOCS") != ""
 
@@ -48,7 +51,7 @@ func (m *moduleGen) loc(pos token.Pos) string {
 	if p.Filename == "" {
 		return ""
 	}
-	if !own {
+	if !own || m.p.opts.LineLocs {
 		// Another package's position: loaded from export data it has
 		// lines only, so use the line alone whatever the load.
 		p.Column = 1

@@ -38,6 +38,10 @@ type Options struct {
 	GoDialect bool
 	// Release enables release-only transforms (more devirtualization).
 	Release bool
+	// LineLocs: op locations carry the line only (column 1), for optimized
+	// builds (locs.go). Tracebacks and DWARF line tables use lines; distinct
+	// columns only add location aliases and DILocations.
+	LineLocs bool
 	// NoptrSections puts package variables without pointers in sections the
 	// collector does not scan (noptr.go).
 	NoptrSections bool

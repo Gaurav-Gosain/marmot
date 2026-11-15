@@ -332,7 +332,7 @@ func (b *build) run1() (string, error) {
 			filePkgs[f] = p.PkgPath
 		}
 	}
-	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, FilePkgs: filePkgs, GoDialect: cfg.Dialect == "go", Release: cfg.Release, NoptrSections: b.noptr(), GCVars: b.noptr() && !b.tier0() && os.Getenv("MARMOT_GCVARS") == "1", InitSections: os.Getenv("MARMOT_INITSECT") == "1", HomeInstances: b.homeInstances(), MergedGOROOT: lp.GOROOT, XDefs: b.xdefs(),
+	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, FilePkgs: filePkgs, GoDialect: cfg.Dialect == "go", Release: cfg.Release, LineLocs: !b.tier0() && cfg.OptLevel != "0" && os.Getenv("MARMOT_LOC_LINEONLY") == "1", NoptrSections: b.noptr(), GCVars: b.noptr() && !b.tier0() && os.Getenv("MARMOT_GCVARS") == "1", InitSections: os.Getenv("MARMOT_INITSECT") == "1", HomeInstances: b.homeInstances(), MergedGOROOT: lp.GOROOT, XDefs: b.xdefs(),
 		Separate: b.incr, Facts: incrementalFacts(lp), KeepExported: keepExported, ReflectCall: reflectCall,
 		AllocReport: b.allocReport()})
 	if err != nil {
