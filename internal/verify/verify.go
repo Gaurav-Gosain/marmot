@@ -105,6 +105,11 @@ func AnalyzePackage(fset *token.FileSet, files []*ast.File, funcs []*ssa.Functio
 		if fn.Blocks == nil || fn.Synthetic != "" {
 			continue
 		}
+		// Tests are not verified: their panics are failures the test
+		// reports itself.
+		if fset != nil && strings.HasSuffix(fset.Position(fn.Pos()).Filename, "_test.go") {
+			continue
+		}
 		fr, sum := analyzeFunc(fset, fn, opts, sums)
 		fr.Effects = hasEffects(fn, sums, effects)
 		effects[fn] = fr.Effects

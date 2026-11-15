@@ -39,11 +39,13 @@ type Hint struct {
 	RecvExported bool   `json:"recvExported,omitempty"`
 	// Effects is set when the function's calls reach files, processes,
 	// the network or system calls: it is run only on request.
-	Effects bool     `json:"effects,omitempty"`
-	Params  []Param  `json:"params"`
-	Ints    []int64  `json:"ints,omitempty"`
-	Strs    []string `json:"strs,omitempty"`
-	Obls    []OblRef `json:"obls"`
+	Effects bool `json:"effects,omitempty"`
+	// Variadic: the last parameter is ...T, passed with ... in calls.
+	Variadic bool     `json:"variadic,omitempty"`
+	Params   []Param  `json:"params"`
+	Ints     []int64  `json:"ints,omitempty"`
+	Strs     []string `json:"strs,omitempty"`
+	Obls     []OblRef `json:"obls"`
 }
 
 // Param is one parameter: its Go type as written in the package, and its
@@ -158,7 +160,7 @@ func makeHint(fn *ssa.Function, fr *FuncResult, fset *token.FileSet) *Hint {
 			return nil
 		}
 	}
-	h := &Hint{PkgName: fn.Pkg.Pkg.Name(), Fn: fn.Name(), Full: fn.String(), Exported: fn.Object() != nil && fn.Object().Exported(), Recv: recv, RecvExported: recvExported, Effects: fr.Effects}
+	h := &Hint{PkgName: fn.Pkg.Pkg.Name(), Fn: fn.Name(), Full: fn.String(), Exported: fn.Object() != nil && fn.Object().Exported(), Recv: recv, RecvExported: recvExported, Effects: fr.Effects, Variadic: fn.Signature.Variadic()}
 	params := fn.Params
 	if recv != "" {
 		params = params[1:]
@@ -527,6 +529,9 @@ func TestMarmotVerifySearch(t *marmottesting.T) {
 		for j := range h.Params {
 			args = append(args, fmt.Sprintf("p%d[cs[i+%d]]", j, j))
 		}
+		if h.Variadic {
+			args[len(args)-1] += "..."
+		}
 		fmt.Fprintf(&b, "\t\tmarmotRun(fn, n, func() { %s(%s) })\n\t}\n}\n", callee, strings.Join(args, ", "))
 	}
 	return b.String()
@@ -546,6 +551,10 @@ func (h *Hint) callee() string {
 
 // Call is the call of h with args as Go source.
 func (h *Hint) Call(args []string) string {
+	if h.Variadic && len(args) > 0 {
+		args = slices.Clone(args)
+		args[len(args)-1] += "..."
+	}
 	c := h.Fn
 	switch {
 	case strings.HasPrefix(h.Recv, "*"):

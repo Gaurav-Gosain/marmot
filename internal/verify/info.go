@@ -46,6 +46,9 @@ type Summary struct {
 	// Counterexamples are panics the search ran into, confirmed by
 	// running the input again.
 	Counterexamples int `json:"counterexamples,omitempty"`
+	// Notes say what limited the run: no sandbox, a search that could
+	// not build. Zero counterexamples mean nothing without them.
+	Notes []string `json:"notes,omitempty"`
 }
 
 // Add sums s2 into s.
