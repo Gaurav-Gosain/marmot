@@ -119,6 +119,20 @@ void os_yield(void);
 // Iterate writable data segments of the main executable.
 void os_data_segments_init(void);  // at startup: os_data_segments asks no loader
 void os_data_segments(void (*fn)(void *start, void *end));
+
+// Calls scan for each piece of [lo, hi) outside the nex sorted, disjoint
+// ranges ex (the package variables without pointers, which the collector
+// skips: os_darwin.c, os_linux.c).
+static inline void rt_ranges_minus(uintptr_t lo, uintptr_t hi, const uintptr_t (*ex)[2], int nex,
+                                   void (*scan)(uintptr_t, uintptr_t, void (*)(void *, void *)),
+                                   void (*fn)(void *, void *)) {
+  for (int i = 0; i < nex && lo < hi; i++) {
+    if (ex[i][1] <= lo || ex[i][0] >= hi) continue;
+    if (ex[i][0] > lo) scan(lo, ex[i][0], fn);
+    lo = ex[i][1];
+  }
+  if (lo < hi) scan(lo, hi, fn);
+}
 // Thread creation. The new thread runs fn(arg) and exits when it returns.
 bool os_thread_create(void (*fn)(void *), void *arg, uintptr_t stacksize);
 // Raw system call, returns -errno on failure.

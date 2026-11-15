@@ -14,8 +14,10 @@
 #   // expect-stderr: TEXT   stderr must contain TEXT
 #   // env: K=V ...          environment for the run
 #   // timeout: SECONDS      default 60
+#   // ldflags-OS: FLAGS     extra compiler flags on OS (uname -s, lower case)
 set -u
 mkdir -p "$OUT"
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
 pass=0
 fail=0
 failed=""
@@ -28,7 +30,9 @@ for src in "$@"; do
     echo "skip $name (wasm)"; continue
   fi
   bin="$OUT/$name"
-  if ! { $CC $CFLAGS "$src" $LIB ${LDLIBS--lpthread} -o "$bin" &&
+  extra=""
+  [ -n "${WASM:-}" ] || extra=$(sed -n "s|^// ldflags-$os: *||p" "$src" | head -1)
+  if ! { $CC $CFLAGS $extra "$src" $LIB ${LDLIBS--lpthread} -o "$bin" &&
          { [ -z "${POSTLINK:-}" ] || $POSTLINK "$bin" -o "$bin"; }; } 2> "$OUT/$name.build"; then
     echo "FAIL $name (build)"; cat "$OUT/$name.build"
     fail=$((fail+1)); failed="$failed $name"; continue

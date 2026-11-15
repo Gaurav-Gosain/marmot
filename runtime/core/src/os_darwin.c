@@ -147,7 +147,7 @@ void os_yield(void) { sched_yield(); }
 // cost 36 MB. mincore marks touched pages (in core, referenced, modified),
 // also paged out ones (MINCORE_PAGED_OUT), which are scanned.
 static void touched_ranges(uintptr_t lo, uintptr_t hi, void (*fn)(void *start, void *end)) {
-  uintptr_t ps = rt_pagesize;
+  uintptr_t ps = rt_pagesize, start = lo;  // runs begin at start, not before it
   lo &= ~(ps - 1);
   unsigned char vec[1024];  // unsigned: the flags are tested as bits
   uintptr_t run = 0;  // start of the current run of touched pages, 0: none
@@ -156,12 +156,12 @@ static void touched_ranges(uintptr_t lo, uintptr_t hi, void (*fn)(void *start, v
     if (n > sizeof vec) n = sizeof vec;
     if (mincore((void *)at, n * ps, (char *)vec) != 0) {
       // Cannot tell: scan everything left.
-      if (!run) run = at;
+      if (!run) run = at > start ? at : start;
       break;
     }
     for (uintptr_t i = 0; i < n; i++, at += ps) {
       if (vec[i] & (unsigned char)~MINCORE_ANONYMOUS) {  // an untouched anonymous page reports only that bit
-        if (!run) run = at;
+        if (!run) run = at > start ? at : start;
       } else if (run) {
         fn((void *)run, (void *)at);
         run = 0;
@@ -180,8 +180,33 @@ static struct {
 } data_segs[16];
 static int ndata_segs;
 
+// Package variables without pointers (MARMOT_NOPTR=1 builds) are in
+// __DATA,__noptrdata and __DATA,__noptrbss; the collector skips them, as gc
+// skips noptrdata and noptrbss.
+static uintptr_t noptr[2][2];  // sorted by start
+static int nnoptr;
+
+static void noptr_add(const struct mach_header_64 *mh, const char *sect) {
+  unsigned long size = 0;
+  uint8_t *p = getsectiondata(mh, "__DATA", sect, &size);
+  if (!p || !size) return;
+  uintptr_t a = (uintptr_t)p, b = a + size;
+  if (nnoptr == 1 && noptr[0][0] > a) {
+    noptr[1][0] = noptr[0][0];
+    noptr[1][1] = noptr[0][1];
+    noptr[0][0] = a;
+    noptr[0][1] = b;
+  } else {
+    noptr[nnoptr][0] = a;
+    noptr[nnoptr][1] = b;
+  }
+  nnoptr++;
+}
+
 void os_data_segments_init(void) {
   const struct mach_header_64 *mh = (const struct mach_header_64 *)_dyld_get_image_header(0);
+  noptr_add(mh, "__noptrdata");
+  noptr_add(mh, "__noptrbss");
   intptr_t slide = _dyld_get_image_vmaddr_slide(0);
   const struct load_command *lc = (const struct load_command *)(mh + 1);
   for (uint32_t i = 0; i < mh->ncmds; i++) {
@@ -204,7 +229,8 @@ void os_data_segments_init(void) {
 }
 
 void os_data_segments(void (*fn)(void *start, void *end)) {
-  for (int i = 0; i < ndata_segs; i++) touched_ranges(data_segs[i].start, data_segs[i].end, fn);
+  for (int i = 0; i < ndata_segs; i++)
+    rt_ranges_minus(data_segs[i].start, data_segs[i].end, (const uintptr_t (*)[2])noptr, nnoptr, touched_ranges, fn);
 }
 
 typedef struct {

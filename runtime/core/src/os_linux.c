@@ -6,6 +6,7 @@
 #if RT_OS_LINUX
 
 #include <errno.h>
+#include <fcntl.h>
 #include <link.h>
 #ifdef __GLIBC__
 // From glibc malloc.h (the runtime's own malloc.h shadows it on -Isrc).
@@ -178,10 +179,84 @@ static int phdr_cb(struct dl_phdr_info *info, size_t size, void *data) {
   return 1;  // stop after the main program
 }
 
-void os_data_segments_init(void) { dl_iterate_phdr(phdr_cb, NULL); }
+// Package variables without pointers (MARMOT_NOPTR=1 builds): the driver's
+// linker script gathers them between these symbols, and the collector skips
+// them, as gc skips noptrdata and noptrbss. Weak: a program linked without
+// the script has none.
+extern char marmot_noptrdata_start[] __attribute__((weak));
+extern char marmot_noptrdata_end[] __attribute__((weak));
+extern char marmot_noptrbss_start[] __attribute__((weak));
+extern char marmot_noptrbss_end[] __attribute__((weak));
+static uintptr_t noptr[2][2];  // sorted by start
+static int nnoptr;
+
+// Addresses as integers: comparing pointers to two different objects is
+// undefined in C, and the compiler may fold it.
+static void noptr_add(uintptr_t a, uintptr_t b) {
+  __asm__("" : "+r"(a), "+r"(b));
+  if (!a || !b || b <= a) return;
+  if (nnoptr == 1 && noptr[0][0] > a) {
+    noptr[1][0] = noptr[0][0];
+    noptr[1][1] = noptr[0][1];
+    noptr[0][0] = a;
+    noptr[0][1] = b;
+  } else {
+    noptr[nnoptr][0] = a;
+    noptr[nnoptr][1] = b;
+  }
+  nnoptr++;
+}
+
+void os_data_segments_init(void) {
+  dl_iterate_phdr(phdr_cb, NULL);
+  noptr_add((uintptr_t)marmot_noptrdata_start, (uintptr_t)marmot_noptrdata_end);
+  noptr_add((uintptr_t)marmot_noptrbss_start, (uintptr_t)marmot_noptrbss_end);
+}
+
+// The runs of pages in [lo, hi) that can hold a heap pointer, from
+// /proc/self/pagemap: present (bit 63) or swapped (bit 62). A bss page
+// nobody wrote is neither and holds zeros. A data page anyone wrote (the
+// program, or the loader relocating it) is private anonymous memory, so
+// present or swapped. A data page that was only read holds its link-time
+// contents, which point into the image, never into the heap. So a 32 MB
+// pointer-free bss array nobody uses costs nothing, as on darwin. Without
+// pagemap (no /proc), everything is scanned.
+static void touched_ranges(uintptr_t lo, uintptr_t hi, void (*fn)(void *start, void *end)) {
+  uintptr_t ps = rt_pagesize, start = lo;  // runs begin at start, not before it
+  lo &= ~(ps - 1);
+  int fd = open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    fn((void *)lo, (void *)hi);
+    return;
+  }
+  uint64_t vec[512];
+  uintptr_t run = 0;  // start of the current run of touched pages, 0: none
+  for (uintptr_t at = lo; at < hi;) {
+    uintptr_t n = (hi - at + ps - 1) / ps;
+    if (n > sizeof vec / sizeof vec[0]) n = sizeof vec / sizeof vec[0];
+    ssize_t r = pread(fd, vec, n * sizeof vec[0], (off_t)(at / ps * sizeof vec[0]));
+    if (r < (ssize_t)sizeof vec[0]) {
+      // Cannot tell: scan everything left.
+      if (!run) run = at > start ? at : start;
+      break;
+    }
+    n = (uintptr_t)r / sizeof vec[0];
+    for (uintptr_t i = 0; i < n; i++, at += ps) {
+      if (vec[i] & (3ull << 62)) {
+        if (!run) run = at > start ? at : start;
+      } else if (run) {
+        fn((void *)run, (void *)at);
+        run = 0;
+      }
+    }
+  }
+  close(fd);
+  if (run) fn((void *)run, (void *)hi);
+}
 
 void os_data_segments(void (*fn)(void *start, void *end)) {
-  for (int i = 0; i < ndata_segs; i++) fn((void *)data_segs[i].start, (void *)data_segs[i].end);
+  for (int i = 0; i < ndata_segs; i++)
+    rt_ranges_minus(data_segs[i].start, data_segs[i].end, (const uintptr_t (*)[2])noptr, nnoptr, touched_ranges, fn);
 }
 
 typedef struct {
