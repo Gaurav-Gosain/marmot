@@ -460,6 +460,9 @@ func (in *inliner) call(e *engine, s *state, call *ssa.Call, f *ssa.Function) {
 	init := s.clone()
 	for i, p := range f.Params {
 		copyValue(init, args[i], p)
+		if w, ok := s.tested[args[i]]; ok {
+			init.tested[p] = w
+		}
 		for _, k := range []nodeKind{nVal, nLen, nCap} {
 			if w, ok := s.guards[node{k, args[i]}]; ok {
 				init.guards[node{k, p}] = w

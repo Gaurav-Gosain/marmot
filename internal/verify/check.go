@@ -201,9 +201,31 @@ func guardTested(s *state, why token.Pos, qs ...node) bool {
 			continue
 		}
 		for _, q := range qs {
+			if _, isConst := constOf(q); isConst {
+				continue
+			}
 			if n == q || sameQuantity(s, n, q) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// testedElsewhere reports whether a dominating branch other than why
+// depended on the value under one of qs (the slice of len(s), the
+// integer itself): strings.HasPrefix(p, "//"), s[1] == "5". The domain
+// does not see what such a test implies, so no mismatch is shown.
+func testedElsewhere(s *state, why token.Pos, qs ...node) bool {
+	for _, q := range qs {
+		if q.v == nil {
+			continue
+		}
+		if _, isConst := constOf(q); isConst {
+			continue
+		}
+		if w, ok := s.tested[q.v]; ok && w != why {
+			return true
 		}
 	}
 	return false
@@ -260,7 +282,7 @@ func derivesFrom(v ssa.Value, q node, depth int) bool {
 // that tested the quantity, and no other branch tested something
 // derived from it.
 func validGuard(s *state, why token.Pos, qs ...node) bool {
-	return why != token.NoPos && guardTested(s, why, qs...) && !derivedGuard(s, why, qs...)
+	return why != token.NoPos && guardTested(s, why, qs...) && !derivedGuard(s, why, qs...) && !testedElsewhere(s, why, qs...)
 }
 
 // otherGuards reports whether a guard related q (or a node equal to q)
@@ -326,7 +348,11 @@ func indexMismatch(s *state, i, l node) *mismatch {
 			return &mismatch{q: l, guard: why, lo: llo, hi: k, needs: fmt.Sprintf(">= %d", k+1)}
 		}
 	}
-	// i - l is guarded: i <= l + c with c >= 0.
+	// i - l is guarded: i <= l + c with c >= 0 (i not a constant: a
+	// constant index is the case above).
+	if _, isConst := constOf(i); isConst || ilo == ihi {
+		return nil
+	}
 	c, why := s.upper(i, l)
 	if validGuard(s, why, i, l) && c >= 0 && c != inf && !otherGuards(s, i, l) && !otherGuards(s, l, i) {
 		if !feasible(s, l, i, 0) {

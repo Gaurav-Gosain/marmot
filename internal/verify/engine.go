@@ -202,6 +202,7 @@ func (e *engine) edge(p, b *ssa.BasicBlock) *state {
 			if !refine(s, iff.Cond, b == p.Succs[0], iff.Cond.Pos()) {
 				return nil
 			}
+			markTested(s, iff.Cond, condPos(iff), 0)
 		}
 	}
 	pi := -1
@@ -213,6 +214,77 @@ func (e *engine) edge(p, b *ssa.BasicBlock) *state {
 	}
 	assignPhis(s, b, pi)
 	return s
+}
+
+// condPos is the position recorded for a branch: its condition's.
+func condPos(iff *ssa.If) token.Pos {
+	if p := iff.Cond.Pos(); p != token.NoPos {
+		return p
+	}
+	return iff.Pos()
+}
+
+// markTested records the values a branch condition depends on in ways
+// the domain does not model (opaque): call arguments, element and field
+// reads, string comparisons other than with "". Integer comparisons,
+// arithmetic, len and cap are modeled and not recorded.
+func markTested(s *state, v ssa.Value, pos token.Pos, depth int) {
+	markTestedOpaque(s, v, pos, depth, false)
+}
+
+func markTestedOpaque(s *state, v ssa.Value, pos token.Pos, depth int, opaque bool) {
+	if v == nil || depth > 5 {
+		return
+	}
+	if _, ok := v.(*ssa.Const); ok {
+		return
+	}
+	if opaque {
+		if _, ok := s.tested[v]; !ok {
+			s.tested[v] = pos
+		}
+	}
+	switch x := v.(type) {
+	case *ssa.UnOp:
+		markTestedOpaque(s, x.X, pos, depth+1, opaque || x.Op == token.MUL)
+	case *ssa.BinOp:
+		modeled := isIntType(x.X.Type()) || isNilConst(x.X) || isNilConst(x.Y) || isEmptyString(x.X) || isEmptyString(x.Y)
+		markTestedOpaque(s, x.X, pos, depth+1, opaque || !modeled)
+		markTestedOpaque(s, x.Y, pos, depth+1, opaque || !modeled)
+	case *ssa.Call:
+		if b, ok := x.Call.Value.(*ssa.Builtin); ok && (b.Name() == "len" || b.Name() == "cap") {
+			for _, a := range x.Call.Args {
+				markTestedOpaque(s, a, pos, depth+1, opaque)
+			}
+			return
+		}
+		for _, a := range x.Call.Args {
+			markTestedOpaque(s, a, pos, depth+1, true)
+		}
+	case *ssa.Index:
+		markTestedOpaque(s, x.X, pos, depth+1, true)
+	case *ssa.IndexAddr:
+		markTestedOpaque(s, x.X, pos, depth+1, true)
+	case *ssa.Lookup:
+		markTestedOpaque(s, x.X, pos, depth+1, true)
+	case *ssa.Slice:
+		markTestedOpaque(s, x.X, pos, depth+1, true)
+	case *ssa.Convert:
+		markTestedOpaque(s, x.X, pos, depth+1, opaque)
+	case *ssa.ChangeType:
+		markTestedOpaque(s, x.X, pos, depth+1, opaque)
+	case *ssa.Extract:
+		markTestedOpaque(s, x.Tuple, pos, depth+1, opaque)
+	case *ssa.FieldAddr:
+		markTestedOpaque(s, x.X, pos, depth+1, true)
+	case *ssa.Field:
+		markTestedOpaque(s, x.X, pos, depth+1, true)
+	}
+}
+
+func isEmptyString(v ssa.Value) bool {
+	c, ok := v.(*ssa.Const)
+	return ok && c.Value != nil && c.Value.Kind() == constant.String && constant.StringVal(c.Value) == ""
 }
 
 // assignPhis gives b's phis their values on the edge from b.Preds[pi].

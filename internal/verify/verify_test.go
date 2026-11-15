@@ -1,20 +1,82 @@
 package verify
 
 import (
+	"encoding/json"
 	"testing"
 
+	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/analysistest"
+	"golang.org/x/tools/go/analysis/passes/buildssa"
 )
 
+// loadTestdata runs AnalyzePackage on a testdata package.
+func loadTestdata(t *testing.T, pkg string) *Result {
+	var r *Result
+	a := &analysis.Analyzer{
+		Name:     "verifyresult",
+		Doc:      "result of verify",
+		Requires: []*analysis.Analyzer{buildssa.Analyzer},
+		Run: func(pass *analysis.Pass) (any, error) {
+			prog := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA)
+			r = AnalyzePackage(pass.Fset, pass.Files, prog.SrcFuncs, DefaultOptions)
+			return nil, nil
+		},
+	}
+	// The want comments are for the manifest test; ignore them here.
+	analysistest.Run(quiet{}, analysistest.TestData(), a, pkg)
+	if r == nil {
+		t.Fatal("no result")
+	}
+	return r
+}
+
+type quiet struct{}
+
+func (quiet) Errorf(string, ...any) {}
+
+// manifestOnly reports the manifest findings of Analyzer, the ones the
+// testdata marks with want comments.
+var manifestOnly = &analysis.Analyzer{
+	Name:     "verifymanifest",
+	Doc:      "manifest findings of verify",
+	Requires: []*analysis.Analyzer{buildssa.Analyzer},
+	Run: func(pass *analysis.Pass) (any, error) {
+		var out []analysis.Diagnostic
+		inner := *pass
+		inner.Report = func(d analysis.Diagnostic) {
+			kind, payload := DecodeCategory(d.Category)
+			if kind != CategoryFinding {
+				return
+			}
+			var in Info
+			if err := json.Unmarshal(payload, &in); err != nil {
+				pass.Reportf(d.Pos, "bad payload: %v", err)
+				return
+			}
+			if in.Class == "manifest" {
+				d.Category = ""
+				out = append(out, d)
+			}
+		}
+		if _, err := run(&inner); err != nil {
+			return nil, err
+		}
+		for _, d := range out {
+			pass.Report(d)
+		}
+		return nil, nil
+	},
+}
+
 func TestManifest(t *testing.T) {
-	analysistest.Run(t, analysistest.TestData(), Analyzer, "codec")
+	analysistest.Run(t, analysistest.TestData(), manifestOnly, "codec")
 }
 
 // TestStatuses checks engine A's status per function on the codec
 // package: what it proves and what stays latent.
 func TestStatuses(t *testing.T) {
-	res := analysistest.Run(t, analysistest.TestData(), Analyzer, "codec")
-	r := res[0].Result.(*Result)
+	pkgs := loadTestdata(t, "codec")
+	r := pkgs
 	want := map[string]Status{
 		"Sum": Proved, "SumRange": Proved, "Pairs": Proved, "Pairs2": Proved,
 		"Guarded": Proved, "Mod": Proved, "Div": Proved, "Ptr": Proved,

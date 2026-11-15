@@ -79,6 +79,10 @@ type state struct {
 	// guards holds the nodes a branch condition tested, for the guard
 	// mismatch rule.
 	guards map[node]token.Pos
+	// tested holds the values every branch on the way here depended on
+	// (through calls and element reads too), with the branch: a must
+	// set, intersected at joins.
+	tested map[ssa.Value]token.Pos
 }
 
 // ctx is shared by the states of one analysis: value numbers for a
@@ -138,14 +142,14 @@ func (c *ctx) implicitEdges(n node) []edge {
 }
 
 func newState(cx *ctx) *state {
-	return &state{cx: cx, d: map[pair]bound{}, nn: map[ssa.Value]token.Pos{}, isnil: map[ssa.Value]token.Pos{}, guards: map[node]token.Pos{}}
+	return &state{cx: cx, d: map[pair]bound{}, nn: map[ssa.Value]token.Pos{}, isnil: map[ssa.Value]token.Pos{}, guards: map[node]token.Pos{}, tested: map[ssa.Value]token.Pos{}}
 }
 
 func (s *state) clone() *state {
 	if s == nil {
 		return nil
 	}
-	return &state{cx: s.cx, d: maps.Clone(s.d), g: s.g, nn: maps.Clone(s.nn), isnil: maps.Clone(s.isnil), guards: maps.Clone(s.guards)}
+	return &state{cx: s.cx, d: maps.Clone(s.d), g: s.g, nn: maps.Clone(s.nn), isnil: maps.Clone(s.isnil), guards: maps.Clone(s.guards), tested: maps.Clone(s.tested)}
 }
 
 func (s *state) set(p pair, bd bound) {
@@ -157,7 +161,7 @@ func (s *state) equal(t *state) bool {
 	if s == nil || t == nil {
 		return s == t
 	}
-	return maps.Equal(s.d, t.d) && maps.Equal(s.nn, t.nn) && maps.Equal(s.isnil, t.isnil) && maps.Equal(s.guards, t.guards)
+	return maps.Equal(s.d, t.d) && maps.Equal(s.nn, t.nn) && maps.Equal(s.isnil, t.isnil) && maps.Equal(s.guards, t.guards) && maps.Equal(s.tested, t.tested)
 }
 
 // satAdd adds two finite upper bounds, clamping on overflow (a clamped
@@ -657,6 +661,7 @@ func (s *state) kill(v ssa.Value) {
 			delete(s.guards, n)
 		}
 	}
+	delete(s.tested, v)
 }
 
 func (s *state) nonNil(v ssa.Value) bool {
@@ -745,6 +750,11 @@ func join(s, t *state) *state {
 	}
 	maps.Copy(r.guards, s.guards)
 	maps.Copy(r.guards, t.guards)
+	for v, w := range s.tested {
+		if w2, ok := t.tested[v]; ok {
+			r.tested[v] = min(w, w2)
+		}
+	}
 	return r
 }
 
@@ -774,6 +784,11 @@ func widen(old, cur *state) *state {
 	}
 	maps.Copy(r.guards, old.guards)
 	maps.Copy(r.guards, cur.guards)
+	for v, w := range old.tested {
+		if _, ok := cur.tested[v]; ok {
+			r.tested[v] = w
+		}
+	}
 	return r
 }
 
@@ -843,6 +858,11 @@ func (s *state) project(live func(ssa.Value) bool) {
 	for n := range s.guards {
 		if n.v != nil && !live(n.v) {
 			delete(s.guards, n)
+		}
+	}
+	for v := range s.tested {
+		if !live(v) {
+			delete(s.tested, v)
 		}
 	}
 	if len(order) == 0 {
