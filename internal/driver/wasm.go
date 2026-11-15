@@ -62,6 +62,20 @@ func (b *build) linkWasm(objs []string, rt, out string) error {
 	if err := b.run(ld, args...); err != nil {
 		return err
 	}
+	// The pc table comes from the final module (wasm-opt leaves the DWARF
+	// stale): functions from its code and name sections, lines through
+	// source maps. marmot-pcln writes a map of the linked module from its
+	// DWARF, wasm-opt carries it through its passes, and marmot-pcln reads
+	// the lines of the final code from the map wasm-opt writes.
+	pcln := hostCallers && !b.cfg.Strip && fileExists(b.pclnTool())
+	var inMap, outMap string
+	if pcln {
+		inMap, outMap = filepath.Join(b.work, "link.map"), filepath.Join(b.work, "final.map")
+		if err := b.run(b.pclnTool(), "-emit-source-map", inMap, raw); err != nil {
+			b.logf("pcln: %v (table without lines)", err)
+			inMap, outMap = "", ""
+		}
+	}
 	oargs := append([]string{raw, "-o", out}, asyncifyFlags...)
 	switch {
 	case b.cfg.Release:
@@ -70,15 +84,16 @@ func (b *build) linkWasm(objs []string, rt, out string) error {
 		oargs = append(oargs, "-O2")
 	}
 	oargs = append(oargs, "-g") // names stay until clean, which -s strips
+	if inMap != "" {
+		oargs = append(oargs, "--input-source-map", inMap, "--output-source-map", outMap)
+	}
 	if err := b.run(opt, oargs...); err != nil {
 		return err
 	}
-	// The pc table from the final code (wasm-opt -g keeps the DWARF up
-	// to date), before -s strips the DWARF.
 	var tbl []byte
-	if hostCallers && !b.cfg.Strip && fileExists(b.pclnTool()) {
+	if pcln {
 		p := filepath.Join(b.work, "pcln.bin")
-		if err := b.run(b.pclnTool(), append(b.pclnArgs(p), out)...); err != nil {
+		if err := b.run(b.pclnTool(), wasmPclnArgs(b.pclnArgs(p), outMap, out)...); err != nil {
 			b.logf("pcln: %v (no table)", err)
 		} else if tbl, err = os.ReadFile(p); err != nil {
 			return err
@@ -98,6 +113,16 @@ func (b *build) linkWasm(objs []string, rt, out string) error {
 		return fmt.Errorf("%s: %v", out, err)
 	}
 	return os.WriteFile(out, data, 0o755)
+}
+
+// wasmPclnArgs is the marmot-pcln command line for the table of the final
+// module, with the lines of its source map when there is one.
+func wasmPclnArgs(tableArgs []string, srcMap, module string) []string {
+	a := []string{"-wasm-final"}
+	if srcMap != "" {
+		a = append(a, "-source-map", srcMap)
+	}
+	return append(append(a, tableArgs...), module)
 }
 
 // cleanWasm rewrites the linked module: only _start and the memory stay
