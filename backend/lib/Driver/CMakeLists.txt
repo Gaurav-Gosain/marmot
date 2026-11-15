@@ -4,6 +4,7 @@ add_library(MarmotPcln STATIC Pcln.cpp)
 # the target registry).
 
 add_library(MarmotDriver STATIC
+  CardStub.cpp
   ParkClear.cpp
   Pipeline.cpp
   RuntimeBitcode.cpp

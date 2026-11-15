@@ -51,6 +51,8 @@
 
 // ParkClear.cpp (MARMOT_PARKCLEAR=1); referenced so its registration links.
 bool marmotParkClearLinked();
+// CardStub.cpp: marmot.card calls become stub calls in inline asm.
+bool marmotLowerCardStubs(llvm::Module &m);
 
 namespace marmot {
 
@@ -1162,6 +1164,8 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
   case Emit::Obj:
   case Emit::Asm: {
     constantStoresToCopies(lmod);
+    if (!marmotLowerCardStubs(lmod))
+      return fail("card stubs: unsupported target");
     llvm::SmallVector<char, 0> buf;
     {
       llvm::raw_svector_ostream bos(buf);
