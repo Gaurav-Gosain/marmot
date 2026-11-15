@@ -2,7 +2,8 @@
 // with the LLVM IR size before and after the optimizer (functions, blocks,
 // instructions, debug records, instructions with a location, distinct
 // DILocations, the largest functions), the optimizer's exclusive time per
-// pass and analysis, and the optimizer and code generation times. For build
+// pass and analysis, how often each pass ran and how often it changed
+// nothing (it preserved all analyses), and the optimizer and code generation times. For build
 // time profiles (docs/status/llvm-profile.md); it changes no output.
 #pragma once
 
@@ -35,6 +36,7 @@ IRCounts countIR(const llvm::Module &m, unsigned topN);
 struct PassClock {
   llvm::StringMap<double> ms;
   llvm::StringMap<uint64_t> runs;
+  llvm::StringMap<uint64_t> idle; // runs that preserved all analyses
   std::vector<std::string> stack;
   std::chrono::steady_clock::time_point last;
   void registerOn(llvm::PassInstrumentationCallbacks &pic);

@@ -78,7 +78,11 @@ void PassClock::registerOn(llvm::PassInstrumentationCallbacks &pic) {
   last = std::chrono::steady_clock::now();
   pic.registerBeforeNonSkippedPassCallback([this](llvm::StringRef p, llvm::Any) { push(p); });
   pic.registerAfterPassCallback(
-      [this](llvm::StringRef, llvm::Any, const llvm::PreservedAnalyses &) { pop(); });
+      [this](llvm::StringRef p, llvm::Any, const llvm::PreservedAnalyses &pa) {
+        if (pa.areAllPreserved())
+          ++idle[p];
+        pop();
+      });
   pic.registerAfterPassInvalidatedCallback(
       [this](llvm::StringRef, const llvm::PreservedAnalyses &) { pop(); });
   pic.registerBeforeAnalysisCallback(
@@ -106,7 +110,7 @@ void writeIRStats(const std::string &unit, const IRCounts &pre, const IRCounts &
     return;
   llvm::json::Object passes;
   for (const auto &e : clock.ms)
-    passes[e.getKey()] = llvm::json::Array{e.getValue(), clock.runs.lookup(e.getKey())};
+    passes[e.getKey()] = llvm::json::Array{e.getValue(), clock.runs.lookup(e.getKey()), clock.idle.lookup(e.getKey())};
   llvm::json::Object o{{"unit", unit},     {"pre", counts(pre)},       {"post", counts(post)},
                        {"opt_ms", optMs},  {"codegen_ms", codegenMs}, {"passes", std::move(passes)}};
   std::string line;
