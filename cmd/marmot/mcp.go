@@ -130,7 +130,7 @@ func mcpTools() []mcpTool {
 		{Name: "verify", Description: "Find run-time panics (index and slice bounds, nil dereferences, division by zero, ...) and prove their absence. Returns one JSON diagnostic (code M0120) per finding with a verify object (obligation, panic kind, class manifest or latent, condition, status, the input that panics when confirmed, assumptions) and a result line with a summary (functions, obligations, proved, manifest, latent, unknown, counterexamples). Manifest findings are panics a guard in the code fails to exclude; latent ones are preconditions of a function (shown for files with uncommitted changes, or all with latent). With confirm, the package's functions run with generated inputs in a sandbox to confirm findings. Cached per package.",
 			InputSchema: schema(map[string]any{"dir": dirProp, "packages": listProp("package patterns (default: every module of the workspace)"),
 				"latent":  boolProp("report every latent panic (a precondition on the inputs), not only those of changed files"),
-				"confirm": strProp("run inputs to confirm findings: off (default), sandbox, or effects (also functions that reach files, processes or the network, still sandboxed)"),
+				"confirm": map[string]any{"type": "string", "enum": []string{"off", "sandbox", "effects"}, "description": "run inputs to confirm findings: off (default), sandbox, or effects (also functions that reach files, processes or the network, still sandboxed)"},
 				"search":  boolProp("search every function for inputs that make it panic (needs confirm)"),
 				"tests":   boolProp("write a regression test per confirmed panic to zz_marmot_verify_test.go (needs confirm)")}),
 			args: func(m map[string]any) ([]string, error) {
