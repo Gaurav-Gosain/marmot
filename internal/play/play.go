@@ -221,7 +221,11 @@ type Response struct {
 	Stages      map[string]Stage `json:"stages"`
 	Size        *SizeReport      `json:"size,omitempty"`
 	Wasm        string           `json:"wasm,omitempty"` // base64
-	Millis      int64            `json:"millis"`
+	// RunMLIR is the program's own package as the backend compiles it for Run in the page
+	// (front-end mode with target wasm): the module of a wasip1/wasm dev build, which the
+	// page compiles and links with the prebuilt standard library (deploy/play/stdobj).
+	RunMLIR string `json:"runMlir,omitempty"`
+	Millis  int64  `json:"millis"`
 }
 
 // Diagnostic is one compiler message.
@@ -427,7 +431,11 @@ func (s *Server) Compile(ctx context.Context, q *Request) (*Response, error) {
 	// The executable first: its diagnostics are the program's, and the
 	// stages need a program that builds.
 	exeFlags := []string{"-o", "prog"}
-	if s.opt.FrontEnd {
+	if s.opt.FrontEnd && q.Target == "wasm" {
+		// Run in the page: the program's own module, for the page's backend and linker
+		// (the front end runs on wasip1, so that is the target).
+		exeFlags = []string{"-emit", "mlir", "-o", "prog.mlir"}
+	} else if s.opt.FrontEnd {
 		// No backend: the front end's MLIR is the build that reports the diagnostics.
 		exeFlags = []string{"-dialect", "go", "-emit", "mlir", "-o", "out.mlir"}
 	} else if q.Target == "wasm" {
@@ -443,7 +451,13 @@ func (s *Server) Compile(ctx context.Context, q *Request) (*Response, error) {
 		res.Millis = time.Since(t0).Milliseconds()
 		return res, nil
 	}
-	if q.Target == "wasm" {
+	if s.opt.FrontEnd && q.Target == "wasm" {
+		data, err := os.ReadFile(filepath.Join(dir, "prog.mlir"))
+		if err != nil {
+			return nil, err
+		}
+		res.RunMLIR = string(data)
+	} else if q.Target == "wasm" {
 		if data, err := os.ReadFile(filepath.Join(dir, "prog.wasm")); err == nil && len(data) <= s.opt.Limits.MaxWasm {
 			res.Wasm = base64.StdEncoding.EncodeToString(data)
 		}

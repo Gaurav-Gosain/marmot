@@ -32,8 +32,9 @@ func run(args []string) int {
 	fs := flag.NewFlagSet("marmot-play", flag.ContinueOnError)
 	mode := fs.String("mode", "dev", "dev, O2 or release")
 	stages := fs.String("stages", "ssa,mlir", "the stages, comma separated (ssa, mlir)")
+	runMod := fs.Bool("run", false, "for Run in the page: the program's own module for wasip1/wasm (runMlir in the reply) instead of the stages")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: marmot-play [-mode M] [-stages LIST] FILE.go")
+		fmt.Fprintln(os.Stderr, "usage: marmot-play [-mode M] [-stages LIST | -run] FILE.go")
 		return 2
 	}
 	src, err := os.ReadFile(fs.Arg(0))
@@ -47,8 +48,11 @@ func run(args []string) int {
 		return 2
 	}
 	q := &play.Request{Mode: *mode, Source: string(src)}
-	if *stages != "" {
+	if *stages != "" && !*runMod {
 		q.Stages = strings.Split(*stages, ",")
+	}
+	if *runMod {
+		q.Target = "wasm"
 	}
 	srv := play.New(play.Options{Root: root, Run: build, FrontEnd: true})
 	res, err := srv.Compile(context.Background(), q)
