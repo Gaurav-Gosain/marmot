@@ -120,6 +120,7 @@ func main() {
 	fmt.Printf("perfcmp %s/%s, %d runs; A=%s %s; B=%s %s\n", runtime.GOOS, runtime.GOARCH, *flRuns,
 		sides[0].root, strings.Join(sides[0].env, " "), sides[1].root, strings.Join(sides[1].env, " "))
 	fmt.Printf("load at start: %s\n", loadavg())
+	fmt.Println("rss: each binary runs as a fresh copy (new file, out of the page cache); rss from perfcmp before this is suspect")
 	same := sides[0].root == sides[1].root && slices.Equal(sides[0].env, sides[1].env)
 	var o outcome
 	o.same = same
@@ -411,7 +412,11 @@ func build(s side, p program, mode, work string) (string, time.Duration, error) 
 	if err != nil {
 		return "", 0, fmt.Errorf("%v: %s", err, lastLines(out, 4))
 	}
-	return bin, time.Since(t0), nil
+	d := time.Since(t0)
+	if err := freshCopy(bin); err != nil {
+		return "", 0, fmt.Errorf("fresh copy of %s: %v", bin, err)
+	}
+	return bin, d, nil
 }
 
 func runOnce(s side, p program, bin string) (sample, error) {
