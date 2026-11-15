@@ -26,6 +26,37 @@ func Header(b []byte) (kind byte, n uint16) {
 }
 `
 
+// TestVerifySearchHintsCached runs the verify check twice on an unchanged
+// tree with the package cache: both runs must have the search hints that
+// confirmation needs (they ride in the cached findings).
+func TestVerifySearchHintsCached(t *testing.T) {
+	if testing.Short() {
+		t.Skip("loads packages with go list")
+	}
+	dir := t.TempDir()
+	for name, text := range map[string]string{"go.mod": "module example.com/codec\n\ngo 1.22\n", "codec.go": verifyModule} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cache := t.TempDir()
+	for run := 1; run <= 2; run++ {
+		res, err := Run(Options{Dir: dir, Only: []string{"verify"}, Offline: true, CacheDir: cache, NoMemo: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, c := range res.Checks {
+			if c.Name == "verify" {
+				n = len(c.search)
+			}
+		}
+		if n == 0 {
+			t.Errorf("run %d: no search hints", run)
+		}
+	}
+}
+
 // TestVerifyJSON runs the verify check on the design's example and checks
 // the schema 1 contract of marmot verify -json: diagnostic lines, then one
 // result line with the verify summary.
