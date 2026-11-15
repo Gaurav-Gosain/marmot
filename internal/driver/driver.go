@@ -332,7 +332,7 @@ func (b *build) run1() (string, error) {
 			filePkgs[f] = p.PkgPath
 		}
 	}
-	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, FilePkgs: filePkgs, GoDialect: cfg.Dialect == "go", Release: cfg.Release, NoptrSections: b.noptr(), GCVars: b.noptr() && os.Getenv("MARMOT_GCVARS") == "1", InitSections: os.Getenv("MARMOT_INITSECT") == "1", MergedGOROOT: lp.GOROOT, XDefs: b.xdefs(),
+	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, FilePkgs: filePkgs, GoDialect: cfg.Dialect == "go", Release: cfg.Release, NoptrSections: b.noptr(), GCVars: b.noptr() && os.Getenv("MARMOT_GCVARS") == "1", InitSections: os.Getenv("MARMOT_INITSECT") == "1", HomeInstances: b.homeInstances(), MergedGOROOT: lp.GOROOT, XDefs: b.xdefs(),
 		Separate: b.incr, Facts: incrementalFacts(lp), KeepExported: keepExported, ReflectCall: reflectCall,
 		AllocReport: b.allocReport()})
 	if err != nil {
@@ -370,7 +370,9 @@ func (b *build) run1() (string, error) {
 		}()
 	}
 	cacheable := func(i int) bool {
-		return i < len(pkgs) && pkgKeys[i] != "" && !cfg.NoCache && cfg.Emit != "mlir"
+		// Home instances: a module's text does not say which shared
+		// functions it left to the instances module, so it is not reused.
+		return i < len(pkgs) && pkgKeys[i] != "" && !cfg.NoCache && cfg.Emit != "mlir" && !b.homeInstances()
 	}
 	// Generation starts the largest packages first, so that none of them
 	// is left running alone at the end.
@@ -472,6 +474,9 @@ func (b *build) run1() (string, error) {
 		return "", err
 	}
 	if err := gen(func(i int) bool { return mods[i].Path == "" }); err != nil {
+		return "", err
+	}
+	if err := b.addInstances(cg, n); err != nil {
 		return "", err
 	}
 	// In parallel: the type aliasing and the write take about 1 s on a large

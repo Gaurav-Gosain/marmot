@@ -47,6 +47,9 @@ type Options struct {
 	// InitSections puts package initialization code in its own text
 	// section (initsect.go).
 	InitSections bool
+	// HomeInstances emits large shared functions once (home.go); whole
+	// program builds only.
+	HomeInstances bool
 	// MergedGOROOT is where the loader's GOROOT symlinks live; source
 	// locations resolve them.
 	MergedGOROOT string
@@ -106,6 +109,7 @@ type Program struct {
 	infos      map[*types.Package]*types.Info
 
 	owner map[*ssa.Function]*ssa.Package // functions emitted as strong definitions
+	home  homeSet                        // shared functions emitted once (home.go)
 	byPkg map[*ssa.Package][]*ssa.Function
 	// Packages loaded from export data, and their functions declared
 	// without a body (bodyless).

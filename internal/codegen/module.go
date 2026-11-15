@@ -25,7 +25,10 @@ type moduleGen struct {
 	// part uses: the part declares it, and the package's helper part
 	// defines it once (helperpart.go).
 	helpers *helperSet
-	tm      *typeMapper
+	// instances: the module of GenerateInstances (home.go), which defines
+	// the shared functions the others declare.
+	instances bool
+	tm        *typeMapper
 
 	defs         textBuf           // definitions: globals and functions
 	spare        [][]byte          // storage of written function buffers, for reuse
@@ -299,6 +302,10 @@ func (m *moduleGen) funcRef(fn *ssa.Function) string {
 		return sym
 	}
 	if owner := m.p.owner[fn]; owner == nil && len(fn.Blocks) > 0 {
+		if m.homed(fn) {
+			m.declare(sym, fn)
+			return sym
+		}
 		if m.helpers != nil {
 			m.helpers.addFunc(sym, fn)
 			m.declare(sym, fn)
