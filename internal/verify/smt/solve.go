@@ -3,8 +3,13 @@ package smt
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -67,6 +72,18 @@ var reValue = regexp.MustCompile(`\(\s*([A-Za-z_][A-Za-z0-9_]*)\s+(#x[0-9a-fA-F]
 // bit-vector variables and, under "arr[i]" names, the bytes the terms
 // select.
 func (s *Solver) Check(ctx context.Context, asserts []*T) Result {
+	key := s.cacheKey(Script(asserts, s.RLimit))
+	if r, ok := s.cacheGet(key); ok {
+		return r
+	}
+	r := s.check(ctx, asserts)
+	if r.Answer != Unknown {
+		s.cachePut(key, r)
+	}
+	return r
+}
+
+func (s *Solver) check(ctx context.Context, asserts []*T) Result {
 	script := Script(asserts, s.RLimit)
 	sels := selects(asserts)
 	if len(sels) > 0 {
@@ -166,6 +183,84 @@ func selects(ts []*T) []*T {
 // declarations and base once, then a push, the query, check-sat, the
 // values, and a pop per query.
 func (s *Solver) CheckMany(ctx context.Context, base []*T, queries []*T) []Result {
+	// Answers come from the cache when every query is there.
+	keys := make([]string, len(queries))
+	cached := make([]Result, len(queries))
+	all := true
+	for i, q := range queries {
+		keys[i] = s.cacheKey(Script(append(append([]*T(nil), base...), q), s.RLimit))
+		if r, ok := s.cacheGet(keys[i]); ok {
+			cached[i] = r
+		} else {
+			all = false
+		}
+	}
+	if all {
+		return cached
+	}
+	res := s.checkMany(ctx, base, queries)
+	for i, r := range res {
+		if r.Answer != Unknown {
+			s.cachePut(keys[i], r)
+		}
+	}
+	return res
+}
+
+// The answer cache: deterministic answers (rlimit, not the wall clock)
+// of a solver version for a script, one small file each.
+func (s *Solver) cacheKey(script string) string {
+	h := sha256.Sum256([]byte(s.Version + "\x00" + strconv.Itoa(s.RLimit) + "\x00" + script))
+	return hex.EncodeToString(h[:16])
+}
+
+func cacheDir() string {
+	if d := os.Getenv("MARMOT_VERIFY_SMT_CACHE"); d != "" {
+		return d
+	}
+	d, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(d, "marmot", "verify-smt")
+}
+
+func (s *Solver) cacheGet(key string) (Result, bool) {
+	dir := cacheDir()
+	if dir == "" {
+		return Result{}, false
+	}
+	b, err := os.ReadFile(filepath.Join(dir, key[:2], key))
+	if err != nil {
+		return Result{}, false
+	}
+	var r Result
+	if json.Unmarshal(b, &r) != nil {
+		return Result{}, false
+	}
+	return r, true
+}
+
+func (s *Solver) cachePut(key string, r Result) {
+	dir := cacheDir()
+	if dir == "" {
+		return
+	}
+	b, err := json.Marshal(r)
+	if err != nil {
+		return
+	}
+	p := filepath.Join(dir, key[:2], key)
+	if os.MkdirAll(filepath.Dir(p), 0o755) != nil {
+		return
+	}
+	tmp := p + ".tmp" + strconv.Itoa(os.Getpid())
+	if os.WriteFile(tmp, b, 0o644) == nil {
+		_ = os.Rename(tmp, p)
+	}
+}
+
+func (s *Solver) checkMany(ctx context.Context, base []*T, queries []*T) []Result {
 	all := append(append([]*T(nil), base...), queries...)
 	full := Script(all, s.RLimit)
 	// The declarations of every variable, then base, then the queries.
