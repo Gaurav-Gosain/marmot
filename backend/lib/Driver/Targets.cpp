@@ -13,16 +13,20 @@
 #endif
 
 extern "C" {
+#if MARMOT_HAVE_AARCH64
 void LLVMInitializeAArch64TargetInfo();
 void LLVMInitializeAArch64Target();
 void LLVMInitializeAArch64TargetMC();
 void LLVMInitializeAArch64AsmPrinter();
 void LLVMInitializeAArch64AsmParser();
+#endif
+#if MARMOT_HAVE_X86
 void LLVMInitializeX86TargetInfo();
 void LLVMInitializeX86Target();
 void LLVMInitializeX86TargetMC();
 void LLVMInitializeX86AsmPrinter();
 void LLVMInitializeX86AsmParser();
+#endif
 #if MARMOT_HAVE_WASM
 void LLVMInitializeWebAssemblyTargetInfo();
 void LLVMInitializeWebAssemblyTarget();
@@ -38,6 +42,7 @@ bool initTargetFor(const llvm::Triple &triple, std::string &err) {
   static std::once_flag aarch64Once, x86Once, wasmOnce;
   switch (triple.getArch()) {
   case llvm::Triple::aarch64:
+#if MARMOT_HAVE_AARCH64
     std::call_once(aarch64Once, [] {
       LLVMInitializeAArch64TargetInfo();
       LLVMInitializeAArch64Target();
@@ -46,7 +51,13 @@ bool initTargetFor(const llvm::Triple &triple, std::string &err) {
       LLVMInitializeAArch64AsmParser();
     });
     return true;
+#else
+    (void)aarch64Once;
+    err = "this marmot-backend was built with an LLVM without the AArch64 target: arm64 targets need one (LLVM_TARGETS_TO_BUILD with AArch64)";
+    return false;
+#endif
   case llvm::Triple::x86_64:
+#if MARMOT_HAVE_X86
     std::call_once(x86Once, [] {
       LLVMInitializeX86TargetInfo();
       LLVMInitializeX86Target();
@@ -55,6 +66,11 @@ bool initTargetFor(const llvm::Triple &triple, std::string &err) {
       LLVMInitializeX86AsmParser();
     });
     return true;
+#else
+    (void)x86Once;
+    err = "this marmot-backend was built with an LLVM without the X86 target: amd64 targets need one (LLVM_TARGETS_TO_BUILD with X86)";
+    return false;
+#endif
   case llvm::Triple::wasm32:
 #if MARMOT_HAVE_WASM
     std::call_once(wasmOnce, [] {

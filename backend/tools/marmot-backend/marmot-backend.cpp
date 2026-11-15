@@ -10,6 +10,9 @@
 #include "marmot/Driver/WholeProgram.h"
 
 #include "llvm/ADT/StringExtras.h"
+#if MARMOT_PLAY_TOOLS
+#include "llvm/CodeGen/CommandFlags.h"
+#endif
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/InitLLVM.h"
@@ -55,10 +58,19 @@ static cl::opt<std::string> rtBitcode("rt-bitcode",
                                       cl::value_desc("path"), cl::cat(cat));
 static cl::opt<std::string> targetTriple("target", cl::desc("Target triple (default: host)"),
                                          cl::cat(cat));
+#if MARMOT_PLAY_TOOLS
+// lld in the same module registers LLVM's codegen flags (-mcpu, -mattr, ...);
+// a second -mcpu or -mattr aborts at start, so read those flags instead.
+static std::string targetCPUValue() { return llvm::codegen::getMCPU(); }
+static std::string targetAttrsValue() { return llvm::join(llvm::codegen::getMAttrs(), ","); }
+#else
 static cl::opt<std::string> targetCPU("mcpu", cl::desc("Target CPU (default: x86-64 (v1) on x86-64, the host CPU otherwise; native: the host CPU and its features)"),
                                       cl::cat(cat));
 static cl::opt<std::string> targetAttrs("mattr", cl::desc("Target features"),
                                         cl::cat(cat));
+static std::string targetCPUValue() { return targetCPU; }
+static std::string targetAttrsValue() { return targetAttrs; }
+#endif
 static cl::opt<std::string> batchFile("batch",
                                       cl::desc("File with one \"in out\" pair per line"),
                                       cl::value_desc("path"), cl::cat(cat));
@@ -279,7 +291,12 @@ static std::string optionKey(int argc, char **argv) {
   return key;
 }
 
+#if MARMOT_PLAY_TOOLS
+// play-tools.cpp has main and runs wasm-ld or this.
+int marmot_backend_main(int argc, char **argv) {
+#else
 int main(int argc, char **argv) {
+#endif
   InitLLVM init(argc, argv);
   // Before option parsing (the watchdog guards it too): the tier 1 runner
   // is known from its argument.
@@ -287,6 +304,11 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; ++i)
     background |= StringRef(argv[i]).ltrim('-') == "tier1-run";
   marmot::startWatchdog(background);
+#if MARMOT_PLAY_TOOLS
+  // lld registers these per link (CommonLinkerContext); the backend path
+  // never links, so it registers them once here for -mcpu and -mattr.
+  static llvm::codegen::RegisterCodeGenFlags codeGenFlags;
+#endif
   cl::HideUnrelatedOptions(cat);
   // Extra options from MARMOT_BACKEND_FLAGS, for example
   // MARMOT_BACKEND_FLAGS="-no-escape -no-bce" through the marmot driver.
@@ -305,8 +327,8 @@ int main(int argc, char **argv) {
   }
   opts.emit = emitKind;
   opts.triple = targetTriple;
-  opts.cpu = targetCPU;
-  opts.features = targetAttrs;
+  opts.cpu = targetCPUValue();
+  opts.features = targetAttrsValue();
   opts.verifyEach = verifyEach;
   opts.initOptNone = initOptNone;
   opts.wpoImport = !noImport;
