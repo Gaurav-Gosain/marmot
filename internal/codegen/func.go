@@ -631,7 +631,7 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 			f.nilCheck(addr)
 		}
 		f.forceUnsafe = f.m.p.localPun[v.Addr]
-		f.cardSkip = f.m.cards() && staticValue(v.Val)
+		f.cardSkip = f.m.cards() && (staticValue(v.Val) || rootedType(v.Val.Type()))
 		if f.m.cards() {
 			if r := f.smallRoot(v.Addr); r != nil {
 				f.cardRoot = f.value(r)

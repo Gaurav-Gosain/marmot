@@ -361,6 +361,25 @@ func staticValue(v ssa.Value) bool {
 	return false
 }
 
+// rootedType reports whether a value of type t is a *runtime.g or a
+// *runtime.sudog. The collector marks every g and every sudog it can reach
+// from a heap object at the second stop of a cycle (rtcore: a g stays in its
+// rt_g slot, which is a root; sudogs are walked from g.sudogcache and
+// g.waiting), so storing one needs no card. An unsafe.Pointer holding one
+// (g.param) keeps its card. A new place that keeps a sudog only in a heap
+// structure must be added to that walk first.
+func rootedType(t types.Type) bool {
+	p, ok := t.(*types.Pointer)
+	if !ok {
+		return false
+	}
+	n, ok := p.Elem().(*types.Named)
+	if !ok || n.Obj().Pkg() == nil || n.Obj().Pkg().Path() != "runtime" {
+		return false
+	}
+	return n.Obj().Name() == "g" || n.Obj().Name() == "sudog"
+}
+
 // smallRoot returns the object addr points into, by field and array
 // element addresses, when its type is at most smallObject; else nil.
 func (f *funcGen) smallRoot(addr ssa.Value) ssa.Value {
