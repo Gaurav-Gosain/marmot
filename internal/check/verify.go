@@ -136,7 +136,7 @@ func verifySearch(c *CheckResult, search, show, effects bool, progress func(stri
 			if hit.Runs == 3 && hit.MarmotRuns >= 0 && hit.MarmotRuns < 3 {
 				// gc is the reference: a different outcome under marmot is a
 				// marmot bug, reported as such and not to the user's code.
-				notes = append(notes, fmt.Sprintf("marmot differs from gc on %s: gc panics (%s), the marmot build %s; a marmot bug unless the program depends on behavior the language leaves open (map order, capacities)", call, hit.PanicMessage, hit.MarmotOther))
+				notes = append(notes, fmt.Sprintf("marmot and gc differ on %s: gc panics (%s), marmot %s; likely a marmot bug", call, strings.TrimPrefix(hit.PanicMessage, "runtime error: "), hit.MarmotOther))
 			}
 			note := fmt.Sprintf("confirmed under gc: %s panics: %s", call, hit.PanicMessage)
 			if hit.Runs < 3 {
