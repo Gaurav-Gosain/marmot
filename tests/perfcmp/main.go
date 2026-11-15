@@ -21,10 +21,12 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -71,6 +73,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "perfcmp: -a and -b are required")
 		os.Exit(2)
 	}
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	go func() {
+		sig := <-sigs
+		fmt.Fprintf(os.Stderr, "perfcmp: %v: cleaning up\n", sig)
+		exit(128 + int(sig.(syscall.Signal)))
+	}()
 	repo, err := os.Getwd()
 	check(err)
 	sides := []side{{"A", abs(*flA), fields(*flAEnv)}, {"B", abs(*flB), fields(*flBEnv)}}
@@ -85,15 +94,15 @@ func main() {
 	work, err := os.MkdirTemp(parent, "run-")
 	check(err)
 	if !*flKeep {
-		defer os.RemoveAll(work)
+		atExit(func() { os.RemoveAll(work) })
 	}
 	sketchInput(abs(*flTuios), work)
 	if *flWait > 0 {
 		if !takeLock(*flWait) {
 			fmt.Fprintf(os.Stderr, "perfcmp: no quiet window with %s free in %v: not timing\n", timingLock, *flWait)
-			os.Exit(3)
+			exit(3)
 		}
-		defer os.RemoveAll(timingLock) // only a lock this run created
+		atExit(dropLock)
 	}
 	fmt.Printf("perfcmp %s/%s, %d runs; A=%s %s; B=%s %s\n", runtime.GOOS, runtime.GOARCH, *flRuns,
 		sides[0].root, strings.Join(sides[0].env, " "), sides[1].root, strings.Join(sides[1].env, " "))
@@ -176,10 +185,43 @@ func main() {
 	}
 	if worse {
 		fmt.Println("verdict: WORSE (a geomean of B is more than 2% slower or 3% bigger in memory than A; lines marked WORSE show where)")
-		os.Exit(1)
+		exit(1)
 	}
 	fmt.Println("verdict: ok (no line worse than the noise rule)")
+	exit(0)
 }
+
+// cleanups run on every exit: the end of main, exit, check and a signal.
+// os.Exit skips deferred calls, so nothing here relies on defer.
+var (
+	cleanMu  sync.Mutex
+	cleanups []func()
+)
+
+func atExit(f func()) {
+	cleanMu.Lock()
+	cleanups = append(cleanups, f)
+	cleanMu.Unlock()
+}
+
+func exit(code int) {
+	cleanMu.Lock()
+	for i := len(cleanups) - 1; i >= 0; i-- {
+		cleanups[i]()
+	}
+	cleanups = nil
+	os.Exit(code)
+}
+
+// dropLock removes the timing lock if this process holds it.
+func dropLock() {
+	b, err := os.ReadFile(filepath.Join(timingLock, "owner"))
+	if err == nil && string(b) == lockOwner() {
+		os.RemoveAll(timingLock)
+	}
+}
+
+func lockOwner() string { return fmt.Sprintf("perfcmp pid %d\n", os.Getpid()) }
 
 func programs(repo string) []program {
 	tu := abs(*flTuios)
@@ -349,7 +391,7 @@ func lastLines(b []byte, n int) string {
 func check(err error) {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "perfcmp:", err)
-		os.Exit(1)
+		exit(1)
 	}
 }
 
@@ -382,7 +424,7 @@ func takeLock(wait time.Duration) bool {
 	said := false
 	for time.Now().Before(end) {
 		if load1() < float64(runtime.NumCPU())/2 && os.Mkdir(timingLock, 0o755) == nil {
-			_ = os.WriteFile(filepath.Join(timingLock, "owner"), []byte(fmt.Sprintf("perfcmp pid %d\n", os.Getpid())), 0o644)
+			_ = os.WriteFile(filepath.Join(timingLock, "owner"), []byte(lockOwner()), 0o644)
 			return true
 		}
 		if !said {
