@@ -3,15 +3,16 @@
 //	/goroot   marmot's merged GOROOT (Go's src plus lib/src), only the standard packages
 //	          the playground offers and their dependencies, for wasip1/wasm
 //	/root     a marmot root for MARMOT_ROOT: build/cache/types holds the export data of
-//	          those packages, made by the browser's own marmot.wasm (run here under node),
+//	          those packages, made by the browser's own marmot-play.wasm (run here under node),
 //	          so the browser type-checks only the program and never the standard library
 //
 // Every GOROOT file gets one fixed modification time: the export data cache is keyed by
 // file sizes and times, and the browser's in-memory file system gives back the tar's.
 //
-//	go run ./deploy/play/bundle -wasm marmot.wasm -o play-fs.tar
+//	GOOS=wasip1 GOARCH=wasm go build -ldflags=-s -o marmot-play.wasm ./cmd/marmot-play
+//	go run ./deploy/play/bundle -wasm marmot-play.wasm -o play-fs.tar
 //
-// Needs node (to run marmot.wasm) and the go command (to list the packages).
+// Needs node (to run marmot-play.wasm) and the go command (to list the packages).
 package main
 
 import (
@@ -43,7 +44,7 @@ var Packages = strings.Fields(`
 var fixedTime = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 func main() {
-	wasm := flag.String("wasm", "", "marmot.wasm (GOOS=wasip1 GOARCH=wasm go build ./cmd/marmot)")
+	wasm := flag.String("wasm", "", "marmot-play.wasm (GOOS=wasip1 GOARCH=wasm go build ./cmd/marmot-play)")
 	out := flag.String("o", "play-fs.tar", "output tar")
 	root := flag.String("root", ".", "marmot repository (lib/src)")
 	keep := flag.Bool("keep", false, "keep the staging directory")
@@ -116,14 +117,14 @@ func main() {
 	b.WriteString(")\n\nfunc main() {}\n")
 	check(os.WriteFile(filepath.Join(dst, "play", "main.go"), []byte(b.String()), 0o644))
 	run := exec.Command("node", "--no-warnings", filepath.Join(abs, "tests", "wasm", "run.mjs"), "--dir", dst+":/",
-		*wasm, "play", "-json", "-mode", "dev", "-stages", "ssa,mlir", "/play/main.go")
+		*wasm, "-mode", "dev", "-stages", "ssa,mlir", "/play/main.go")
 	run.Env = []string{"HOME=/tmp", "PWD=/play", "TMPDIR=/tmp", "MARMOT_ROOT=/root", "MARMOT_MERGED_GOROOT=/goroot", "PATH=" + os.Getenv("PATH")}
 	t0 := time.Now()
 	res, err := run.CombinedOutput()
-	if err != nil || !strings.Contains(string(res), `"ok": true`) {
-		fail(fmt.Errorf("warming the cache with marmot.wasm: %v\n%s", err, lastLines(string(res), 30)))
+	if err != nil || !strings.Contains(string(res), `"ok":true`) {
+		fail(fmt.Errorf("warming the cache with marmot-play.wasm: %v\n%s", err, lastLines(string(res), 30)))
 	}
-	fmt.Printf("export data made by marmot.wasm in %.1f s\n", time.Since(t0).Seconds())
+	fmt.Printf("export data made by marmot-play.wasm in %.1f s\n", time.Since(t0).Seconds())
 	check(os.RemoveAll(filepath.Join(dst, "tmp")))
 	check(os.RemoveAll(filepath.Join(dst, "play")))
 
