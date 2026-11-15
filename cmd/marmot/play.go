@@ -167,11 +167,16 @@ func playJSON(args []string, mode, stages string) int {
 		return 2
 	}
 	exe, err := os.Executable()
-	if err != nil {
+	if err != nil && runtime.GOOS != "wasip1" { // wasip1 runs the commands in-process
 		fmt.Fprintln(os.Stderr, "marmot play:", err)
 		return 1
 	}
-	srv := play.New(play.Options{Marmot: exe, Root: root})
+	opt := play.Options{Marmot: exe, Root: root}
+	if runtime.GOOS == "wasip1" {
+		// The browser playground: no processes and no backend; the front end runs here.
+		opt.Run, opt.FrontEnd = inProcess, true
+	}
+	srv := play.New(opt)
 	res, err := srv.Compile(context.Background(), q)
 	if err != nil {
 		return rep.Usage("marmot play -json: " + err.Error())

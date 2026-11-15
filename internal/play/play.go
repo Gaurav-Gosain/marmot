@@ -78,6 +78,13 @@ type Options struct {
 	Local   bool   // serve the page and /api/run (marmot play on a laptop)
 	Initial string // the page's first program (Local)
 	Runner  Runner // runs programs for /api/run (Local); LocalRunner by default
+	// Run runs one marmot command (args after the marmot binary) in dir with env added and
+	// returns its combined output; nil runs Marmot as a process. In the browser (wasip1) the
+	// compiler runs in-process.
+	Run func(ctx context.Context, dir string, args, env []string) ([]byte, error)
+	// FrontEnd: no backend here (the browser): diagnostics come from the MLIR emit, and only
+	// the ssa and mlir stages are built.
+	FrontEnd bool
 	// Origins that may call /compile from a browser ("*": any). The
 	// Worker in front of the deployed service sets its own CORS headers.
 	AllowOrigin string
@@ -412,7 +419,10 @@ func (s *Server) Compile(ctx context.Context, q *Request) (*Response, error) {
 	// The executable first: its diagnostics are the program's, and the
 	// stages need a program that builds.
 	exeFlags := []string{"-o", "prog"}
-	if q.Target == "wasm" {
+	if s.opt.FrontEnd {
+		// No backend: the front end's MLIR is the build that reports the diagnostics.
+		exeFlags = []string{"-dialect", "go", "-emit", "mlir", "-o", "out.mlir"}
+	} else if q.Target == "wasm" {
 		exeFlags = []string{"-target", "wasip1/wasm", "-o", "prog.wasm"}
 	}
 	diags, other, ok := s.build(ctx, dir, q.Mode, exeFlags...)
@@ -433,6 +443,9 @@ func (s *Server) Compile(ctx context.Context, q *Request) (*Response, error) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	for _, st := range q.Stages {
+		if s.opt.FrontEnd && st != "ssa" && st != "mlir" {
+			continue // needs the backend
+		}
 		if st == "size" {
 			exe := filepath.Join(dir, "prog")
 			if q.Target == "wasm" {
@@ -516,6 +529,19 @@ func (s *Server) build(ctx context.Context, dir, mode string, extra ...string) (
 	defer cancel()
 	args := append(append([]string{"build"}, modeFlags[mode]...), extra...)
 	args = append(args, ".")
+	env := []string{"MARMOT_OUTPUT=json", "MARMOT_ROOT=" + s.opt.Root,
+		"GOPROXY=off", "GOFLAGS=-mod=mod", "GONOSUMDB=*", "GOTOOLCHAIN=local", "CGO_ENABLED=0"}
+	if s.opt.Run != nil {
+		out, err := s.opt.Run(ctx, dir, args, env)
+		diags, other := parseDiagnostics(out)
+		if len(diags) > 0 {
+			s.lastHuman.Store(dir, humanText(out, dir))
+		}
+		if err != nil && other == "" && len(diags) == 0 {
+			other = err.Error()
+		}
+		return diags, other, err == nil
+	}
 	var cmd *exec.Cmd
 	if runtime.GOOS == "linux" && s.opt.Limits.CPUSeconds > 0 {
 		// RLIMIT_CPU for the compile and its tools.
@@ -524,8 +550,7 @@ func (s *Server) build(ctx context.Context, dir, mode string, extra ...string) (
 		cmd = exec.CommandContext(ctx, s.opt.Marmot, args...)
 	}
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "MARMOT_OUTPUT=json", "MARMOT_ROOT="+s.opt.Root,
-		"GOPROXY=off", "GOFLAGS=-mod=mod", "GONOSUMDB=*", "GOTOOLCHAIN=local", "CGO_ENABLED=0")
+	cmd.Env = append(os.Environ(), env...)
 	inGroup(cmd)
 	out, err := cmd.CombinedOutput()
 	diags, other := parseDiagnostics(out)
@@ -618,7 +643,9 @@ func (s *Server) stage(ctx context.Context, dir, mode, stage string) Stage {
 		st = Stage{Note: "x/tools SSA of package main, as marmot's frontend builds it"}
 		finish(&st, text, lines, limit)
 	case "mlir":
-		if e := emit("-dialect", "go", "-emit", "mlir", "-o", "out.mlir"); e != "" {
+		if s.opt.FrontEnd {
+			// out.mlir is the front end's build of the program, made already
+		} else if e := emit("-dialect", "go", "-emit", "mlir", "-o", "out.mlir"); e != "" {
 			return Stage{Error: e}
 		}
 		data, _ := os.ReadFile(filepath.Join(dir, "out.mlir"))
