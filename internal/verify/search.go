@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"go/constant"
@@ -282,7 +283,10 @@ func candidates(p Param, h *Hint) []string {
 	case "bytes":
 		add(p.Type + "(nil)")
 		for _, s := range stringCandidates(h) {
-			add(p.Type + "(" + strconv.Quote(s) + ")")
+			// The capacity of a conversion is not specified: fix it, so
+			// gc and marmot run the same input.
+			n := strconv.Itoa(len(s))
+			add(p.Type + "(" + strconv.Quote(s) + ")[:" + n + ":" + n + "]")
 		}
 	case "slice":
 		add(p.Type + "(nil)")
@@ -680,6 +684,12 @@ type Hit struct {
 	File         string
 	Line         int
 	Runs         int // of the confirmation runs, how many panicked there
+	// MarmotRuns is how many of three runs of the marmot build panicked
+	// at the same place (-1: no marmot build); MarmotOther is what the
+	// marmot build did instead when it differs.
+	MarmotRuns  int
+	MarmotOther string
+	fn, in      int
 }
 
 // SearchOptions control the runs.
@@ -689,10 +699,13 @@ type SearchOptions struct {
 	Sandbox string        // "off": no runs; anything else: runs in the sandbox
 	// Effects also runs functions whose calls reach files, processes or
 	// the network (in the sandbox all the same).
-	Effects  bool
-	Scratch  string // temporary directory root ("" = os.TempDir)
-	GoBin    string // "go"
-	Progress func(string)
+	Effects bool
+	Scratch string // temporary directory root ("" = os.TempDir)
+	GoBin   string // "go"
+	// MarmotBin, when set, also builds the test with marmot and runs every
+	// hit under it: gc is the reference, a difference is a marmot bug.
+	MarmotBin string
+	Progress  func(string)
 }
 
 // SandboxAvailable reports whether confirmation runs can be sandboxed
@@ -764,7 +777,11 @@ func Search(ctx context.Context, dir, pkgName string, hints []*Hint, opts Search
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tmp)
+	if os.Getenv("MARMOT_VERIFY_KEEP") == "" {
+		defer os.RemoveAll(tmp)
+	} else if opts.Progress != nil {
+		opts.Progress("verify: search files kept in " + tmp)
+	}
 	if !opts.Effects {
 		var keep []*Hint
 		for _, h := range hints {
@@ -778,11 +795,16 @@ func Search(ctx context.Context, dir, pkgName string, hints []*Hint, opts Search
 		}
 	}
 	p := makePlan(hints, opts.Limit)
-	src := filepath.Join(tmp, "zz_marmot_verify_search_test.go")
-	if err := os.WriteFile(src, []byte(p.testSource(pkgName)), 0o644); err != nil {
+	// The overlaid name carries a hash of the content: a build cache keyed
+	// by the overlaid path then never reuses another plan's test.
+	code := p.testSource(pkgName)
+	sum := sha256.Sum256([]byte(code))
+	name := fmt.Sprintf("zz_marmot_verify_search_%x_test.go", sum[:6])
+	src := filepath.Join(tmp, name)
+	if err := os.WriteFile(src, []byte(code), 0o644); err != nil {
 		return nil, err
 	}
-	ov, _ := json.Marshal(map[string]map[string]string{"Replace": {filepath.Join(dir, "zz_marmot_verify_search_test.go"): src}})
+	ov, _ := json.Marshal(map[string]map[string]string{"Replace": {filepath.Join(dir, name): src}})
 	ovFile := filepath.Join(tmp, "overlay.json")
 	if err := os.WriteFile(ovFile, ov, 0o644); err != nil {
 		return nil, err
@@ -834,7 +856,36 @@ func Search(ctx context.Context, dir, pkgName string, hints []*Hint, opts Search
 				args[j] = p.cands[i][j][p.combos[i][r.in][j]]
 				input[pr.Name] = args[j]
 			}
-			hits = append(hits, Hit{Fn: h.Full, Call: h.Call(args), API: h.API(), Obligation: o.Key, Kind: o.Kind, Input: input, Args: args, PanicMessage: r.msg, File: r.file, Line: r.line, Runs: n})
+			hits = append(hits, Hit{fn: i, in: r.in, MarmotRuns: -1, Fn: h.Full, Call: h.Call(args), API: h.API(), Obligation: o.Key, Kind: o.Kind, Input: input, Args: args, PanicMessage: r.msg, File: r.file, Line: r.line, Runs: n})
+		}
+	}
+	if len(hits) > 0 && opts.MarmotBin != "" {
+		mbin := filepath.Join(tmp, "search-marmot.test")
+		mb := exec.CommandContext(ctx, opts.MarmotBin, "test", "-c", "-o", mbin, "-overlay", ovFile, ".")
+		mb.Dir = dir
+		if out, err := mb.CombinedOutput(); err != nil {
+			return hits, fmt.Errorf("building the search test with marmot: %v: %s", err, firstLines(string(out), 5))
+		}
+		for k := range hits {
+			h := &hits[k]
+			h.MarmotRuns = 0
+			for range 3 {
+				raws := parseHits(runSandboxed(ctx, opts, mbin, filepath.Join(tmp, fmt.Sprintf("run-%d", h.fn)), h.fn, h.in))
+				same := false
+				for _, r := range raws {
+					if r.line == h.Line && sameFile(r.file, h.File) {
+						same = true
+					} else if h.MarmotOther == "" {
+						h.MarmotOther = fmt.Sprintf("panics at %s:%d: %s", filepath.Base(r.file), r.line, r.msg)
+					}
+				}
+				if same {
+					h.MarmotRuns++
+				}
+			}
+			if h.MarmotRuns == 0 && h.MarmotOther == "" {
+				h.MarmotOther = "does not panic"
+			}
 		}
 	}
 	return hits, nil
