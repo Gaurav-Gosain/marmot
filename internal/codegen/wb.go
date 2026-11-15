@@ -58,6 +58,19 @@ func (m *moduleGen) cards() bool {
 	return (wbMode == "cards" || cardFlag || cardStub) && m.p.opts.GOARCH != "wasm"
 }
 
+// wbKind is the rt_wb_kind the entry module defines (rt.h): 0 without
+// barriers, 1 for the flag barrier (MARMOT_WB=1, and every mode on wasm,
+// which has no cards), 2 for card marking.
+func (m *moduleGen) wbKind() int {
+	switch {
+	case !optWB:
+		return 0
+	case m.cards():
+		return 2
+	}
+	return 1
+}
+
 // trackAddr: whether funcGen records address spaces and stack slots.
 var trackAddr = optGCPtr || optWB
 

@@ -239,6 +239,11 @@ func (p *Program) GenerateMain(mainPkg *ssa.Package) (Module, error) {
 	}
 	call(main)
 	b.WriteString("    llvm.return\n  }\n")
+	if k := m.wbKind(); k != 0 {
+		// The runtime holds a weak rt_wb_kind of 0 and runs concurrent
+		// marking (MARMOT_GC_CONC=1) only when the program has barriers.
+		fmt.Fprintf(&b, "  llvm.mlir.global external constant @rt_wb_kind(%d : i8) {addr_space = 0 : i32} : i8\n", k)
+	}
 	m.defs.WriteString(b.String())
 	return m.finish("marmot:main")
 }
