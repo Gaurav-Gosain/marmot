@@ -277,7 +277,7 @@ func cmdFix(args []string) int {
 // runTestJSON runs a test binary in JSON mode: -test.v output is parsed
 // into one {"kind":"test"} line per test, failures become diagnostics with
 // source context, and a result line ends the run.
-func runTestJSON(rep *diag.Reporter, cmd *exec.Cmd, pkg string, start time.Time) int {
+func runTestJSON(rep *diag.Reporter, cmd *exec.Cmd, pkg string, start time.Time, schedule string) int {
 	verbose := false
 	for _, a := range cmd.Args[1:] {
 		if a == "-test.v" || strings.HasPrefix(a, "-test.v=") {
@@ -289,6 +289,9 @@ func runTestJSON(rep *diag.Reporter, cmd *exec.Cmd, pkg string, start time.Time)
 	}
 	// The parser reads the plain panic text of the test binary.
 	cmd.Env = append(os.Environ(), "MARMOT_OUTPUT=plain")
+	if schedule != "" {
+		cmd.Env = append(cmd.Env, "MARMOT_EXPLORE="+schedule)
+	}
 	pr, pw := io.Pipe()
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, pw, pw
 	if err := cmd.Start(); err != nil {
@@ -302,10 +305,9 @@ func runTestJSON(rep *diag.Reporter, cmd *exec.Cmd, pkg string, start time.Time)
 	enc := json.NewEncoder(rep.W)
 	enc.SetEscapeHTML(false)
 	failed := 0
-	sched := os.Getenv("MARMOT_EXPLORE")
 	for _, t := range results {
-		if t.Status == "fail" && sched != "" {
-			t.Schedule = sched
+		if t.Status == "fail" && schedule != "" {
+			t.Schedule = schedule
 		}
 		_ = enc.Encode(t)
 		if t.Status == "fail" {

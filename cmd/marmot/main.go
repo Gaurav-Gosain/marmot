@@ -429,6 +429,15 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 	if *tags != "" {
 		cfg.Tags = strings.Split(*tags, ",")
 	}
+	var exStrategy string
+	var exRuns int
+	if t.explore.val != "" {
+		var ok bool
+		if exStrategy, exRuns, ok = parseExplore(t.explore.val); !ok {
+			fmt.Fprintln(os.Stderr, "marmot: -explore is random or pct, with an optional number of runs (random:1000)")
+			return 2
+		}
+	}
 	if t.explore.val != "" || *t.schedule != "" {
 		// The exploration hooks of the runtime are compiled in only
 		// with this tag.
@@ -450,11 +459,7 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 		dir = wd
 	}
 	if t.explore.val != "" {
-		s, ok := exploreSchedules(t.explore.val, exe, dir, testArgs)
-		if !ok {
-			fmt.Fprintln(os.Stderr, "marmot: -explore is random or pct, with an optional number of runs (random:1000)")
-			return 2
-		}
+		s := exploreSchedules(exStrategy, exRuns, exe, dir, testArgs)
 		if s == "" {
 			if rep.Mode != diag.ModeJSON {
 				fmt.Printf("ok  \t%s\t%.3fs\t(%s: every schedule passed)\n", pkg, time.Since(start).Seconds(), t.explore.val)
@@ -468,16 +473,16 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 		*t.schedule = s
 		defer fmt.Fprintf(os.Stderr, "marmot: failing schedule %s; replay with marmot test %s-schedule=%s %s\n", s, runFlag(testArgs), s, pkg)
 	}
-	if *t.schedule != "" {
-		_ = os.Setenv("MARMOT_EXPLORE", *t.schedule)
-	}
 	cmd := exec.Command(exe, testArgs...)
 	cmd.Dir = dir
 	if rep.Mode == diag.ModeJSON {
-		return runTestJSON(rep, cmd, pkg, start)
+		return runTestJSON(rep, cmd, pkg, start, *t.schedule)
 	}
 	if rep.Mode == diag.ModeHuman {
-		return runTestHuman(rep, cmd, pkg, start)
+		return runTestHuman(rep, cmd, pkg, start, *t.schedule)
+	}
+	if *t.schedule != "" {
+		cmd.Env = append(os.Environ(), "MARMOT_EXPLORE="+*t.schedule)
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	err = cmd.Run()
@@ -494,31 +499,33 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 	return 0
 }
 
-// exploreSchedules runs the test binary under the schedules spec names
-// (random or pct, with a count) and returns the first that fails, "" when
-// all pass; ok is false for a bad spec.
-func exploreSchedules(spec, exe, dir string, testArgs []string) (failed string, ok bool) {
-	strategy, n := spec, 1000
+// parseExplore reads an -explore value: random or pct, with an optional
+// number of runs (default 1000).
+func parseExplore(spec string) (strategy string, n int, ok bool) {
+	strategy, n = spec, 1000
 	if s, count, has := strings.Cut(spec, ":"); has {
 		v, err := strconv.Atoi(count)
 		if err != nil || v <= 0 {
-			return "", false
+			return "", 0, false
 		}
 		strategy, n = s, v
 	}
-	if strategy != "random" && strategy != "pct" {
-		return "", false
-	}
+	return strategy, n, strategy == "random" || strategy == "pct"
+}
+
+// exploreSchedules runs the test binary under n schedules of strategy and
+// returns the first that fails, "" when all pass.
+func exploreSchedules(strategy string, n int, exe, dir string, testArgs []string) string {
 	for seed := 1; seed <= n; seed++ {
 		s := fmt.Sprintf("%s:%d", strategy, seed)
 		cmd := exec.Command(exe, testArgs...)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "MARMOT_EXPLORE="+s, "MARMOT_OUTPUT=plain")
 		if err := cmd.Run(); err != nil {
-			return s, true
+			return s
 		}
 	}
-	return "", true
+	return ""
 }
 
 // runFlag is the -run of testArgs for the replay command, "" when none.

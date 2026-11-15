@@ -16,7 +16,7 @@ import (
 // runTestHuman runs a test binary for a terminal: failures first, each with
 // its source line and the test's log, then the tests as a tree with status
 // and time, then a summary line.
-func runTestHuman(rep *diag.Reporter, cmd *exec.Cmd, pkg string, start time.Time) int {
+func runTestHuman(rep *diag.Reporter, cmd *exec.Cmd, pkg string, start time.Time, schedule string) int {
 	verbose := false
 	for _, a := range cmd.Args[1:] {
 		if a == "-test.v" || strings.HasPrefix(a, "-test.v=") {
@@ -27,6 +27,9 @@ func runTestHuman(rep *diag.Reporter, cmd *exec.Cmd, pkg string, start time.Time
 		cmd.Args = append(cmd.Args, "-test.v")
 	}
 	cmd.Env = append(os.Environ(), "MARMOT_OUTPUT=plain")
+	if schedule != "" {
+		cmd.Env = append(cmd.Env, "MARMOT_EXPLORE="+schedule)
+	}
 	pr, pw := io.Pipe()
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, pw, pw
 	if err := cmd.Start(); err != nil {
