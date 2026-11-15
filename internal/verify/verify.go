@@ -658,6 +658,18 @@ func (in *inliner) call(e *engine, s *state, call *ssa.Call, f *ssa.Function) {
 	sub.evaluate(func(ins ssa.Instruction, st *state) {
 		for _, o := range byInstr[ins] {
 			v := checkObligation(o, st)
+			if v.fails && o.Kind != KPanic && !v.proved {
+				// The arguments of this call make the callee panic on every
+				// input (rule 3, the call violates the callee's
+				// precondition whatever the caller is given).
+				key := o.Key + "@always@" + fmt.Sprint(call.Pos())
+				if !in.seen[key] {
+					in.seen[key] = true
+					in.found = append(in.found, &ObResult{Ob: o, Via: o, Status: Counterexample, Class: "manifest", Rule: "call-always",
+						Labels: []Label{{Pos: call.Pos(), Text: "this call always makes " + f.Name() + " panic"}}})
+				}
+				continue
+			}
 			if v.mismatch == nil || !inCaller(in.caller, v.mismatch.guard) {
 				continue
 			}

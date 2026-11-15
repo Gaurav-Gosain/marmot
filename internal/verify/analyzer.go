@@ -57,7 +57,7 @@ func run(pass *analysis.Pass) (any, error) {
 			msg := Message(f.Fn, o.Ob)
 			if o.Condition != "" {
 				msg += fmt.Sprintf(" when %s", o.Condition)
-			} else if o.Rule == "always" {
+			} else if o.Rule == "always" || o.Rule == "call-always" {
 				msg += " on every input"
 			}
 			in := info(f, o)

@@ -90,7 +90,9 @@ func Div(a, b int) int {
 	return a / b
 }
 
-func At(s []int, i int) int { return s[i] }
+func At(s []int, i int) int { return s[i] } // want "`Last` can panic: index out of range on every input"
+
+func Last(s []int) int { return At(s, len(s)) }
 
 type T struct{ x int }
 
