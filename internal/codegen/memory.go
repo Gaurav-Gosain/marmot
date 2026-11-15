@@ -80,7 +80,7 @@ func (f *funcGen) indexAddr(v *ssa.IndexAddr) {
 	case *types.Pointer: // *[N]T
 		at := u.Elem().Underlying().(*types.Array)
 		if needsNilCheck(v.X) {
-			f.nilCheck(x)
+			f.nilCheckOf(v.X, x)
 		}
 		n := f.constInt(at.Len(), mlir.I64)
 		f.vals[v] = f.elemAddr(x, n, at.Len(), at.Elem(), v.Index)
@@ -145,7 +145,7 @@ func (f *funcGen) slice(v *ssa.Slice) {
 	case *types.Pointer:
 		at := u.Elem().Underlying().(*types.Array)
 		if needsNilCheck(v.X) {
-			f.nilCheck(x)
+			f.nilCheckOf(v.X, x)
 		}
 		base = x
 		length = f.constInt(at.Len(), mlir.I64)

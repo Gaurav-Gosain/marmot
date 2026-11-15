@@ -34,9 +34,10 @@ type funcGen struct {
 	frame             string // _deferframe address, "" if none
 	noinlineCalls     bool   // mark calls no_inline (defer thunks)
 	curBlock          *ssa.BasicBlock
-	statSym           string             // the function's symbol, for MARMOT_SSASTATS (ssastats.go)
-	fvValue           map[ssa.Value]bool // free variables captured by value
-	open              *openDefers        // open-coded defers, nil if not used
+	statSym           string                          // the function's symbol, for MARMOT_SSASTATS (ssastats.go)
+	nilDone           map[ssa.Value][]*ssa.BasicBlock // blocks where a value was nil checked (nilCheckOf)
+	fvValue           map[ssa.Value]bool              // free variables captured by value
+	open              *openDefers                     // open-coded defers, nil if not used
 	stackOK           map[ssa.Value]bool
 	region            string                            // region clone: the rt_region parameter
 	regionCalls       map[ssa.Instruction]*regionPlan   // calls that use a region clone
@@ -637,7 +638,7 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 	case *ssa.Store:
 		addr := f.value(v.Addr)
 		if needsNilCheck(v.Addr) {
-			f.nilCheck(addr)
+			f.nilCheckOf(v.Addr, addr)
 		}
 		f.forceUnsafe = f.m.p.localPun[v.Addr]
 		f.cardSkip = f.m.cards() && (staticValue(v.Val) || rootedType(v.Val.Type()))
@@ -805,6 +806,31 @@ func needsNilCheck(addr ssa.Value) bool {
 	return true
 }
 
+// nilCheckOf is nilCheck of SSA value v (emitted as p), skipped when an
+// earlier check of v dominates this point: the code here runs only if v
+// was not nil there (a nil v panicked, and a recovered panic does not
+// resume in this function). MARMOT_NILDOM=1 for now (the default once
+// measured).
+func (f *funcGen) nilCheckOf(v ssa.Value, p string) {
+	cur := f.curBlock
+	if nilDomOn && cur != nil {
+		for _, b := range f.nilDone[v] {
+			if b == cur || b.Dominates(cur) {
+				return
+			}
+		}
+	}
+	f.nilCheck(p)
+	if nilDomOn && cur != nil {
+		if f.nilDone == nil {
+			f.nilDone = map[ssa.Value][]*ssa.BasicBlock{}
+		}
+		f.nilDone[v] = append(f.nilDone[v], cur)
+	}
+}
+
+var nilDomOn = os.Getenv("MARMOT_NILDOM") == "1"
+
 func (f *funcGen) nilCheck(p string) {
 	if f.goOps() {
 		f.emit("go.nil_check %s", p)
@@ -917,7 +943,7 @@ func (f *funcGen) fieldAddr(v *ssa.FieldAddr) {
 	// An allocation, a global or the address of a field or element (whose
 	// base was checked) is never nil.
 	if needsNilCheck(v.X) && !f.envPointer(v.X) {
-		f.nilCheck(x)
+		f.nilCheckOf(v.X, x)
 	}
 	st := v.X.Type().Underlying().(*types.Pointer).Elem()
 	f.vals[v] = f.gep(x, f.tm.memType(st), 0, v.Field)
@@ -952,7 +978,7 @@ func (f *funcGen) unop(v *ssa.UnOp) string {
 			return x // captured by value
 		}
 		if needsNilCheck(v.X) && !f.envPointer(v.X) {
-			f.nilCheck(x)
+			f.nilCheckOf(v.X, x)
 		}
 		f.forceUnsafe = f.m.p.localPun[v.X]
 		r := f.load(x, v.Type(), f.volatile[v.X])
