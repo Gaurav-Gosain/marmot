@@ -988,8 +988,18 @@ bool lowerModule(ParsedModule &pm, const std::string &input, const CompileOption
 static void associateTypeLinks(llvm::Module &m) {
   if (!llvm::Triple(m.getTargetTriple()).isOSBinFormatELF()) return;
   for (llvm::GlobalVariable &g : m.globals()) {
-    if (g.getSection() != "marmot_tlinks" || !g.hasInitializer()) continue;
-    auto *t = llvm::dyn_cast<llvm::GlobalObject>(g.getInitializer()->stripPointerCasts());
+    if (!g.hasInitializer()) continue;
+    // marmot_tlinks: the initializer is the descriptor's address.
+    // marmot_gcvars (GC scan records {ptr var, i64, ptr bits}): the variable,
+    // so --gc-sections with -z start-stop-gc keeps the record of every
+    // variable it keeps.
+    llvm::Constant *target = nullptr;
+    if (g.getSection() == "marmot_tlinks")
+      target = g.getInitializer();
+    else if (g.getSection() == "marmot_gcvars" && g.getInitializer()->getNumOperands() > 0)
+      target = llvm::dyn_cast<llvm::Constant>(g.getInitializer()->getOperand(0));
+    if (!target) continue;
+    auto *t = llvm::dyn_cast<llvm::GlobalObject>(target->stripPointerCasts());
     if (!t || t->isDeclaration()) continue;
     g.setMetadata(llvm::LLVMContext::MD_associated,
                   llvm::MDNode::get(m.getContext(), llvm::ValueAsMetadata::get(t)));
