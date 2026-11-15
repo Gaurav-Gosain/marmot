@@ -77,8 +77,8 @@ func NewVerify() (*flag.FlagSet, *Verify) {
 		Jobs:    fs.Int("j", 0, "parallel analysis jobs (default: the number of CPUs)"),
 		NoCache: fs.Bool("nocache", false, "analyze everything again, ignoring cached results"),
 		Verbose: fs.Bool("v", false, "print timing and cache statistics"),
-		Search:  fs.Bool("search", false, "also search for inputs that make latent and unproved operations panic (runs the functions in a sandbox)"),
-		Confirm: fs.String("confirm", "sandbox", "run inputs to confirm findings: sandbox (when one is available) or off"),
+		Search:  fs.Bool("search", false, "also search every function for inputs that make it panic (needs -confirm)"),
+		Confirm: fs.String("confirm", "off", "run the package's functions with generated inputs to confirm findings: off, sandbox (in a sandbox: sandbox-exec on macOS, bwrap on Linux; functions that reach files, processes or the network are skipped) or effects (those too, in the sandbox)"),
 	}
 	return fs, v
 }

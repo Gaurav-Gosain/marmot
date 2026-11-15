@@ -77,7 +77,7 @@ type searchHint struct {
 // only on the functions of manifest findings (to confirm them). It
 // updates the findings it confirms and adds one for every other panic it
 // confirms; the added ones are shown with -latent or -search.
-func verifySearch(c *CheckResult, search, show bool, progress func(string)) []string {
+func verifySearch(c *CheckResult, search, show, effects bool, progress func(string)) []string {
 	var notes []string
 	type key struct{ fn, obl string }
 	byKey := map[key]int{}
@@ -111,7 +111,7 @@ func verifySearch(c *CheckResult, search, show bool, progress func(string)) []st
 			hints = append(hints, h.hint)
 		}
 		slices.SortFunc(hints, func(a, b *vfy.Hint) int { return strings.Compare(a.Full, b.Full) })
-		hits, err := vfy.Search(context.Background(), dir, hints[0].PkgName, hints, vfy.SearchOptions{Progress: progress})
+		hits, err := vfy.Search(context.Background(), dir, hints[0].PkgName, hints, vfy.SearchOptions{Progress: progress, Effects: effects})
 		if err != nil {
 			notes = append(notes, fmt.Sprintf("search in %s: %v", hs[0].pkg, err))
 			continue
@@ -205,6 +205,14 @@ func VerifyMain(args []string, version string) int {
 		}
 		return rep.Usage(err.Error() + "\nrun `marmot verify -h` for the flags")
 	}
+	switch *vf.Confirm {
+	case "off", "sandbox", "effects":
+	default:
+		return rep.Usage("marmot verify: -confirm is off, sandbox or effects")
+	}
+	if *vf.Search && *vf.Confirm == "off" {
+		return rep.Usage("marmot verify: -search runs the package's functions with generated inputs; add -confirm=sandbox to allow it")
+	}
 	opts := Options{Patterns: fs.Args(), Jobs: *vf.Jobs, Only: []string{"verify"}, Latent: *vf.Latent, Offline: true}
 	if *vf.Tags != "" {
 		opts.Tags = strings.Split(*vf.Tags, ",")
@@ -234,7 +242,7 @@ func VerifyMain(args []string, version string) int {
 		if opts.Progress != nil {
 			progress = func(s string) { fmt.Fprintln(opts.Progress, s) }
 		}
-		c.Notes = append(c.Notes, verifySearch(c, *vf.Search, *vf.Latent || *vf.Search, progress)...)
+		c.Notes = append(c.Notes, verifySearch(c, *vf.Search, *vf.Latent || *vf.Search, *vf.Confirm == "effects", progress)...)
 	}
 	ds := c.Findings
 	errs, _ := diag.Counts(ds)
