@@ -119,6 +119,12 @@ void watchdogEnd(const std::string &input) {
 
 
 void startWatchdog(bool background) {
+#if defined(__EMSCRIPTEN__)
+  // No threads in the browser build (std::thread throws there); the page
+  // stops the worker on its own timeout.
+  (void)background;
+  return;
+#endif
   uint64_t maxMB = envLimit("MARMOT_MAX_MEM_MB", 3072);
   // A background run (the tier 1 runner) outlives the build that started it
   // and runs at idle priority as long as it takes: no time limit and no
