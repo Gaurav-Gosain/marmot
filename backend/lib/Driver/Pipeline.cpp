@@ -1147,10 +1147,12 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
   // MARMOT_IRSTATS: IR size before and after the optimizer, pass times.
   const bool irStats = irStatsPath() != nullptr;
   IRCounts preCounts;
+  std::vector<FnCounts> preFns, postFns;
   PassClock clock;
   auto optStart = std::chrono::steady_clock::now();
   if (irStats) {
     preCounts = countIR(lmod, 10);
+    preFns = countFns(lmod, irStatsFnFilter());
     optStart = std::chrono::steady_clock::now();
     currentPassClock = &clock;
   }
@@ -1158,8 +1160,10 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
   currentPassClock = nullptr;
   double optMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - optStart).count();
   IRCounts postCounts;
-  if (irStats)
+  if (irStats) {
     postCounts = countIR(lmod, 10);
+    postFns = countFns(lmod, irStatsFnFilter());
+  }
   double codegenMs = 0;
   // With line info (the pc table, tracebacks), Go functions keep their frames
   // as gc does: code generation emits no sibling calls, so a caller that ends
@@ -1218,7 +1222,7 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
   out.keep();
   times.write += timer.lap();
   if (irStats)
-    writeIRStats(input, preCounts, postCounts, clock, optMs, codegenMs);
+    writeIRStats(input, preCounts, postCounts, clock, optMs, codegenMs, preFns, postFns);
   return true;
 }
 
