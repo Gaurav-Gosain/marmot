@@ -178,27 +178,42 @@ void ModuleGen::emitGlobal(LL::GlobalOp g) {
   uint64_t align = std::max<uint64_t>(g.getAlignment().value_or(0), alignOf(g.getGlobalType()));
   bool zero = cv.rels.empty() && std::all_of(cv.bytes.begin(), cv.bytes.end(), [](uint8_t b) { return b == 0; });
   bool local = isLocalLinkage(g.getLinkage()), weak = isWeakLinkage(g.getLinkage());
-  if (g.getLinkage() == LL::Linkage::Common && zero && !local) {
+  // Named sections: the type link table and the pointer-free data the
+  // garbage collector skips. Looked at before the zero fill and common cases.
+  std::optional<Sect> named;
+  if (auto sec = g.getSection()) {
+    StringRef n = *sec;
+    if (n == "marmot_tlinks" || n.starts_with("__DATA,__marmot_tlinks"))
+      named = Sect::TLinks;
+    else if (n == "marmot_noptrdata" || n == "__DATA,__noptrdata" || n.starts_with("__DATA,__noptrdata,"))
+      named = Sect::NoPtrData;
+    else if (n == ".bss.marmot.noptr" || n == "__DATA,__noptrbss" || n.starts_with("__DATA,__noptrbss,"))
+      named = Sect::NoPtrBss;
+    else
+      unsupported("section " + n.str());
+  }
+  if (named == Sect::NoPtrBss) {
+    if (!zero || weak || g.getConstant()) unsupported("non-zero or weak global in the noptrbss section");
+    w.reserveBss(0, unsigned(align), Sect::NoPtrBss);
+    w.define(name, Sect::NoPtrBss, w.size(Sect::NoPtrBss), !local, false, isHidden(g));
+    w.reserveBss(std::max<uint64_t>(cv.bytes.size(), 1), 1, Sect::NoPtrBss);
+    return;
+  }
+  if (!named && g.getLinkage() == LL::Linkage::Common && zero && !local) {
     unsigned l2 = 0;
     while ((uint64_t(1) << l2) < align) l2++;
     w.common(name, cv.bytes.size(), l2);
     return;
   }
-  if (zero && !g.getConstant() && !weak) {
+  if (!named && zero && !g.getConstant() && !weak) {
     w.reserveBss(0, unsigned(align));
     w.define(name, Sect::Bss, w.size(Sect::Bss), !local, false, isHidden(g));
     w.reserveBss(std::max<uint64_t>(cv.bytes.size(), 1), 1);
     return;
   }
   // Read-only data without pointers can live in __TEXT,__const; anything
-  // with relocations goes to __DATA. The only named section is the type
-  // link table.
-  Sect s = g.getConstant() && cv.rels.empty() ? Sect::Const : Sect::Data;
-  if (auto sec = g.getSection()) {
-    StringRef n = *sec;
-    if (n != "marmot_tlinks" && !n.starts_with("__DATA,__marmot_tlinks")) unsupported("section " + n.str());
-    s = Sect::TLinks;
-  }
+  // with relocations goes to __DATA.
+  Sect s = named ? *named : g.getConstant() && cv.rels.empty() ? Sect::Const : Sect::Data;
   w.align(s, unsigned(align));
   uint64_t at = w.size(s);
   w.define(name, s, at, !local, weak, isHidden(g));

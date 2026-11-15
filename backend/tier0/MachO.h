@@ -16,8 +16,13 @@ namespace tier0 {
 // TLinks: the type link table (pointers to type descriptors). Each entry is
 // kept only while the descriptor it points to is live: a live_support
 // section in Mach-O, one SHF_LINK_ORDER section per entry in ELF.
-enum class Sect : uint8_t { Text, Data, Const, TLinks, Bss };
-constexpr unsigned kNumSect = 5;
+// NoPtrData, NoPtrBss: globals without pointers, which the garbage collector
+// does not scan (Mach-O __DATA,__noptrdata and __DATA,__noptrbss; ELF
+// marmot_noptrdata and .bss.marmot.noptr). Bss and NoPtrBss are zero fill.
+enum class Sect : uint8_t { Text, Data, Const, TLinks, Bss, NoPtrData, NoPtrBss };
+constexpr unsigned kNumSect = 7;
+inline bool isZeroFill(Sect s) { return s == Sect::Bss || s == Sect::NoPtrBss; }
+inline bool isZeroFill(unsigned i) { return isZeroFill(Sect(i)); }
 
 enum class Reloc : uint8_t {
   Branch26,       // BL/B to a symbol
@@ -59,7 +64,7 @@ public:
   // Section contents. Code is appended as instruction words.
   std::vector<uint8_t> &bytes(Sect s) { return sec_[unsigned(s)].data; }
   uint64_t size(Sect s) const;
-  void reserveBss(uint64_t n, unsigned align);
+  void reserveBss(uint64_t n, unsigned align, Sect s = Sect::Bss);
   void align(Sect s, unsigned align);
   void setAlign(Sect s, unsigned log2) {
     if (log2 > sec_[unsigned(s)].align) sec_[unsigned(s)].align = log2;
@@ -115,7 +120,7 @@ private:
     int64_t addend;
   };
   struct Section {
-    std::vector<uint8_t> data;  // empty for Bss
+    std::vector<uint8_t> data;  // empty for zero fill
     uint64_t bssSize = 0;
     unsigned align = 0;         // log2
     std::vector<Rel> rels;

@@ -58,7 +58,7 @@ struct Strtab {
 };
 
 const char *elfSectName(unsigned i) {
-  static const char *n[] = {".text", ".data", ".rodata", "marmot_tlinks", ".bss"};
+  static const char *n[] = {".text", ".data", ".rodata", "marmot_tlinks", ".bss", "marmot_noptrdata", ".bss.marmot.noptr"};
   return n[i];
 }
 
@@ -80,9 +80,10 @@ std::string MachOWriter::serializeELF() const {
   // One ELF section per defined symbol (as -ffunction-sections and
   // -fdata-sections), so --gc-sections drops dead code and the undefined
   // symbols only dead code refers to.
-  const unsigned B = unsigned(Sect::Bss), TL = unsigned(Sect::TLinks);
+  const unsigned TL = unsigned(Sect::TLinks);
   static const uint64_t flags[kNumSect] = {SHF_ALLOC | SHF_EXECINSTR, SHF_ALLOC | SHF_WRITE, SHF_ALLOC,
-                                           SHF_ALLOC | SHF_WRITE, SHF_ALLOC | SHF_WRITE};
+                                           SHF_ALLOC | SHF_WRITE, SHF_ALLOC | SHF_WRITE, SHF_ALLOC | SHF_WRITE,
+                                           SHF_ALLOC | SHF_WRITE};
   struct Chunk {
     uint64_t lo, hi;
     unsigned shndx;
@@ -90,8 +91,8 @@ std::string MachOWriter::serializeELF() const {
   std::vector<Chunk> chunks[kNumSect];
   for (unsigned i = 0; i < kNumSect; i++) {
     const Section &x = sec_[i];
-    uint64_t total = i == B ? x.bssSize : x.data.size();
-    if (i == TL && total == 0) continue;
+    uint64_t total = isZeroFill(i) ? x.bssSize : x.data.size();
+    if ((i == TL || i == unsigned(Sect::NoPtrData) || i == unsigned(Sect::NoPtrBss)) && total == 0) continue;
     std::vector<uint64_t> starts, kept;
     for (const Sym &y : syms_)
       if (y.defined && unsigned(y.sect) == i) {
@@ -104,10 +105,10 @@ std::string MachOWriter::serializeELF() const {
     for (size_t k = 0; k < starts.size(); k++) {
       uint64_t lo = starts[k], hi = k + 1 < starts.size() ? starts[k + 1] : total;
       if (hi <= lo && !(k == 0 && starts.size() == 1)) continue;
-      Shdr h{shstr.add(elfSectName(i), true), i == B ? SHT_NOBITS : SHT_PROGBITS, flags[i]};
+      Shdr h{shstr.add(elfSectName(i), true), isZeroFill(i) ? SHT_NOBITS : SHT_PROGBITS, flags[i]};
       h.align = uint64_t(1) << x.align;
       if (std::find(kept.begin(), kept.end(), lo) != kept.end()) h.flags |= SHF_GNU_RETAIN;
-      if (i == B)
+      if (isZeroFill(i))
         h.size = hi - lo;
       else
         h.data.assign(x.data.begin() + lo, x.data.begin() + hi);
@@ -202,7 +203,7 @@ std::string MachOWriter::serializeELF() const {
   unsigned symtabIndex = 0;
   std::vector<Shdr> relas;
   for (unsigned i = 0; i < kNumSect; i++) {
-    if (i == B) continue;
+    if (isZeroFill(i)) continue;
     std::vector<Buf> per(chunks[i].size());
     for (const Rel &x : sec_[i].rels) {
       uint32_t type = R_X86_64_64;

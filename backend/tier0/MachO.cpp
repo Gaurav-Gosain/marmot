@@ -44,11 +44,10 @@ struct Out {
 };
 
 const char *sectName(unsigned i) {
-  static const char *n[] = {"__text", "__data", "__const", "__marmot_tlinks", "__bss"};
+  static const char *n[] = {"__text", "__data", "__const", "__marmot_tlinks", "__bss", "__noptrdata", "__noptrbss"};
   return n[i];
 }
 const char *segName(unsigned i) { return i == 0 || i == 2 ? "__TEXT" : "__DATA"; }
-constexpr unsigned kBss = unsigned(Sect::Bss);
 
 } // namespace
 
@@ -90,7 +89,7 @@ void MachOWriter::renameShared(const std::string &from, const std::string &to) {
 
 uint64_t MachOWriter::size(Sect s) const {
   const Section &x = sec_[unsigned(s)];
-  return s == Sect::Bss ? x.bssSize : x.data.size();
+  return isZeroFill(s) ? x.bssSize : x.data.size();
 }
 
 void MachOWriter::align(Sect s, unsigned a) {
@@ -98,16 +97,16 @@ void MachOWriter::align(Sect s, unsigned a) {
   unsigned log2 = 0;
   while ((1u << log2) < a) log2++;
   setAlign(s, log2);
-  if (s == Sect::Bss) {
+  if (isZeroFill(s)) {
     x.bssSize = (x.bssSize + a - 1) & ~uint64_t(a - 1);
     return;
   }
   while (x.data.size() % a) x.data.push_back(s == Sect::Text ? 0 : 0);
 }
 
-void MachOWriter::reserveBss(uint64_t n, unsigned a) {
-  align(Sect::Bss, a);
-  sec_[unsigned(Sect::Bss)].bssSize += n;
+void MachOWriter::reserveBss(uint64_t n, unsigned a, Sect s) {
+  align(s, a);
+  sec_[unsigned(s)].bssSize += n;
 }
 
 uint64_t MachOWriter::emit32(uint32_t w) {
@@ -128,19 +127,28 @@ void MachOWriter::reloc(Sect s, uint64_t offset, Reloc kind, unsigned sym, int64
 }
 
 std::string MachOWriter::serialize() const {
-  const unsigned nsect = kNumSect;
+  // Sections in the object: the first five always (as before the
+  // optional ones existed), the others only when they hold something.
+  // n_sect of a symbol is its section's position here, from 1.
+  unsigned present[kNumSect], nsect = 0, posOf[kNumSect];
+  for (unsigned i = 0; i < kNumSect; i++) {
+    bool opt = i == unsigned(Sect::NoPtrData) || i == unsigned(Sect::NoPtrBss);
+    posOf[i] = nsect;
+    if (!opt || size(Sect(i)) != 0 || !sec_[i].rels.empty()) present[nsect++] = i;
+  }
   const uint32_t segCmdSize = 72 + 80 * nsect, buildSize = 24, symtabSize = 24, dysymSize = 80;
   const uint32_t sizeofcmds = segCmdSize + buildSize + symtabSize + dysymSize;
   const uint64_t headerEnd = 32 + sizeofcmds;
 
   // Section addresses (in one segment) and file offsets.
-  uint64_t addr[nsect], fileoff[nsect], vmsize = 0, filePos = headerEnd, fileEnd = headerEnd;
-  for (unsigned i = 0; i < nsect; i++) {
+  uint64_t addr[kNumSect] = {}, fileoff[kNumSect] = {}, vmsize = 0, filePos = headerEnd, fileEnd = headerEnd;
+  for (unsigned k = 0; k < nsect; k++) {
+    unsigned i = present[k];
     uint64_t a = uint64_t(1) << sec_[i].align;
     vmsize = (vmsize + a - 1) & ~(a - 1);
     addr[i] = vmsize;
-    vmsize += i == kBss ? sec_[i].bssSize : sec_[i].data.size();
-    if (i != kBss) {
+    vmsize += isZeroFill(i) ? sec_[i].bssSize : sec_[i].data.size();
+    if (!isZeroFill(i)) {
       filePos = (filePos + a - 1) & ~(a - 1);
       fileoff[i] = filePos;
       filePos += sec_[i].data.size();
@@ -174,9 +182,10 @@ std::string MachOWriter::serialize() const {
 
   // Relocations, then symbols and strings, after the section data.
   uint64_t relPos = (fileEnd + 7) & ~uint64_t(7);
-  uint64_t reloff[nsect];
-  uint32_t nreloc[nsect];
-  for (unsigned i = 0; i < nsect; i++) {
+  uint64_t reloff[kNumSect] = {};
+  uint32_t nreloc[kNumSect] = {};
+  for (unsigned k = 0; k < nsect; k++) {
+    unsigned i = present[k];
     uint32_t n = 0;
     for (const Rel &r : sec_[i].rels) {
       bool needAddend = r.addend != 0 && r.kind != Reloc::Abs64;
@@ -219,17 +228,18 @@ std::string MachOWriter::serialize() const {
   o.u32(7);
   o.u32(nsect);
   o.u32(0);
-  for (unsigned i = 0; i < nsect; i++) {
+  for (unsigned k = 0; k < nsect; k++) {
+    unsigned i = present[k];
     o.name16(sectName(i));
     o.name16(segName(i));
     o.u64(addr[i]);
-    o.u64(i == kBss ? sec_[i].bssSize : sec_[i].data.size());
+    o.u64(isZeroFill(i) ? sec_[i].bssSize : sec_[i].data.size());
     o.u32(uint32_t(fileoff[i]));
     o.u32(sec_[i].align);
     o.u32(uint32_t(reloff[i]));
     o.u32(nreloc[i]);
     uint32_t flags = i == 0 ? S_REGULAR | S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
-                     : i == kBss ? S_ZEROFILL
+                     : isZeroFill(i) ? S_ZEROFILL
                      : i == unsigned(Sect::TLinks) ? S_REGULAR | S_ATTR_LIVE_SUPPORT
                               : S_REGULAR;
     o.u32(flags);
@@ -263,8 +273,9 @@ std::string MachOWriter::serialize() const {
   for (int i = 0; i < 12; i++) o.u32(0);
 
   // Section data.
-  for (unsigned i = 0; i < nsect; i++) {
-    if (i == kBss) continue;
+  for (unsigned k = 0; k < nsect; k++) {
+    unsigned i = present[k];
+    if (isZeroFill(i)) continue;
     o.pad(fileoff[i]);
     std::vector<uint8_t> d = sec_[i].data;
     // Abs64 addends live in the data.
@@ -274,7 +285,8 @@ std::string MachOWriter::serialize() const {
   }
 
   // Relocations.
-  for (unsigned i = 0; i < nsect; i++) {
+  for (unsigned k = 0; k < nsect; k++) {
+    unsigned i = present[k];
     if (!nreloc[i]) continue;
     o.pad(reloff[i]);
     for (const Rel &r : sec_[i].rels) {
@@ -309,7 +321,7 @@ std::string MachOWriter::serialize() const {
       o.u64(s.commonSize);
     } else {
       o.u8(N_SECT | (s.global ? N_EXT : 0) | (s.hidden ? 0x10 : 0));  // N_PEXT
-      o.u8(uint8_t(unsigned(s.sect) + 1));
+      o.u8(uint8_t(posOf[unsigned(s.sect)] + 1));
       o.u16(uint16_t((s.weak ? 0x80 : 0) | (s.retain ? 0x20 : 0)));  // N_WEAK_DEF, N_NO_DEAD_STRIP
       o.u64(addr[unsigned(s.sect)] + s.offset);
     }
