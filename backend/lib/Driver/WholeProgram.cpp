@@ -845,8 +845,20 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback) 
     gv.setVisibility(GlobalValue::HiddenVisibility);
     gv.setDSOLocal(true);
   }
+  // A global with !associated (ELF marmot_tlinks and marmot_gcvars records)
+  // goes to the group of what it is associated with: SHF_LINK_ORDER needs
+  // that symbol defined in the same object, and in another group the
+  // metadata pointed at nothing and failed verification.
+  auto homeOf = [](const GlobalValue &gv) -> const GlobalValue & {
+    if (auto *v = dyn_cast<GlobalVariable>(&gv))
+      if (MDNode *md = v->getMetadata(LLVMContext::MD_associated); md && md->getNumOperands() == 1)
+        if (auto *vam = dyn_cast_or_null<ValueAsMetadata>(md->getOperand(0)))
+          if (auto *t = dyn_cast<GlobalValue>(vam->getValue()->stripPointerCasts()))
+            return *t;
+    return gv;
+  };
   auto groupOf = [&](const GlobalValue &gv) {
-    return unsigned(xxh3_64bits(gv.getName()) % k);
+    return unsigned(xxh3_64bits(homeOf(gv).getName()) % k);
   };
   auto copyable = [](const GlobalValue &gv) {
     return gv.hasLinkOnceLinkage() || gv.hasWeakLinkage() ||
@@ -908,6 +920,16 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback) 
     for (GlobalVariable &v : make_early_inc_range(part->globals()))
       if (v.isDeclaration() && v.use_empty())
         v.eraseFromParent();
+    // An association whose target this group does not define (a copyable
+    // target, or one the group lost) is dropped: the record then stays
+    // whatever --gc-sections does with its section, as without the metadata.
+    for (GlobalVariable &v : part->globals())
+      if (MDNode *md = v.getMetadata(LLVMContext::MD_associated)) {
+        auto *vam = md->getNumOperands() == 1 ? dyn_cast_or_null<ValueAsMetadata>(md->getOperand(0)) : nullptr;
+        auto *t = vam ? dyn_cast<GlobalObject>(vam->getValue()->stripPointerCasts()) : nullptr;
+        if (!t || t->isDeclaration())
+          v.setMetadata(LLVMContext::MD_associated, nullptr);
+      }
     part->setModuleIdentifier("");
     part->setSourceFileName("");
     raw_string_ostream os(out[g]);
