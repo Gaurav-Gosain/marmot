@@ -302,7 +302,11 @@ func runTestJSON(rep *diag.Reporter, cmd *exec.Cmd, pkg string, start time.Time)
 	enc := json.NewEncoder(rep.W)
 	enc.SetEscapeHTML(false)
 	failed := 0
+	sched := os.Getenv("MARMOT_EXPLORE")
 	for _, t := range results {
+		if t.Status == "fail" && sched != "" {
+			t.Schedule = sched
+		}
 		_ = enc.Encode(t)
 		if t.Status == "fail" {
 			failed++

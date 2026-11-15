@@ -267,7 +267,7 @@ func cmdTest(args []string) int {
 		buildArgs = append(buildArgs, a)
 		// Build flags with a value.
 		switch name {
-		case "o", "O", "tags", "dialect", "gc", "target", "emit", "pgo", "color", "overlay":
+		case "o", "O", "tags", "dialect", "gc", "target", "emit", "pgo", "color", "overlay", "schedule":
 			if !hasVal && i+1 < len(args) {
 				i++
 				buildArgs = append(buildArgs, args[i])
@@ -321,8 +321,27 @@ func expandTestPatterns(pats []string) []testPkg {
 	return out
 }
 
+// exploreFlag is -explore with an optional value: -explore alone is
+// random:1000.
+type exploreFlag struct{ val string }
+
+func (f *exploreFlag) String() string   { return f.val }
+func (f *exploreFlag) IsBoolFlag() bool { return true }
+func (f *exploreFlag) Set(s string) error {
+	if s == "true" {
+		s = "random"
+	}
+	if s == "false" {
+		s = ""
+	}
+	f.val = s
+	return nil
+}
+
 // testBuildFlags are the build flags marmot test takes.
 type testBuildFlags struct {
+	explore                          exploreFlag
+	schedule                         *string
 	opt, tags, dialect, out, overlay *string
 	printCmd, work, release, compile *bool
 	output                           outputFlags
@@ -340,6 +359,8 @@ func newTestFlags() (*flag.FlagSet, *testBuildFlags) {
 	t.out = fs.String("o", "", "write the test binary here and do not run it")
 	t.compile = fs.Bool("c", false, "write the test binary (to -o, default pkg.test) and do not run it, as go test -c")
 	t.overlay = fs.String("overlay", "", "JSON file of source files to replace or add, as go build -overlay ({\"Replace\": {path: file}})")
+	fs.Var(&t.explore, "explore", "explore schedules of synctest bubbles: random or pct, with an optional number of runs (random:1000, pct:500); stops at the first failing schedule and prints how to replay it")
+	t.schedule = fs.String("schedule", "", "run synctest bubbles under one explored schedule, as printed by -explore (random:17)")
 	t.output = addOutputFlags(fs)
 	return fs, t
 }
@@ -408,6 +429,11 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 	if *tags != "" {
 		cfg.Tags = strings.Split(*tags, ",")
 	}
+	if t.explore.val != "" || *t.schedule != "" {
+		// The exploration hooks of the runtime are compiled in only
+		// with this tag.
+		cfg.Tags = append(cfg.Tags, "marmotexplore")
+	}
 	start := time.Now()
 	exe, dir, err := driver.BuildTest(cfg)
 	if err != nil {
@@ -420,11 +446,33 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 	if *out != "" {
 		return 0
 	}
+	if dir == "" {
+		dir = wd
+	}
+	if t.explore.val != "" {
+		s, ok := exploreSchedules(t.explore.val, exe, dir, testArgs)
+		if !ok {
+			fmt.Fprintln(os.Stderr, "marmot: -explore is random or pct, with an optional number of runs (random:1000)")
+			return 2
+		}
+		if s == "" {
+			if rep.Mode != diag.ModeJSON {
+				fmt.Printf("ok  \t%s\t%.3fs\t(%s: every schedule passed)\n", pkg, time.Since(start).Seconds(), t.explore.val)
+			}
+			if rep.Mode == diag.ModeJSON {
+				diag.WriteResult(rep.W, diag.Result{Command: "test", OK: true, DurationMs: time.Since(start).Milliseconds()})
+			}
+			return 0
+		}
+		// Replay the failing schedule through the normal output.
+		*t.schedule = s
+		defer fmt.Fprintf(os.Stderr, "marmot: failing schedule %s; replay with marmot test %s-schedule=%s %s\n", s, runFlag(testArgs), s, pkg)
+	}
+	if *t.schedule != "" {
+		_ = os.Setenv("MARMOT_EXPLORE", *t.schedule)
+	}
 	cmd := exec.Command(exe, testArgs...)
 	cmd.Dir = dir
-	if cmd.Dir == "" {
-		cmd.Dir = wd
-	}
 	if rep.Mode == diag.ModeJSON {
 		return runTestJSON(rep, cmd, pkg, start)
 	}
@@ -444,6 +492,43 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 	}
 	fmt.Printf("ok  \t%s\t%.3fs\n", pkg, elapsed)
 	return 0
+}
+
+// exploreSchedules runs the test binary under the schedules spec names
+// (random or pct, with a count) and returns the first that fails, "" when
+// all pass; ok is false for a bad spec.
+func exploreSchedules(spec, exe, dir string, testArgs []string) (failed string, ok bool) {
+	strategy, n := spec, 1000
+	if s, count, has := strings.Cut(spec, ":"); has {
+		v, err := strconv.Atoi(count)
+		if err != nil || v <= 0 {
+			return "", false
+		}
+		strategy, n = s, v
+	}
+	if strategy != "random" && strategy != "pct" {
+		return "", false
+	}
+	for seed := 1; seed <= n; seed++ {
+		s := fmt.Sprintf("%s:%d", strategy, seed)
+		cmd := exec.Command(exe, testArgs...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "MARMOT_EXPLORE="+s, "MARMOT_OUTPUT=plain")
+		if err := cmd.Run(); err != nil {
+			return s, true
+		}
+	}
+	return "", true
+}
+
+// runFlag is the -run of testArgs for the replay command, "" when none.
+func runFlag(testArgs []string) string {
+	for _, a := range testArgs {
+		if v, ok := strings.CutPrefix(a, "-test.run="); ok {
+			return "-run '" + v + "' "
+		}
+	}
+	return ""
 }
 
 func cmdCache(args []string) int {
