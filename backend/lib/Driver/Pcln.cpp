@@ -33,6 +33,10 @@ uint32_t Table::fileId(const std::string &f) {
 }
 
 uint64_t imageBase(const ObjectFile &obj) {
+  // Wasm DWARF code addresses are already offsets into the code section;
+  // the lowest section address (data, near 1024) is no base for them.
+  if (obj.isWasm())
+    return 0;
   if (auto *m = dyn_cast<MachOObjectFile>(&obj)) {
     for (const auto &lc : m->load_commands())
       if (lc.C.cmd == MachO::LC_SEGMENT_64) {
