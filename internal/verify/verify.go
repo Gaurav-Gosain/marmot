@@ -39,10 +39,41 @@ type FuncResult struct {
 	// and never re-panics.
 	Recovers    bool
 	Obligations []*ObResult
+	// Invariants are engine B's checks of engine A's loop invariants: an
+	// invariant is used only when its base and step are both unsat.
+	Invariants []InvariantResult
 	// Effects is set when the function's calls reach files, processes,
 	// the network or system calls (directly, through same-package
 	// callees, or through other packages' functions by their summary).
 	Effects bool
+}
+
+// InvariantResult is the check of one loop header's invariant.
+type InvariantResult struct {
+	Block      int
+	Facts      int // facts kept, of Of computed by engine A
+	Of         int
+	Base, Step string // the last answers (unsat when the kept set holds)
+}
+
+// modelEnv turns a solver model into an evaluation environment (array
+// bytes come as "name[i]").
+func modelEnv(m map[string]uint64) *smt.Env {
+	env := &smt.Env{BV: map[string]uint64{}, Arr: map[string]map[uint64]byte{}}
+	for k, v := range m {
+		if i := strings.IndexByte(k, '['); i > 0 && strings.HasSuffix(k, "]") {
+			idx, err := strconv.ParseUint(k[i+1:len(k)-1], 10, 64)
+			if err == nil {
+				if env.Arr[k[:i]] == nil {
+					env.Arr[k[:i]] = map[uint64]byte{}
+				}
+				env.Arr[k[:i]][idx] = byte(v)
+			}
+			continue
+		}
+		env.BV[k] = v
+	}
+	return env
 }
 
 // ObResult is the outcome for one obligation.
@@ -348,6 +379,70 @@ func engineB(fn *ssa.Function, fr *FuncResult, s *smt.Solver, heads map[*ssa.Bas
 	if err != nil {
 		return
 	}
+	// Loop invariants are obligations too: the facts of each header's
+	// invariant are kept only when base and step are unsat for the set
+	// kept (Houdini: a model of a failing check drops the facts it
+	// breaks, until both checks are unsat). Outer headers first, so an
+	// inner loop's step may assume the outer invariant.
+	var hs []*ssa.BasicBlock
+	for h := range enc.Heads {
+		hs = append(hs, h)
+	}
+	slices.SortFunc(hs, func(a, b *ssa.BasicBlock) int { return a.Index - b.Index })
+	verified := map[*ssa.BasicBlock]bool{}
+	ctxI, cancelI := context.WithTimeout(context.Background(), engineBBudget)
+	defer cancelI()
+	for _, h := range hs {
+		n0 := len(enc.Heads[h])
+		base, step := "unsat", "unsat"
+		for iter := 0; iter < 12 && len(enc.Heads[h]) > 0; iter++ {
+			keep := make([]bool, len(enc.Heads[h]))
+			for k := range keep {
+				keep[k] = true
+			}
+			changed := false
+			for _, which := range []string{"base", "step"} {
+				q := enc.Base[h]
+				fs := enc.BaseF[h]
+				if which == "step" {
+					q, fs = enc.StepQuery(h), enc.StepF[h]
+				}
+				res := s.Check(ctxI, append(append([]*smt.T(nil), enc.Assumes...), q))
+				switch res.Answer {
+				case smt.Unsat:
+					continue
+				case smt.Sat:
+					env := modelEnv(res.Model)
+					for k, f := range fs {
+						if smt.Eval(f, env) != 0 {
+							keep[k], changed = false, true
+						}
+					}
+				}
+				if which == "base" {
+					base = string(res.Answer)
+				} else {
+					step = string(res.Answer)
+				}
+				if res.Answer != smt.Sat || !changed {
+					// unknown, or a model that breaks no single fact: give up.
+					for k := range keep {
+						keep[k] = false
+					}
+					changed = true
+				}
+				break
+			}
+			if !changed {
+				base, step = "unsat", "unsat"
+				break
+			}
+			enc.KeepFacts(h, keep)
+		}
+		verified[h] = len(enc.Heads[h]) > 0
+		fr.Invariants = append(fr.Invariants, InvariantResult{Block: h.Index, Facts: len(enc.Heads[h]), Of: n0, Base: base, Step: step})
+	}
+	enc.DropUnverified(verified)
 	var qs []*smt.T
 	var qo []*ObResult
 	for _, o := range open {

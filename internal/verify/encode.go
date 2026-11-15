@@ -32,6 +32,17 @@ type encoding struct {
 	// Block is the block of each obligation, by key.
 	Block  map[string]*ssa.BasicBlock
 	Result *smt.T // the first result when it is an integer, nil otherwise
+	// Base and Step are, per loop header, the conditions under which its
+	// invariant fails on entry, or after one more iteration; the
+	// invariant is used only when both are unsat.
+	Base, Step map[*ssa.BasicBlock]*smt.T
+	// BaseF and StepF are the same per fact of Heads[h] (index for
+	// index): the edge conditions under which that fact fails.
+	BaseF, StepF map[*ssa.BasicBlock][]*smt.T
+	// StepHeads are the back edges of each header, for the invariants a
+	// step may assume.
+	StepHeads map[*ssa.BasicBlock][]*ssa.BasicBlock
+	headFacts map[*ssa.BasicBlock][]pairBound
 }
 
 type encParam struct {
@@ -125,7 +136,7 @@ func encodeFunc(fn *ssa.Function, heads ...map[*ssa.BasicBlock]*state) (*encodin
 			return nil, fmt.Errorf("not encoded: loop")
 		}
 	}
-	e := &encoder{fn: fn, vals: map[ssa.Value]*smt.T{}, seqs: map[ssa.Value]*seqT{}, reach: map[*ssa.BasicBlock]*smt.T{}, edges: map[[2]*ssa.BasicBlock]*smt.T{}, enc: &encoding{Viol: map[string]*smt.T{}, Heads: map[*ssa.BasicBlock][]*smt.T{}, Block: map[string]*ssa.BasicBlock{}}}
+	e := &encoder{fn: fn, vals: map[ssa.Value]*smt.T{}, seqs: map[ssa.Value]*seqT{}, reach: map[*ssa.BasicBlock]*smt.T{}, edges: map[[2]*ssa.BasicBlock]*smt.T{}, enc: &encoding{Viol: map[string]*smt.T{}, Heads: map[*ssa.BasicBlock][]*smt.T{}, Block: map[string]*ssa.BasicBlock{}, Base: map[*ssa.BasicBlock]*smt.T{}, Step: map[*ssa.BasicBlock]*smt.T{}, BaseF: map[*ssa.BasicBlock][]*smt.T{}, StepF: map[*ssa.BasicBlock][]*smt.T{}, StepHeads: map[*ssa.BasicBlock][]*ssa.BasicBlock{}, headFacts: map[*ssa.BasicBlock][]pairBound{}}}
 	for i, p := range fn.Params {
 		name := fmt.Sprintf("p%d_%s", i, p.Name())
 		switch {
@@ -191,6 +202,7 @@ func encodeFunc(fn *ssa.Function, heads ...map[*ssa.BasicBlock]*state) (*encodin
 			}
 		}
 	}
+	e.invariantChecks()
 	if len(results) > 0 && results[0].v.W > 0 {
 		r := results[len(results)-1].v
 		for i := len(results) - 2; i >= 0; i-- {
@@ -235,29 +247,63 @@ func (e *encoder) cutLoop(h *ssa.BasicBlock, st *state) {
 			e.vals[phi] = e.freshOf(phi.Type())
 		}
 	}
-	// a - b <= c, in 66-bit arithmetic: no wrap for 64-bit operands.
+	var facts []pairBound
+	for p, bd := range st.d {
+		facts = append(facts, pairBound{p, bd.c})
+	}
+	// Keep the facts the encoder can state at the header (about its phis
+	// and values defined before the loop).
+	var kept []pairBound
+	for _, f := range facts {
+		if e.factTerm(f, nil) != nil {
+			kept = append(kept, f)
+		}
+	}
+	e.enc.headFacts[h] = kept
+	for _, f := range kept {
+		e.enc.Heads[h] = append(e.enc.Heads[h], e.factTerm(f, nil))
+	}
+}
+
+// pairBound is a difference bound a - b <= c of engine A.
+type pairBound struct {
+	p pair
+	c int64
+}
+
+// factTerm states a - b <= c in 66-bit arithmetic (no wrap for 64-bit
+// operands); sub replaces the header's phis by other values (the
+// incoming values of an edge). nil when a node has no term.
+func (e *encoder) factTerm(f pairBound, sub map[ssa.Value]ssa.Value) *smt.T {
 	term := func(n node) *smt.T {
+		v := n.v
+		if s, ok := sub[v]; ok {
+			v = s
+		}
 		switch n.k {
 		case nZero:
 			return smt.BV(0, 66)
 		case nVal:
-			if _, ok := n.v.(*ssa.Const); !ok {
-				if _, ok := e.vals[n.v]; !ok {
+			if _, ok := v.(*ssa.Const); !ok {
+				if _, ok := e.vals[v]; !ok {
 					return nil
 				}
 			}
-			t := e.val(n.v)
+			t := e.val(v)
 			if t.W == 0 {
 				return nil
 			}
-			if _, signed, _ := intWidth(n.v.Type()); signed {
+			if _, signed, _ := intWidth(v.Type()); signed {
 				return smt.SExt(t, 66)
 			}
 			return smt.ZExt(t, 66)
 		case nLen, nCap:
-			s, ok := e.seqs[n.v]
+			s, ok := e.seqs[v]
 			if !ok {
-				return nil
+				if _, isConst := v.(*ssa.Const); !isConst {
+					return nil
+				}
+				s = e.seq(v)
 			}
 			if n.k == nLen {
 				return smt.SExt(s.len, 66)
@@ -266,18 +312,104 @@ func (e *encoder) cutLoop(h *ssa.BasicBlock, st *state) {
 		}
 		return nil
 	}
-	for p, bd := range st.d {
-		a, b := term(p.a), term(p.b)
-		if a == nil || b == nil {
+	a, b := term(f.p.a), term(f.p.b)
+	if a == nil || b == nil {
+		return nil
+	}
+	cterm := smt.BV(uint64(f.c), 66)
+	if f.c < 0 {
+		cterm = smt.Neg(smt.BV(uint64(-f.c), 66))
+	}
+	return smt.SLe(smt.Sub(a, b), cterm)
+}
+
+// invariantChecks builds, for every loop header and every fact of its
+// invariant, the base condition (an entry edge whose incoming values
+// break the fact) and the step condition (a back edge that does).
+func (e *encoder) invariantChecks() {
+	for h, facts := range e.enc.headFacts {
+		if len(facts) == 0 {
 			continue
 		}
-		c := bd.c
-		cterm := smt.BV(uint64(c), 66)
-		if c < 0 {
-			cterm = smt.Neg(smt.BV(uint64(-c), 66))
+		var phis []*ssa.Phi
+		for _, in := range h.Instrs {
+			if phi, ok := in.(*ssa.Phi); ok {
+				phis = append(phis, phi)
+			}
 		}
-		e.enc.Heads[h] = append(e.enc.Heads[h], smt.SLe(smt.Sub(a, b), cterm))
+		baseF := make([]*smt.T, len(facts))
+		stepF := make([]*smt.T, len(facts))
+		for k := range facts {
+			baseF[k], stepF[k] = smt.Bool(false), smt.Bool(false)
+		}
+		for i, p := range h.Preds {
+			sub := map[ssa.Value]ssa.Value{}
+			for _, phi := range phis {
+				sub[phi] = phi.Edges[i]
+			}
+			back := h.Dominates(p)
+			if back {
+				e.enc.StepHeads[h] = append(e.enc.StepHeads[h], p)
+			}
+			for k, f := range facts {
+				t := e.factTerm(f, sub)
+				// An incoming value without a term: the fact cannot be
+				// shown on this edge.
+				broken := smt.Bool(true)
+				if t != nil {
+					broken = smt.Not(t)
+				}
+				c := smt.LAnd(e.edgeCond(p, h), broken)
+				if back {
+					stepF[k] = smt.LOr(stepF[k], c)
+				} else {
+					baseF[k] = smt.LOr(baseF[k], c)
+				}
+			}
+		}
+		e.enc.BaseF[h], e.enc.StepF[h] = baseF, stepF
+		e.enc.Base[h], e.enc.Step[h] = smt.LOr(baseF...), smt.LOr(stepF...)
 	}
+}
+
+// Verified marks the headers whose invariants were shown (base and
+// step unsat); the others are dropped from every query.
+func (enc *encoding) DropUnverified(ok map[*ssa.BasicBlock]bool) {
+	for h := range enc.Heads {
+		if !ok[h] {
+			delete(enc.Heads, h)
+		}
+	}
+}
+
+// KeepFacts keeps the facts of h's invariant where keep is true.
+func (enc *encoding) KeepFacts(h *ssa.BasicBlock, keep []bool) {
+	var hs, bs, ss []*smt.T
+	for k, t := range enc.Heads[h] {
+		if keep[k] {
+			hs, bs, ss = append(hs, t), append(bs, enc.BaseF[h][k]), append(ss, enc.StepF[h][k])
+		}
+	}
+	enc.Heads[h], enc.BaseF[h], enc.StepF[h] = hs, bs, ss
+	enc.Base[h], enc.Step[h] = smt.LOr(bs...), smt.LOr(ss...)
+}
+
+// StepQuery is the step condition of h with the invariants of the
+// headers that dominate its back edges assumed (h's own among them).
+func (enc *encoding) StepQuery(h *ssa.BasicBlock) *smt.T {
+	parts := []*smt.T{enc.Step[h]}
+	for g, inv := range enc.Heads {
+		dom := len(enc.StepHeads[h]) > 0
+		for _, p := range enc.StepHeads[h] {
+			if !g.Dominates(p) {
+				dom = false
+			}
+		}
+		if dom {
+			parts = append(parts, inv...)
+		}
+	}
+	return smt.LAnd(parts...)
 }
 
 // Query is the condition for obligation key: its violation and the
