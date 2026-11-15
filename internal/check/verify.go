@@ -141,6 +141,7 @@ func verifySearch(c *CheckResult, search, show, effects bool, progress func(stri
 				var in vfy.Info
 				_ = json.Unmarshal(d.Verify, &in)
 				in.Confirmed, in.Input, in.PanicMessage = confirmed, hit.Input, hit.PanicMessage
+				in.Status = "counterexample"
 				if hit.Runs == 3 {
 					in.ReproducedBy = []string{"gc"}
 				}
@@ -242,7 +243,15 @@ func VerifyMain(args []string, version string) int {
 		if opts.Progress != nil {
 			progress = func(s string) { fmt.Fprintln(opts.Progress, s) }
 		}
-		c.Notes = append(c.Notes, verifySearch(c, *vf.Search, *vf.Latent || *vf.Search, *vf.Confirm == "effects", progress)...)
+		notes := verifySearch(c, *vf.Search, *vf.Latent || *vf.Search, *vf.Confirm == "effects", progress)
+		if !vfy.SandboxAvailable() {
+			notes = append([]string{"no sandbox here (sandbox-exec on macOS, bwrap on Linux): nothing was run, so no finding is confirmed"}, notes...)
+		}
+		c.Notes = append(c.Notes, notes...)
+		if c.Verify == nil {
+			c.Verify = &vfy.Summary{}
+		}
+		c.Verify.Notes = append(c.Verify.Notes, notes...)
 	}
 	ds := c.Findings
 	errs, _ := diag.Counts(ds)
