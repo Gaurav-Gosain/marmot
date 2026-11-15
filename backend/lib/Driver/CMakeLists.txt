@@ -5,6 +5,7 @@ add_library(MarmotPcln STATIC Pcln.cpp)
 
 add_library(MarmotDriver STATIC
   CardStub.cpp
+  IRStats.cpp
   ParkClear.cpp
   Pipeline.cpp
   RuntimeBitcode.cpp

@@ -2,6 +2,7 @@
 // emit. Everything runs in-process. Each call owns its own MLIRContext and
 // LLVMContext, so calls are safe to run in parallel.
 #include "marmot/Driver/Pipeline.h"
+#include "marmot/Driver/IRStats.h"
 #include "tier0/Reader.h"
 #include "llvm/Support/CommandLine.h"
 #include <mutex>
@@ -265,6 +266,8 @@ void runLLVMPipeline(llvm::Module &m, llvm::TargetMachine &tm, char level,
   llvm::PassInstrumentationCallbacks pic;
   llvm::StandardInstrumentations si(m.getContext(), /*DebugLogging=*/false);
   si.registerCallbacks(pic, &mam);
+  if (currentPassClock)
+    currentPassClock->registerOn(pic);
   // Profile guided optimization: instrument (-pgo-gen) or use (-pgo).
   std::optional<llvm::PGOOptions> pgo;
   if (!opts.pgoGen.empty() && level != '0')
@@ -1131,7 +1134,23 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
 
   if (opts.verifyEach && llvm::verifyModule(lmod, &errs))
     return fail("LLVM IR verification failed");
+  // MARMOT_IRSTATS: IR size before and after the optimizer, pass times.
+  const bool irStats = irStatsPath() != nullptr;
+  IRCounts preCounts;
+  PassClock clock;
+  auto optStart = std::chrono::steady_clock::now();
+  if (irStats) {
+    preCounts = countIR(lmod, 10);
+    optStart = std::chrono::steady_clock::now();
+    currentPassClock = &clock;
+  }
   runLLVMPipeline(lmod, tm, opts.optLevel, opts.loops, opts);
+  currentPassClock = nullptr;
+  double optMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - optStart).count();
+  IRCounts postCounts;
+  if (irStats)
+    postCounts = countIR(lmod, 10);
+  double codegenMs = 0;
   // With line info (the pc table, tracebacks), Go functions keep their frames
   // as gc does: code generation emits no sibling calls, so a caller that ends
   // with a call still shows up in a traceback. Set after the optimizer, so
@@ -1175,7 +1194,9 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
                                        : llvm::CodeGenFileType::AssemblyFile;
       if (tm.addPassesToEmitFile(cg, bos, nullptr, ft))
         return fail("target cannot emit this file type");
+      auto cgStart = std::chrono::steady_clock::now();
       cg.run(lmod);
+      codegenMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cgStart).count();
     }
     times.codegen += timer.lap();
     out.os().write(buf.data(), buf.size());
@@ -1186,6 +1207,8 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
   }
   out.keep();
   times.write += timer.lap();
+  if (irStats)
+    writeIRStats(input, preCounts, postCounts, clock, optMs, codegenMs);
   return true;
 }
 
