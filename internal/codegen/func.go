@@ -34,6 +34,7 @@ type funcGen struct {
 	frame             string // _deferframe address, "" if none
 	noinlineCalls     bool   // mark calls no_inline (defer thunks)
 	curBlock          *ssa.BasicBlock
+	statSym           string             // the function's symbol, for MARMOT_SSASTATS (ssastats.go)
 	fvValue           map[ssa.Value]bool // free variables captured by value
 	open              *openDefers        // open-coded defers, nil if not used
 	stackOK           map[ssa.Value]bool
@@ -127,6 +128,7 @@ func (f *funcGen) fail(pos token.Pos, format string, args ...any) {
 }
 
 func (f *funcGen) gen(sym string, shared bool) {
+	f.statSym = sym
 	fn := f.fn
 	params, ret := f.m.signature(fn)
 	if f.region != "" {
@@ -268,7 +270,13 @@ func (f *funcGen) gen(sym string, shared bool) {
 			f.curBlock = b
 			f.emitSunk(instr)
 			f.curPos = instr.Pos()
-			f.instr(instr)
+			if ssaStatsOn {
+				v0, b0 := f.nval, f.nblk
+				f.instr(instr)
+				f.noteSSA(ssaKind(instr), f.nval-v0, f.nblk-b0)
+			} else {
+				f.instr(instr)
+			}
 			for _, pl := range f.regionFree[instr] {
 				f.emit("llvm.call @rt_region_free(%s) : (%s) -> ()", f.gcv(pl.r), tP)
 			}

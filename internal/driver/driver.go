@@ -414,6 +414,7 @@ func (b *build) run1() (string, error) {
 			}()
 		}
 		wg.Wait()
+		codegen.WriteSSAStats()
 		var msgs []string
 		for _, e := range errs {
 			if e != nil {
