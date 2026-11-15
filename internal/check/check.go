@@ -23,7 +23,7 @@ import (
 
 	"github.com/Gaurav-Gosain/marmot/internal/checkflags"
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
-	tier1 "github.com/Gaurav-Gosain/marmot/internal/verify"
+	vfy "github.com/Gaurav-Gosain/marmot/internal/verify"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -102,9 +102,9 @@ type CheckResult struct {
 	Notes    []string          `json:"notes,omitempty"`
 	Findings []diag.Diagnostic `json:"-"`
 	// Verify sums the verify statistics of the analyzed packages.
-	Verify   *tier1.Summary `json:"verify,omitempty"`
-	Duration time.Duration  `json:"-"`
-	Cached   bool           `json:"cached,omitempty"`
+	Verify   *vfy.Summary  `json:"verify,omitempty"`
+	Duration time.Duration `json:"-"`
+	Cached   bool          `json:"cached,omitempty"`
 }
 
 // Result is the outcome of a run.
@@ -192,7 +192,7 @@ func Run(opts Options) (*Result, error) {
 		want[n] = true
 	}
 	lc, lcErr := findLintConfig(dir)
-	on := func(n string) bool { return selected(n, want, lc) || n == "verify" && opts.Verify }
+	on := func(n string) bool { return selected(n, want, lc) || (n == "verify" && opts.Verify) }
 	res := &Result{Dir: dir}
 	results := map[string]*CheckResult{}
 	for _, n := range Names {

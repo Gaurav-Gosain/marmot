@@ -15,7 +15,7 @@ import (
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
 	"github.com/Gaurav-Gosain/marmot/internal/exhaustive"
 	"github.com/Gaurav-Gosain/marmot/internal/nilcheck"
-	tier1 "github.com/Gaurav-Gosain/marmot/internal/verify"
+	vfy "github.com/Gaurav-Gosain/marmot/internal/verify"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -83,7 +83,7 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 	}
 	if results["verify"] != nil {
 		fams["verify"] = &family{}
-		fams["verify"].add("verify", tier1.Analyzer)
+		fams["verify"].add("verify", vfy.Analyzer)
 	}
 	for _, n := range analysisChecks {
 		if f := fams[n]; f != nil {

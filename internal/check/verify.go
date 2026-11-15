@@ -10,8 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Gaurav-Gosain/marmot/internal/checkflags"
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
-	tier1 "github.com/Gaurav-Gosain/marmot/internal/verify"
+	vfy "github.com/Gaurav-Gosain/marmot/internal/verify"
 )
 
 // verifyDiag finishes a verify finding: the statistics diagnostic is
@@ -19,19 +20,19 @@ import (
 // note (no class is an error until its false report sample passes);
 // latent findings are dropped unless asked for.
 func verifyDiag(r *CheckResult, d *diag.Diagnostic, fd finding, latent bool) bool {
-	kind, payload := tier1.DecodeCategory(fd.Category)
+	kind, payload := vfy.DecodeCategory(fd.Category)
 	switch kind {
-	case tier1.CategoryStats:
-		var s tier1.Summary
+	case vfy.CategoryStats:
+		var s vfy.Summary
 		if json.Unmarshal(payload, &s) == nil {
 			if r.Verify == nil {
-				r.Verify = &tier1.Summary{}
+				r.Verify = &vfy.Summary{}
 			}
 			r.Verify.Add(s)
 		}
 		return false
-	case tier1.CategoryFinding:
-		var in tier1.Info
+	case vfy.CategoryFinding:
+		var in vfy.Info
 		if err := json.Unmarshal(payload, &in); err != nil {
 			return false
 		}
@@ -47,7 +48,7 @@ func verifyDiag(r *CheckResult, d *diag.Diagnostic, fd finding, latent bool) boo
 
 // writeVerifyJSON writes schema 1: the diagnostics, then one result
 // line carrying the verify summary.
-func writeVerifyJSON(w io.Writer, ds []diag.Diagnostic, sum *tier1.Summary, code int, took time.Duration) {
+func writeVerifyJSON(w io.Writer, ds []diag.Diagnostic, sum *vfy.Summary, code int, took time.Duration) {
 	errs, warns := diag.Counts(ds)
 	_ = diag.WriteJSON(w, ds)
 	diag.WriteResult(w, diag.Result{Command: "verify", OK: code == 0, Errors: errs, Warnings: warns, DurationMs: took.Milliseconds(), ExitCode: code, Verify: sum})
@@ -57,17 +58,10 @@ func writeVerifyJSON(w io.Writer, ds []diag.Diagnostic, sum *tier1.Summary, code
 // diagnostics and its summary in the result line.
 func VerifyMain(args []string, version string) int {
 	limitMemory()
-	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
-	jsonFlag := fs.Bool("json", false, "machine readable output: JSON Lines on stderr (also $MARMOT_OUTPUT=json, and the default under coding agents)")
-	color := fs.String("color", "auto", "color in human output: auto, always or never")
-	latent := fs.Bool("latent", false, "also report latent panics: operations that panic for some inputs of their function (preconditions)")
-	tags := fs.String("tags", "", "comma separated build tags")
-	jobs := fs.Int("j", 0, "parallel analysis jobs (default: the number of CPUs)")
-	noCache := fs.Bool("nocache", false, "analyze everything again, ignoring cached results")
-	verbose := fs.Bool("v", false, "print timing and cache statistics")
+	fs, vf := checkflags.NewVerify()
 	fs.SetOutput(io.Discard)
 	err := fs.Parse(args)
-	rep := reporter("verify", *jsonFlag, *color, version)
+	rep := reporter("verify", *vf.JSON, *vf.Color, version)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fs.SetOutput(os.Stdout)
@@ -76,14 +70,14 @@ func VerifyMain(args []string, version string) int {
 		}
 		return rep.Usage(err.Error() + "\nrun `marmot verify -h` for the flags")
 	}
-	opts := Options{Patterns: fs.Args(), Jobs: *jobs, Only: []string{"verify"}, Latent: *latent, Offline: true}
-	if *tags != "" {
-		opts.Tags = strings.Split(*tags, ",")
+	opts := Options{Patterns: fs.Args(), Jobs: *vf.Jobs, Only: []string{"verify"}, Latent: *vf.Latent, Offline: true}
+	if *vf.Tags != "" {
+		opts.Tags = strings.Split(*vf.Tags, ",")
 	}
-	if !*noCache {
+	if !*vf.NoCache {
 		opts.CacheDir = checkCacheDir()
 	}
-	if *verbose && rep.Mode != diag.ModeJSON {
+	if *vf.Verbose && rep.Mode != diag.ModeJSON {
 		opts.Progress = os.Stderr
 	}
 	start := time.Now()
@@ -108,7 +102,7 @@ func VerifyMain(args []string, version string) int {
 	}
 	sum := c.Verify
 	if sum == nil {
-		sum = &tier1.Summary{}
+		sum = &vfy.Summary{}
 	}
 	switch rep.Mode {
 	case diag.ModeJSON:

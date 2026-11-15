@@ -53,6 +53,32 @@ func NewCheck() (*flag.FlagSet, *Check) {
 	return fs, c
 }
 
+// Verify are the flags of marmot verify.
+type Verify struct {
+	JSON    *bool
+	Color   *string
+	Latent  *bool
+	Tags    *string
+	Jobs    *int
+	NoCache *bool
+	Verbose *bool
+}
+
+// NewVerify returns the flag set of marmot verify.
+func NewVerify() (*flag.FlagSet, *Verify) {
+	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
+	v := &Verify{
+		JSON:    fs.Bool("json", false, "machine readable output: JSON Lines on stderr (also $MARMOT_OUTPUT=json, and the default under coding agents)"),
+		Color:   fs.String("color", "auto", "color in human output: auto, always or never (NO_COLOR turns auto off)"),
+		Latent:  fs.Bool("latent", false, "also report latent panics: operations that panic for some inputs of their function (preconditions)"),
+		Tags:    fs.String("tags", "", "comma separated build tags"),
+		Jobs:    fs.Int("j", 0, "parallel analysis jobs (default: the number of CPUs)"),
+		NoCache: fs.Bool("nocache", false, "analyze everything again, ignoring cached results"),
+		Verbose: fs.Bool("v", false, "print timing and cache statistics"),
+	}
+	return fs, v
+}
+
 // SplitChanged turns "-changed" without a value into -changed=@default,
 // and "-changed REF" into -changed=REF when REF names a commit, so the
 // flag works with and without a value.

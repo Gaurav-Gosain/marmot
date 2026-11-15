@@ -22,19 +22,9 @@ func cmdCheck(args []string) int { return runCheckTool("check", args) }
 
 func cmdVerify(args []string) int { return runCheckTool("verify", args) }
 
-// newVerifyFlags mirrors the flags of marmot-check verify, for help and
+// newVerifyFlags is the flag set of marmot-check verify, for help and
 // completion.
-func newVerifyFlags() *flag.FlagSet {
-	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
-	fs.Bool("json", false, "machine readable output: JSON Lines on stderr (also $MARMOT_OUTPUT=json, and the default under coding agents)")
-	fs.String("color", "auto", "color in human output: auto, always or never")
-	fs.Bool("latent", false, "also report latent panics: operations that panic for some inputs of their function (preconditions)")
-	fs.String("tags", "", "comma separated build tags")
-	fs.Int("j", 0, "parallel analysis jobs (default: the number of CPUs)")
-	fs.Bool("nocache", false, "analyze everything again, ignoring cached results")
-	fs.Bool("v", false, "print timing and cache statistics")
-	return fs
-}
+func newVerifyFlags() *flag.FlagSet { fs, _ := checkflags.NewVerify(); return fs }
 
 // checkTool finds marmot-check: $MARMOT_CHECK, next to this executable,
 // or in build/bin of the marmot root.
