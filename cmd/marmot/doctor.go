@@ -95,18 +95,21 @@ func cmdDoctor(args []string) int {
 	}
 
 	// LLVM: clang links and compiles C and IR.
-	clang := "/opt/homebrew/opt/llvm@22/bin/clang"
-	if d := os.Getenv("LLVM_BIN"); d != "" {
-		clang = filepath.Join(d, "clang")
+	// The driver's LLVM: $LLVM_BIN, the install record, Homebrew, then PATH.
+	clang := driver.LLVMTool("clang")
+	_, from := driver.LLVMBin()
+	found := ""
+	if from != "Homebrew llvm@22" {
+		found = " (" + clang + ", from " + from + ")"
 	}
 	if out, err := run(clang, "--version"); err != nil {
-		add("llvm", "fail", "no clang at "+clang, "install LLVM 22 (brew install llvm@22) or set LLVM_BIN to its bin directory")
+		add("llvm", "fail", "no clang at "+clang+" (looked in "+from+")", "install LLVM 22 (brew install llvm@22 on macOS, apt.llvm.org on Linux), or set LLVM_BIN to its bin directory")
 	} else {
 		first, _, _ := strings.Cut(out, "\n")
 		if !strings.Contains(first, "version 22") {
-			add("llvm", "warn", first, "marmot is built against LLVM 22; other versions may not read its output")
+			add("llvm", "warn", first+found, "marmot is built against LLVM 22; other versions may not read its output")
 		} else {
-			add("llvm", "ok", first, "")
+			add("llvm", "ok", first+found, "")
 		}
 	}
 	// cgo: the same clang compiles C; nothing else is needed but headers.

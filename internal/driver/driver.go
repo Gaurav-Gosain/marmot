@@ -86,15 +86,6 @@ func FindRoot() (string, error) {
 	return "", fmt.Errorf("cannot find the marmot root; set MARMOT_ROOT")
 }
 
-const llvmBin = "/opt/homebrew/opt/llvm@22/bin"
-
-func llvmTool(name string) string {
-	if d := os.Getenv("LLVM_BIN"); d != "" {
-		return filepath.Join(d, name)
-	}
-	return filepath.Join(llvmBin, name)
-}
-
 type build struct {
 	cfg        Config
 	closers    []func() error // files opened for this build (the allocation report)

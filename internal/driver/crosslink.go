@@ -56,7 +56,7 @@ func linuxLinker() []string {
 
 // ldLLD finds ld.lld: beside marmot's clang, in Homebrew's lld, or on PATH.
 func ldLLD() string {
-	for _, p := range []string{llvmTool("ld.lld"), filepath.Join(filepath.Dir(llvmBin), "..", "lld@22", "bin", "ld.lld"), "/opt/homebrew/opt/lld@22/bin/ld.lld", "/usr/local/opt/lld@22/bin/ld.lld"} {
+	for _, p := range []string{llvmTool("ld.lld"), filepath.Join(filepath.Dir(homebrewLLVM), "..", "lld@22", "bin", "ld.lld"), "/opt/homebrew/opt/lld@22/bin/ld.lld", "/usr/local/opt/lld@22/bin/ld.lld"} {
 		if fileExists(p) {
 			return p
 		}
