@@ -1,6 +1,7 @@
 // MachO.cpp: arm64 Mach-O relocatable object writer (see MachO.h).
 #include "MachO.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
