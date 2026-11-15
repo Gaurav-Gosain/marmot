@@ -9,6 +9,7 @@
 package diag
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
 )
@@ -127,6 +128,9 @@ type Diagnostic struct {
 	Check string `json:"check,omitempty"`
 	// Analyzer is the analyzer within the check (printf, SA1019, ...).
 	Analyzer string `json:"analyzer,omitempty"`
+	// Verify is the verify object of a marmot verify finding: obligation,
+	// condition, status, assumptions (internal/verify.Info).
+	Verify json.RawMessage `json:"verify,omitempty"`
 }
 
 // Sort orders diagnostics by file, line and column, with diagnostics without

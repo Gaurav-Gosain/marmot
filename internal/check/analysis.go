@@ -15,6 +15,7 @@ import (
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
 	"github.com/Gaurav-Gosain/marmot/internal/exhaustive"
 	"github.com/Gaurav-Gosain/marmot/internal/nilcheck"
+	tier1 "github.com/Gaurav-Gosain/marmot/internal/verify"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -79,6 +80,10 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 	if results["nil"] != nil {
 		fams["nil"] = &family{}
 		fams["nil"].add("nil", nilcheck.Analyzer)
+	}
+	if results["verify"] != nil {
+		fams["verify"] = &family{}
+		fams["verify"].add("verify", tier1.Analyzer)
 	}
 	for _, n := range analysisChecks {
 		if f := fams[n]; f != nil {
@@ -234,6 +239,9 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 					continue
 				}
 				d := toDiag(n, x.linter, x.fd, p.path)
+				if n == "verify" && !verifyDiag(results[n], &d, x.fd, opts.Latent) {
+					continue
+				}
 				if len(p.CgoFiles) > 0 {
 					// The analyzers saw cgo's rewrite of the files: an edit's
 					// offsets need not match the file the user has.
@@ -247,7 +255,7 @@ func runAnalysis(sc *scope, opts Options, st *store, lc *lintConfig, lcErr error
 
 // analysisChecks are the checks that run analyzers on the package graph,
 // in reporting order.
-var analysisChecks = []string{"vet", "lint", "modernize", "gopls", "exhaustive", "nil"}
+var analysisChecks = []string{"vet", "lint", "modernize", "gopls", "exhaustive", "nil", "verify"}
 
 // lintFiltered applies golangci-lint's filters: generated files, test
 // files when tests are off, exclusion rules, //nolint and one issue per
@@ -374,6 +382,8 @@ func checkCode(check string) string {
 		return diag.CodeExhaustive
 	case "nil":
 		return diag.CodeNil
+	case "verify":
+		return diag.CodeVerify
 	}
 	return diag.CodeOther
 }

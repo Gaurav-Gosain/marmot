@@ -23,6 +23,7 @@ import (
 
 	"github.com/Gaurav-Gosain/marmot/internal/checkflags"
 	"github.com/Gaurav-Gosain/marmot/internal/diag"
+	tier1 "github.com/Gaurav-Gosain/marmot/internal/verify"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -47,9 +48,11 @@ func selected(n string, want map[string]bool, lc *lintConfig) bool {
 // them or when the lint configuration enables the linter of that name.
 // exhaustive reports every partial switch, which in most code is
 // intended.
-var optIn = map[string]bool{"exhaustive": true}
+// verify runs on request (-verify, -only verify, marmot verify): it
+// analyzes every function and is new.
+var optIn = map[string]bool{"exhaustive": true, "verify": true}
 
-var reportOnly = map[string]bool{"modernize": true, "deadcode": true, "exhaustive": true, "nil": true}
+var reportOnly = map[string]bool{"modernize": true, "deadcode": true, "exhaustive": true, "nil": true, "verify": true}
 
 // Codes of check findings, one per check.
 var Codes = map[string]string{
@@ -77,6 +80,8 @@ type Options struct {
 	CacheDir string   // "" disables the cache
 	Targets  []string // cross build targets (goos/goarch); default the platforms file
 	Offline  bool     // no network (vuln is skipped)
+	Verify   bool     // also run verify
+	Latent   bool     // verify: report latent findings too
 	Progress io.Writer
 }
 
@@ -96,8 +101,10 @@ type CheckResult struct {
 	Gate     bool              `json:"gate"`
 	Notes    []string          `json:"notes,omitempty"`
 	Findings []diag.Diagnostic `json:"-"`
-	Duration time.Duration     `json:"-"`
-	Cached   bool              `json:"cached,omitempty"`
+	// Verify sums the verify statistics of the analyzed packages.
+	Verify   *tier1.Summary `json:"verify,omitempty"`
+	Duration time.Duration  `json:"-"`
+	Cached   bool           `json:"cached,omitempty"`
 }
 
 // Result is the outcome of a run.
@@ -185,7 +192,7 @@ func Run(opts Options) (*Result, error) {
 		want[n] = true
 	}
 	lc, lcErr := findLintConfig(dir)
-	on := func(n string) bool { return selected(n, want, lc) }
+	on := func(n string) bool { return selected(n, want, lc) || n == "verify" && opts.Verify }
 	res := &Result{Dir: dir}
 	results := map[string]*CheckResult{}
 	for _, n := range Names {
@@ -222,7 +229,7 @@ func Run(opts Options) (*Result, error) {
 	}
 	// The analysis checks share one package graph and one pass.
 	analysis := []string{}
-	for _, n := range []string{"vet", "lint", "modernize", "gopls", "exhaustive", "nil"} {
+	for _, n := range analysisChecks {
 		if results[n] != nil {
 			analysis = append(analysis, n)
 		}

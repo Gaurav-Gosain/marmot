@@ -85,6 +85,7 @@ var explainSkip = map[string]string{
 	CodeExhaustive:  "reported by marmot check",
 	CodeNil:         "reported by marmot check",
 	CodeHeapAlloc:   "reported by marmot build -allocs",
+	CodeVerify:      "reported by marmot verify",
 }
 
 // TestExplainExamples type checks a program for every explain example and

@@ -106,6 +106,8 @@ type Result struct {
 	Output     string `json:"output,omitempty"`
 	DurationMs int64  `json:"durationMs"`
 	ExitCode   int    `json:"exitCode,omitempty"`
+	// Verify is the summary of marmot verify (internal/verify.Summary).
+	Verify any `json:"verify,omitempty"`
 }
 
 // jsonDiag is the wire form: the diagnostic plus the schema version.

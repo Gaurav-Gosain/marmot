@@ -52,6 +52,9 @@ const (
 	CodeExhaustive = "M0109"
 	CodeNil        = "M0110"
 	CodeHeapAlloc  = "M0111"
+
+	// marmot verify findings.
+	CodeVerify = "M0120"
 )
 
 // CodeInfo describes one code for marmot explain.
@@ -264,6 +267,11 @@ var codeTable = []CodeInfo{
 		Right: "func point() Point {\n\treturn Point{1, 2} // a value: no allocation\n}",
 		Text:  "marmot build -allocs lists where the program allocates on the heap and why the object could not live in the frame: it is returned, stored in memory that outlives the function or in a global, passed to a call that may keep it, captured by an escaping closure, converted to an interface, kept across loop iterations, or too large for the frame. Heap allocations cost time in the allocator and the garbage collector; those in loops cost on every iteration.",
 		Fix:   "Return values instead of pointers, pass buffers in, keep large arrays out of loops, or avoid interfaces on hot paths."},
+	{Code: CodeVerify, Title: "possible run-time panic",
+		Wrong: "func Header(b []byte) (byte, uint16) {\n\tif len(b) < 2 {\n\t\treturn 0, 0\n\t}\n\treturn b[0], uint16(b[1])<<8 | uint16(b[2]) // len(b) == 2 panics\n}",
+		Right: "func Header(b []byte) (byte, uint16) {\n\tif len(b) < 3 {\n\t\treturn 0, 0\n\t}\n\treturn b[0], uint16(b[1])<<8 | uint16(b[2])\n}",
+		Text:  "marmot verify found an operation that can panic at run time (index or slice out of range, nil dereference, division by zero, ...). A manifest finding is a panic that a guard in the code fails to exclude: the code tests the quantity, but with a weaker bound than the operation needs, so the input the message names passes the guard and panics. A latent finding is a panic for some inputs of the function, a precondition its callers must meet; latent findings are notes and are shown with -latent. The verify object in JSON has the obligation, the condition, the status and the assumptions the result depends on.",
+		Fix:   "Tighten the guard to the bound the operation needs, or check the input before the operation. A fix that returns early silences the panic but can change behavior: the program's tests decide."},
 	{Code: CodeOther, Title: "error",
 		Text: "An error without a more specific code. The message says what is wrong."},
 }

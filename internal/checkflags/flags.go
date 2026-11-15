@@ -11,7 +11,7 @@ import (
 )
 
 // Names are the checks, in the order they run and are reported.
-var Names = []string{"fmt", "vet", "lint", "modernize", "gopls", "exhaustive", "nil", "vuln", "tidy", "cross", "deadcode"}
+var Names = []string{"fmt", "vet", "lint", "modernize", "gopls", "exhaustive", "nil", "verify", "vuln", "tidy", "cross", "deadcode"}
 
 // Check are the flags of marmot check.
 type Check struct {
@@ -28,6 +28,7 @@ type Check struct {
 	Targets *string
 	Watch   *bool
 	Staged  *bool
+	Verify  *bool
 }
 
 // NewCheck returns the flag set of marmot check.
@@ -46,6 +47,7 @@ func NewCheck() (*flag.FlagSet, *Check) {
 		Offline: fs.Bool("offline", false, "no network: the vulnerability check is skipped"),
 		Watch:   fs.Bool("watch", false, "run again after every change to the files and report only new and resolved findings"),
 		Staged:  fs.Bool("staged", false, "check exactly what git has staged (for a pre-commit hook), not the working tree"),
+		Verify:  fs.Bool("verify", false, "also run verify: report run-time panics a guard fails to exclude (see marmot verify)"),
 		Targets: fs.String("targets", "", "cross build targets, comma separated goos/goarch (default: scripts/platforms.txt, else linux, darwin and windows on amd64 and arm64)"),
 	}
 	return fs, c
