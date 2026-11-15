@@ -62,6 +62,8 @@ type Verify struct {
 	Jobs    *int
 	NoCache *bool
 	Verbose *bool
+	Search  *bool
+	Confirm *string
 }
 
 // NewVerify returns the flag set of marmot verify.
@@ -75,6 +77,8 @@ func NewVerify() (*flag.FlagSet, *Verify) {
 		Jobs:    fs.Int("j", 0, "parallel analysis jobs (default: the number of CPUs)"),
 		NoCache: fs.Bool("nocache", false, "analyze everything again, ignoring cached results"),
 		Verbose: fs.Bool("v", false, "print timing and cache statistics"),
+		Search:  fs.Bool("search", false, "also search for inputs that make latent and unproved operations panic (runs the functions in a sandbox)"),
+		Confirm: fs.String("confirm", "sandbox", "run inputs to confirm findings: sandbox (when one is available) or off"),
 	}
 	return fs, v
 }

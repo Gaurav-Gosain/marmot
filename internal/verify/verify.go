@@ -19,6 +19,7 @@ type Result struct {
 	Funcs []*FuncResult
 	// Summaries are the package's function summaries, for callers.
 	Summaries map[*ssa.Function]*FnSummary
+	fset      *token.FileSet
 }
 
 // FuncResult is the outcome for one function.

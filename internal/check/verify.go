@@ -1,12 +1,15 @@
 package check
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,6 +34,12 @@ func verifyDiag(r *CheckResult, d *diag.Diagnostic, fd finding, latent bool) boo
 			r.Verify.Add(s)
 		}
 		return false
+	case vfy.CategorySearch:
+		var h vfy.Hint
+		if json.Unmarshal(payload, &h) == nil {
+			r.search = append(r.search, searchHint{pkg: d.Package, dir: filepath.Dir(d.Span.File), hint: &h})
+		}
+		return false
 	case vfy.CategoryFinding:
 		var in vfy.Info
 		if err := json.Unmarshal(payload, &in); err != nil {
@@ -41,6 +50,7 @@ func verifyDiag(r *CheckResult, d *diag.Diagnostic, fd finding, latent bool) boo
 		}
 		d.Verify = payload
 		d.Severity = diag.Note
+		d.Primary = in.Label
 		// The guard and the call are labels in the snippet when they are
 		// in the finding's file.
 		var rel []diag.Related
@@ -55,6 +65,122 @@ func verifyDiag(r *CheckResult, d *diag.Diagnostic, fd finding, latent bool) boo
 		return true
 	}
 	return true
+}
+
+// searchHint is one function the search can call, with its package.
+type searchHint struct {
+	pkg, dir string
+	hint     *vfy.Hint
+}
+
+// verifySearch runs the directed search: on every hint with search, else
+// only on the functions of manifest findings (to confirm them). It
+// updates the findings it confirms and adds one for every other panic it
+// confirms; the added ones are shown with -latent or -search.
+func verifySearch(c *CheckResult, search, show bool, progress func(string)) []string {
+	var notes []string
+	type key struct{ fn, obl string }
+	byKey := map[key]int{}
+	wantFn := map[string]bool{}
+	for i := range c.Findings {
+		var in vfy.Info
+		if json.Unmarshal(c.Findings[i].Verify, &in) != nil {
+			continue
+		}
+		byKey[key{in.Fn, in.Obligation}] = i
+		if in.Class == "manifest" {
+			wantFn[in.Fn] = true
+		}
+	}
+	byDir := map[string][]searchHint{}
+	var dirs []string
+	for _, h := range c.search {
+		if !search && !wantFn[h.hint.Full] {
+			continue
+		}
+		if _, ok := byDir[h.dir]; !ok {
+			dirs = append(dirs, h.dir)
+		}
+		byDir[h.dir] = append(byDir[h.dir], h)
+	}
+	slices.Sort(dirs)
+	for _, dir := range dirs {
+		hs := byDir[dir]
+		var hints []*vfy.Hint
+		for _, h := range hs {
+			hints = append(hints, h.hint)
+		}
+		slices.SortFunc(hints, func(a, b *vfy.Hint) int { return strings.Compare(a.Full, b.Full) })
+		hits, err := vfy.Search(context.Background(), dir, hints[0].PkgName, hints, vfy.SearchOptions{Progress: progress})
+		if err != nil {
+			notes = append(notes, fmt.Sprintf("search in %s: %v", hs[0].pkg, err))
+			continue
+		}
+		exported := map[string]bool{}
+		obls := map[key]vfy.OblRef{}
+		for _, h := range hints {
+			exported[h.Full] = h.Exported
+			for _, o := range h.Obls {
+				obls[key{h.Full, o.Key}] = o
+			}
+		}
+		for _, hit := range hits {
+			k := key{hit.Fn, hit.Obligation}
+			confirmed := "function-level"
+			if exported[hit.Fn] {
+				confirmed = "api"
+			}
+			if hit.Runs < 3 {
+				confirmed = "none"
+			}
+			call := fmt.Sprintf("%s(%s)", shortName(hit.Fn), strings.Join(hit.Args, ", "))
+			note := fmt.Sprintf("confirmed under gc: %s panics: %s", call, hit.PanicMessage)
+			if hit.Runs < 3 {
+				note = fmt.Sprintf("flaky: %s panicked in %d of 3 runs: %s", call, hit.Runs, hit.PanicMessage)
+			}
+			if i, ok := byKey[k]; ok {
+				d := &c.Findings[i]
+				var in vfy.Info
+				_ = json.Unmarshal(d.Verify, &in)
+				in.Confirmed, in.Input, in.PanicMessage = confirmed, hit.Input, hit.PanicMessage
+				if hit.Runs == 3 {
+					in.ReproducedBy = []string{"gc"}
+				}
+				in.Engine = "pentagon+search"
+				d.Verify, _ = json.Marshal(in)
+				d.Notes = append(d.Notes, note)
+				continue
+			}
+			o := obls[k]
+			if c.Verify == nil {
+				c.Verify = &vfy.Summary{}
+			}
+			c.Verify.Counterexamples++
+			if !show {
+				continue
+			}
+			in := vfy.Info{Obligation: hit.Obligation, Fn: hit.Fn, Panic: hit.Kind, Class: "latent", Status: "counterexample", Confirmed: confirmed, Engine: "search", Input: hit.Input, PanicMessage: hit.PanicMessage, Assumes: []string{"no-races"}, Label: "panics for " + call}
+			if hit.Runs == 3 {
+				in.ReproducedBy = []string{"gc"}
+			}
+			payload, _ := json.Marshal(in)
+			c.Findings = append(c.Findings, diag.Diagnostic{
+				Kind: "diagnostic", Severity: diag.Note, Code: diag.CodeVerify,
+				Message: fmt.Sprintf("`%s` can panic: %s", shortName(hit.Fn), vfy.KindText(hit.Kind)),
+				Span:    diag.Span{File: o.File, Line: o.Line, Col: o.Col, EndLine: o.Line, EndCol: o.Col},
+				Primary: in.Label, Notes: []string{note}, Package: hs[0].pkg, Check: "verify", Analyzer: "verify", Verify: payload,
+			})
+		}
+	}
+	diag.Sort(c.Findings)
+	return notes
+}
+
+func shortName(full string) string {
+	if i := strings.LastIndex(full, "."); i >= 0 {
+		return full[i+1:]
+	}
+	return full
 }
 
 // writeVerifyJSON writes schema 1: the diagnostics, then one result
@@ -105,6 +231,13 @@ func VerifyMain(args []string, version string) int {
 	if c == nil {
 		return rep.Usage("marmot verify: the verify check did not run")
 	}
+	if *vf.Confirm != "off" {
+		var progress func(string)
+		if opts.Progress != nil {
+			progress = func(s string) { fmt.Fprintln(opts.Progress, s) }
+		}
+		c.Notes = append(c.Notes, verifySearch(c, *vf.Search, *vf.Latent || *vf.Search, progress)...)
+	}
 	ds := c.Findings
 	errs, _ := diag.Counts(ds)
 	code := 0
@@ -132,8 +265,8 @@ func VerifyMain(args []string, version string) int {
 		for _, n := range c.Notes {
 			fmt.Fprintf(w, "%s%s%s\n", st.Dim, n, st.Reset)
 		}
-		fmt.Fprintf(w, "verify: %d functions, %d obligations: %d proved, %d manifest, %d latent, %d unknown, %d recovered (%.2fs)\n",
-			sum.Functions, sum.Obligations, sum.Proved+sum.ProvedAssuming, sum.Manifest, sum.Latent, sum.Unknown, sum.Recovered, time.Since(start).Seconds())
+		fmt.Fprintf(w, "verify: %d functions, %d obligations: %d proved, %d manifest, %d latent, %d unknown, %d recovered, %d counterexamples (%.2fs)\n",
+			sum.Functions, sum.Obligations, sum.Proved+sum.ProvedAssuming, sum.Manifest, sum.Latent, sum.Unknown, sum.Recovered, sum.Counterexamples, time.Since(start).Seconds())
 	}
 	return code
 }

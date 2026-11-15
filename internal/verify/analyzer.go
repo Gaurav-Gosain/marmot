@@ -2,6 +2,7 @@ package verify
 
 import (
 	"fmt"
+	"go/ast"
 	"go/types"
 	"reflect"
 
@@ -57,7 +58,9 @@ func run(pass *analysis.Pass) (any, error) {
 			if o.Condition != "" {
 				msg += fmt.Sprintf(" when %s", o.Condition)
 			}
-			d := analysis.Diagnostic{Pos: pos, End: end, Category: encodeCategory(CategoryFinding, info(f, o)), Message: msg}
+			in := info(f, o)
+			in.Label = primaryLabel(idx, o)
+			d := analysis.Diagnostic{Pos: pos, End: end, Category: encodeCategory(CategoryFinding, in), Message: msg}
 			for _, l := range o.Labels {
 				lp, le := idx.span(l.Pos)
 				d.Related = append(d.Related, analysis.RelatedInformation{Pos: lp, End: le, Message: l.Text})
@@ -65,8 +68,50 @@ func run(pass *analysis.Pass) (any, error) {
 			pass.Report(d)
 		}
 	}
+	for _, f := range r.Funcs {
+		if h := makeHint(f.Fn, f, pass.Fset); h != nil {
+			pass.Report(analysis.Diagnostic{Pos: f.Fn.Pos(), Category: encodeCategory(CategorySearch, h), Message: "verify search hint"})
+		}
+	}
 	if len(pass.Files) > 0 {
 		pass.Report(analysis.Diagnostic{Pos: pass.Files[0].Package, Category: encodeCategory(CategoryStats, r.Summary()), Message: "verify statistics"})
 	}
 	return r, nil
+}
+
+// primaryLabel is the text under the primary span, which must make sense
+// alone: the expression, what goes wrong, and when.
+func primaryLabel(idx *spanIndex, o *ObResult) string {
+	expr := ""
+	if n, ok := idx.at[o.Ob.Pos]; ok {
+		if e, ok := n.(ast.Expr); ok {
+			expr = types.ExprString(e)
+		}
+	}
+	var s string
+	switch o.Ob.Kind {
+	case KIndex:
+		s = "index out of range"
+		if expr != "" {
+			s = expr + " is out of range"
+		}
+	case KSlice:
+		s = "slice bounds out of range"
+		if expr != "" {
+			s = expr + " is out of bounds"
+		}
+	case KDivide:
+		s = "division by zero"
+	case KNil:
+		s = "nil dereference"
+		if expr != "" {
+			s = expr + " dereferences nil"
+		}
+	default:
+		s = panicText(o.Ob)
+	}
+	if o.Condition != "" {
+		s += " when " + o.Condition
+	}
+	return s
 }

@@ -102,7 +102,9 @@ type CheckResult struct {
 	Notes    []string          `json:"notes,omitempty"`
 	Findings []diag.Diagnostic `json:"-"`
 	// Verify sums the verify statistics of the analyzed packages.
-	Verify   *vfy.Summary  `json:"verify,omitempty"`
+	Verify *vfy.Summary `json:"verify,omitempty"`
+	// search are the verify search hints of the analyzed packages.
+	search   []searchHint
 	Duration time.Duration `json:"-"`
 	Cached   bool          `json:"cached,omitempty"`
 }

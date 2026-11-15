@@ -23,6 +23,8 @@ type Info struct {
 	ReproducedBy []string          `json:"reproducedBy,omitempty"`
 	Assumes      []string          `json:"assumes"`
 	Test         *TestRef          `json:"test,omitempty"`
+	// Label is the text under the primary span: what fails and when.
+	Label string `json:"label,omitempty"`
 }
 
 // TestRef names a generated test.
@@ -41,6 +43,9 @@ type Summary struct {
 	Manifest       int `json:"manifest"`
 	Latent         int `json:"latent"`
 	Unknown        int `json:"unknown"`
+	// Counterexamples are panics the search ran into, confirmed by
+	// running the input again.
+	Counterexamples int `json:"counterexamples,omitempty"`
 }
 
 // Add sums s2 into s.
@@ -53,6 +58,7 @@ func (s *Summary) Add(s2 Summary) {
 	s.Manifest += s2.Manifest
 	s.Latent += s2.Latent
 	s.Unknown += s2.Unknown
+	s.Counterexamples += s2.Counterexamples
 }
 
 // Summary counts the statuses of r.

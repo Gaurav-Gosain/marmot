@@ -20,6 +20,7 @@ func loadTestdata(t *testing.T, pkg string) *Result {
 		Run: func(pass *analysis.Pass) (any, error) {
 			prog := pass.ResultOf[buildssa.Analyzer].(*buildssa.SSA)
 			r = AnalyzePackage(pass.Fset, pass.Files, prog.SrcFuncs, DefaultOptions)
+			r.fset = pass.Fset
 			return nil, nil
 		},
 	}
