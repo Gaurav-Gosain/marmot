@@ -20,6 +20,9 @@ type TestResult struct {
 	Line       int      `json:"line,omitempty"`
 	Message    string   `json:"message,omitempty"` // the first failure message, with got/want lines
 	Output     []string `json:"output,omitempty"`  // everything the test logged
+	// Schedule is the explored schedule a failure happened under
+	// (marmot test -explore), for replay with -schedule.
+	Schedule string `json:"schedule,omitempty"`
 }
 
 var (
