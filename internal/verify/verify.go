@@ -1,0 +1,661 @@
+package verify
+
+import (
+	"bytes"
+	"fmt"
+	"go/ast"
+	"go/token"
+	"go/types"
+	"os"
+	"slices"
+	"strings"
+	"time"
+
+	"golang.org/x/tools/go/ssa"
+)
+
+// Result is the outcome for one package.
+type Result struct {
+	Funcs []*FuncResult
+}
+
+// FuncResult is the outcome for one function.
+type FuncResult struct {
+	Fn *ssa.Function
+	// Name is the function's full name (pkg.F, (*pkg.T).M, pkg.F$1).
+	Name string
+	// Assumes are the function's assumption holes (design 4.4): unknown
+	// callees, unsafe, reflect. Engine A's proofs do not use them (it
+	// keeps no memory facts and treats call results as arbitrary), so they
+	// are listed for the CI policy, not attached to each proof.
+	Assumes []string
+	// Recovers is set when a deferred closure calls recover() directly
+	// and never re-panics.
+	Recovers    bool
+	Obligations []*ObResult
+}
+
+// ObResult is the outcome for one obligation.
+type ObResult struct {
+	Ob     *Obligation
+	Status Status
+	// Reason is set for unknown: loop, heap-input, unknown-callee,
+	// call-result, global, unsafe.
+	Reason string
+	Dead   bool
+	// Class is "manifest" or "latent" for open obligations.
+	Class string
+	// Manifest guard mismatch (rule 1).
+	Rule      string
+	Condition string
+	Labels    []Label
+	// Via is the obligation of a callee inlined at a call in this
+	// function; the span is the callee's.
+	Via *Obligation
+	// Assumes the result depends on, besides no-races.
+	Assumes []string
+}
+
+// Label is a secondary span with a text.
+type Label struct {
+	Pos, End token.Pos
+	Text     string
+}
+
+// Options select what is analyzed.
+type Options struct {
+	// Inline is the size limit, in SSA instructions, of same-package
+	// callees analyzed in their caller's context (0: no inlining).
+	Inline int
+}
+
+// DefaultOptions are the options of marmot verify.
+var DefaultOptions = Options{Inline: 30}
+
+// AnalyzePackage runs tier 1 on the source functions of pkg.
+func AnalyzePackage(fset *token.FileSet, files []*ast.File, funcs []*ssa.Function, opts Options) *Result {
+	idx := newSpanIndex(files)
+	_ = idx
+	r := &Result{}
+	for _, fn := range funcs {
+		if fn.Blocks == nil || fn.Synthetic != "" {
+			continue
+		}
+		r.Funcs = append(r.Funcs, analyzeFunc(fset, fn, opts))
+	}
+	return r
+}
+
+func analyzeFunc(fset *token.FileSet, fn *ssa.Function, opts Options) *FuncResult {
+	fr := &FuncResult{Fn: fn, Name: fn.String(), Recovers: recovers(fn), Assumes: assumptions(fn)}
+	obs := obligations(fn)
+	byInstr := map[ssa.Instruction][]*Obligation{}
+	for _, o := range obs {
+		byInstr[o.Instr] = append(byInstr[o.Instr], o)
+	}
+	var inl *inliner
+	if opts.Inline > 0 {
+		inl = &inliner{limit: opts.Inline, caller: fn}
+	}
+	e := newEngine(fn, inl, 0)
+	cx := newCtx()
+	t0 := time.Now()
+	e.run(newState(cx))
+	if os.Getenv("MARMOT_VERIFY_SLOW") != "" {
+		if d := time.Since(t0); d > 50*time.Millisecond {
+			n := 0
+			for _, b := range fn.Blocks {
+				n += len(b.Instrs)
+			}
+			maxF := 0
+			for _, s := range e.in {
+				if s != nil && len(s.d) > maxF {
+					maxF = len(s.d)
+				}
+			}
+			fmt.Fprintf(os.Stderr, "slow %s %v instrs=%d blocks=%d maxfacts=%d work=%d visits=%d\n", fn, d, n, len(fn.Blocks), maxF, workBudget-cx.work, e.visits)
+		}
+	}
+	if cx.work < 0 {
+		for _, o := range obs {
+			fr.Obligations = append(fr.Obligations, &ObResult{Ob: o, Status: Unknown, Reason: "budget"})
+		}
+		return fr
+	}
+	verdicts := map[*Obligation]verdict{}
+	debug := os.Getenv("MARMOT_VERIFY_DEBUG") != "" && os.Getenv("MARMOT_VERIFY_DEBUG") == fn.Name()
+	if debug {
+		var buf bytes.Buffer
+		ssa.WriteFunction(&buf, fn)
+		fmt.Fprint(os.Stderr, buf.String())
+		for _, b := range fn.Blocks {
+			fmt.Fprintf(os.Stderr, "in[%d]: %v\n", b.Index, e.in[b])
+		}
+	}
+	e.evaluate(func(in ssa.Instruction, s *state) {
+		for _, o := range byInstr[in] {
+			verdicts[o] = checkObligation(o, s)
+			if debug {
+				fmt.Fprintf(os.Stderr, "%s at %v: %+v\n  state %v\n", o.Key, in, verdicts[o], s)
+			}
+		}
+	})
+	for _, o := range obs {
+		v, ok := verdicts[o]
+		if !ok {
+			v = verdict{proved: true, dead: true}
+		}
+		fr.Obligations = append(fr.Obligations, classify(fn, fr, o, v))
+	}
+	if inl != nil {
+		fr.Obligations = append(fr.Obligations, inl.found...)
+	}
+	return fr
+}
+
+// classify turns engine A's verdict into a status.
+func classify(fn *ssa.Function, fr *FuncResult, o *Obligation, v verdict) *ObResult {
+	r := &ObResult{Ob: o, Dead: v.dead}
+	switch {
+	case v.proved:
+		r.Status = Proved
+		return r
+	case fr.Recovers:
+		r.Status = Recovered
+		return r
+	}
+	if v.mismatch != nil {
+		if m := describeMismatch(fn, o, v.mismatch, nil); m != nil {
+			return m
+		}
+	}
+	reason := sourceReason(fn, o)
+	if reason == "" {
+		r.Status, r.Class = Latent, "latent"
+	} else {
+		r.Status, r.Reason = Unknown, reason
+	}
+	return r
+}
+
+// describeMismatch builds the manifest result of a guard mismatch, or nil
+// when the quantity has no name in the source (so no condition can be
+// printed).
+func describeMismatch(fn *ssa.Function, o *Obligation, m *mismatch, via *ssa.Call) *ObResult {
+	q := nodeName(m.q)
+	if q == "" {
+		return nil
+	}
+	var cond string
+	if m.other.k == nZero && m.other.v == nil {
+		if m.lo == m.hi {
+			cond = fmt.Sprintf("%s == %d", q, m.lo)
+		} else if m.hi == inf {
+			cond = fmt.Sprintf("%s >= %d", q, m.lo)
+		} else {
+			cond = fmt.Sprintf("%d <= %s && %s <= %d", m.lo, q, q, m.hi)
+		}
+	} else {
+		other := nodeName(m.other)
+		if other == "" {
+			return nil
+		}
+		// q - other in [lo, hi].
+		switch {
+		case m.lo == m.hi && m.lo == 0:
+			cond = fmt.Sprintf("%s == %s", q, other)
+		case m.lo == m.hi:
+			cond = fmt.Sprintf("%s == %s+%d", q, other, m.lo)
+		default:
+			cond = fmt.Sprintf("%s >= %s+%d", q, other, m.lo)
+		}
+	}
+	r := &ObResult{Ob: o, Status: Counterexample, Class: "manifest", Rule: "guard-mismatch", Condition: cond}
+	r.Labels = append(r.Labels, Label{Pos: m.guard, Text: "this guard allows " + cond})
+	if via != nil {
+		r.Labels = append(r.Labels, Label{Pos: via.Pos(), Text: "the call panics when " + cond})
+	}
+	return r
+}
+
+// nodeName is the source name of a node: a parameter, len or cap of a
+// parameter, or a constant.
+func nodeName(n node) string {
+	var base string
+	switch v := n.v.(type) {
+	case *ssa.Parameter:
+		base = v.Name()
+	case *ssa.Phi:
+		// A local variable merged at a loop header or join.
+		if v.Comment == "" || strings.ContainsAny(v.Comment, " .:") {
+			return ""
+		}
+		base = v.Comment
+	case *ssa.Const:
+		if n.k == nVal {
+			return v.Value.String()
+		}
+	default:
+		return ""
+	}
+	switch n.k {
+	case nLen:
+		return "len(" + base + ")"
+	case nCap:
+		return "cap(" + base + ")"
+	}
+	return base
+}
+
+// sourceReason is why an open obligation is not latent, from where its
+// operands come from; "" when they are functions of the parameters only.
+func sourceReason(fn *ssa.Function, o *Obligation) string {
+	var roots []ssa.Value
+	for _, v := range []ssa.Value{o.X, o.I, o.Hi, o.Max} {
+		if v != nil {
+			roots = append(roots, v)
+		}
+	}
+	if o.Kind == KPanic {
+		return "explicit"
+	}
+	seen := map[ssa.Value]bool{}
+	reasons := map[string]bool{}
+	var walk func(v ssa.Value, depth int)
+	walk = func(v ssa.Value, depth int) {
+		if v == nil || seen[v] {
+			return
+		}
+		seen[v] = true
+		if depth > 40 {
+			reasons["budget"] = true
+			return
+		}
+		switch v := v.(type) {
+		case *ssa.Parameter, *ssa.Const, *ssa.Function, *ssa.Alloc, *ssa.MakeSlice,
+			*ssa.MakeMap, *ssa.MakeChan, *ssa.MakeClosure:
+		case *ssa.FreeVar:
+			reasons["heap-input"] = true
+		case *ssa.Global:
+			reasons["global"] = true
+		case *ssa.UnOp:
+			if v.Op == token.MUL {
+				if g, ok := v.X.(*ssa.Global); ok {
+					_ = g
+					reasons["global"] = true
+				} else {
+					reasons["heap-input"] = true
+				}
+				return
+			}
+			if v.Op == token.ARROW {
+				reasons["heap-input"] = true
+				return
+			}
+			walk(v.X, depth+1)
+		case *ssa.Phi:
+			if v.Block() != nil && isLoopHeader(v.Block()) {
+				reasons["loop"] = true
+			}
+			for _, e := range v.Edges {
+				walk(e, depth+1)
+			}
+		case *ssa.Call:
+			c := v.Common()
+			if b, ok := c.Value.(*ssa.Builtin); ok {
+				switch b.Name() {
+				case "len", "cap", "min", "max", "append", "copy":
+					for _, a := range c.Args {
+						walk(a, depth+1)
+					}
+					return
+				}
+			}
+			if c.IsInvoke() || c.StaticCallee() == nil {
+				reasons["unknown-callee"] = true
+			} else {
+				reasons["call-result"] = true
+			}
+		case *ssa.Extract:
+			walk(v.Tuple, depth+1)
+		case *ssa.Lookup, *ssa.Index, *ssa.Field:
+			reasons["heap-input"] = true
+		case *ssa.TypeAssert:
+			walk(v.X, depth+1)
+		case ssa.Instruction:
+			for _, op := range v.Operands(nil) {
+				walk(*op, depth+1)
+			}
+		}
+	}
+	for _, r := range roots {
+		walk(r, 0)
+	}
+	for _, r := range []string{"unknown-callee", "call-result", "heap-input", "global", "loop", "budget"} {
+		if reasons[r] {
+			return r
+		}
+	}
+	return ""
+}
+
+func isLoopHeader(b *ssa.BasicBlock) bool {
+	for _, p := range b.Preds {
+		if b.Dominates(p) {
+			return true
+		}
+	}
+	return false
+}
+
+// recovers reports whether fn defers a closure (or function) that calls
+// recover() directly and contains no panic.
+func recovers(fn *ssa.Function) bool {
+	for _, b := range fn.Blocks {
+		for _, in := range b.Instrs {
+			d, ok := in.(*ssa.Defer)
+			if !ok {
+				continue
+			}
+			var callee *ssa.Function
+			switch v := d.Call.Value.(type) {
+			case *ssa.Function:
+				callee = v
+			case *ssa.MakeClosure:
+				callee, _ = v.Fn.(*ssa.Function)
+			}
+			if callee == nil {
+				continue
+			}
+			calls, panics := false, false
+			for _, cb := range callee.Blocks {
+				for _, ci := range cb.Instrs {
+					switch ci := ci.(type) {
+					case *ssa.Call:
+						if bi, ok := ci.Call.Value.(*ssa.Builtin); ok && bi.Name() == "recover" {
+							calls = true
+						}
+					case *ssa.Panic:
+						panics = true
+					}
+				}
+			}
+			if calls && !panics {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// assumptions lists fn's holes for the policy: unknown callees, unsafe
+// and reflect use.
+func assumptions(fn *ssa.Function) []string {
+	set := map[string]bool{}
+	for _, b := range fn.Blocks {
+		for _, in := range b.Instrs {
+			if c, ok := in.(ssa.CallInstruction); ok {
+				cm := c.Common()
+				switch {
+				case cm.IsInvoke():
+					set["unknown-callee:"+types.TypeString(cm.Value.Type(), nil)+"."+cm.Method.Name()] = true
+				case cm.StaticCallee() == nil:
+					if _, ok := cm.Value.(*ssa.Builtin); !ok {
+						set["unknown-callee:func"] = true
+					}
+				default:
+					if p := cm.StaticCallee().Pkg; p != nil && p.Pkg.Path() == "reflect" {
+						set["reflect:"+cm.StaticCallee().Name()] = true
+					}
+				}
+			}
+			if v, ok := in.(ssa.Value); ok {
+				if t, ok := v.Type().Underlying().(*types.Basic); ok && t.Kind() == types.UnsafePointer {
+					set["unsafe:"+fn.String()] = true
+				}
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for s := range set {
+		out = append(out, s)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// evaluate re-runs every reachable block from its fixpoint state, calling
+// check before each instruction.
+func (e *engine) evaluate(check func(ssa.Instruction, *state)) {
+	e.final = true
+	for _, b := range e.fn.Blocks {
+		in := e.in[b]
+		if in == nil {
+			continue
+		}
+		e.transfer(b, in.clone(), check)
+	}
+}
+
+// inliner analyzes small same-package callees in the caller's context,
+// for the guard mismatch rule.
+type inliner struct {
+	limit  int
+	caller *ssa.Function
+	found  []*ObResult
+	seen   map[string]bool
+}
+
+func (in *inliner) call(e *engine, s *state, call *ssa.Call, f *ssa.Function) {
+	if !e.final || e.depth >= 2 || f.Pkg == nil || f.Pkg != in.caller.Pkg || f == in.caller {
+		return
+	}
+	if !smallLoopFree(f, in.limit) || f.Recover != nil || len(f.FreeVars) > 0 {
+		return
+	}
+	args := call.Call.Args
+	if len(args) != len(f.Params) {
+		return
+	}
+	init := s.clone()
+	for i, p := range f.Params {
+		copyValue(init, args[i], p)
+		for _, k := range []nodeKind{nVal, nLen, nCap} {
+			if w, ok := s.guards[node{k, args[i]}]; ok {
+				init.guards[node{k, p}] = w
+			}
+		}
+	}
+	sub := newEngine(f, &inliner{limit: in.limit, caller: in.caller, seen: in.seen}, e.depth+1)
+	sub.inline.found = nil
+	sub.run(init)
+	obs := obligations(f)
+	byInstr := map[ssa.Instruction][]*Obligation{}
+	for _, o := range obs {
+		byInstr[o.Instr] = append(byInstr[o.Instr], o)
+	}
+	if in.seen == nil {
+		in.seen = map[string]bool{}
+	}
+	sub.evaluate(func(ins ssa.Instruction, st *state) {
+		for _, o := range byInstr[ins] {
+			v := checkObligation(o, st)
+			if v.mismatch == nil || !inCaller(in.caller, v.mismatch.guard) {
+				continue
+			}
+			// Name the quantity in the caller: map callee parameters
+			// back to the caller's arguments.
+			m := *v.mismatch
+			m.q = mapBack(m.q, f, args)
+			if m.other.v != nil {
+				m.other = mapBack(m.other, f, args)
+			}
+			r := describeMismatch(in.caller, o, &m, call)
+			if r == nil {
+				continue
+			}
+			key := o.Key + "@" + fmt.Sprint(call.Pos())
+			if in.seen[key] {
+				continue
+			}
+			in.seen[key] = true
+			r.Via = o
+			in.found = append(in.found, r)
+		}
+	})
+	in.found = append(in.found, sub.inline.found...)
+}
+
+// mapBack renames a callee parameter node to the caller's argument.
+func mapBack(n node, f *ssa.Function, args []ssa.Value) node {
+	for i, p := range f.Params {
+		if n.v == p {
+			return node{n.k, args[i]}
+		}
+	}
+	return n
+}
+
+func inCaller(fn *ssa.Function, pos token.Pos) bool {
+	if pos == token.NoPos || fn.Syntax() == nil {
+		return false
+	}
+	return fn.Syntax().Pos() <= pos && pos < fn.Syntax().End()
+}
+
+func smallLoopFree(f *ssa.Function, limit int) bool {
+	n := 0
+	for _, b := range f.Blocks {
+		n += len(b.Instrs)
+		if isLoopHeader(b) {
+			return false
+		}
+	}
+	return n <= limit
+}
+
+// spanIndex maps instruction anchor positions to the source expression
+// they belong to, for spans.
+type spanIndex struct {
+	at map[token.Pos]ast.Node
+}
+
+func newSpanIndex(files []*ast.File) *spanIndex {
+	x := &spanIndex{at: map[token.Pos]ast.Node{}}
+	for _, f := range files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.IndexExpr:
+				x.put(n.Lbrack, n)
+			case *ast.IndexListExpr:
+				x.put(n.Lbrack, n)
+			case *ast.SliceExpr:
+				x.put(n.Lbrack, n)
+			case *ast.BinaryExpr:
+				x.put(n.OpPos, n)
+			case *ast.StarExpr:
+				x.put(n.Star, n)
+			case *ast.UnaryExpr:
+				x.put(n.OpPos, n)
+			case *ast.SelectorExpr:
+				x.put(n.Sel.Pos(), n)
+			case *ast.CallExpr:
+				x.put(n.Lparen, n)
+			case *ast.TypeAssertExpr:
+				x.put(n.Lparen, n)
+			case *ast.AssignStmt:
+				x.put(n.TokPos, n)
+			case *ast.IncDecStmt:
+				x.put(n.TokPos, n)
+			}
+			return true
+		})
+	}
+	return x
+}
+
+func (x *spanIndex) put(p token.Pos, n ast.Node) {
+	if _, ok := x.at[p]; !ok {
+		x.at[p] = n
+	}
+}
+
+// Span is the source range of an obligation's expression.
+func (x *spanIndex) span(pos token.Pos) (token.Pos, token.Pos) {
+	if n, ok := x.at[pos]; ok {
+		return n.Pos(), n.End()
+	}
+	return pos, pos
+}
+
+// Message is the diagnostic text for an open obligation.
+func Message(fn *ssa.Function, o *Obligation) string {
+	name := fn.Name()
+	if fn.Parent() != nil {
+		name = fn.Parent().Name() + " (closure)"
+	}
+	return fmt.Sprintf("`%s` can panic: %s", name, panicText(o))
+}
+
+func panicText(o *Obligation) string {
+	switch o.Kind {
+	case KIndex:
+		return "index out of range"
+	case KSlice:
+		return "slice bounds out of range"
+	case KNil:
+		return "nil pointer dereference"
+	case KIface:
+		return "method call on a nil interface"
+	case KDivide:
+		return "integer divide by zero"
+	case KAssert:
+		return "interface conversion"
+	case KCompare:
+		return "comparing or hashing an uncomparable type"
+	case KMap:
+		return "assignment to entry in nil map"
+	case KConvert:
+		return "conversion of a short slice to an array"
+	case KShift:
+		return "negative shift amount"
+	case KMake:
+		return "make with a negative or too large size"
+	case KAppend:
+		return "append length overflow"
+	case KUnsafe:
+		return "unsafe.Slice or unsafe.String with a bad length"
+	case KChan:
+		return "close of a nil channel"
+	case KPanic:
+		return "explicit panic"
+	}
+	return string(o.Kind)
+}
+
+// Counts sums statuses over a result.
+func (r *Result) Counts() map[string]int {
+	c := map[string]int{}
+	for _, f := range r.Funcs {
+		c["functions"]++
+		for _, o := range f.Obligations {
+			if o.Via != nil {
+				c["manifest-inlined"]++
+				continue
+			}
+			c["obligations"]++
+			c[string(o.Status)]++
+			if o.Status == Unknown {
+				c["unknown:"+o.Reason]++
+			}
+			c["kind:"+string(o.Ob.Kind)]++
+			if o.Status == Proved || o.Status == ProvedAssuming {
+				c["proved:"+string(o.Ob.Kind)]++
+			}
+			if o.Dead {
+				c["dead"]++
+			}
+		}
+	}
+	return c
+}
