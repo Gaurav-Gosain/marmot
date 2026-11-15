@@ -49,9 +49,12 @@ type Config struct {
 	Strip    bool   // -s: no pc table
 	TrimPath bool   // -trimpath: no directory of this machine in the output (trimNames)
 	Static   bool   // -static: a static executable (Linux: musl)
-	Trace    string // -trace=full: release builds keep the inlined frames of each call site apart
-	Tags     []string
-	Patterns []string
+	// BuildMode: "exe" (default) or "pie", a position independent ELF
+	// executable (pie.go).
+	BuildMode string
+	Trace     string // -trace=full: release builds keep the inlined frames of each call site apart
+	Tags      []string
+	Patterns  []string
 	// Overlay replaces or adds source files: absolute path to contents (as
 	// go build -overlay). Builds with one skip the stamp and incremental
 	// caches, which read files from disk.
@@ -194,6 +197,9 @@ func buildToDevice(cfg Config, dev string) (string, error) {
 }
 
 func build1(cfg Config) (*build, error) {
+	if err := checkBuildMode(cfg.BuildMode); err != nil {
+		return nil, err
+	}
 	b := &build{cfg: cfg}
 	out, err := b.run1()
 	if errors.Is(err, errIncrementalMiss) {
@@ -746,6 +752,7 @@ func (b *build) link1(objs []string, rt, out string, extra []string) error {
 		args = append(args, "-Wl,--gc-sections", "-Wl,-z,start-stop-gc")
 		args = append(args, linuxLinker()...)
 		args = append(args, b.noptrLinkArgs()...)
+		args = append(args, b.pieArgs()...)
 		if !b.wantPcln() {
 			args = append(args, "-s")
 		}
@@ -980,6 +987,11 @@ func (b *build) linkBundle(objs []string, rt, out string) error {
 			return err
 		}
 		noptr = " -Wl,-T,noptr.ld"
+	}
+	if b.goos != "darwin" {
+		for _, a := range b.pieArgs() {
+			noptr += " " + a
+		}
 	}
 	exe := filepath.Base(out)
 	script := fmt.Sprintf(`#!/bin/sh

@@ -38,7 +38,7 @@ func main() {
 
 // buildFlags are the flags of build and run.
 type buildFlags struct {
-	out, opt, trace, pgo, emit, tags, gc, target, dialect                       *string
+	out, opt, trace, pgo, emit, tags, gc, target, dialect, buildmode            *string
 	strip, pgoGen, release, work, verbose, printCmd, nocache, allocs, allocsAll *bool
 	static, trimpath                                                            *bool
 	output                                                                      outputFlags
@@ -67,6 +67,7 @@ func newBuildFlags(name string) (*flag.FlagSet, *buildFlags) {
 	b.allocsAll = fs.Bool("allocs-all", false, "like -allocs, for every package")
 	b.static = fs.Bool("static", false, "link a static executable (Linux: with the musl C library; marmot sysroot add -libc musl GOOS/GOARCH first)")
 	b.gc = fs.String("gc", "precise", "garbage collector: precise or none")
+	b.buildmode = fs.String("buildmode", "exe", "exe, or pie: a position independent executable on Linux (with packed relative relocations)")
 	b.target = fs.String("target", "", "target triple (default: host)")
 	b.dialect = fs.String("dialect", os.Getenv("MARMOT_DIALECT"), "MLIR dialect level: llvm or go (default: go with -release, llvm otherwise; $MARMOT_DIALECT overrides)")
 	b.output = addOutputFlags(fs)
@@ -146,7 +147,7 @@ func cmdBuild(args []string, run bool) int {
 		Root: root, Dir: wd, Output: *out, OptLevel: *opt, OptSet: optSet, Emit: *emit, Work: *work,
 		Verbose: *verbose, PrintCmd: *printCmd, NoCache: *nocache, GC: *gc, Target: *target,
 		Dialect: *dialect, Patterns: patterns, Stderr: os.Stderr, Release: *release, PGOGen: *pgoGen, PGO: *pgo, Strip: *strip, Trace: *trace,
-		Static: *b.static, TrimPath: *b.trimpath,
+		Static: *b.static, TrimPath: *b.trimpath, BuildMode: *b.buildmode,
 	}
 	if *tags != "" {
 		cfg.Tags = strings.Split(*tags, ",")
