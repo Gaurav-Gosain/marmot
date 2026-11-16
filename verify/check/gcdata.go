@@ -94,8 +94,12 @@ func readGoInit(s string) (vals []int64, syms []string, err error) {
 	return vals, syms, nil
 }
 
-// sideTables are the suffixes of a descriptor's side globals: type:T.fields and the others.
-var sideTables = map[string]bool{"fields": true, "methods": true, "imethods": true, "uncommon": true}
+// reSideSuffix is the suffix of a descriptor's side globals (type:T.fields, .params,
+// .uncommon and the others) and of its bitmap (.gcdata): a lower case word. Which word is
+// not listed, so a new side table is not mistaken for a descriptor. The price: a real
+// descriptor type:B.x is skipped when type:B also exists, as for a type x in a package whose
+// path is itself a type name. std has no such package.
+var reSideSuffix = regexp.MustCompile(`^[a-z]+$`)
 
 // rawGlobal is one type: global as read, before it is known to be a descriptor, a bitmap or
 // a side table.
@@ -119,6 +123,8 @@ func readDescs(path string) (map[string]*tdesc, error) {
 	defer fh.Close()
 	raw := map[string]*rawGlobal{}
 	seen := map[string]bool{} // every type: global, found loosely
+	refs := 0                 // lines outside the globals that name a type: symbol
+	decls := 0                // type: globals declared here and defined in another module
 	sc := bufio.NewScanner(fh)
 	sc.Buffer(make([]byte, 1<<20), 1<<26)
 	var cur *rawGlobal
@@ -126,7 +132,15 @@ func readDescs(path string) (map[string]*tdesc, error) {
 	for sc.Scan() {
 		line := sc.Text()
 		if m := reAnyDesc.FindStringSubmatch(line); m != nil {
-			seen[m[1]] = true
+			// a declaration (defined in another module) has no initializer: neither go.init
+			// nor a region
+			if strings.Contains(line, " external ") && !strings.Contains(line, "go.init") && !strings.HasSuffix(strings.TrimSpace(line), "{") {
+				decls++
+			} else {
+				seen[m[1]] = true
+			}
+		} else if strings.Contains(line, `@"type:`) {
+			refs++
 		}
 		if m := reDescStart.FindStringSubmatch(line); m != nil {
 			curName, cur = m[1], &rawGlobal{}
@@ -180,7 +194,7 @@ func readDescs(path string) (map[string]*tdesc, error) {
 		r := raw[n]
 		ok := r != nil && r.decoded
 		switch {
-		case sideTables[suf] && seen[base]:
+		case suf != "gcdata" && reSideSuffix.MatchString(suf) && seen[base]:
 			continue
 		case suf == "gcdata" && seen[base]:
 			if !ok {
@@ -207,6 +221,9 @@ func readDescs(path string) (map[string]*tdesc, error) {
 			}
 		}
 		missed = append(missed, n)
+	}
+	if refs > 0 && len(seen) == 0 && decls == 0 {
+		return nil, fmt.Errorf("%d lines name type: symbols but no type: global was found: did the descriptor format change?", refs)
 	}
 	if len(missed) > 0 {
 		sort.Strings(missed)
@@ -757,8 +774,8 @@ func checkGCData(mlirPath string, patterns []string) (*gcResult, error) {
 			res.bad = append(res.bad, n+": "+strings.Join(problems, "; "))
 		}
 	}
-	if res.checked == 0 {
-		return nil, fmt.Errorf("no type descriptor checked (%d skipped): a marmot program always has some", res.skipped)
+	if len(descs) > 0 && res.checked == 0 {
+		return nil, fmt.Errorf("none of the %d type descriptors checked (%d skipped)", len(descs), res.skipped)
 	}
 	return res, nil
 }

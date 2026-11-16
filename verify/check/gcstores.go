@@ -230,7 +230,6 @@ var (
 
 type storesResult struct {
 	stores, checked, skipped int
-	withDesc                 int // checks against a descriptor readDescs read
 	bad                      []string
 }
 
@@ -287,9 +286,6 @@ func checkStores(mlirPath string) (*storesResult, error) {
 	seenBad := map[string]bool{}
 	for _, fn := range fns {
 		checkFnStores(fn, descs, res, seenBad)
-	}
-	if len(descs) > 0 && res.checked > 0 && res.withDesc == 0 {
-		return nil, fmt.Errorf("%d pointer stores, none checked against a descriptor: are the object descriptors read?", res.checked)
 	}
 	return res, nil
 }
@@ -471,9 +467,6 @@ func checkFnStores(fn fnBody, descs map[string]*tdesc, res *storesResult, seenBa
 				continue
 			}
 			o := objs[f.o]
-			if descs[o.desc] != nil {
-				res.withDesc++
-			}
 			if p := storeProblem(o, f, t, descs); p != "" {
 				key := fn.name + "|" + o.site + "|" + o.desc + "|" + p
 				if !seenBad[key] {

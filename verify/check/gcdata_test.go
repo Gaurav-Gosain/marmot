@@ -147,6 +147,39 @@ func TestReadDescsSuffixNames(t *testing.T) {
 	}
 }
 
+// TestReadDescsSideAndExternal checks that any lower case side global of a present type
+// (here .params) and an external declaration are not descriptors, and that type: references
+// without any type: global are an error.
+func TestReadDescsSideAndExternal(t *testing.T) {
+	write := func(s string) string {
+		t.Helper()
+		p := t.TempDir() + "/m.mlir"
+		if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	fn := "  llvm.mlir.global linkonce_odr constant @\"type:func()(string)\"() {addr_space = 0 : i32, go.init = \"(i8;i8;zzzi51;i8;i8;i19;)\"} : !llvm.struct<(i64, i64, ptr, !llvm.struct<(ptr, i64)>, ptr, i8, i8, i8, i8)>\n" +
+		"  llvm.mlir.global linkonce_odr constant @\"type:func()(string).params\"() {addr_space = 0 : i32, go.init = \"(a11:type:string)\"} : !llvm.array<1 x ptr>\n" +
+		"  llvm.mlir.global external constant @\"type:embed.FS\"() {addr_space = 0 : i32} : !llvm.ptr\n"
+	ds, err := readDescs(write(fn))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ds) != 1 || ds["func()(string)"] == nil {
+		t.Errorf("descriptors %v, want func()(string) only", ds)
+	}
+	refOnly := "    %0 = llvm.mlir.addressof @\"type:int\" : !llvm.ptr\n"
+	if _, err := readDescs(write(refOnly)); err == nil {
+		t.Error("type: references without a type: global passed")
+	}
+	// a module whose only type: global is a declaration: the descriptor is defined elsewhere
+	declOnly := "  llvm.mlir.global external constant @\"type:int\"() {addr_space = 0 : i32} : !llvm.ptr\n" + refOnly
+	if ds, err := readDescs(write(declOnly)); err != nil || len(ds) != 0 {
+		t.Errorf("declaration only: %v, %v; want no descriptors and no error", ds, err)
+	}
+}
+
 // TestCompareWasmBitmap checks that a wasm descriptor whose bitmap has one bit per 8 bytes
 // (the pointer at offset 4 left unmarked) is a mismatch, and the right one is not.
 func TestCompareWasmBitmap(t *testing.T) {
