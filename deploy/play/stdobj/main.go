@@ -9,7 +9,11 @@
 //
 // The objects come from a separate compilation build of a program that imports every package
 // (so the program flags are those of the largest program: methods kept for reflection), with
-// tier 1 off and no cache, so they are the tier 0 objects the page's backend makes too.
+// tier 1 off, so they are the tier 0 objects the page's backend makes too. The build must be
+// incremental (separate compilation, as the page's front end): with -nocache marmot compiles
+// the whole program at once and drops the methods that program does not use, and a program
+// that uses one of them then calls a wrong function. Give it a root (-root) with an empty
+// build/cache.
 package main
 
 import (
@@ -55,7 +59,8 @@ func main() {
 	src.WriteString(")\n\nfunc main() {}\n")
 	check(os.WriteFile(filepath.Join(dir, "main.go"), src.Bytes(), 0o644))
 	check(os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module play\n\ngo 1.24\n"), 0o644))
-	args := []string{"build", "-target", "wasip1/wasm", "-work", "-nocache", "-v", "-o", filepath.Join(dir, "prog.wasm")}
+	// -trimpath: the archive is published; no directory of this machine in it
+	args := []string{"build", "-target", "wasip1/wasm", "-trimpath", "-work", "-v", "-o", filepath.Join(dir, "prog.wasm")}
 	switch *mode {
 	case "dev":
 	case "O2":
@@ -104,6 +109,17 @@ func main() {
 	cmd = exec.Command(tool("llvm-ar"), append([]string{"rcs", ar}, std...)...)
 	if b, err := cmd.CombinedOutput(); err != nil {
 		fail(fmt.Errorf("llvm-ar: %v\n%s", err, b))
+	}
+	// The archive is published: no directory of this machine in it.
+	data, err := os.ReadFile(ar)
+	check(err)
+	home, _ := os.UserHomeDir()
+	wd, _ := os.Getwd()
+	for _, p := range []string{home, wd, dir, work, *root} {
+		if p != "" && p != "/" && bytes.Contains(data, []byte(p)) {
+			os.Remove(ar)
+			fail(fmt.Errorf("%s holds %s (build with a marmot whose -trimpath works)", ar, p))
+		}
 	}
 	fmt.Printf("%s: %d objects of %d (the program's own left out); %s\n", ar, len(std), len(objs), flags)
 }
