@@ -37,7 +37,7 @@ func newGenerateFlags() (*flag.FlagSet, *generateFlags) {
 	fs := flag.NewFlagSet("generate", flag.ContinueOnError)
 	g := &generateFlags{}
 	g.force = fs.Bool("force", false, "run every directive, ignoring the cache")
-	g.list = fs.Bool("n", false, "print the directives and whether they are cached; run nothing")
+	g.list = fs.Bool("n", false, "print the directives and whether they are cached, and run nothing")
 	g.verbose = fs.Bool("v", false, "print each directive as it runs")
 	g.run = fs.String("run", "", "only directives whose text contains this")
 	g.output = addOutputFlags(fs)

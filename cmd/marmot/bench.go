@@ -34,7 +34,7 @@ func newBenchFlags() (*flag.FlagSet, *benchFlags) {
 	b.compare = fs.String("compare", "", "compare with results saved by -save (or any go test -bench output)")
 	b.save = fs.String("save", "", "write the raw results to this file")
 	b.timeout = fs.String("timeout", "30m", "time limit of each benchmark binary run")
-	b.cpuprofile = fs.String("cpuprofile", "", "write a CPU profile of the last run to this file (with -vs go, the go build's to FILE.go); read it with marmot prof")
+	b.cpuprofile = fs.String("cpuprofile", "", "write a CPU profile of the last run to this file (with -vs go, the go build's profile to FILE.go). Read it with marmot prof")
 	b.output = addOutputFlags(fs)
 	return fs, b
 }

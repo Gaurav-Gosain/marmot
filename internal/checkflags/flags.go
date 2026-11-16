@@ -82,7 +82,7 @@ func NewVerify() (*flag.FlagSet, *Verify) {
 		Search:      fs.Bool("search", false, "also search every function for inputs that make it panic (needs -confirm)"),
 		WritePolicy: fs.Bool("write-policy", false, "record the counts of every function in .marmot/verify.json, the policy later runs (CI) are checked against"),
 		Tests:       fs.Bool("tests", false, "write a regression test for every confirmed panic reachable through the API to zz_marmot_verify_test.go in its package (needs -confirm)"),
-		Confirm:     fs.String("confirm", "off", "run the package's functions with generated inputs to confirm findings: off, sandbox (in a sandbox: sandbox-exec on macOS, bwrap on Linux; functions that reach files, processes or the network are skipped) or effects (those too, in the sandbox)"),
+		Confirm:     fs.String("confirm", "off", "run the package's functions with generated inputs to confirm findings: off, sandbox or effects. sandbox runs them in a sandbox (sandbox-exec on macOS, bwrap on Linux) and skips functions that reach files, processes or the network. effects runs those too, in the sandbox"),
 	}
 	return fs, v
 }

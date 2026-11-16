@@ -25,7 +25,7 @@ func newFmtFlags() (*flag.FlagSet, *fmtFlags) {
 	f := &fmtFlags{}
 	f.list = fs.Bool("l", false, "only list the files that would change")
 	f.diff = fs.Bool("d", false, "print a diff of the changes instead of writing them")
-	f.check = fs.Bool("check", false, "change nothing; exit 1 if a file is not formatted")
+	f.check = fs.Bool("check", false, "change nothing, and exit 1 if a file is not formatted")
 	f.output = addOutputFlags(fs)
 	return fs, f
 }

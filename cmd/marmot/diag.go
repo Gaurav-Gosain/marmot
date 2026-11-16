@@ -146,7 +146,7 @@ func newFixFlags() (*flag.FlagSet, *fixFlags) {
 	fs := flag.NewFlagSet("fix", flag.ContinueOnError)
 	f := &fixFlags{}
 	f.codes = fs.String("code", "", "only apply fixes for these comma separated codes, for example M0004,M0005")
-	f.all = fs.Bool("all", false, "also apply fixes that may be incorrect (typo corrections); check the result")
+	f.all = fs.Bool("all", false, "also apply fixes that may be incorrect (typo corrections). Check the result")
 	f.tags = fs.String("tags", "", "comma separated build tags")
 	f.only = fs.String("only", "", "apply only the fixes of these checks (fmt, modernize, vet, lint, exhaustive), not the build errors")
 	f.diff = fs.Bool("diff", false, "print the check fixes as patches, change nothing")

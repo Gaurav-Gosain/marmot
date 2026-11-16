@@ -57,7 +57,7 @@ func newBuildFlags(name string) (*flag.FlagSet, *buildFlags) {
 	b.pgoGen = fs.Bool("pgo-gen", false, "build an instrumented binary that writes marmot-<id>.profraw next to itself")
 	b.pgo = fs.String("pgo", "", "profile guided optimization with this indexed profile (llvm-profdata merge -o FILE *.profraw)")
 	b.release = fs.Bool("release", os.Getenv("MARMOT_RELEASE") == "1", "release build: whole program optimization, -O3, all specializations (default from $MARMOT_RELEASE=1)")
-	b.emit = fs.String("emit", "exe", "output kind: mlir, llvm, obj, exe; wat with -target wasip1/wasm")
+	b.emit = fs.String("emit", "exe", "output kind: mlir, llvm, obj, exe, or wat with -target wasip1/wasm")
 	b.work = fs.Bool("work", false, "print and keep the temporary work directory")
 	b.verbose = fs.Bool("v", false, "print progress and timing")
 	b.tags = fs.String("tags", "", "comma separated build tags")
@@ -65,11 +65,11 @@ func newBuildFlags(name string) (*flag.FlagSet, *buildFlags) {
 	b.nocache = fs.Bool("nocache", false, "do not use the object cache")
 	b.allocs = fs.Bool("allocs", false, "report the allocation sites of the main module: heap or stack, and why (rebuilds without the object cache)")
 	b.allocsAll = fs.Bool("allocs-all", false, "like -allocs, for every package")
-	b.static = fs.Bool("static", false, "link a static executable (Linux: with the musl C library; marmot sysroot add -libc musl GOOS/GOARCH first)")
+	b.static = fs.Bool("static", false, "link a static executable (Linux: with the musl C library, after marmot sysroot add -libc musl GOOS/GOARCH)")
 	b.gc = fs.String("gc", "precise", "garbage collector: precise or none")
 	b.buildmode = fs.String("buildmode", "exe", "exe, or pie: a position independent executable on Linux (with packed relative relocations)")
 	b.target = fs.String("target", "", "target triple (default: host)")
-	b.dialect = fs.String("dialect", os.Getenv("MARMOT_DIALECT"), "MLIR dialect level: llvm or go (default: go with -release, llvm otherwise; $MARMOT_DIALECT overrides)")
+	b.dialect = fs.String("dialect", os.Getenv("MARMOT_DIALECT"), "MLIR dialect level: llvm or go (default: go with -release, llvm otherwise, or $MARMOT_DIALECT)")
 	b.output = addOutputFlags(fs)
 	return fs, b
 }
@@ -360,7 +360,7 @@ func newTestFlags() (*flag.FlagSet, *testBuildFlags) {
 	t.out = fs.String("o", "", "write the test binary here and do not run it")
 	t.compile = fs.Bool("c", false, "write the test binary (to -o, default pkg.test) and do not run it, as go test -c")
 	t.overlay = fs.String("overlay", "", "JSON file of source files to replace or add, as go build -overlay ({\"Replace\": {path: file}})")
-	fs.Var(&t.explore, "explore", "explore schedules of synctest bubbles: random or pct, with an optional number of runs (random:1000, pct:500); stops at the first failing schedule and prints how to replay it")
+	fs.Var(&t.explore, "explore", "explore schedules of synctest bubbles: random or pct, with an optional number of runs (random:1000, pct:500). It stops at the first failing schedule and prints how to replay it")
 	t.schedule = fs.String("schedule", "", "run synctest bubbles under one explored schedule, as printed by -explore (random:17)")
 	t.output = addOutputFlags(fs)
 	return fs, t
