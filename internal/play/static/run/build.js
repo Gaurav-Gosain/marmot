@@ -79,6 +79,14 @@ export class Builder {
     return { ok: true, wasm, diagnostics: front.diagnostics || [], times };
   }
 
+  // preload: start loading everything a build with these switches needs (the page calls it
+  // when the user starts editing, so a Run waits for none of it). Errors show at the build.
+  preload(switches = 'asyncify') {
+    const jspi = switches === 'jspi';
+    for (const a of ['toolsModule', 'tools', 'std', jspi ? 'rtJSPI' : 'rt', jspi ? 'rtBitcodeJSPI' : 'rtBitcode', 'binaryen'])
+      this.load(a).catch(() => this.memo.delete(a));
+  }
+
   // front: marmot-play -run on the source; the parsed reply.
   async front(src) {
     if (!this.fs) {
