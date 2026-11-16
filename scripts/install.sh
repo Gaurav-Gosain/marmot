@@ -40,6 +40,10 @@ if [ "${LLVM_RELEASE:-}" = 1 ] && [ -z "${LLVM_BIN:-}${LLVM_PREFIX:-}" ]; then
 	ln -s llvm-objcopy "$tmp/llvm/bin/llvm-strip"
 	# clang's resource directory (headers, compiler-rt), found beside its binary.
 	cp -R "$rel/lib/clang" "$tmp/llvm/lib/"
+	# macOS: the SDK path clang reads at start (written by llvm-release.sh).
+	for c in clang.cfg clang++.cfg; do
+		if [ -f "$rel/bin/$c" ]; then cp "$rel/bin/$c" "$tmp/llvm/bin/"; fi
+	done
 	mkdir -p "$PREFIX"
 	echo "$(cd "$PREFIX" && pwd -P)/llvm/bin" > "$tmp/build/llvm-bin"
 elif [ -n "${LLVM_BIN:-}" ]; then

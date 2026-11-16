@@ -45,7 +45,22 @@ check() {
 	done
 }
 
+# cfg DIR: on macOS the release clang has no default SDK; clang.cfg beside it
+# (read by clang at start; clang++ reads clang++.cfg) names the one xcrun
+# finds. Written again when the recorded SDK is gone (an Xcode update).
+cfg() {
+	[ "$(uname -s)" = Darwin ] || return 0
+	if [ -f "$1/bin/clang.cfg" ] && [ -f "$1/bin/clang++.cfg" ]; then
+		old=$(sed -n 's/^-isysroot //p' "$1/bin/clang.cfg")
+		[ -n "$old" ] && [ -d "$old" ] && return 0
+	fi
+	sdk=$(xcrun --show-sdk-path 2>/dev/null) || die "no macOS SDK (xcode-select --install)"
+	echo "-isysroot $sdk" > "$1/bin/clang.cfg"
+	echo "@clang.cfg" > "$1/bin/clang++.cfg"
+}
+
 if [ -f "$dir/.checked" ]; then
+	cfg "$dir"
 	echo "$dir"
 	exit 0
 fi
@@ -95,5 +110,6 @@ why=$(check "$dir.part" 2>&1) || { rm -rf "$dir.part"; die "$asset is not usable
 rm -rf "$dir"
 mv "$dir.part" "$dir"
 rm -f "$tar"
+cfg "$dir"
 touch "$dir/.checked"
 echo "$dir"
