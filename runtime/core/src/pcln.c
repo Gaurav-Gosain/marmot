@@ -78,6 +78,46 @@ static void pcln_find(void) {
   }
   munmap((void *)f, fsize);
 }
+#elif RT_ARCH_WASM32
+// wasm: the table is the module's ".marmot_pcln" custom section, which is
+// not in linear memory. A host that offers it (the browser playground:
+// wasm-callers.o, linked with MARMOT_WASM_HOSTCALLERS=1, imports
+// marmot.pcln and marmot.callers) copies it in on the first lookup. The
+// section starts with "MPCW" and the module offset of the code section's
+// payload, which the table's offsets are relative to.
+extern int32_t rt_wasm_host_pcln(void *ptr, int32_t cap) __attribute__((weak));
+extern int32_t rt_wasm_host_callers(uint32_t *buf, int32_t max) __attribute__((weak));
+static uint32_t wasm_code_start;
+
+static void pcln_find(void) {
+  if (!rt_wasm_host_pcln) return;
+  int32_t n = rt_wasm_host_pcln(NULL, 0);
+  if (n <= 8) return;
+  uint8_t *p = os_map((uintptr_t)n);
+  if (!p || rt_wasm_host_pcln(p, n) != n || p[0] != 'M' || p[1] != 'P' || p[2] != 'C' || p[3] != 'W') return;
+  wasm_code_start = (uint32_t)p[4] | (uint32_t)p[5] << 8 | (uint32_t)p[6] << 16 | (uint32_t)p[7] << 24;
+  pcln_table = p + 8;
+  pcln_len = n - 8;
+  pcln_base = 0;
+}
+
+// The return pcs of the wasm frames on the stack, innermost first, as
+// offsets into the code section plus 1 (the host reports the call's own
+// offset; lookups use pc-1). 0 without a host that reports frames. pc is
+// 64-bit: a Go uintptr on wasm (32-bit uintptr_t here).
+RT_API int32_t rt_wasm_callers(uint64_t *pc, int32_t max) {
+  if (!rt_wasm_host_callers || max <= 0) return 0;
+  const uint8_t *t;
+  intptr_t len;
+  uintptr_t base;
+  rt_pcln(&t, &len, &base);  // sets wasm_code_start
+  uint32_t buf[128];
+  int32_t n = rt_wasm_host_callers(buf, max < 128 ? max : 128);
+  int32_t k = 0;
+  for (int32_t i = 0; i < n; i++)
+    if (buf[i] >= wasm_code_start) pc[k++] = (uint64_t)(buf[i] - wasm_code_start) + 1;
+  return k;
+}
 #else
 static void pcln_find(void) {}
 #endif

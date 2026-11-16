@@ -117,7 +117,7 @@ HDRS    := $(wildcard src/*.h) include/rt.h
 
 .PHONY: all test test-asan test-tsan bench clean check-targets
 
-all: $(OUT)/librtcore.a $(OUT)/rtcore.bc
+all: $(OUT)/librtcore.a $(OUT)/rtcore.bc $(if $(WASM),$(OUT)/wasm-callers.o)
 
 vpath %.c src gpu
 
@@ -136,6 +136,10 @@ $(OUT)/librtcore.a: $(C_OBJS) $(S_OBJS) | $(OUT)
 
 $(OUT)/rtcore.bc: $(BCS) | $(OUT)
 	$(LINK) $^ -o $@
+
+# wasm: the host imports for tracebacks, linked only on request (wasm/callers.c).
+$(OUT)/wasm-callers.o: wasm/callers.c | $(OUT)
+	$(CC) $(ALL_CFLAGS) -c $< -o $@
 
 $(OBJ) $(OUT):
 	mkdir -p $@

@@ -2330,6 +2330,9 @@ static void scan_g(rt_g *g, void (*scan)(uintptr_t lo, uintptr_t hi)) {
   }
   if (lo < g->stack_lo || lo > g->stack_hi) rt_throw("gc: goroutine sp outside its stack");
   uintptr_t fp = 0, pc = 0;  // the innermost frame of the chain, and its pc (0: unknown)
+  // wasm frames are not in memory: no chain to walk, even when the host
+  // gave the runtime a pc table (tracebacks).
+#if !RT_ARCH_WASM32
   if (pcln_has_stackmaps()) {
     if (s == G_RUNNING) {
       fp = (uintptr_t)g->m->stop_fp;
@@ -2347,6 +2350,7 @@ static void scan_g(rt_g *g, void (*scan)(uintptr_t lo, uintptr_t hi)) {
 #endif
     }
   }
+#endif
   if (fp) scan_frames(lo, g->stack_hi, fp, pc, scan);
   else scan(lo, g->stack_hi);
 }
