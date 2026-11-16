@@ -13,8 +13,11 @@ export MARMOT_OUTPUT=plain # plain compiler output whoever runs this
 cd "$(dirname "$0")/../.."
 export GOCACHE="$PWD/.work/gocache" # build cache inside the repo
 R=$(pwd)
-W=.work/verify/gccheck
-mkdir -p "$W"
+# one work dir per run, so runs in the same tree do not overwrite each other; it is removed
+# when the run passes and kept (its path printed) for inspection when it fails
+mkdir -p .work/verify
+W=$(mktemp -d "$PWD/.work/verify/gccheck.XXXXXX") || exit 2
+W=${W#"$R/"}
 tflag= cflags= skips=0
 known=
 [ "${GCCHECK_TARGET:-}" = wasip1/wasm ] && known=xsys_unix
@@ -37,12 +40,11 @@ one() { # one NAME DIR TARGET
 		return
 	fi
 	out=$(cd "$2" && timeout 300 "$R/$W/check" $cflags -gcdata "$m" "$3" 2>&1)
-	case "$out" in *" 0 mismatches"*) ;; *) echo "$1: $out"; st=1 ;; esac
+	case "$out" in *" 0 mismatches"*) rm -f "$m" ;; *) echo "$1: $out"; st=1 ;; esac
 	k=$(echo "$out" | sed -n 's/^check: \([0-9]*\) type descriptors checked.*/\1/p')
 	s=$(echo "$out" | sed -n 's/.* \([0-9]*\) skipped$/\1/p')
 	[ "${s:-0}" != 0 ] && echo "$1: ${s} descriptors skipped"
 	total=$((total + ${k:-0})); n=$((n + 1))
-	rm -f "$m"
 }
 
 for dir in "${@:-tests/run/core}"; do
@@ -58,4 +60,5 @@ done
 # a run that checked nothing fails: no program built (no marmot binary?) or none was found
 [ "$n" -gt 0 ] || { echo "gccheck: no program checked"; st=2; }
 echo "gccheck${GCCHECK_TARGET:+ $GCCHECK_TARGET}: $n programs, $total descriptors checked, $skips not built, status $st"
+if [ "$st" = 0 ]; then rm -rf "$R/$W"; else echo "gccheck: MLIR kept in $R/$W"; fi
 exit $st
