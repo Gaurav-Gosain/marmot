@@ -10,6 +10,8 @@ for t in intrinsics wide ext card cse; do
   "$T0" "$src/$t.mlir" $t.o > /dev/null
   "$L/clang" -O1 -w "$src/${t}_main.c" $t.o -o $t && ./$t > /dev/null && echo "$t: ok"
 done
+MARMOT_TIER0_MIR=1 MARMOT_TIER0_SATNARROW=1 "$T0" "$src/sat.mlir" sat.o > /dev/null
+"$L/clang" -O1 -w "$src/sat_main.c" sat.o -o sat && ./sat && echo "sat: ok"
 if [ "$(uname)" = Darwin ]; then sec=__DATA,__marmot_tlinks,regular,live_support; gc=-dead_strip; else sec=marmot_tlinks; gc=--gc-sections,-z,start-stop-gc; fi
 sed "s/SECTION/$sec/" "$src/tlinks.mlir" > tlinks.mlir
 "$T0" tlinks.mlir tlinks.o > /dev/null

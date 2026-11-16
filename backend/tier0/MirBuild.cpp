@@ -25,6 +25,16 @@ namespace {
 
 using Pieces = llvm::SmallVector<VId, 4>;
 
+// MARMOT_TIER0_SATNARROW=1: llvm.fptosi.sat and llvm.fptoui.sat to i8, i16
+// and i32 in MIR (without it the function takes the older emitters).
+bool satNarrowOn() {
+  static const bool on = [] {
+    const char *e = getenv("MARMOT_TIER0_SATNARROW");
+    return e && *e == '1';
+  }();
+  return on;
+}
+
 // Pieces of a type: (offset, scalar type); i128 is two i64 words.
 void pieceTypes(MLIRContext *ctx, Type t, uint64_t base, std::vector<std::pair<uint64_t, Type>> &out) {
   if (auto s = dyn_cast<LL::LLVMStructType>(t)) {
@@ -1512,6 +1522,26 @@ void Builder::intrinsic(LL::CallIntrinsicOp c) {
              name == "llvm.fptosi.sat.i64.f32" || name == "llvm.fptoui.sat.i64.f32") {
     Op k = name.starts_with("llvm.fptosi") ? Op::FPToSISat : Op::FPToUISat;
     set(res, unary(k, val(args[0]), Cls::Int, 64, args[0].getType().isF64() ? 64 : 32));
+  } else if (satNarrowOn() && (name.starts_with("llvm.fptosi.sat.i") || name.starts_with("llvm.fptoui.sat.i")) &&
+             (name.ends_with(".f64") || name.ends_with(".f32")) && intWidth(rt) < 64) {
+    // A narrower result (MARMOT_TIER0_SATNARROW=1): the 64-bit saturating
+    // conversion, clamped to the result's range. NaN gives 0 there, which is
+    // in every range.
+    bool s = name.starts_with("llvm.fptosi");
+    unsigned n = intWidth(rt);
+    VId x = unary(s ? Op::FPToSISat : Op::FPToUISat, val(args[0]), Cls::Int, 64,
+                  args[0].getType().isF64() ? 64 : 32);
+    using P = LL::ICmpPredicate;
+    if (s) {
+      VId lo = konst(uint64_t(-(int64_t(1) << (n - 1))));
+      VId hi = konst((uint64_t(1) << (n - 1)) - 1);
+      x = select(icmp(P::slt, 64, x, lo), lo, x);
+      x = select(icmp(P::sgt, 64, x, hi), hi, x);
+    } else {
+      VId hi = konst(mask(n));
+      x = select(icmp(P::ugt, 64, x, hi), hi, x);
+    }
+    set(res, trunc(x, n));
   } else if (name == "llvm.frameaddress.p0") {
     auto k = args[0].getDefiningOp<LL::ConstantOp>();
     auto ia = k ? dyn_cast<IntegerAttr>(k.getValue()) : IntegerAttr();
