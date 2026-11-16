@@ -127,7 +127,8 @@ func (m *moduleGen) noteGCVarOf(t types.Type, sym string) {
 		return
 	}
 	sizes := m.p.opts.Sizes
-	n := (sizes.Sizeof(t) + 7) / 8
+	ps := ptrSize(sizes)
+	n := (sizes.Sizeof(t) + ps - 1) / ps
 	if n < gcVarMinWords || n > maxBitmapWords || !hasPointers(t) {
 		return // small, or too large for a bitmap: scanned conservatively
 	}

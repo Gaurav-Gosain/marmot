@@ -251,27 +251,16 @@ func (m *moduleGen) emitTypeDesc(sym string, t types.Type) {
 	sizes := m.p.opts.Sizes
 	size := sizes.Sizeof(t)
 	align := sizes.Alignof(t)
-	words := ptrWords(t, sizes)
-	var ptrdata int64
+	ptrdata, bm := gcLayout(t, sizes)
 	gcdata := cNull()
-	if len(words) > 0 {
-		last := words[len(words)-1]
-		ptrdata = (last + 1) * 8
-		// The bitmap covers all size/8 words (rt_alloc precise mode).
-		nwords := max(size/8, last+1)
-		if nwords <= maxBitmapWords {
-			bm := make([]byte, (nwords+7)/8)
-			for _, w := range words {
-				bm[w/8] |= 1 << (w % 8)
-			}
-			gsym := sym + ".gcdata"
-			elems := make([]cv, len(bm))
-			for i, x := range bm {
-				elems[i] = cInt(int64(x), mlir.I8)
-			}
-			m.constGlobal(gsym, "linkonce_odr", true, cArray(mlir.I8, elems...))
-			gcdata = cAddr(gsym)
+	if bm != nil {
+		gsym := sym + ".gcdata"
+		elems := make([]cv, len(bm))
+		for i, x := range bm {
+			elems[i] = cInt(int64(x), mlir.I8)
 		}
+		m.constGlobal(gsym, "linkonce_odr", true, cArray(mlir.I8, elems...))
+		gcdata = cAddr(gsym)
 	}
 	var tflag int64
 	switch types.Unalias(t).(type) {
@@ -760,20 +749,51 @@ func kindOf(t types.Type) int64 {
 	panic(fmt.Sprintf("kindOf %v", t))
 }
 
-// ptrWords lists the pointer-sized words of t that hold pointers.
+// gcLayout returns t's ptrdata (the bytes up to the end of its last
+// pointer word, 0 without pointers) and its gcdata bitmap: one bit per
+// pointer-sized word, covering all of t (rt_alloc precise mode); nil
+// without pointers or when the bitmap would pass maxBitmapWords.
+func gcLayout(t types.Type, sizes types.Sizes) (ptrdata int64, bm []byte) {
+	words := ptrWords(t, sizes)
+	if len(words) == 0 {
+		return 0, nil
+	}
+	ps := ptrSize(sizes)
+	last := words[len(words)-1]
+	ptrdata = (last + 1) * ps
+	nwords := max(sizes.Sizeof(t)/ps, last+1)
+	if nwords > maxBitmapWords {
+		return ptrdata, nil
+	}
+	bm = make([]byte, (nwords+7)/8)
+	for _, w := range words {
+		bm[w/8] |= 1 << (w % 8)
+	}
+	return ptrdata, bm
+}
+
+// ptrSize is the size of a pointer: 8, or 4 on wasm (wasip1/wasm has
+// 32-bit memory with 8-byte int and uintptr, internal/target).
+func ptrSize(sizes types.Sizes) int64 { return sizes.Sizeof(types.Typ[types.UnsafePointer]) }
+
+// ptrWords lists the pointer-sized words (ptrSize bytes) of t that hold
+// pointers: the gcdata bitmap has one bit per word, as the runtime reads it
+// (one bit per uintptr_t).
 func ptrWords(t types.Type, sizes types.Sizes) []int64 {
 	var out []int64
+	ps := ptrSize(sizes)
 	var walk func(t types.Type, off int64)
 	walk = func(t types.Type, off int64) {
 		switch u := t.Underlying().(type) {
 		case *types.Basic:
 			if u.Kind() == types.String || u.Kind() == types.UnsafePointer {
-				out = append(out, off/8)
+				out = append(out, off/ps)
 			}
 		case *types.Pointer, *types.Map, *types.Chan, *types.Signature, *types.Slice:
-			out = append(out, off/8)
+			out = append(out, off/ps)
 		case *types.Interface:
-			out = append(out, off/8, off/8+1)
+			// The type or itab word and the data word.
+			out = append(out, off/ps, off/ps+1)
 		case *types.Array:
 			es := sizes.Sizeof(u.Elem())
 			if es == 0 || len(ptrWords(u.Elem(), sizes)) == 0 {
