@@ -579,7 +579,7 @@ std::string fingerprint(const CompileOptions &opts) {
     os << opts.rtBitcode->fileHash();
   os << "|opts:" << opts.optionKey << "|loopopts:" << loops::cacheKey();
   // Backend switches read from the environment that change objects.
-  for (const char *e : {"MARMOT_CARDSTUB_CALL"})
+  for (const char *e : {"MARMOT_CARDSTUB_CALL", "MARMOT_SPLIT_REACH"})
     if (const char *v = std::getenv(e))
       os << "|" << e << "=" << v;
   // On by default since the perfcmp gate; objects cached before had it off.
@@ -783,6 +783,14 @@ bool importBodies(Module &m, const std::map<unsigned, std::set<std::string>> &im
 // bitcode: exact, and stable across edits elsewhere in the module because
 // unused declarations are dropped and no location refers to the input .mlir
 // (parseFile), so metadata numbering inside an unchanged group stays the same.
+bool splitReachOn() {
+  static const bool on = [] {
+    const char *e = std::getenv("MARMOT_SPLIT_REACH");
+    return e && *e == '1';
+  }();
+  return on;
+}
+
 std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback) {
   // Stable suffix: the smallest strong external definition of the module
   // (a symbol only this module defines).
@@ -902,6 +910,89 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback) 
       work = std::move(next);
     }
   }
+  // MARMOT_SPLIT_REACH=1: the copyable (linkonce, weak,
+  // available_externally) definitions each group reaches from what it
+  // defines and imports, through code, initializers and other copyable
+  // definitions. Only those are cloned into the group; without the switch
+  // every group gets all of them (tuios -release: 19% of the optimizer's
+  // input instructions). Weak definitions cannot be dropped, so group 0
+  // keeps every one; it also holds the appending arrays and what they list.
+  // A comdat goes whole.
+  const bool byReach = splitReachOn();
+  DenseMap<const GlobalValue *, SmallVector<const GlobalValue *, 4>> refs;
+  if (byReach) {
+    DenseSet<const Constant *> seen;
+    SmallVector<const GlobalValue *, 4> *cur = nullptr;
+    std::function<void(const Value *)> walk = [&](const Value *v) {
+      if (auto *gv = dyn_cast<GlobalValue>(v)) {
+        cur->push_back(gv);
+        return;
+      }
+      auto *c = dyn_cast<Constant>(v);
+      if (!c || isa<ConstantData>(c) || !seen.insert(c).second)
+        return;
+      for (const Use &u : c->operands())
+        walk(u.get());
+    };
+    for (const GlobalValue &gv : m.global_values()) {
+      if (gv.isDeclaration())
+        continue;
+      seen.clear();
+      cur = &refs[&gv];
+      if (auto *f = dyn_cast<Function>(&gv)) {
+        for (const BasicBlock &bb : *f)
+          for (const Instruction &inst : bb)
+            for (const Use &u : inst.operands())
+              walk(u.get());
+        if (f->hasPersonalityFn())
+          walk(f->getPersonalityFn());
+        if (f->hasPrefixData())
+          walk(f->getPrefixData());
+        if (f->hasPrologueData())
+          walk(f->getPrologueData());
+      } else if (auto *v = dyn_cast<GlobalVariable>(&gv)) {
+        if (v->hasInitializer())
+          walk(v->getInitializer());
+      } else if (auto *a = dyn_cast<GlobalAlias>(&gv)) {
+        walk(a->getAliasee());
+      }
+    }
+  }
+  DenseMap<const Comdat *, SmallVector<const GlobalValue *, 2>> comdats;
+  for (const GlobalValue &gv : m.global_values())
+    if (byReach && !gv.isDeclaration() && copyable(gv))
+      if (const Comdat *c = gv.getComdat())
+        comdats[c].push_back(&gv);
+  std::vector<DenseSet<const GlobalValue *>> reach(k);
+  for (unsigned g = 0; byReach && g < k; ++g) {
+    SmallVector<const GlobalValue *, 64> work;
+    auto add = [&](const GlobalValue *gv) {
+      if (!gv->isDeclaration() && copyable(*gv) && reach[g].insert(gv).second)
+        work.push_back(gv);
+    };
+    for (const GlobalValue &gv : m.global_values()) {
+      if (gv.isDeclaration())
+        continue;
+      auto *v = dyn_cast<GlobalVariable>(&gv);
+      bool appending = v && v->hasAppendingLinkage();
+      if (appending ? g == 0 : !copyable(gv) && groupOf(gv) == g)
+        for (const GlobalValue *r : refs[&gv])
+          add(r);
+      if (g == 0 && gv.hasWeakLinkage())
+        add(&gv);
+    }
+    for (const GlobalValue *gv : imports[g])
+      for (const GlobalValue *r : refs[gv])
+        add(r);
+    while (!work.empty()) {
+      const GlobalValue *gv = work.pop_back_val();
+      for (const GlobalValue *r : refs[gv])
+        add(r);
+      if (const Comdat *c = gv->getComdat())
+        for (const GlobalValue *o : comdats[c])
+          add(o);
+    }
+  }
   std::vector<std::string> out(k);
   for (unsigned g = 0; g < k; ++g) {
     ValueToValueMapTy vmap;
@@ -913,7 +1004,9 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback) 
     std::unique_ptr<Module> part = CloneModule(m, vmap, [&](const GlobalValue *gv) {
       if (auto *v = dyn_cast<GlobalVariable>(gv); v && v->hasAppendingLinkage())
         return g == 0;
-      return copyable(*gv) || groupOf(*gv) == g || imports[g].contains(gv);
+      if (copyable(*gv))
+        return !byReach || reach[g].contains(gv);
+      return groupOf(*gv) == g || imports[g].contains(gv);
     });
     for (const GlobalValue *gv : imports[g])
       if (auto *f = dyn_cast<Function>(vmap[gv]); f && !f->isDeclaration()) {
