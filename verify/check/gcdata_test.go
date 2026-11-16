@@ -4,7 +4,9 @@ import (
 	"go/token"
 	"go/types"
 	"os"
+	"regexp"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -87,6 +89,61 @@ func TestReadDescsGoInit(t *testing.T) {
 	}
 	if i := ds["int"]; i == nil || i.size != 8 || i.ptrdata != 0 || i.hasBits {
 		t.Errorf("int: %+v, want size 8, ptrdata 0, no bitmap", i)
+	}
+}
+
+// TestReadDescsUndecoded checks that a descriptor global readDescs cannot decode is an
+// error: an empty check must not pass.
+func TestReadDescsUndecoded(t *testing.T) {
+	good := `  llvm.mlir.global linkonce_odr constant @"type:int"() {addr_space = 0 : i32, go.init = "(i8;i0;z(a9:go:str.abi3;)zi2;i8;i8;i7;)"} : !llvm.struct<(i64, i64, ptr, !llvm.struct<(ptr, i64)>, ptr, i8, i8, i8, i8)>
+`
+	write := func(s string) string {
+		t.Helper()
+		p := t.TempDir() + "/m.mlir"
+		if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	if _, err := readDescs(write(good)); err != nil {
+		t.Fatalf("good form: %v", err)
+	}
+	// a form neither decoder knows
+	other := strings.Replace(good, "go.init", "go.data", 1)
+	if _, err := readDescs(write(other)); err == nil || !strings.Contains(err.Error(), "not decoded") {
+		t.Errorf("unknown form: err %v, want a not decoded error", err)
+	}
+	// the decoder broken on purpose: it matches nothing
+	saved := reGoInit
+	reGoInit = regexp.MustCompile(`$^`)
+	defer func() { reGoInit = saved }()
+	if _, err := readDescs(write(good)); err == nil {
+		t.Error("a decoder that reads nothing passed")
+	}
+}
+
+// TestReadDescsSuffixNames checks types whose names end like a side table: main.data and
+// main.fields are descriptors (there is no type:main), p.pair.fields is p.pair's side table.
+func TestReadDescsSuffixNames(t *testing.T) {
+	desc := func(name string) string {
+		return "  llvm.mlir.global linkonce_odr constant @\"type:" + name + "\"() {addr_space = 0 : i32, go.init = \"(i8;i0;z(a9:go:str.abi3;)zi2;i8;i8;i7;)\"} : !llvm.struct<(i64, i64, ptr, !llvm.struct<(ptr, i64)>, ptr, i8, i8, i8, i8)>\n"
+	}
+	side := "  llvm.mlir.global linkonce_odr constant @\"type:p.pair.fields\"() {addr_space = 0 : i32, go.init = \"(i1;)\"} : !llvm.array<1 x i8>\n"
+	path := t.TempDir() + "/m.mlir"
+	if err := os.WriteFile(path, []byte(desc("main.data")+desc("main.fields")+desc("main.e")+desc("p.pair")+side), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ds, err := readDescs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"main.data", "main.fields", "main.e", "p.pair"} {
+		if ds[n] == nil {
+			t.Errorf("type:%s not read as a descriptor", n)
+		}
+	}
+	if ds["p.pair.fields"] != nil || len(ds) != 4 {
+		t.Errorf("descriptors %v, want main.data, main.fields, main.e and p.pair", ds)
 	}
 }
 

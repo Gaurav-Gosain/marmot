@@ -41,6 +41,9 @@ var (
 	reDescStart = regexp.MustCompile(`^\s*llvm\.mlir\.global .*constant @"type:(.*)"\(\)`)
 	reConstI64  = regexp.MustCompile(`llvm\.mlir\.constant\((-?\d+) : i64\)`)
 	reConstI8   = regexp.MustCompile(`llvm\.mlir\.constant\((-?\d+) : i8\)`)
+	// reAnyDesc finds descriptor globals in any form, loosely: readDescs fails when one it
+	// finds is not decoded, so a change of the format is an error, not an empty check.
+	reAnyDesc = regexp.MustCompile(`llvm\.mlir\.global [^@]*@"type:((?:[^"\\]|\\.)*)"`)
 	reGoInit    = regexp.MustCompile(`go\.init = "((?:[^"\\]|\\.)*)"`)
 )
 
@@ -91,92 +94,130 @@ func readGoInit(s string) (vals []int64, syms []string, err error) {
 	return vals, syms, nil
 }
 
-// readDescs collects type descriptors and their bitmaps from an MLIR file.
+// sideTables are the suffixes of a descriptor's side globals: type:T.fields and the others.
+var sideTables = map[string]bool{"fields": true, "methods": true, "imethods": true, "uncommon": true}
+
+// rawGlobal is one type: global as read, before it is known to be a descriptor, a bitmap or
+// a side table.
+type rawGlobal struct {
+	decoded bool
+	vals    []int64  // go.init: the scalar values; region: the first two i64 constants
+	i8s     []byte   // region: the i8 constants (a bitmap's bytes)
+	syms    []string // go.init: the symbols it takes the address of
+	gcref   bool     // region: the descriptor refers to its bitmap
+	goInit  bool
+}
+
+// readDescs collects type descriptors and their bitmaps from an MLIR file. A global
+// type:T.S is a side table (S fields, methods, imethods, uncommon) or the bitmap (S gcdata)
+// of type:T only when type:T exists: a type may itself be named p.fields or p.data.
 func readDescs(path string) (map[string]*tdesc, error) {
 	fh, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer fh.Close()
-	descs := map[string]*tdesc{}
-	bitsOf := map[string][]byte{}
+	raw := map[string]*rawGlobal{}
+	seen := map[string]bool{} // every type: global, found loosely
 	sc := bufio.NewScanner(fh)
 	sc.Buffer(make([]byte, 1<<20), 1<<26)
-	var cur string
-	var isBits bool
-	var i64s []int64
-	var i8s []byte
-	var gcref bool
+	var cur *rawGlobal
+	var curName string
 	for sc.Scan() {
 		line := sc.Text()
+		if m := reAnyDesc.FindStringSubmatch(line); m != nil {
+			seen[m[1]] = true
+		}
 		if m := reDescStart.FindStringSubmatch(line); m != nil {
-			cur = m[1]
-			if i := strings.LastIndex(cur, "."); i >= 0 && strings.Contains("fields methods imethods uncommon", cur[i+1:]) && !strings.HasSuffix(cur, ".gcdata") {
-				cur = "" // side tables of a descriptor, not descriptors
-				continue
-			}
-			isBits = strings.HasSuffix(cur, ".gcdata")
-			if isBits {
-				cur = strings.TrimSuffix(cur, ".gcdata")
-			}
-			i64s, i8s, gcref = nil, nil, false
+			curName, cur = m[1], &rawGlobal{}
+			raw[curName] = cur
 			if g := reGoInit.FindStringSubmatch(line); g != nil {
 				// the one-line form: the initializer is the go.init string
 				vals, syms, err := readGoInit(unescapeMLIR(g[1]))
 				if err != nil {
-					return nil, fmt.Errorf("type:%s: go.init: %v", cur, err)
+					return nil, fmt.Errorf("type:%s: go.init: %v", curName, err)
 				}
-				if isBits {
-					bs := make([]byte, len(vals))
-					for i, v := range vals {
-						bs[i] = byte(v)
-					}
-					bitsOf[cur] = bs
-				} else if len(vals) >= 2 {
-					d := &tdesc{name: cur, size: vals[0], ptrdata: vals[1]}
-					d.hasBits = slices.Contains(syms, "type:"+unescapeMLIR(cur)+".gcdata")
-					descs[cur] = d
-				}
-				cur = ""
+				cur.vals, cur.syms, cur.decoded, cur.goInit = vals, syms, true, true
+				cur = nil
 			}
 			continue
 		}
-		if cur == "" {
+		if cur == nil {
 			continue
 		}
 		if strings.Contains(line, "llvm.return") {
-			if isBits {
-				bitsOf[cur] = i8s
-			} else if len(i64s) >= 2 {
-				descs[cur] = &tdesc{name: cur, size: i64s[0], ptrdata: i64s[1], hasBits: gcref}
-			}
-			cur = ""
+			cur.decoded = true
+			cur = nil
 			continue
 		}
-		if isBits {
-			if m := reConstI8.FindStringSubmatch(line); m != nil {
-				n, _ := strconv.Atoi(m[1])
-				i8s = append(i8s, byte(n))
-			}
+		if m := reConstI8.FindStringSubmatch(line); m != nil {
+			n, _ := strconv.Atoi(m[1])
+			cur.i8s = append(cur.i8s, byte(n))
 			continue
 		}
-		if len(i64s) < 2 {
+		if len(cur.vals) < 2 {
 			if m := reConstI64.FindStringSubmatch(line); m != nil {
 				n, _ := strconv.ParseInt(m[1], 10, 64)
-				i64s = append(i64s, n)
+				cur.vals = append(cur.vals, n)
 				continue
 			}
 		}
-		if len(i64s) == 2 && strings.Contains(line, `@"type:`+cur+`.gcdata"`) {
-			gcref = true
+		if len(cur.vals) == 2 && strings.Contains(line, `@"type:`+curName+`.gcdata"`) {
+			cur.gcref = true
 		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	descs := map[string]*tdesc{}
+	bitsOf := map[string][]byte{}
+	var missed []string
+	for n := range seen {
+		base, suf := n, ""
+		if i := strings.LastIndex(n, "."); i >= 0 {
+			base, suf = n[:i], n[i+1:]
+		}
+		r := raw[n]
+		ok := r != nil && r.decoded
+		switch {
+		case sideTables[suf] && seen[base]:
+			continue
+		case suf == "gcdata" && seen[base]:
+			if !ok {
+				break
+			}
+			if r.goInit {
+				bs := make([]byte, len(r.vals))
+				for i, v := range r.vals {
+					bs[i] = byte(v)
+				}
+				bitsOf[base] = bs
+			} else {
+				bitsOf[base] = r.i8s
+			}
+			continue
+		default:
+			if ok && len(r.vals) >= 2 {
+				d := &tdesc{name: n, size: r.vals[0], ptrdata: r.vals[1], hasBits: r.gcref}
+				if r.goInit {
+					d.hasBits = slices.Contains(r.syms, "type:"+unescapeMLIR(n)+".gcdata")
+				}
+				descs[n] = d
+				continue
+			}
+		}
+		missed = append(missed, n)
+	}
+	if len(missed) > 0 {
+		sort.Strings(missed)
+		return nil, fmt.Errorf("%d of %d type: globals not decoded (first: type:%s): did the descriptor format change?", len(missed), len(seen), missed[0])
 	}
 	for k, b := range bitsOf {
 		if d := descs[k]; d != nil {
 			d.bits = b
 		}
 	}
-	return descs, sc.Err()
+	return descs, nil
 }
 
 // ---- gc layout, written from the gc rules (cmd/compile/internal/types/size.go) ----
@@ -715,6 +756,9 @@ func checkGCData(mlirPath string, patterns []string) (*gcResult, error) {
 		if len(problems) > 0 {
 			res.bad = append(res.bad, n+": "+strings.Join(problems, "; "))
 		}
+	}
+	if res.checked == 0 {
+		return nil, fmt.Errorf("no type descriptor checked (%d skipped): a marmot program always has some", res.skipped)
 	}
 	return res, nil
 }

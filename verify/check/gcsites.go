@@ -320,5 +320,8 @@ func checkSites(mlirPath string) (*sitesResult, error) {
 			res.bad = append(res.bad, fmt.Sprintf("%s %q with %s: %s", s.op, s.desc, s.mtype, strings.Join(problems, "; ")))
 		}
 	}
+	if len(sites) > 0 && res.checked == 0 {
+		return nil, fmt.Errorf("%d allocation sites, none checked (%d skipped): are the descriptors read?", len(sites), res.skipped)
+	}
 	return res, nil
 }
