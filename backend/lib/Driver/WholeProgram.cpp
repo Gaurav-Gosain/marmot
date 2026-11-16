@@ -692,7 +692,12 @@ std::string importSource(StringRef bitcode, StringRef name, const StringSet<> &i
       v.eraseFromParent();
       continue;
     }
-    if (!v.isDeclaration() && !v.hasLinkOnceLinkage() && !v.hasWeakLinkage()) {
+    // A local constant (string data, a boxed value) stays defined: a
+    // linkonce body linked along may use it, and as a declaration it was an
+    // undefined symbol (.str.23) in the importing module. The linker copies
+    // it only when a linked body uses it.
+    if (!v.isDeclaration() && !v.hasLinkOnceLinkage() && !v.hasWeakLinkage() &&
+        !(v.hasLocalLinkage() && v.isConstant())) {
       v.setInitializer(nullptr);
       v.setComdat(nullptr);
       v.setLinkage(GlobalValue::ExternalLinkage);
@@ -737,7 +742,10 @@ bool importBodies(Module &m, const std::map<unsigned, std::set<std::string>> &im
         v.eraseFromParent();
         continue;
       }
-      if (!v.isDeclaration() && !v.hasLinkOnceLinkage() && !v.hasWeakLinkage()) {
+      // A local constant stays defined, as in importSource: a linkonce body
+      // linked along may use it.
+      if (!v.isDeclaration() && !v.hasLinkOnceLinkage() && !v.hasWeakLinkage() &&
+          !(v.hasLocalLinkage() && v.isConstant())) {
         v.setInitializer(nullptr);
         v.setComdat(nullptr);
         v.setLinkage(GlobalValue::ExternalLinkage);
