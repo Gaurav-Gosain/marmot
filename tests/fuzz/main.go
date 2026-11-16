@@ -165,7 +165,18 @@ func (g *gen) extStmt() {
 	for v.name[0] != 'v' {
 		v = g.vars[g.r.Intn(len(g.vars))]
 	}
-	switch g.r.Intn(9) {
+	switch g.r.Intn(11) {
+	case 9:
+		// One value converted to two integer types in one statement, so in
+		// one block: a code generator that shares equal operations (CSE)
+		// must keep the results apart.
+		o := g.anyVar()
+		t1, t2 := types[g.r.Intn(len(types))], types[g.r.Intn(len(types))]
+		g.emit("%s += %s(%s(%s)) ^ %s(%s(%s))", v.name, v.typ, t1.typ, o, v.typ, t2.typ, o)
+	case 10:
+		// The same with float32 and float64 results.
+		o := g.anyVar()
+		g.emit("f = f/2 + float64(float32(%s)) - float64(%s) + float64(float32(f))", o, o)
 	case 0:
 		g.emit("m[int(%s)%%8] += int(%s)", g.expr(v, 2), g.anyVar())
 	case 1:
