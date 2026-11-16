@@ -17,7 +17,8 @@ if [ "$(uname)" = Darwin ]; then nd=__DATA,__noptrdata; nb=__DATA,__noptrbss,zer
 sed -e "s/DATASECT/$nd/" -e "s/BSSSECT/$nb/" -e "s/ZEROSECT/$nz/" "$src/noptr.mlir" > noptr.mlir
 "$T0" noptr.mlir noptr.o > /dev/null
 s=$("$L/llvm-objdump" -h noptr.o)
-echo "$s" | grep -q noptrdata && echo "$s" | grep -q noptr || { echo "noptr: sections missing"; echo "$s"; exit 1; }
+if [ "$(uname)" = Darwin ]; then pd=noptrdata; pb=noptrbss; else pd=.data.marmot.noptr.; pb=.bss.marmot.noptr.; fi
+echo "$s" | grep -qF "$pd" && echo "$s" | grep -qF "$pb" || { echo "noptr: sections missing"; echo "$s"; exit 1; }
 "$L/llvm-objdump" -t noptr.o | grep -E "np_zero" | grep -qE "noptr" || { echo "noptr: np_zero not in noptrbss"; "$L/llvm-objdump" -t noptr.o; exit 1; }
 "$L/clang" -O1 -w "$src/noptr_main.c" noptr.o -o noptr && ./noptr && echo "noptr: ok"
 if [ "$(uname)" = Darwin ]; then is=__TEXT,__StaticInit,regular,pure_instructions; else is=.text.startup.pkg.init; fi
