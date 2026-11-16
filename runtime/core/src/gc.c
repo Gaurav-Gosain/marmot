@@ -1575,7 +1575,10 @@ static void set_goal(uint64_t live) {
 static NOINLINE void gc_collect_body(bool forced, void *sp, void *fp);
 
 NOINLINE void gc_collect(bool forced) {
-  void *regs[24];
+  // Zeroed: rt_spill_regs fills only the callee-saved registers, and the
+  // scan of this goroutine covers the whole array. Stale words left by
+  // deeper calls kept dead objects alive (a decoder's whole result).
+  void *regs[24] = {0};
   void *sp = rt_spill_regs(regs);
   gc_collect_body(forced, sp, __builtin_frame_address(0));
   __asm__ volatile("" ::"r"(regs) : "memory");

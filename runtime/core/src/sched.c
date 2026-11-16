@@ -704,7 +704,7 @@ NOINLINE void rt_safepoint(void) {
   if (!atomic_load_explicit(&sched.gcwaiting, memory_order_acquire)) return;
   rt_m *m = getm();
   if (!m || !m->curg || m->locks > 0) return;
-  void *regs[24];
+  void *regs[24] = {0};  // see gc_collect: the scan covers the whole array
   void *sp = rt_spill_regs(regs);
   sched_stop_self(sp, m->curg->stack_hi, __builtin_frame_address(0));
   __asm__ volatile("" ::"r"(regs) : "memory");
