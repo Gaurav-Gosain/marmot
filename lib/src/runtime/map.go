@@ -811,7 +811,19 @@ func (m *hmap) resize(n uintptr) {
 			m.insertNew(k, m.slotElem(grp, s), m.hash(k))
 		}
 	}
+	// Only an iterator can still hold the old array (it reads its own
+	// array to stay valid). A map that was never iterated has none: give
+	// the old array back now instead of at the next collection (not during
+	// a concurrent mark, which may hold it already). A reader racing this
+	// writer (undefined behavior) may then read reused memory instead of a
+	// stale table.
+	if oldGroups != nil && m.iterSeq == 0 {
+		rt_free_idle(oldGroups, oldN*m.groupSize)
+	}
 }
+
+//go:linkname rt_free_idle rt_free_idle
+func rt_free_idle(p unsafe.Pointer, size uintptr)
 
 // insertNew inserts an entry known to be absent into a table with room.
 // It does not change count.
@@ -904,7 +916,12 @@ func mapiterinit(t *maptype, m *hmap, it *hiter) {
 	// A different pseudo random start for every iteration: the map seed
 	// mixed with a per-map counter (cheaper than the goroutine's random
 	// state, which needs getg).
-	it.start = fmix64(uint64(m.seed) ^ uint64(atomicXadd32(&m.iterSeq, 1))*0x9e3779b97f4a7c15)
+	// iterSeq never returns to 0 (resize frees old arrays only while it is 0).
+	seq := atomicXadd32(&m.iterSeq, 1)
+	if seq == 0 {
+		atomicXadd32(&m.iterSeq, 1)
+	}
+	it.start = fmix64(uint64(m.seed) ^ uint64(seq)*0x9e3779b97f4a7c15)
 	it.i = 0
 	it.clearSeq = m.clearSeq
 	mapiternext(it)

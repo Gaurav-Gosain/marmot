@@ -1,0 +1,5 @@
+plain 300000 bad 0
+iter old keys seen once 1000 len 7400
+clone 2000 bad 0 src 200000
+pointers 100000 bad 0
+copy 3 3 x3 50000

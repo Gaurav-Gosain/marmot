@@ -960,11 +960,29 @@ RT_API int32_t rt_heap_ptr_word(void *base, uintptr_t off) {
   return (s->ptrmap[i / 8] >> (i % 8)) & 1;
 }
 
+// A large object freed early gives its pages back to the OS at once from this
+// size on: larger allocations cannot reuse them, so they would stay resident.
+#define RT_FREE_RELEASE_MIN ((uintptr_t)1 << 20)
+
 // Return a heap object the compiler proved dead. Small objects go on this
 // thread's list for their class and are handed out by the next allocation
 // of that class; large objects give their pages back at once. Pointers that
 // are not to the start of a heap object (zero-size objects, regions,
 // stacks, globals, interior pointers) are ignored.
+void rt_free(void *ptr, uintptr_t size);
+
+// rt_free outside a concurrent mark, nothing during one: for objects that
+// were reachable until just now (a map's old table), which a marker may
+// already hold gray.
+RT_API void rt_free_idle(void *ptr, uintptr_t size) {
+  // No stop (rt_safepoint, the SIGURG handler) between the test and the
+  // free: a mark begins only at a stop, which waits while locks > 0.
+  rt_m *m = getm();
+  if (m) m->locks++;
+  if (!rt_gc_marking) rt_free(ptr, size);
+  if (m) m->locks--;
+}
+
 RT_API void rt_free(void *ptr, uintptr_t size) {
   uintptr_t p = (uintptr_t)ptr;
   if (p - rt_arena_start >= rt_arena_used - rt_arena_start) return;
@@ -983,6 +1001,16 @@ RT_API void rt_free(void *ptr, uintptr_t size) {
       s->allocbits[0] = 0;
       atomic_fetch_sub(&heap_live, s->elemsize);
       atomic_fetch_add(&stat_frees, 1);
+      uintptr_t n = s->npages * PAGE_SIZE;
+      if (n >= RT_FREE_RELEASE_MIN && !s->released) {
+        // A large array freed early (a map's old table): its pages would
+        // stay resident until a scavenge, and larger allocations cannot
+        // reuse them.
+        os_release((void *)s->base, n);
+        s->released = 1;
+        s->needzero = 1;
+        heap_released += n;
+      }
       span_free(s);
     }
     spin_unlock(&heap_lock);
