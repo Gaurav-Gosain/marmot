@@ -66,6 +66,9 @@
 
 using namespace llvm;
 
+// ParkClear.cpp: whether the park clear pass is on (it also registers it).
+bool marmotParkClearLinked();
+
 namespace marmot {
 
 namespace {
@@ -576,9 +579,11 @@ std::string fingerprint(const CompileOptions &opts) {
     os << opts.rtBitcode->fileHash();
   os << "|opts:" << opts.optionKey << "|loopopts:" << loops::cacheKey();
   // Backend switches read from the environment that change objects.
-  for (const char *e : {"MARMOT_PARKCLEAR", "MARMOT_CARDSTUB_CALL"})
+  for (const char *e : {"MARMOT_CARDSTUB_CALL"})
     if (const char *v = std::getenv(e))
       os << "|" << e << "=" << v;
+  // On by default since the perfcmp gate; objects cached before had it off.
+  os << "|parkclear=" << marmotParkClearLinked();
   // Only when not the default, so the default keeps its keys.
   if (opts.wpoImportBudget != 400 || !opts.wpoImportTransitive)
     os << "|ib" << opts.wpoImportBudget << "t" << opts.wpoImportTransitive;

@@ -50,8 +50,8 @@
 #include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringMap.h"
 
-// ParkClear.cpp (MARMOT_PARKCLEAR=1): registers its code generation callback
-// on the first call.
+// ParkClear.cpp: registers its code generation callback on the first call and
+// reports whether the pass is on (MARMOT_PARKCLEAR=0 turns it off).
 bool marmotParkClearLinked();
 // CardStub.cpp: marmot.card calls become stub calls in inline asm.
 bool marmotLowerCardStubs(llvm::Module &m);
@@ -1204,7 +1204,7 @@ bool optimizeAndEmit(llvm::Module &lmod, llvm::TargetMachine &tm, const std::str
     {
       llvm::raw_svector_ostream bos(buf);
       llvm::legacy::PassManager cg;
-      (void)marmotParkClearLinked(); // registers MARMOT_PARKCLEAR=1 (ParkClear.cpp)
+      (void)marmotParkClearLinked(); // registers the park clear pass (ParkClear.cpp)
       auto ft = opts.emit == Emit::Obj ? llvm::CodeGenFileType::ObjectFile
                                        : llvm::CodeGenFileType::AssemblyFile;
       if (tm.addPassesToEmitFile(cg, bos, nullptr, ft))

@@ -1,4 +1,5 @@
-// Zeroes dead spill slots at park calls (MARMOT_PARKCLEAR=1).
+// Zeroes dead spill slots at park calls (on by default; MARMOT_PARKCLEAR=0
+// turns it off).
 //
 // A goroutine parked in a blocking runtime call (a select, a channel
 // operation, a sleep) keeps its frames on the stack, and the collector scans
@@ -234,7 +235,7 @@ char ParkClear::ID = 0;
 bool parkClearOn() {
   static const bool on = [] {
     const char *e = getenv("MARMOT_PARKCLEAR");
-    return e && *e == '1';
+    return !(e && *e == '0');
   }();
   return on;
 }
@@ -246,7 +247,7 @@ bool parkClearOn() {
 // it builds a code generation pipeline. Not a global object: LLVM keeps the
 // callbacks in a global vector with a dynamic initializer, and with static
 // LLVM libraries that vector can be constructed after a global of ours,
-// which drops the registration (MARMOT_PARKCLEAR=1 did nothing).
+// which drops the registration (the pass did not run).
 bool marmotParkClearLinked() {
   static RegisterTargetPassConfigCallback callback(
       [](TargetMachine &, PassManagerBase &, TargetPassConfig *pc) {

@@ -1,9 +1,11 @@
-// MARMOT_PARKCLEAR=1: spill slots dead at a park call are zeroed before it.
+// Park clear (on by default, MARMOT_PARKCLEAR=0 turns it off): spill slots
+// dead at a park call are zeroed before it.
 // Twelve pointers live across a call need more than the callee-saved
 // registers, so some are spilled; all are dead at the selectgo call.
 // RUN: env MARMOT_PARKCLEAR=1 %backend -O2 -target linux/arm64 -emit=asm -o - %s | %FileCheck %s --check-prefix=ARM64
 // RUN: env MARMOT_PARKCLEAR=1 %backend -O2 -target linux/amd64 -emit=asm -o - %s | %FileCheck %s --check-prefix=AMD64
-// RUN: %backend -O2 -target linux/arm64 -emit=asm -o - %s | %FileCheck %s --check-prefix=OFF
+// RUN: %backend -O2 -target linux/arm64 -emit=asm -o - %s | %FileCheck %s --check-prefix=ARM64
+// RUN: env MARMOT_PARKCLEAR=0 %backend -O2 -target linux/arm64 -emit=asm -o - %s | %FileCheck %s --check-prefix=OFF
 // ARM64-LABEL: main.spill:
 // ARM64: bl use
 // ARM64: xzr, [sp
