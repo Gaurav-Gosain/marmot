@@ -191,6 +191,39 @@ func TestVerifyPolicyMain(t *testing.T) {
 	}
 }
 
+// TestCheckVerifyFlag checks that marmot check -verify runs verify.
+func TestCheckVerifyFlag(t *testing.T) {
+	if testing.Short() {
+		t.Skip("loads packages with go list")
+	}
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MARMOT_OUTPUT", "json")
+	t.Chdir(dir)
+	for name, text := range map[string]string{"go.mod": "module example.com/codec\n\ngo 1.22\n", "codec.go": verifyModule} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := os.Create(filepath.Join(t.TempDir(), "out"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	stdout, stderr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = out, out
+	Main([]string{"-verify", "-only", "fmt", "-nocache", "./..."}, "test")
+	os.Stdout, os.Stderr = stdout, stderr
+	b, err := os.ReadFile(out.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte(diag.CodeVerify)) {
+		t.Errorf("check -verify -only fmt: no %s finding in\n%s", diag.CodeVerify, b)
+	}
+}
+
 // TestVerifySearchHintsCached runs the verify check twice on an unchanged
 // tree with the package cache: both runs must have the search hints that
 // confirmation needs (they ride in the cached findings).

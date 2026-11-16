@@ -71,6 +71,7 @@ func Main(args []string, version string) int {
 		Patterns: fs.Args(),
 		Jobs:     *cf.Jobs,
 		Offline:  *cf.Offline,
+		Verify:   *cf.Verify,
 	}
 	if *cf.Only != "" {
 		opts.Only = strings.Split(*cf.Only, ",")
