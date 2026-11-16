@@ -1,0 +1,13 @@
+loopGrow 6 60 720
+nestedFresh 1208
+loopPointers 3 45
+aliasLoop [1] [2]
+gotoLoop [10] [20]
+otherSite ac ac a
+elemPtr 1 99 21
+deferRead 16
+rangeFunc [0 1 4 9]
+recur [4 3 2 1 0]
+escape [4] [[6]] [7]
+pointers 3
+structField &{[4]}
