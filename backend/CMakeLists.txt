@@ -4,6 +4,18 @@ project(marmot-backend LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# MARMOT_STATIC with the official LLVM release: its LLVMSupport links
+# zstd::libzstd_static, and a host with only the shared libzstd has no such
+# target (the configure failed). Then the target is the shared library.
+if(MARMOT_STATIC AND NOT TARGET zstd::libzstd_static)
+  find_library(MARMOT_ZSTD_STATIC NAMES libzstd.a)
+  find_library(MARMOT_ZSTD_SHARED NAMES zstd)
+  if(NOT MARMOT_ZSTD_STATIC AND MARMOT_ZSTD_SHARED)
+    add_library(zstd::libzstd_static UNKNOWN IMPORTED)
+    set_target_properties(zstd::libzstd_static PROPERTIES IMPORTED_LOCATION "${MARMOT_ZSTD_SHARED}")
+  endif()
+endif()
+
 find_package(MLIR REQUIRED CONFIG)
 message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
