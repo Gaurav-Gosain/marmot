@@ -15,6 +15,14 @@ add_library(MarmotTier0 STATIC MachO.cpp ELF.cpp Common.cpp Abi.cpp Module.cpp M
 # Unsupported constructs unwind out of the code generator with an exception
 # (caught inside it, never across LLVM frames).
 target_compile_options(MarmotTier0 PRIVATE -fexceptions -fno-rtti)
+# Emscripten: an executable linked without -fexceptions cannot catch, so the
+# reader's fallback to the MLIR parser aborted at the catch. JavaScript based
+# exceptions (not -fwasm-exceptions: the LLVM libraries use Emscripten's
+# setjmp/longjmp, which wasm exceptions do not link with); only code built
+# with -fexceptions (this library) pays for them.
+if(EMSCRIPTEN)
+  target_link_options(MarmotTier0 INTERFACE -fexceptions)
+endif()
 # The backend includes it as "tier0/Tier0.h".
 target_include_directories(MarmotTier0 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 if(DEFINED MARMOT_LLVM_LIBS)
