@@ -13,5 +13,5 @@
 // CHECK-NEXT: wasm-function[3]{{$}}
 // CHECK-NEXT: wasm-function[3]{{$}}
 // CHECK-NEXT: ?
-// RUN: printf '\0asm' > %t.bad && not %pcln -wasm-final -o %t.bad.pcln %t.bad 2>&1 | %FileCheck %s --check-prefix=BAD
+// RUN: printf '\0asm' > %t.bad && %not %pcln -wasm-final -o %t.bad.pcln %t.bad 2>&1 | %FileCheck %s --check-prefix=BAD
 // BAD: not a wasm module

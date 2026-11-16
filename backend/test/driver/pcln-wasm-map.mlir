@@ -12,8 +12,8 @@
 // CHECK-NEXT: main.main /src/b.go:20
 // CHECK-NEXT: main.main /src/b.go:20
 // CHECK-NEXT: main.main /src/b.go:20
-// RUN: not %pcln -source-map %t.map -o %t.x %t.wasm 2>&1 | %FileCheck %s --check-prefix=NEEDS
+// RUN: %not %pcln -source-map %t.map -o %t.x %t.wasm 2>&1 | %FileCheck %s --check-prefix=NEEDS
 // NEEDS: -source-map needs -wasm-final
 // RUN: printf '{"version":3}' > %t.bad.map
-// RUN: not %pcln -wasm-final -source-map %t.bad.map -o %t.x %t.wasm 2>&1 | %FileCheck %s --check-prefix=BADMAP
+// RUN: %not %pcln -wasm-final -source-map %t.bad.map -o %t.x %t.wasm 2>&1 | %FileCheck %s --check-prefix=BADMAP
 // BADMAP: not a source map
