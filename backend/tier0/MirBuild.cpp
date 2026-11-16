@@ -57,7 +57,15 @@ void pieceTypes(MLIRContext *ctx, Type t, uint64_t base, std::vector<std::pair<u
   out.push_back({base, t});
 }
 
-constexpr size_t kMaxPieces = 32;
+// Aggregates of at most this many pieces go to MIR: 32, or 64 with
+// MARMOT_TIER0_PIECES64=1.
+size_t maxPieces() {
+  static const size_t n = [] {
+    const char *e = getenv("MARMOT_TIER0_PIECES64");
+    return size_t(e && *e == '1' ? 64 : 32);
+  }();
+  return n;
+}
 
 // The result's class and width are part of the key: sitofp of one value
 // to f32 and to f64 has the same operation and operands.
@@ -344,7 +352,7 @@ private:
   std::vector<std::pair<uint64_t, Type>> piecesOf(Type t) {
     std::vector<std::pair<uint64_t, Type>> out;
     pieceTypes(ctx, t, 0, out);
-    if (out.size() > kMaxPieces) unsupported("mir: aggregate of more than 32 pieces");
+    if (out.size() > maxPieces()) unsupported("mir: aggregate of more than the piece limit");
     return out;
   }
   bool isAggOrWide(Type t) { return isAggregate(t) || isWide(t); }
