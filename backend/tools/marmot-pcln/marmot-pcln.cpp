@@ -544,7 +544,9 @@ int writeSourceMap() {
 // readSourceMap adds the rows of a source map of a final module to the
 // functions of t: segments with a source give (offset, line, file), at code
 // section offsets (start is the file offset of the code section contents).
-// A segment without a source ends the row before it (line 0).
+// Segments without a source are skipped, as the DWARF reader skips line 0
+// rows: binaryen writes one at the start of most functions (the locals),
+// which made the entry line 0.
 bool readSourceMap(StringRef path, uint64_t start, pcln::Table &t, std::string &err) {
   auto buf = MemoryBuffer::getFile(path);
   if (!buf)
@@ -582,13 +584,12 @@ bool readSourceMap(StringRef path, uint64_t start, pcln::Table &t, std::string &
     if (nf != 1 && nf != 4 && nf != 5)
       return err = path.str() + ": malformed mappings", false;
     col += f[0];
-    uint32_t lineNo = 0, fileNo = 0;
-    if (nf >= 4) {
-      src += f[1], line += f[2], scol += f[3];
-      if (src < 0 || size_t(src) >= ids.size() || line < 0)
-        return err = path.str() + ": mapping outside the sources", false;
-      lineNo = line + 1, fileNo = ids[src];
-    }
+    if (nf == 1)
+      continue;
+    src += f[1], line += f[2], scol += f[3];
+    if (src < 0 || size_t(src) >= ids.size() || line < 0)
+      return err = path.str() + ": mapping outside the sources", false;
+    uint32_t lineNo = line + 1, fileNo = ids[src];
     if (col < int64_t(start))
       continue;
     uint64_t pc = col - start;
