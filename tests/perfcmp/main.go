@@ -442,7 +442,10 @@ func build(s side, p program, mode, work string) (string, time.Duration, error) 
 	args = append(args, p.pkg)
 	cmd := exec.Command(filepath.Join(s.root, "build", "bin", "marmot"), args...)
 	cmd.Dir = p.dir
-	cmd.Env = append(os.Environ(), append([]string{"MARMOT_ROOT=" + s.root, "MARMOT_OUTPUT=plain", "CGO_ENABLED=0", "MARMOT_TIER1=0"}, s.env...)...)
+	// MARMOT_MAX_SECONDS: the backend's hang guard (default 300 s) is for builds only here and
+	// is raised, so a large -release build (tuios) on a loaded machine is not killed. The build
+	// is not timed for the verdict. -a-env and -b-env can still set it.
+	cmd.Env = append(os.Environ(), append([]string{"MARMOT_ROOT=" + s.root, "MARMOT_OUTPUT=plain", "CGO_ENABLED=0", "MARMOT_TIER1=0", "MARMOT_MAX_SECONDS=1800"}, s.env...)...)
 	t0 := time.Now()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
