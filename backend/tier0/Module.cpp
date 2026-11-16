@@ -278,12 +278,11 @@ void ModuleGen::checkFunction(LL::LLVMFuncOp fn) {
 // the functions it covers, the reasons of the others, and the operations of
 // both forms; printed at exit.
 static const bool mirStatsOn = getenv("TIER0_MIR_STATS") != nullptr;
-// Functions go through MIR (Mir.h) where it covers them, the others
-// through the older emitters. MARMOT_TIER0_MIR=0 sends every function to
-// the older emitters.
+// MARMOT_TIER0_MIR=1: functions go through MIR (Mir.h) where it covers
+// them, the others through the older emitters.
 static const bool mirOn = [] {
   const char *e = getenv("MARMOT_TIER0_MIR");
-  return !(e && *e == '0');
+  return e && *e == '1';
 }();
 namespace {
 struct MirStats {
