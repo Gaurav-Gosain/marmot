@@ -45,6 +45,8 @@ type funcGen struct {
 	frameCalls        map[ssa.Instruction]bool          // calls that allocate into the frame region
 	frameSlot         string                            // holds the frame region (nil until first use)         // heap Allocs and closures that live in the frame
 	reuseAppend       map[ssa.Instruction]bool          // appends whose old array can be freed on growth
+	appendStack       map[ssa.Instruction]string        // appends with a frame buffer (appendstack.go)
+	stackNow          string                            // the frame buffer of the append being emitted
 	reuseNow          bool
 	appendElems       map[*ssa.Slice][]ssa.Value // append(s, a, b): elements by varargs slice
 	litCopy           map[*ssa.Alloc]string      // constant literal objects: their image (litcopy.go)
@@ -213,6 +215,7 @@ func (f *funcGen) gen(sym string, shared bool) {
 	f.findRegionCalls()
 	f.findFrameRegionCalls()
 	f.findReusableAppends()
+	f.findAppendStack()
 	if od := openDefersFor(fn); od != nil && os.Getenv("MARMOT_NO_OPENDEFER") == "" {
 		f.open = od
 		f.setupOpenDefers()

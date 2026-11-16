@@ -104,6 +104,8 @@ type Program struct {
 	importTags map[*ssa.Package]EscTags // escape tags of every package (esctags.go)
 	opts       Options
 	allocMu    sync.Mutex // serializes writes to opts.AllocReport
+	recMu      sync.Mutex
+	recursive  map[*ssa.Function]bool // functions on a static recursion cycle of their package (appendstack.go)
 	prog       *ssa.Program
 	fset       *token.FileSet
 	runtime    *ssa.Package

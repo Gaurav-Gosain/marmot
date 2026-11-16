@@ -376,6 +376,9 @@ func (f *funcGen) append(sv, tv ssa.Value) string {
 	saved := f.b
 	f.b = &f.cold
 	f.b.WriteString("  " + growB + ":\n")
+	if f.stackNow != "" {
+		f.appendStackTake(f.stackNow, c, newLen, done, es)
+	}
 	g := f.rtcall("growslice", f.typeDesc(et), p, l, c, newLen)
 	if f.reuseNow {
 		f.freeOldArray(p, c, et) // the old array is unreachable now
@@ -413,6 +416,9 @@ func (f *funcGen) appendValues(sv ssa.Value, elems []ssa.Value) string {
 	saved := f.b
 	f.b = &f.cold
 	f.b.WriteString("  " + growB + ":\n")
+	if f.stackNow != "" {
+		f.appendStackTake(f.stackNow, c, newLen, done, f.m.p.opts.Sizes.Sizeof(et))
+	}
 	g := f.rtcall("growslice", f.typeDesc(et), p, l, c, newLen)
 	if f.reuseNow {
 		f.freeOldArray(p, c, et)

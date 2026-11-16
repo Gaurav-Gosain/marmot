@@ -241,8 +241,9 @@ func (f *funcGen) builtin(b *ssa.Builtin, args []ssa.Value, instr ssa.Instructio
 		return ""
 	case "append":
 		f.reuseNow = f.reuseAppend[instr]
+		f.stackNow = f.appendStack[instr]
 		r := f.append(args[0], args[1])
-		f.reuseNow = false
+		f.reuseNow, f.stackNow = false, ""
 		return r
 	case "copy":
 		dst := f.value(args[0])
