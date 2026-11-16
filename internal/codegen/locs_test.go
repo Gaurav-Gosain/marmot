@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// Options.LineLocs (MARMOT_LOC_LINEONLY=1 in optimized builds) gives every
+// Options.LineLocs (optimized builds, unless MARMOT_LOC_COLS=1) gives every
 // location column 1, so two positions on one line share one alias. Without
 // it the columns stay.
 func TestLineLocs(t *testing.T) {

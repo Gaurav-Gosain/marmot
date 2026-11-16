@@ -14,9 +14,9 @@ import (
 // marmot-pcln can build the pc -> function, file:line table for
 // tracebacks. Instructions without a position take the last position seen
 // in the function. MARMOT_NO_LOCS=1 turns locations off. Optimized builds
-// give every location column 1 with MARMOT_LOC_LINEONLY=1 (Options.LineLocs,
-// set by the driver): on tuios -O 2 about half of the location aliases
-// differ only by column. Off by default until perfcmp passes.
+// give every location column 1 (Options.LineLocs, set by the driver;
+// MARMOT_LOC_COLS=1 keeps columns): on tuios -O 2 about half of the location
+// aliases differ only by column.
 
 var locsOff = os.Getenv("MARMOT_NO_LOCS") != ""
 
