@@ -1,7 +1,8 @@
 // MirAlloc.h: register assignment and frame layout for a MIR function.
 //
 // Positions number the live instructions in block order (a block's start
-// first). Every value gets an interval from its definition to its last use,
+// first), except that a block that only panics comes right after its one
+// predecessor. A call followed by unreachable clobbers nothing. Every value gets an interval from its definition to its last use,
 // over the liveness dataflow when it is used in another block; block
 // parameters are written by the edge moves at the end of each predecessor.
 // A linear scan then gives each interval one register for its whole length:

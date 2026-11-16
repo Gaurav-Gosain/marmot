@@ -95,12 +95,48 @@ void allocate(const Func &f, const TargetRegs &t, Alloc &a) {
   std::vector<uint32_t> clobber;                        // positions of calls
   std::vector<std::pair<VId, uint32_t>> far;            // (value, block) uses in another block
   auto wanted = [&](VId v) { return a.loc[v].k == Loc::None; };
+  // A call followed by unreachable (a panic) does not return, so nothing it
+  // clobbers is read again: values live over it need no callee saved
+  // register. (A recovered panic leaves through rt_setjmp, and functions
+  // that call it keep every value in memory.)
+  auto noReturn = [&](const BB &b, uint32_t i) {
+    if (f.insts[i].op != Op::Call) return false;
+    for (uint32_t j = i + 1; j < b.end; j++)
+      if (!f.insts[j].dead) return f.insts[j].op == Op::Unreachable;
+    return false;
+  };
   auto touch = [&](VId v, uint32_t p) {
     start[v] = std::min(start[v], p);
     end[v] = std::max(end[v], p);
   };
+  // Numbering order: a block that only panics (one predecessor, a call and
+  // unreachable at its end) comes right after its predecessor, although it
+  // is emitted at the end. The values it passes to the panic then keep
+  // their short intervals instead of reaching over the rest of the
+  // function and its calls. Any order is sound: intervals also cover the
+  // block boundaries where the dataflow finds a value live.
+  std::vector<unsigned> seq;
+  {
+    std::vector<char> cold(nb, 0);
+    std::vector<llvm::SmallVector<unsigned, 1>> after(nb);
+    for (unsigned bi = 1; bi < nb; bi++) {
+      const BB &b = f.blocks[bi];
+      if (b.preds.size() != 1 || b.preds[0] == bi || b.end == b.begin || f.insts[b.end - 1].op != Op::Unreachable)
+        continue;
+      uint32_t j = b.end - 1;  // the unreachable; the call is the live instruction before it
+      while (j > b.begin && f.insts[j - 1].dead) j--;
+      if (j == b.begin || f.insts[j - 1].op != Op::Call) continue;
+      cold[bi] = 1;
+      after[b.preds[0]].push_back(bi);
+    }
+    for (unsigned bi = 0; bi < nb; bi++) {
+      if (cold[bi]) continue;
+      seq.push_back(bi);
+      for (unsigned c : after[bi]) seq.push_back(c);
+    }
+  }
   uint32_t p = 0;
-  for (unsigned bi = 0; bi < nb; bi++) {
+  for (unsigned bi : seq) {
     const BB &b = f.blocks[bi];
     uint32_t s = p++;
     span[bi].first = s;
@@ -112,7 +148,7 @@ void allocate(const Func &f, const TargetRegs &t, Alloc &a) {
       const Inst &in = f.insts[i];
       if (in.dead || a.fused[i]) continue;
       uint32_t at = p++;
-      if (isCall(in, t)) clobber.push_back(at);
+      if (isCall(in, t) && !noReturn(b, i)) clobber.push_back(at);
       forUses(f, a, in, [&](VId v) {
         if (!wanted(v)) return;
         touch(v, at);
