@@ -190,7 +190,7 @@ type obj struct {
 type fact struct {
 	o                int
 	off, stride, cnt int64 // cnt: number of k values when known, 0 when unbounded
-	agg, rgn, ch     bool // ch: a channel whose buffer holds elements of o's descriptor
+	agg, rgn, ch     bool  // ch: a channel whose buffer holds elements of o's descriptor
 }
 
 func gcd(a, b int64) int64 {
@@ -211,7 +211,7 @@ var (
 	reBlock     = regexp.MustCompile(`^\s*\^([\w.$-]+)(?:\((.*)\))?:`)
 	reDef       = regexp.MustCompile(`^\s*(%[\w.$-]+) = (.*)$`)
 	reAddrOf    = regexp.MustCompile(`^llvm\.mlir\.addressof @"type:(.*?)" : !llvm\.ptr`)
-	reStConst     = regexp.MustCompile(`^llvm\.mlir\.constant\((-?\d+) : i\d+\)`)
+	reStConst   = regexp.MustCompile(`^llvm\.mlir\.constant\((-?\d+) : i\d+\)`)
 	reRtAlloc   = regexp.MustCompile(`^llvm\.call @runtime\.(newobject|makeslice|makeslice64|growslice)\((%[\w.$-]+)`)
 	reRgnNew    = regexp.MustCompile(`^llvm\.call @rt_region_new_noscan\(`)
 	reRgnAlloc  = regexp.MustCompile(`^llvm\.call @rt_region_alloc\((%[\w.$-]+),`)
@@ -224,7 +224,7 @@ var (
 	reGEP       = regexp.MustCompile(`^llvm\.getelementptr (?:inbounds )?(%[\w.$-]+)\[(.*?)\] : \(.*?\) -> !llvm\.ptr, (.*?)(?: loc\(|$)`)
 	reSelect    = regexp.MustCompile(`^llvm\.select %[\w.$-]+, (%[\w.$-]+), (%[\w.$-]+) `)
 	reStore     = regexp.MustCompile(`^\s*llvm\.store (?:volatile )?(%[\w.$-]+), (%[\w.$-]+)(?: atomic \w+)?(?: \{.*?\})? : (.*?), !llvm\.ptr`)
-	reStSucc      = regexp.MustCompile(`\^([\w.$-]+)\(([^()]*?) : `)
+	reStSucc    = regexp.MustCompile(`\^([\w.$-]+)\(([^()]*?) : `)
 	reBlockArg  = regexp.MustCompile(`(%[\w.$-]+):`)
 )
 

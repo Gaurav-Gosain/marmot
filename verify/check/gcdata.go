@@ -44,7 +44,7 @@ var (
 	// reAnyDesc finds descriptor globals in any form, loosely: readDescs fails when one it
 	// finds is not decoded, so a change of the format is an error, not an empty check.
 	reAnyDesc = regexp.MustCompile(`llvm\.mlir\.global [^@]*@"type:((?:[^"\\]|\\.)*)"`)
-	reGoInit    = regexp.MustCompile(`go\.init = "((?:[^"\\]|\\.)*)"`)
+	reGoInit  = regexp.MustCompile(`go\.init = "((?:[^"\\]|\\.)*)"`)
 )
 
 // readGoInit decodes a go.init initializer (internal/codegen/consts.go, appendInit): i<n>;
@@ -381,8 +381,8 @@ func (m model) mark(dst []bool, e lay, off int64) {
 // ---- type strings back to types ----
 
 type resolver struct {
-	named map[string]*types.TypeName // "pkgpath.Name"
-	paths []string                   // package paths, longest first
+	named map[string]*types.TypeName   // "pkgpath.Name"
+	paths []string                     // package paths, longest first
 	local map[string][]*types.TypeName // pkg.Name of types declared inside functions
 }
 
