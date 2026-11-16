@@ -4,7 +4,7 @@
 //
 //	check -before in.mlir -after out.mlir [-report bce.report]
 //	check -loops-report loops.json
-//	check -gcdata prog.mlir PACKAGES
+//	check -gcdata prog.mlir PACKAGES [-goos GOOS -goarch GOARCH]
 //	check -gcsites prog.mlir (go dialect)
 //
 // in.mlir is the go dialect MLIR the frontend emits (marmot build -dialect=go -emit mlir),
@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 )
 
@@ -33,7 +34,21 @@ func main() {
 	gcsites := flag.String("gcsites", "", "MLIR whose allocation sites (go dialect) and stores into allocated objects (either dialect) to check against their descriptors")
 	gcdata := flag.String("gcdata", "", "MLIR whose type descriptor bitmaps to check; the arguments are the packages it was built from")
 	gcbin := flag.String("gcbin", "", "a marmot -work directory: check the type descriptors of the linked program (nopcln.exe) against its MLIR")
+	goos := flag.String("goos", runtime.GOOS, "-gcdata, -gcsites: the GOOS the MLIR was built for")
+	goarch := flag.String("goarch", runtime.GOARCH, "-gcdata, -gcsites: the GOARCH the MLIR was built for (wasm: 4-byte pointers, one bitmap bit per 4 bytes)")
 	flag.Parse()
+	if *gcdata != "" || *gcsites != "" || *gcbin != "" {
+		m, err := modelFor(*goarch)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "check:", err)
+			os.Exit(2)
+		}
+		tgt, tgtGOOS = m, *goos
+	}
+	if *gcbin != "" && tgt.ps != 8 {
+		fmt.Fprintln(os.Stderr, "check: -gcbin reads 64-bit Mach-O only")
+		os.Exit(2)
+	}
 	if *gcbin != "" {
 		r, err := checkGCBin(*gcbin)
 		if err != nil {

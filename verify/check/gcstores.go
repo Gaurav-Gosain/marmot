@@ -65,7 +65,7 @@ func (p *ttparser) typ() (*ttype, error) {
 	p.skip()
 	switch {
 	case p.eat("!llvm.ptr"), p.eat("ptr"):
-		return &ttype{size: 8, align: 8, ptrs: []int64{0}}, nil
+		return &ttype{size: tgt.ps, align: tgt.ps, ptrs: []int64{0}}, nil
 	case p.eat("!llvm.struct<"):
 		packed := p.eat("packed")
 		if !p.eat("(") {
@@ -556,10 +556,10 @@ func storeProblem(o obj, f fact, t *ttype, descs map[string]*tdesc) string {
 		if o.array {
 			pos %= d.size
 		}
-		if pos%8 != 0 {
+		if pos%tgt.ps != 0 {
 			return false
 		}
-		w := pos / 8
+		w := pos / tgt.ps
 		return w < int64(len(d.bits))*8 && d.bits[w/8]&(1<<(w%8)) != 0
 	}
 	limit := int64(1)
@@ -581,7 +581,7 @@ func storeProblem(o obj, f fact, t *ttype, descs map[string]*tdesc) string {
 				break
 			}
 			if !isPtr(pos) {
-				return fmt.Sprintf("pointer stored at offset %d, descriptor word %d is not a pointer", pos, pos%max(d.size, 1)/8)
+				return fmt.Sprintf("pointer stored at offset %d, descriptor word %d is not a pointer", pos, pos%max(d.size, 1)/tgt.ps)
 			}
 		}
 	}

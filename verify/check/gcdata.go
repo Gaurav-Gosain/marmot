@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -40,7 +41,55 @@ var (
 	reDescStart = regexp.MustCompile(`^\s*llvm\.mlir\.global .*constant @"type:(.*)"\(\)`)
 	reConstI64  = regexp.MustCompile(`llvm\.mlir\.constant\((-?\d+) : i64\)`)
 	reConstI8   = regexp.MustCompile(`llvm\.mlir\.constant\((-?\d+) : i8\)`)
+	reGoInit    = regexp.MustCompile(`go\.init = "((?:[^"\\]|\\.)*)"`)
 )
+
+// readGoInit decodes a go.init initializer (internal/codegen/consts.go, appendInit): i<n>;
+// an integer, z a zero value, f<16 hex digits> a float, a<len>:<symbol> an address, ( ... )
+// an aggregate. It returns the scalar values in order (z and a float count as 0; an address
+// is not a value) and the symbols the addresses name.
+func readGoInit(s string) (vals []int64, syms []string, err error) {
+	for i := 0; i < len(s); {
+		switch s[i] {
+		case '(', ')':
+			i++
+		case 'z':
+			vals = append(vals, 0)
+			i++
+		case 'i':
+			j := strings.IndexByte(s[i:], ';')
+			if j < 0 {
+				return nil, nil, fmt.Errorf("integer without ';' at %d", i)
+			}
+			v, perr := strconv.ParseInt(s[i+1:i+j], 10, 64)
+			if perr != nil {
+				return nil, nil, perr
+			}
+			vals = append(vals, v)
+			i += j + 1
+		case 'f':
+			if i+17 > len(s) {
+				return nil, nil, fmt.Errorf("short float at %d", i)
+			}
+			vals = append(vals, 0)
+			i += 17
+		case 'a':
+			j := strings.IndexByte(s[i:], ':')
+			if j < 0 {
+				return nil, nil, fmt.Errorf("address without ':' at %d", i)
+			}
+			n, perr := strconv.Atoi(s[i+1 : i+j])
+			if perr != nil || i+j+1+n > len(s) {
+				return nil, nil, fmt.Errorf("bad address length at %d", i)
+			}
+			syms = append(syms, s[i+j+1:i+j+1+n])
+			i += j + 1 + n
+		default:
+			return nil, nil, fmt.Errorf("unknown letter %q at %d", s[i], i)
+		}
+	}
+	return vals, syms, nil
+}
 
 // readDescs collects type descriptors and their bitmaps from an MLIR file.
 func readDescs(path string) (map[string]*tdesc, error) {
@@ -71,6 +120,25 @@ func readDescs(path string) (map[string]*tdesc, error) {
 				cur = strings.TrimSuffix(cur, ".gcdata")
 			}
 			i64s, i8s, gcref = nil, nil, false
+			if g := reGoInit.FindStringSubmatch(line); g != nil {
+				// the one-line form: the initializer is the go.init string
+				vals, syms, err := readGoInit(unescapeMLIR(g[1]))
+				if err != nil {
+					return nil, fmt.Errorf("type:%s: go.init: %v", cur, err)
+				}
+				if isBits {
+					bs := make([]byte, len(vals))
+					for i, v := range vals {
+						bs[i] = byte(v)
+					}
+					bitsOf[cur] = bs
+				} else if len(vals) >= 2 {
+					d := &tdesc{name: cur, size: vals[0], ptrdata: vals[1]}
+					d.hasBits = slices.Contains(syms, "type:"+unescapeMLIR(cur)+".gcdata")
+					descs[cur] = d
+				}
+				cur = ""
+			}
 			continue
 		}
 		if cur == "" {
@@ -113,12 +181,55 @@ func readDescs(path string) (map[string]*tdesc, error) {
 
 // ---- gc layout, written from the gc rules (cmd/compile/internal/types/size.go) ----
 
-type lay struct {
-	size, align int64
-	ptr         []bool // per 8-byte word
+// model is a target's layout: the pointer size (one bitmap bit per pointer slot) and the size
+// of int, uint, uintptr and a length. 64-bit targets use 8 for both. marmot's wasm keeps gc's
+// 8-byte integers with 4-byte pointers, so a pointer can sit at offset 4 mod 8 (in
+// struct{a int32; p *int}, or as the second word of an interface).
+type model struct {
+	goarch string
+	ps, ws int64
 }
 
-func layoutOf(t types.Type, depth int) (lay, error) {
+// tgt is the target the descriptors were built for (-goarch).
+var tgt = mustModel(runtime.GOARCH)
+
+// tgtGOOS is the GOOS the packages are loaded for (-goos).
+var tgtGOOS = runtime.GOOS
+
+func modelFor(goarch string) (model, error) {
+	switch goarch {
+	case "wasm":
+		return model{goarch, 4, 8}, nil
+	case "amd64", "arm64", "riscv64", "loong64", "ppc64", "ppc64le", "s390x", "mips64", "mips64le":
+		return model{goarch, 8, 8}, nil
+	}
+	return model{}, fmt.Errorf("no layout model for GOARCH=%s", goarch)
+}
+
+func mustModel(goarch string) model {
+	m, err := modelFor(goarch)
+	if err != nil {
+		return model{goarch, 8, 8}
+	}
+	return m
+}
+
+// slots is the number of pointer slots of an object of size bytes.
+func (m model) slots(size int64) int64 { return (size + m.ps - 1) / m.ps }
+
+// header is the size of a string's or slice's data pointer, padded to the alignment of the
+// length that follows it.
+func (m model) header() int64 { return (m.ps + m.ws - 1) / m.ws * m.ws }
+
+type lay struct {
+	size, align int64
+	ptr         []bool // per pointer slot (m.ps bytes); nil when the type has no pointers
+}
+
+// ptrAt is the layout of a pointer-sized value: one slot, a pointer when p.
+func (m model) ptrAt(p bool) lay { return lay{m.ps, m.ps, []bool{p}} }
+
+func (m model) layoutOf(t types.Type, depth int) (lay, error) {
 	if depth > 64 {
 		return lay{}, fmt.Errorf("type too deep")
 	}
@@ -131,26 +242,31 @@ func layoutOf(t types.Type, depth int) (lay, error) {
 			return lay{2, 2, nil}, nil
 		case types.Int32, types.Uint32, types.Float32:
 			return lay{4, 4, nil}, nil
-		case types.Int, types.Uint, types.Int64, types.Uint64, types.Uintptr, types.Float64:
-			return lay{8, 8, []bool{false}}, nil
+		case types.Int64, types.Uint64, types.Float64:
+			return lay{8, 8, nil}, nil
+		case types.Int, types.Uint, types.Uintptr:
+			return lay{m.ws, m.ws, nil}, nil
 		case types.Complex64:
-			return lay{8, 4, []bool{false}}, nil
+			return lay{8, 4, nil}, nil
 		case types.Complex128:
-			return lay{16, 8, []bool{false, false}}, nil
+			return lay{16, 8, nil}, nil
 		case types.String:
-			return lay{16, 8, []bool{true, false}}, nil
+			// {data, len}
+			return m.withPtr0(m.header()+m.ws, m.ws), nil
 		case types.UnsafePointer:
-			return lay{8, 8, []bool{true}}, nil
+			return m.ptrAt(true), nil
 		}
 		return lay{}, fmt.Errorf("basic %v", u)
 	case *types.Pointer, *types.Map, *types.Chan, *types.Signature:
-		return lay{8, 8, []bool{true}}, nil
+		return m.ptrAt(true), nil
 	case *types.Slice:
-		return lay{24, 8, []bool{true, false, false}}, nil
+		// {data, len, cap}
+		return m.withPtr0(m.header()+2*m.ws, m.ws), nil
 	case *types.Interface:
-		return lay{16, 8, []bool{true, true}}, nil
+		// {type or itab, data}: two pointer slots
+		return lay{2 * m.ps, m.ps, []bool{true, true}}, nil
 	case *types.Array:
-		e, err := layoutOf(u.Elem(), depth+1)
+		e, err := m.layoutOf(u.Elem(), depth+1)
 		if err != nil {
 			return lay{}, err
 		}
@@ -159,9 +275,11 @@ func layoutOf(t types.Type, depth int) (lay, error) {
 		if e.size*n > 1<<24 {
 			return lay{}, fmt.Errorf("array too large to lay out")
 		}
-		out.ptr = make([]bool, (out.size+7)/8)
-		for i := int64(0); i < n; i++ {
-			mark(out.ptr, e, i*e.size)
+		if e.ptr != nil {
+			out.ptr = make([]bool, m.slots(out.size))
+			for i := int64(0); i < n; i++ {
+				m.mark(out.ptr, e, i*e.size)
+			}
 		}
 		return out, nil
 	case *types.Struct:
@@ -172,7 +290,7 @@ func layoutOf(t types.Type, depth int) (lay, error) {
 		}
 		var fs []fl
 		for i := 0; i < u.NumFields(); i++ {
-			l, err := layoutOf(u.Field(i).Type(), depth+1)
+			l, err := m.layoutOf(u.Field(i).Type(), depth+1)
 			if err != nil {
 				return lay{}, err
 			}
@@ -189,20 +307,32 @@ func layoutOf(t types.Type, depth int) (lay, error) {
 			off++
 		}
 		size := (off + align - 1) / align * align
-		out := lay{size: size, align: align, ptr: make([]bool, (size+7)/8)}
+		out := lay{size: size, align: align}
 		for _, f := range fs {
-			mark(out.ptr, f.l, f.off)
+			if f.l.ptr != nil {
+				if out.ptr == nil {
+					out.ptr = make([]bool, m.slots(size))
+				}
+				m.mark(out.ptr, f.l, f.off)
+			}
 		}
 		return out, nil
 	}
 	return lay{}, fmt.Errorf("unsupported type %v", t)
 }
 
-// mark copies e's pointer words into dst at byte offset off (pointers are 8-aligned).
-func mark(dst []bool, e lay, off int64) {
+// withPtr0 is the layout of a header whose first slot is the only pointer.
+func (m model) withPtr0(size, align int64) lay {
+	ptr := make([]bool, m.slots(size))
+	ptr[0] = true
+	return lay{size, align, ptr}
+}
+
+// mark copies e's pointer slots into dst at byte offset off (pointers are m.ps-aligned).
+func (m model) mark(dst []bool, e lay, off int64) {
 	for w, p := range e.ptr {
 		if p {
-			dst[off/8+int64(w)] = true
+			dst[off/m.ps+int64(w)] = true
 		}
 	}
 }
@@ -448,7 +578,7 @@ func (r *resolver) conv(e ast.Expr, ph map[string]string) (types.Type, error) {
 
 // marmotEnv is the go list environment marmot builds with: its merged GOROOT (stock sources
 // with lib/src overlaid, so reflect, runtime and the other overlay packages have marmot's
-// types), its build tags, and the host's GOOS and GOARCH (marmot's default target). The merge itself is file
+// types), its build tags, and the target's GOOS and GOARCH (-goos, -goarch: the host's by default). The merge itself is file
 // placement only (internal/loader/goroot.go); the layout is computed here.
 func marmotEnv() ([]string, error) {
 	root, err := os.Getwd()
@@ -473,11 +603,55 @@ func marmotEnv() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(os.Environ(), "GOROOT="+gr, "CGO_ENABLED=0", "GOOS="+runtime.GOOS, "GOARCH="+runtime.GOARCH,
+	return append(os.Environ(), "GOROOT="+gr, "CGO_ENABLED=0", "GOOS="+tgtGOOS, "GOARCH="+tgt.goarch,
 		"GOFLAGS=-tags=marmot,purego,math_big_pure_go", "GOTOOLCHAIN=local"), nil
 }
 
 // ---- the check ----
+
+// compare checks a descriptor against the layout: size, ptrdata (the end of the last pointer
+// slot) and one bitmap bit per pointer slot.
+func (m model) compare(d *tdesc, l lay) []string {
+	var problems []string
+	if l.size != d.size {
+		problems = append(problems, fmt.Sprintf("size %d, gc layout %d", d.size, l.size))
+	}
+	last := int64(-1)
+	for w, p := range l.ptr {
+		if p {
+			last = int64(w)
+		}
+	}
+	if want := (last + 1) * m.ps; want != d.ptrdata {
+		problems = append(problems, fmt.Sprintf("ptrdata %d, want %d", d.ptrdata, want))
+	}
+	switch {
+	case last < 0:
+		if d.hasBits {
+			problems = append(problems, "bitmap for a type without pointers")
+		}
+	case !d.hasBits:
+		// allowed only when the type is scanned conservatively for size
+		if int64(len(l.ptr)) <= 4096 {
+			problems = append(problems, "no bitmap: scanned conservatively although small")
+		}
+	default:
+		for w, p := range l.ptr {
+			got := w/8 < len(d.bits) && d.bits[w/8]&(1<<(w%8)) != 0
+			if got != p {
+				problems = append(problems, fmt.Sprintf("word %d: emitted pointer=%v, gc layout pointer=%v", w, got, p))
+				break
+			}
+		}
+		for w := len(l.ptr); w < len(d.bits)*8; w++ {
+			if d.bits[w/8]&(1<<(w%8)) != 0 {
+				problems = append(problems, fmt.Sprintf("word %d: bit set beyond the object", w))
+				break
+			}
+		}
+	}
+	return problems
+}
 
 type gcResult struct {
 	checked, skipped int
@@ -508,7 +682,7 @@ func checkGCData(mlirPath string, patterns []string) (*gcResult, error) {
 	pkgs = append(pkgs, rt...)
 	// the main package of a file-argument build is "command-line-arguments" in both tools
 	r := newResolver(pkgs)
-	gcSizes := types.SizesFor("gc", runtime.GOARCH)
+	gcSizes := types.SizesFor("gc", tgt.goarch)
 	res := &gcResult{}
 	names := make([]string, 0, len(descs))
 	for n := range descs {
@@ -523,52 +697,19 @@ func checkGCData(mlirPath string, patterns []string) (*gcResult, error) {
 			res.skips = append(res.skips, n+": "+err.Error())
 			continue
 		}
-		l, err := layoutOf(t, 0)
+		l, err := tgt.layoutOf(t, 0)
 		if err != nil {
 			res.skipped++
 			res.skips = append(res.skips, n+": "+err.Error())
 			continue
 		}
 		res.checked++
-		var problems []string
-		if l.size != d.size {
-			problems = append(problems, fmt.Sprintf("size %d, gc layout %d", d.size, l.size))
-		}
-		if gs := gcSizes.Sizeof(t); gs != l.size {
-			problems = append(problems, fmt.Sprintf("verify's layout %d disagrees with go/types gc sizes %d", l.size, gs))
-		}
-		last := int64(-1)
-		for w, p := range l.ptr {
-			if p {
-				last = int64(w)
-			}
-		}
-		if want := (last + 1) * 8; want != d.ptrdata {
-			problems = append(problems, fmt.Sprintf("ptrdata %d, want %d", d.ptrdata, want))
-		}
-		switch {
-		case last < 0:
-			if d.hasBits {
-				problems = append(problems, "bitmap for a type without pointers")
-			}
-		case !d.hasBits:
-			// allowed only when the type is scanned conservatively for size
-			if int64(len(l.ptr)) <= 4096 {
-				problems = append(problems, "no bitmap: scanned conservatively although small")
-			}
-		default:
-			for w, p := range l.ptr {
-				got := w/8 < len(d.bits) && d.bits[w/8]&(1<<(w%8)) != 0
-				if got != p {
-					problems = append(problems, fmt.Sprintf("word %d: emitted pointer=%v, gc layout pointer=%v", w, got, p))
-					break
-				}
-			}
-			for w := len(l.ptr); w < len(d.bits)*8; w++ {
-				if d.bits[w/8]&(1<<(w%8)) != 0 {
-					problems = append(problems, fmt.Sprintf("word %d: bit set beyond the object", w))
-					break
-				}
+		problems := tgt.compare(d, l)
+		// gc's own sizes cross-check the model on 64-bit targets. gc's wasm is 64-bit
+		// throughout, so it says nothing about marmot's 4-byte wasm pointers.
+		if gcSizes != nil && tgt.ps == 8 {
+			if gs := gcSizes.Sizeof(t); gs != l.size {
+				problems = append(problems, fmt.Sprintf("verify's layout %d disagrees with go/types gc sizes %d", l.size, gs))
 			}
 		}
 		if len(problems) > 0 {

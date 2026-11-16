@@ -147,7 +147,7 @@ func (p *tparser) typ() (llay, error) {
 	p.skip()
 	switch {
 	case p.eat("!llvm.ptr"), p.eat("ptr"):
-		return llay{8, 8, []int64{0}}, nil
+		return llay{tgt.ps, tgt.ps, []int64{0}}, nil
 	case p.eat("!llvm.struct<"):
 		packed := p.eat("packed")
 		if !p.eat("(") {
@@ -300,14 +300,14 @@ func checkSites(mlirPath string) (*sitesResult, error) {
 				continue
 			}
 			switch {
-			case off%8 != 0:
+			case off%tgt.ps != 0:
 				problems = append(problems, fmt.Sprintf("pointer at unaligned offset %d", off))
 			case d.ptrdata == 0:
 				problems = append(problems, fmt.Sprintf("NOSCAN descriptor, pointer stored at offset %d", off))
 			case !d.hasBits:
 				// conservative: every word is scanned
 			default:
-				w := off / 8
+				w := off / tgt.ps
 				if w >= int64(len(d.bits))*8 || d.bits[w/8]&(1<<(w%8)) == 0 {
 					problems = append(problems, fmt.Sprintf("pointer stored at offset %d, descriptor word %d is not a pointer", off, w))
 				}
