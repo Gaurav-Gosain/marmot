@@ -88,14 +88,27 @@ export class Builder {
   }
 
   // tool: one run of play tools (a fresh instance: the runtime exits after main) with the
-  // given files; the output file, the exit code and the end of stderr.
+  // given files; the output file, the exit code and the end of stderr. When the instance
+  // does not start (instantiate fails, for example when the browser has no memory left for
+  // it), the code is -1: Emscripten's createTools never settles after a failed
+  // instantiateWasm, so the failure is raced against it (the build waited forever before).
   async tool(args, files, output) {
     const [createTools, mod] = await Promise.all([this.load('tools'), this.load('toolsModule')]);
     let err = '';
-    const t = await createTools({
-      instantiateWasm: (imports, ok) => { WebAssembly.instantiate(mod, imports).then((i) => ok(i, mod)); return {}; },
-      print: () => {}, printErr: (s) => (err += s + '\n'),
-    });
+    let failed;
+    const failure = new Promise((_, reject) => (failed = reject));
+    let t;
+    try {
+      t = await Promise.race([
+        createTools({
+          instantiateWasm: (imports, ok) => { WebAssembly.instantiate(mod, imports).then((i) => ok(i, mod), failed); return {}; },
+          print: () => {}, printErr: (s) => (err += s + '\n'),
+        }),
+        failure,
+      ]);
+    } catch (e) {
+      return { code: -1, err: 'the build tools did not start: ' + String(e?.message ?? e) + '\nClose other tabs, then run again.', out: null };
+    }
     for (const [p, d] of Object.entries(files)) t.FS.writeFile(p, d);
     let code = 0;
     try { code = t.callMain(args); } catch (e) { code = e && e.status !== undefined ? e.status : String(e); }
