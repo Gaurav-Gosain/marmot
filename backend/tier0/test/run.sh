@@ -12,6 +12,15 @@ for t in intrinsics wide ext card cse; do
 done
 MARMOT_TIER0_MIR=1 MARMOT_TIER0_SATNARROW=1 "$T0" "$src/sat.mlir" sat.o > /dev/null
 "$L/clang" -O1 -w "$src/sat_main.c" sat.o -o sat && ./sat && echo "sat: ok"
+# Leaf inlining (MARMOT_TIER0_INLINE=1, MIR): same results; the calls to the leaves are gone, the
+# no_inline one stays.
+for i in 0 1; do
+  MARMOT_TIER0_MIR=1 MARMOT_TIER0_INLINE=$i "$T0" "$src/inline.mlir" inline$i.o > /dev/null
+  "$L/clang" -O1 -w "$src/inline_main.c" inline$i.o -o inline$i && ./inline$i
+done
+pat='[ _](a|swaplen|keep)(-0x4)?$'
+n0=$("$L/llvm-objdump" -r inline0.o | grep -cE "$pat"); n1=$("$L/llvm-objdump" -r inline1.o | grep -cE "$pat")
+[ "$n0" = 5 ] && [ "$n1" = 1 ] && echo "inline: ok ($n0 -> $n1 calls)" || { echo "inline: $n0 -> $n1 calls (want 5 -> 1)"; exit 1; }
 if [ "$(uname)" = Darwin ]; then sec=__DATA,__marmot_tlinks,regular,live_support; gc=-dead_strip; else sec=marmot_tlinks; gc=--gc-sections,-z,start-stop-gc; fi
 sed "s/SECTION/$sec/" "$src/tlinks.mlir" > tlinks.mlir
 "$T0" tlinks.mlir tlinks.o > /dev/null

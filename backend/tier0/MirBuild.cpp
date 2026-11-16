@@ -392,6 +392,8 @@ private:
   void op(Operation &o);
   void gep(LL::GEPOp g);
   void call(LL::CallOp c);
+  bool inlineCall(LL::CallOp c);
+  llvm::DenseMap<mlir::Operation *, bool> inlinable;  // callee -> may be inlined (MARMOT_TIER0_INLINE)
   void intrinsic(LL::CallIntrinsicOp c);
   void wide(Operation &o);
   bool fuseLoadStore(LL::LoadOp l);
@@ -1432,8 +1434,101 @@ void Builder::gep(LL::GEPOp g) {
   set(g.getResult(), acc);
 }
 
+// MARMOT_TIER0_INLINE=1: a direct call to a small leaf of this module (one
+// block ending in a return, no calls, no memory access, at most kInlineOps
+// operations, a body final at link) is replaced by the callee's operations,
+// translated in the caller's block at the call's location. The callee cannot
+// call, fault or panic, so no traceback or safe point falls inside it.
+static const bool inlineOn = [] {
+  const char *e = getenv("MARMOT_TIER0_INLINE");
+  return e && *e == '1';
+}();
+constexpr unsigned kInlineOps = 24;
+
+static bool leafToInline(LL::LLVMFuncOp g) {
+  if (g.isExternal() || g.isVarArg() || g.getNoInline() || !llvm::hasSingleElement(g.getBody())) return false;
+  // Only a body that is final at link: a weak or linkonce (not odr) body can be
+  // replaced by another definition, which an inlined copy would not follow.
+  auto l = g.getLinkage();
+  if (l != LL::Linkage::External && l != LL::Linkage::LinkonceODR && l != LL::Linkage::WeakODR) return false;
+  if (g.getSection()) return false;
+  Block &b = g.getBody().front();
+  unsigned n = 0;
+  for (Operation &o : b) {
+    if (++n > kInlineOps) return false;
+    for (Type t : o.getResultTypes())
+      if (isWide(t)) return false;
+    if (isa<LL::ReturnOp>(o)) return &o == &b.back();
+    if (!isa<LL::ConstantOp, LL::ZeroOp, LL::UndefOp, LL::PoisonOp, LL::AddressOfOp, LL::AddOp, LL::SubOp,
+             LL::MulOp, LL::UDivOp, LL::SDivOp, LL::URemOp, LL::SRemOp, LL::AndOp, LL::OrOp, LL::XOrOp, LL::ShlOp,
+             LL::LShrOp, LL::AShrOp, LL::ICmpOp, LL::FCmpOp, LL::SelectOp, LL::SExtOp, LL::ZExtOp, LL::TruncOp,
+             LL::SIToFPOp, LL::UIToFPOp, LL::FPToSIOp, LL::FPToUIOp, LL::FPExtOp, LL::FPTruncOp, LL::BitcastOp,
+             LL::FAddOp, LL::FSubOp, LL::FMulOp, LL::FDivOp, LL::FNegOp, LL::ExtractValueOp, LL::InsertValueOp,
+             LL::GEPOp>(o))
+      return false;
+  }
+  return false;  // no return
+}
+
+bool Builder::inlineCall(LL::CallOp c) {
+  if (!inlineOn || c.getNoInline()) return false;
+  auto callee = c.getCalleeAttr();
+  if (!callee) return false;
+  auto it = mg.funcs.find(callee.getAttr());
+  if (it == mg.funcs.end()) return false;
+  LL::LLVMFuncOp g = it->second;
+  if (g.getOperation() == fn.getOperation()) return false;
+  auto [e, fresh] = inlinable.try_emplace(g.getOperation(), false);
+  if (fresh) {
+    e->second = leafToInline(g);
+    // Aggregates in the callee within the piece limit, so the caller cannot
+    // lose MIR because of what it inlines.
+    auto tooBig = [&](Type t) {
+      if (!isAggregate(t)) return false;
+      std::vector<std::pair<uint64_t, Type>> ps;
+      pieceTypes(ctx, t, 0, ps);
+      return ps.size() > maxPieces();
+    };
+    if (e->second)
+      for (Block &b : g.getBody()) {
+        for (BlockArgument a : b.getArguments())
+          if (tooBig(a.getType())) e->second = false;
+        for (Operation &o : b)
+          for (Type t : o.getResultTypes())
+            if (tooBig(t)) e->second = false;
+      }
+  }
+  if (!e->second) return false;
+  Block &b = g.getBody().front();
+  auto args = c.getArgOperands();
+  if (args.size() != b.getNumArguments()) return false;
+  for (unsigned i = 0; i < args.size(); i++) {
+    BlockArgument p = b.getArgument(i);
+    if (isAggOrWide(p.getType()))
+      setPieces(p, any(args[i]));
+    else
+      set(p, val(args[i]));
+  }
+  for (Operation &o : b) {
+    if (auto r = dyn_cast<LL::ReturnOp>(o)) {
+      if (c.getNumResults() == 1) {
+        Value v = r.getArg();
+        Value res = c.getResult();
+        if (isAggregate(res.getType()))
+          setPieces(res, Pieces(pieces(v)));
+        else
+          set(res, val(v));
+      }
+      break;
+    }
+    op(o);  // cur stays the call: the inlined operations take its location
+  }
+  return true;
+}
+
 void Builder::call(LL::CallOp c) {
   if (c.getVarCalleeType()) unsupported("variadic call");
+  if (inlineCall(c)) return;
   CallRec cr;
   cr.op = c;
   if (auto callee = c.getCallee()) {
