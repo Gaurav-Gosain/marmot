@@ -8,7 +8,8 @@ self.onmessage = async (e) => {
     const code = await runWasi(e.data.bytes, {
       args: ['main.wasm'],
       // the plain panic report (what Go prints): no terminal codes, no hint about the flag
-      env: { MARMOT_OUTPUT: 'plain' },
+      // 16 KiB goroutine stacks: 100k goroutines fit in wasm's 4 GiB (the default 64 KiB does not)
+      env: { MARMOT_OUTPUT: 'plain', MARMOT_STACKSIZE: '16384' },
       onStdout: (text) => self.postMessage({ type: 'stdout', text }),
       onStderr: (text) => self.postMessage({ type: 'stderr', text }),
     });
