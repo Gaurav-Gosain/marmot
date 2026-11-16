@@ -395,6 +395,18 @@ func sameQuantity(s *state, a, b node) bool {
 	return proveLE(s, a, b, 0) && proveLE(s, b, a, 0)
 }
 
+// implicitLo is the lower bound n has without any guard (0 for a length),
+// ninf when none. A guard on a path to a lower bound no higher than that
+// did not bound n from below: after len(a) != len(b) panics, the path
+// 0 <= len(b) == len(a) carries the guard's position, but the guard
+// allows nothing the type does not.
+func implicitLo(n node) int64 {
+	if c, ok := implicitFromZero(n); ok {
+		return neg(c)
+	}
+	return ninf
+}
+
 // indexMismatch looks for a guard on the quantity i < l needs.
 func indexMismatch(s *state, i, l node) *mismatch {
 	ilo, ihi := s.interval(i)
@@ -404,7 +416,7 @@ func indexMismatch(s *state, i, l node) *mismatch {
 		k := ilo
 		negLo, why := s.upper(zeroNode, l)
 		llo := neg(negLo)
-		if validGuard(s, why, l) && llo <= k && !otherGuards(s, l) {
+		if validGuard(s, why, l) && llo <= k && llo > implicitLo(l) && !otherGuards(s, l) {
 			if !feasible(s, l, zeroNode, k) {
 				return nil
 			}
@@ -498,7 +510,7 @@ func sliceMismatch(s *state, v, l node) *mismatch {
 		k := vlo
 		negLo, why := s.upper(zeroNode, l)
 		llo := neg(negLo)
-		if validGuard(s, why, l) && llo < k && !otherGuards(s, l) {
+		if validGuard(s, why, l) && llo < k && llo > implicitLo(l) && !otherGuards(s, l) {
 			if !feasible(s, l, zeroNode, k-1) {
 				return nil
 			}

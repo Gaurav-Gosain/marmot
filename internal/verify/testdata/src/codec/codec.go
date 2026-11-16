@@ -187,3 +187,20 @@ func TopThenLoop(u []uint64) uint64 {
 	}
 	return r
 }
+
+// SameLen reads src[0] after a length check against out: the check does
+// not bound len(src) from below, so the read is latent, not manifest.
+func SameLen(src, out []uint64) uint64 {
+	if len(src) != len(out) {
+		panic("length mismatch")
+	}
+	return src[0]
+}
+
+// SameLenSlice is SameLen for a slice expression.
+func SameLenSlice(src, out []byte) []byte {
+	if len(src) != len(out) {
+		panic("length mismatch")
+	}
+	return src[:4]
+}
