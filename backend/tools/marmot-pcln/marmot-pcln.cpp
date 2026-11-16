@@ -424,6 +424,8 @@ int fromFragments() {
   }
   errs() << "marmot-pcln: " << t.funcs.size() << " functions, " << t.files.size() << " files, "
          << table.size() << " bytes\n";
+  if (t.dropped)
+    errs() << "marmot-pcln: " << t.dropped << " functions without an address left out\n";
   if (stripLocals && !patch.empty())
     errs() << "marmot-pcln: " << dropped << " local symbols dropped\n";
   return 0;
@@ -816,5 +818,7 @@ int main(int argc, char **argv) {
   os << table;
   errs() << "marmot-pcln: " << t.funcs.size() << " functions, " << t.files.size() << " files, "
          << table.size() << " bytes\n";
+  if (t.dropped)
+    errs() << "marmot-pcln: " << t.dropped << " functions without an address left out\n";
   return 0;
 }
