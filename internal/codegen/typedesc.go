@@ -760,7 +760,9 @@ func gcLayout(t types.Type, sizes types.Sizes) (ptrdata int64, bm []byte) {
 	}
 	ps := ptrSize(sizes)
 	last := words[len(words)-1]
-	ptrdata = (last + 1) * ps
+	// ptrWords stops listing in very large arrays; the end of the last
+	// pointer word comes from the layout instead.
+	ptrdata = ptrEnd(t, sizes)
 	nwords := max(sizes.Sizeof(t)/ps, last+1)
 	if nwords > maxBitmapWords {
 		return ptrdata, nil
@@ -770,6 +772,40 @@ func gcLayout(t types.Type, sizes types.Sizes) (ptrdata int64, bm []byte) {
 		bm[w/8] |= 1 << (w % 8)
 	}
 	return ptrdata, bm
+}
+
+// ptrEnd is the number of leading bytes of t that can hold pointers: the
+// end of its last pointer word (0 without pointers), from the layout, so
+// it is exact for arrays too large to list word by word.
+func ptrEnd(t types.Type, sizes types.Sizes) int64 {
+	ps := ptrSize(sizes)
+	switch u := t.Underlying().(type) {
+	case *types.Basic:
+		if u.Kind() == types.String || u.Kind() == types.UnsafePointer {
+			return ps
+		}
+	case *types.Pointer, *types.Map, *types.Chan, *types.Signature, *types.Slice:
+		return ps
+	case *types.Interface:
+		return 2 * ps
+	case *types.Array:
+		if u.Len() == 0 {
+			return 0
+		}
+		if e := ptrEnd(u.Elem(), sizes); e > 0 {
+			return (u.Len()-1)*sizes.Sizeof(u.Elem()) + e
+		}
+	case *types.Struct:
+		offs := sizes.Offsetsof(structFields(u))
+		var end int64
+		for i := 0; i < u.NumFields(); i++ {
+			if e := ptrEnd(u.Field(i).Type(), sizes); e > 0 {
+				end = max(end, offs[i]+e)
+			}
+		}
+		return end
+	}
+	return 0
 }
 
 // ptrSize is the size of a pointer: 8, or 4 on wasm (wasip1/wasm has

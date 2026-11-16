@@ -46,6 +46,10 @@ func TestGCLayout(t *testing.T) {
 		{"mixed", "wasm", mixed, 32, 28, []byte{0x5c}},
 		{"mixed", "amd64", mixed, 48, 48, []byte{0x2e}},
 		{"int64", "wasm", i64, 8, 0, nil},
+		// too large for a bitmap: ptrdata still covers every element
+		{"[2097152]*int", "amd64", types.NewArray(ptr, 2097152), 16777216, 16777216, nil},
+		{"[2097152]*int", "wasm", types.NewArray(ptr, 2097152), 8388608, 8388608, nil},
+		{"[1<<20]{int64, *int}", "amd64", types.NewArray(types.NewStruct([]*types.Var{field("n", i64), field("p", ptr)}, nil), 1<<20), 16 << 20, 16 << 20, nil},
 	}
 	for _, c := range cases {
 		sizes := target.Sizes(c.arch)
