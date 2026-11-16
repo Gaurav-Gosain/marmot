@@ -18,6 +18,7 @@ R=$(pwd)
 mkdir -p .work/verify
 W=$(mktemp -d "$PWD/.work/verify/gccheck.XXXXXX") || exit 2
 W=${W#"$R/"}
+trap 'rm -rf "$R/$W"; exit 130' INT TERM HUP # a killed run leaves no work dir
 tflag= cflags= skips=0
 known=
 [ "${GCCHECK_TARGET:-}" = wasip1/wasm ] && known=xsys_unix
