@@ -116,6 +116,7 @@ type build struct {
 	partMu     sync.Mutex
 	parts      []codegen.Module // modules after the first of packages split in parts
 	partKeys   []string
+	partIDs    []partID // which package and part each of parts is (linkOrder)
 }
 
 func (b *build) haveBackend() bool {
@@ -458,7 +459,7 @@ func (b *build) run1() (string, error) {
 					b.stream.send(i, paths[0], pkgKeys[i]+"-"+moduleTextVersion)
 				}
 				for c, path := range paths[1:] {
-					b.addPart(codegen.Module{Name: pkgs[i].Pkg.Path(), Path: path}, partKey(pkgKeys[i], c+1)+"-"+moduleTextVersion, n)
+					b.addPart(codegen.Module{Name: pkgs[i].Pkg.Path(), Path: path}, partKey(pkgKeys[i], c+1)+"-"+moduleTextVersion, n, partID{i, c + 1})
 				}
 				skipped++
 			}
@@ -521,6 +522,9 @@ func (b *build) run1() (string, error) {
 	}
 	if err != nil {
 		return "", err
+	}
+	if partOrder {
+		objs = b.linkOrder(objs, n)
 	}
 	if cfg.Emit == "exe" {
 		objs = expandParts(objs)

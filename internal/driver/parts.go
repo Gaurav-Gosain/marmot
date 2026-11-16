@@ -2,9 +2,12 @@ package driver
 
 import (
 	"bufio"
+	"cmp"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -35,13 +38,20 @@ func (b *build) partInstrs() int {
 
 func partKey(k string, c int) string { return fmt.Sprintf("%s-p%d", k, c) }
 
+// A partID names a part: part c (from 1) of the package with index pkg.
+// The instances module (home.go) comes after every part.
+type partID struct{ pkg, part int }
+
+var instancesPart = partID{math.MaxInt, 0}
+
 // addPart appends a module after the first modules and returns its index
 // among the parts; key is its text key for the backend ("" if none).
-func (b *build) addPart(m codegen.Module, key string, n int) {
+func (b *build) addPart(m codegen.Module, key string, n int, id partID) {
 	b.partMu.Lock()
 	i := len(b.parts)
 	b.parts = append(b.parts, m)
 	b.partKeys = append(b.partKeys, key)
+	b.partIDs = append(b.partIDs, id)
 	b.partMu.Unlock()
 	if b.stream != nil && m.Path != "" {
 		b.stream.send(n+i, m.Path, key)
@@ -60,7 +70,7 @@ func (b *build) spillParts(i int, m *codegen.Module, parts []codegen.Module, cac
 			k := partKey(keys[i], c+1)
 			if p := b.saveModule(k, pm.Text); p != "" {
 				pm.Path, pm.Text = p, ""
-				b.addPart(*pm, k+"-"+moduleTextVersion, n)
+				b.addPart(*pm, k+"-"+moduleTextVersion, n, partID{i, c + 1})
 				continue
 			}
 			cacheable = false
@@ -69,6 +79,7 @@ func (b *build) spillParts(i int, m *codegen.Module, parts []codegen.Module, cac
 		j := n + len(b.parts)
 		b.parts = append(b.parts, codegen.Module{})
 		b.partKeys = append(b.partKeys, "")
+		b.partIDs = append(b.partIDs, partID{i, c + 1})
 		b.partMu.Unlock()
 		p := filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", j))
 		if err := writeModuleFile(p, nil, pm.Text); err != nil {
@@ -84,6 +95,37 @@ func (b *build) spillParts(i int, m *codegen.Module, parts []codegen.Module, cac
 	}
 	// The first part last: a cached first part means every part is cached.
 	return b.spill(i, m, cacheable, keys)
+}
+
+// partOrder: MARMOT_PART_ORDER=1 links parts in package and part order
+// (linkOrder), for now (the default once perfcmp passes).
+var partOrder = os.Getenv("MARMOT_PART_ORDER") == "1"
+
+// linkOrder puts the objects of the parts (after the n first modules) in
+// package and part order. Parts get their module numbers as their
+// packages finish generating, in parallel, so that order changes from run
+// to run; the link order (and with it the layout of the binary and the pc
+// table's fragment list) must not.
+func (b *build) linkOrder(objs []string, n int) []string {
+	if len(objs) != n+len(b.partIDs) {
+		return objs // not one object per module (-emit llvm)
+	}
+	idx := make([]int, len(b.partIDs))
+	for k := range idx {
+		idx[k] = k
+	}
+	slices.SortStableFunc(idx, func(x, y int) int {
+		a, c := b.partIDs[x], b.partIDs[y]
+		if a.pkg != c.pkg {
+			return cmp.Compare(a.pkg, c.pkg)
+		}
+		return cmp.Compare(a.part, c.part)
+	})
+	out := slices.Clone(objs[:n])
+	for _, k := range idx {
+		out = append(out, objs[n+k])
+	}
+	return out
 }
 
 // cachedParts returns the cached MLIR files of the package with key k:

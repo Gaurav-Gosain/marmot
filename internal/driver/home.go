@@ -27,6 +27,7 @@ func (b *build) addInstances(cg *codegen.Program, n int) error {
 	j := n + len(b.parts)
 	b.parts = append(b.parts, codegen.Module{})
 	b.partKeys = append(b.partKeys, "")
+	b.partIDs = append(b.partIDs, instancesPart)
 	b.partMu.Unlock()
 	p := filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", j))
 	if err := writeModuleFile(p, nil, mod.Text); err != nil {
