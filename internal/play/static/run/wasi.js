@@ -6,12 +6,31 @@
 // The docs site's /play runs programs with this same file (and run-worker.js), and
 // tests/wasm/run.mjs uses it with MARMOT_WASM_HOST=browser, so the conformance programs
 // check it.
+//
+// A program linked with the JSPI runtime (runtime/core WASM_SWITCH=jspi: it imports
+// marmot.switch) runs each goroutine on an engine stack of its own: _start and the export
+// marmot_gorun are wrapped with WebAssembly.promising, marmot.switch with
+// WebAssembly.Suspending. A program linked with the Asyncify runtime runs as before.
+// When such a program cannot start (no JSPI in this engine, or instantiate fails),
+// runWasi throws a StartError, before the program has run: the caller can run an
+// Asyncify build instead.
 
 const ESUCCESS = 0, EBADF = 8, EINVAL = 28, ENOSYS = 52;
 
 class Exit extends Error {
   constructor(code) { super('exit ' + code); this.code = code; }
 }
+
+// StartError: the program did not start (it ran no code).
+export class StartError extends Error {}
+
+// jspiSupported: this engine has JavaScript Promise Integration.
+export const jspiSupported = () =>
+  typeof WebAssembly.Suspending === 'function' && typeof WebAssembly.promising === 'function';
+
+// usesJSPI: the module is linked with the JSPI runtime.
+export const usesJSPI = (mod) =>
+  WebAssembly.Module.imports(mod).some((i) => i.module === 'marmot' && i.name === 'switch');
 
 export async function runWasi(bytes, opt = {}) {
   const args = opt.args || ['main.wasm'];
@@ -128,8 +147,9 @@ export async function runWasi(bytes, opt = {}) {
     get: (t, k) => t[k] || (() => ENOSYS), // a call not listed: not supported
   }) };
   // bytes: the module's bytes, or a compiled WebAssembly.Module (compile once, run often)
-  const inst = await WebAssembly.instantiate(bytes, imports);
-  const instance = inst instanceof WebAssembly.Instance ? inst : inst.instance;
+  const mod = bytes instanceof WebAssembly.Module ? bytes : await WebAssembly.compile(bytes);
+  if (usesJSPI(mod)) return runJSPI(mod, imports, (m) => (memory = m));
+  const instance = await WebAssembly.instantiate(mod, imports);
   memory = instance.exports.memory;
   try {
     instance.exports._start();
@@ -138,4 +158,41 @@ export async function runWasi(bytes, opt = {}) {
     if (e instanceof Exit) return e.code;
     throw e;
   }
+}
+
+// runJSPI: the host side of goroutine switching with JSPI (runtime/core/src/arch_wasm32.c,
+// RT_WASM_JSPI; runtime/core/test/wasm/jspi.mjs is the reference host). switch(from, to,
+// fresh) suspends the calling stack (from) and starts to on a new stack (fresh) or resumes
+// it. proc_exit on any stack ends the run with its status; a trap on any stack rejects.
+async function runJSPI(mod, imports, setMemory) {
+  if (!jspiSupported()) throw new StartError('this browser has no JSPI (WebAssembly.Suspending)');
+  let finish, fail;
+  const done = new Promise((res, rej) => { finish = res; fail = rej; });
+  const end = (e) => (e instanceof Exit ? finish(e.code) : fail(e));
+  // stacks suspended in marmot.switch, by context address: the resolve of the promise
+  // each one waits on
+  const waiting = new Map();
+  let gorun;
+  const marmot = {
+    switch: new WebAssembly.Suspending((from, to, fresh) => {
+      const p = new Promise((r) => waiting.set(from, r));
+      const r = waiting.get(to);
+      waiting.delete(to);
+      // a new stack starts from a microtask, on top of no wasm frames; a fresh context at
+      // an exited goroutine's address drops its old stack
+      if (fresh) queueMicrotask(() => gorun(to).catch(end));
+      else r();
+      return p;
+    }),
+  };
+  let instance;
+  try {
+    instance = await WebAssembly.instantiate(mod, { ...imports, marmot });
+    gorun = WebAssembly.promising(instance.exports.marmot_gorun);
+  } catch (e) {
+    throw new StartError(String(e?.message ?? e));
+  }
+  setMemory(instance.exports.memory);
+  WebAssembly.promising(instance.exports._start)().then(() => finish(0), end);
+  return done;
 }

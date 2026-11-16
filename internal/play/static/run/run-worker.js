@@ -1,7 +1,9 @@
 // The Web Worker a program runs in: messages {bytes} in; {type: 'stdout'|'stderr', text},
-// then {type: 'exit', code} or {type: 'error', message} out. The page ends a program that
-// runs too long by terminating the worker.
-import { runWasi } from './wasi.js';
+// then {type: 'exit', code} or {type: 'error', message, start} out (start: the program did
+// not start, for example a JSPI build where the engine has no JSPI; nothing ran, so the
+// page can run an Asyncify build instead). The page ends a program that runs too long by
+// terminating the worker.
+import { runWasi, StartError } from './wasi.js';
 
 self.onmessage = async (e) => {
   try {
@@ -15,6 +17,6 @@ self.onmessage = async (e) => {
     });
     self.postMessage({ type: 'exit', code });
   } catch (err) {
-    self.postMessage({ type: 'error', message: String(err && err.message ? err.message : err) });
+    self.postMessage({ type: 'error', message: String(err && err.message ? err.message : err), start: err instanceof StartError });
   }
 };

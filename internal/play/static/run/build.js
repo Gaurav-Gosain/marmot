@@ -2,16 +2,21 @@
 // turns the source into the program's own module, the backend (play tools) compiles it to an
 // object, wasm-ld links it with the prebuilt standard library and runtime, and binaryen's
 // Asyncify pass makes goroutine switches work. The result runs in run-worker.js.
+// With switches: 'jspi' the build links the JSPI runtime instead and runs binaryen's
+// spill-pointers pass (about 7 times faster than Asyncify, and half the size); the result
+// needs an engine with JSPI (wasi.js jspiSupported). The standard library is the same.
 //
 //   const b = new Builder(assets, { cache, mode, fs });
-//   const r = await b.build(src, { onProgress });  // {ok, wasm, diagnostics, error, times}
+//   const r = await b.build(src, { onProgress, switches });  // {ok, wasm, diagnostics, error, times}
 //
 // assets holds loaders, each called at most once, on the first build that needs it:
 //   front(): WebAssembly.Module of marmot-play.wasm   bundle(): Uint8Array of its tar (not
 //   needed when fs, a MemFS with the tar loaded, is given)
 //   tools(): the createTools factory of play-tools.mjs   toolsModule(): its WebAssembly.Module
 //   std(), rt(), rtBitcode(): Uint8Array of std-<mode>.a, librtcore.a, rtcore.bc
+//   rtJSPI(), rtBitcodeJSPI(): the same for the JSPI runtime (only for switches: 'jspi')
 //   binaryen(): the binaryen.js module
+//   prefetch(name) (optional): download an asset without evaluating it (into the HTTP cache)
 //   version: a string that changes with any asset (part of the cache key)
 // cache (optional): {get(key) -> Uint8Array|undefined, put(key, bytes)}, see browserCache.
 import { runWasi } from './wasi.js';
@@ -37,30 +42,39 @@ export class Builder {
     return this.memo.get(name);
   }
 
-  async build(src, { onProgress = () => {} } = {}) {
+  async build(src, { onProgress = () => {}, switches = 'asyncify' } = {}) {
+    const jspi = switches === 'jspi';
     const times = {};
     const step = async (stage, fn) => {
       onProgress({ stage });
       const t0 = performance.now();
       try { return await fn(); } finally { times[stage] = Math.round(performance.now() - t0); }
     };
-    const key = await sha256(this.assets.version + '\0' + this.mode + '\0' + src);
+    const key = await sha256(this.assets.version + '\0' + this.mode + '\0' + switches + '\0' + src);
     if (this.cache) {
       const hit = await this.cache.get(key);
       if (hit) return { ok: true, wasm: hit, diagnostics: [], times, cached: true };
     }
     const front = await step('compile', () => this.front(src));
     if (!front.ok || !front.runMlir) return { ok: false, diagnostics: front.diagnostics || [], error: front.error, times };
+    // the link and switch steps' assets load while the backend runs (binaryen.js is 13 MB).
+    // Not earlier: Firefox stalled with every asset loading at once beside the front end.
+    // binaryen.js is only downloaded here (assets.prefetch): evaluating it beside a start of
+    // the play tools stalled the worker in Chrome and in Firefox.
+    for (const a of ['std', jspi ? 'rtJSPI' : 'rt']) this.load(a).catch(() => {});
+    this.assets.prefetch?.('binaryen')?.catch(() => {});
     const obj = await step('codegen', async () => {
       const r = await this.tool([...backendArgs, '-o', '/u.o', '/u.mlir'],
-        { '/u.mlir': front.runMlir, '/rtcore.bc': await this.load('rtBitcode') }, '/u.o');
+        { '/u.mlir': front.runMlir, '/rtcore.bc': await this.load(jspi ? 'rtBitcodeJSPI' : 'rtBitcode') }, '/u.o');
       return r;
     });
     if (!obj.out) return { ok: false, diagnostics: [], error: 'codegen failed (exit ' + obj.code + '):\n' + obj.err, times };
-    const linked = await step('link', async () => this.tool(['wasm-ld', '-o', '/p.wasm', '/u.o', '/std.a', '/rt.a'],
-      { '/u.o': obj.out, '/std.a': await this.load('std'), '/rt.a': await this.load('rt') }, '/p.wasm'));
+    const linked = await step('link', async () => this.tool(['wasm-ld', '-o', '/p.wasm', ...(jspi ? ['--export=marmot_gorun'] : []), '/u.o', '/std.a', '/rt.a'],
+      { '/u.o': obj.out, '/std.a': await this.load('std'), '/rt.a': await this.load(jspi ? 'rtJSPI' : 'rt') }, '/p.wasm'));
     if (!linked.out) return { ok: false, diagnostics: [], error: 'link failed (exit ' + linked.code + '):\n' + linked.err, times };
-    const wasm = await step('asyncify', async () => asyncify(await this.load('binaryen'), linked.out));
+    const wasm = jspi
+      ? await step('spill', async () => spillPointers(await this.load('binaryen'), linked.out))
+      : await step('asyncify', async () => asyncify(await this.load('binaryen'), linked.out));
     if (this.cache) await this.cache.put(key, wasm);
     return { ok: true, wasm, diagnostics: front.diagnostics || [], times };
   }
@@ -128,6 +142,21 @@ export function asyncify(binaryen, bytes) {
     // names stay (as wasm-opt -g in the driver): stack traces of traps name the functions
     binaryen.setDebugInfo(true);
     m.runPasses(['asyncify']);
+    return m.emitBinary();
+  } finally {
+    m.dispose();
+  }
+}
+
+// spillPointers: the JSPI runtime's pass (runtime/core Makefile JSPI_FLAGS): every pointer
+// live across a call is stored to the shadow stack, where the collector scans it (the
+// locals of a suspended engine stack are out of its reach). No optimization.
+export function spillPointers(binaryen, bytes) {
+  const m = binaryen.readBinary(bytes);
+  try {
+    binaryen.setOptimizeLevel(0);
+    binaryen.setDebugInfo(true);
+    m.runPasses(['spill-pointers']);
     return m.emitBinary();
   } finally {
     m.dispose();
