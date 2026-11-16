@@ -145,6 +145,11 @@ func (e *engine) run(init *state) {
 		work[e.fn.Recover] = true
 	}
 	for len(work) > 0 {
+		// Out of budget: analyzeFunc reports every obligation unknown,
+		// so the rest of the fixpoint is wasted work.
+		if init.cx.work < 0 {
+			return
+		}
 		var b *ssa.BasicBlock
 		for c := range work {
 			if b == nil || rank[c] < rank[b] {
