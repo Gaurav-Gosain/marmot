@@ -22,6 +22,12 @@
 // not a number, or a -programs name that is not here makes it FAILED, which
 // comes before everything else: a comparison with a hole in it is never ok.
 //
+// -cpus (Linux) runs the timed programs on the listed CPUs only. A pinned program
+// sees only those CPUs: its CPU count, and so its thread count, differ from an
+// unpinned run. Compare A with B in the same run, not with numbers taken without
+// -cpus. Each mode then prints how much other work ran on those CPUs during the
+// timed runs (information only, not part of the verdict).
+//
 // Exit status: 0 ok, 1 WORSE, 2 usage, 3 no quiet window in -wait,
 // 4 INCONCLUSIVE, 5 FAILED.
 package main
@@ -55,10 +61,13 @@ var (
 	flTuios = flag.String("tuios", envOr("MARMOT_TUIOS_SRC", ".work/lead/tuios-src"), "tuios source tree (holds sketch/ too; default $MARMOT_TUIOS_SRC)")
 	flWork  = flag.String("work", "", "the binaries go in a new directory inside this one (default .work/perfcmp)")
 	flKeep  = flag.Bool("keep", false, "keep the binaries")
+	flCPUs  = flag.String("cpus", "", "Linux: run the timed programs on these CPUs only, like 0-3. A pinned program sees only these CPUs. Compare A with B, not with runs without -cpus")
 	flWait  = flag.Duration("wait", 2*time.Hour, "how long to wait for the timing lock and a load below half the CPUs before giving up (0: no wait, no lock)")
 )
 
 var timingLock = "/tmp/marmot-timing.lock" // a var for the tests
+
+var pinned cpuSet // -cpus, nil for all CPUs
 
 // benchSubset is the bench programs in the default set: compute, memory,
 // maps, interfaces, goroutines and strings.
@@ -84,6 +93,11 @@ func main() {
 	flag.Parse()
 	if *flA == "" || *flB == "" {
 		fmt.Fprintln(os.Stderr, "perfcmp: -a and -b are required")
+		os.Exit(exitUsage)
+	}
+	var err error
+	if pinned, err = parseCPUs(*flCPUs); err != nil {
+		fmt.Fprintln(os.Stderr, "perfcmp:", err)
 		os.Exit(exitUsage)
 	}
 	sigs := make(chan os.Signal, 1)
@@ -120,6 +134,9 @@ func main() {
 	fmt.Printf("perfcmp %s/%s, %d runs; A=%s %s; B=%s %s\n", runtime.GOOS, runtime.GOARCH, *flRuns,
 		sides[0].root, strings.Join(sides[0].env, " "), sides[1].root, strings.Join(sides[1].env, " "))
 	fmt.Printf("load at start: %s\n", loadavg())
+	if pinned != nil {
+		fmt.Printf("cpus: the timed runs use CPUs %s only\n", *flCPUs)
+	}
 	fmt.Println("rss: each binary runs as a fresh copy (new file, out of the page cache); rss from perfcmp before this is suspect")
 	same := sides[0].root == sides[1].root && slices.Equal(sides[0].env, sides[1].env)
 	var o outcome
@@ -137,7 +154,8 @@ func main() {
 		fmt.Printf("\n== %s\n%-12s %10s %10s %7s %10s %10s %7s %9s %9s %7s %9s %9s %7s\n", mode,
 			"program", "wall A", "wall B", "B/A", "cpu A", "cpu B", "B/A", "rss A", "rss B", "B/A", "size A", "size B", "B/A")
 		var lw, lc, lr []float64
-		var nw, nc []float64 // per side and program: median of the odd runs over the even ones
+		var nw, nc []float64         // per side and program: median of the odd runs over the even ones
+		var busy, used, wall float64 // -cpus: busy time of those CPUs, the runs' CPU time, wall time (s)
 		// Build everything first, then let the load of the builds (the compiler uses
 		// every core) decay before timing: the load sampled during the runs is the
 		// machine's, not perfcmp's own.
@@ -176,6 +194,7 @@ func main() {
 				runs *= 5 // short runs: more samples
 			}
 			note := ""
+			b0, t0 := cpuBusy(pinned), time.Now()
 			for r := 0; r < runs+1; r++ { // the first round warms caches and is dropped
 				order := []int{0, 1}
 				if r%2 == 1 {
@@ -189,6 +208,7 @@ func main() {
 						ok = false
 						break
 					}
+					used += sm.cpu.Seconds()
 					if r > 0 {
 						got[i] = append(got[i], sm)
 					}
@@ -199,6 +219,9 @@ func main() {
 				if r == 1 && got[0][0].wall > 5*time.Second && runs > 1 {
 					runs, note = 1, " (1 run: slow)" // a slow program in a slow mode: one sample a side
 				}
+			}
+			if b1 := cpuBusy(pinned); b0 >= 0 && b1 >= 0 {
+				busy, wall = busy+b1-b0, wall+time.Since(t0).Seconds()
 			}
 			if !ok {
 				continue
@@ -240,6 +263,9 @@ func main() {
 			ew, ec = max(ew, spread(gw)), max(ec, spread(gc))
 		}
 		fmt.Printf("%-12s %10s %10s %7.3f %10s %10s %7.3f\n", "noise", "", "", ew, "", "", ec)
+		if pinned != nil && wall > 0 {
+			fmt.Printf("other work on CPUs %s during the timed runs: %.1f%% of one CPU (information only)\n", *flCPUs, 100*max(busy-used, 0)/wall)
+		}
 		if ew > 1.02 || ec > 1.02 {
 			o.noisy = true
 		}
@@ -441,7 +467,10 @@ func runOnce(s side, p program, bin string) (sample, error) {
 	cmd.Env = append(os.Environ(), s.env...)
 	cmd.Stdout, cmd.Stderr = nil, nil
 	t0 := time.Now()
-	if err := cmd.Run(); err != nil {
+	if err := startPinned(cmd, pinned); err != nil {
+		return sample{}, err
+	}
+	if err := cmd.Wait(); err != nil {
 		return sample{}, err
 	}
 	wall := time.Since(t0)
