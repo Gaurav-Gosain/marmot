@@ -57,10 +57,6 @@ struct Table {
   // no subprograms at all (LLVM 22, as clang -gline-tables-only); they go to
   // the function symbols in addTextSymbols.
   std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> orphans;
-  // Functions left out because they have no address: DWARF of code the
-  // linker removed (it resolves their addresses to 0), or below the image
-  // base, which would wrap around in the table's 32-bit offsets.
-  uint32_t dropped = 0;
   uint32_t fileId(const std::string &f);
 };
 

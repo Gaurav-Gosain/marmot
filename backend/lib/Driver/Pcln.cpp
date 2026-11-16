@@ -193,16 +193,8 @@ void readDwarf(const ObjectFile &obj, unsigned version, Table &t) {
   readUnits(
       *dwarf, version, raws, [&](const std::string &f) { return t.fileId(f); }, false,
       &t.orphans);
-  // In a linked binary address 0 is never code (ELF and Mach-O leave the
-  // first page unmapped; a wasm code section starts with its count): a
-  // function there is one the linker removed.
-  for (Raw &r : raws) {
-    if (r.lo == 0) {
-      t.dropped++;
-      continue;
-    }
+  for (Raw &r : raws)
     t.funcs[r.lo] = std::move(r.f);
-  }
 }
 
 void addTextSymbols(const ObjectFile &obj, Table &t) {
@@ -454,12 +446,6 @@ bool addFragment(StringRef fragment, const std::function<uint64_t(StringRef)> &a
 
 std::string encode(Table &t, uint64_t base, uint32_t quantum, unsigned version,
                    const std::function<std::string(const std::string &)> &rename) {
-  // Offsets are 32 bits from base: a function below it would wrap to the
-  // top and break the sorted function table.
-  while (!t.funcs.empty() && t.funcs.begin()->first < base) {
-    t.funcs.erase(t.funcs.begin());
-    t.dropped++;
-  }
   auto nm = [&](const std::string &n) { return rename ? rename(n) : n; };
   // Hash maps: offsets depend only on the order of first use (a std::map of
   // 45000 names cost a large part of encode).
