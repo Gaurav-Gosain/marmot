@@ -839,6 +839,11 @@ var nilDomOn = os.Getenv("MARMOT_NILDOM") == "1"
 
 func (f *funcGen) nilCheck(p string) {
 	if f.goOps() {
+		// go.nil_check takes an address space 0 pointer; with GC pointers
+		// (MARMOT_GCPTR=1) the value is cast for the test only.
+		if f.pty(p) == mlir.GCPtr {
+			p = f.op("llvm.addrspacecast %s : !llvm.ptr<1> to !llvm.ptr", p)
+		}
 		f.emit("go.nil_check %s", p)
 		return
 	}
