@@ -37,8 +37,11 @@ $(error LIBC=musl needs GOOS=linux)
 endif
 SYSROOT_DIR ?= $(ROOT)/build/cache/sysroot/linux-$(GOARCH)-musl
 endif
+# WASM_SWITCH=jspi (wasip1/wasm): goroutines switch with JSPI instead of
+# Asyncify (src/arch_wasm32.c), in build/lib/wasip1-wasm-jspi.
+WASM_SWITCH ?=
 ifneq ($(GOOS)$(GOARCH),)
-SUFFIX  := /$(GOOS)-$(GOARCH)$(if $(filter musl,$(LIBC)),-musl,)
+SUFFIX  := /$(GOOS)-$(GOARCH)$(if $(filter musl,$(LIBC)),-musl,)$(if $(filter jspi,$(WASM_SWITCH)),-jspi,)
 LIBCTRIPLE := $(if $(filter musl,$(LIBC)),musl,gnu)
 TRIPLE_linux_amd64  := x86_64-linux-$(LIBCTRIPLE)
 TRIPLE_linux_arm64  := aarch64-linux-$(LIBCTRIPLE)
@@ -56,6 +59,9 @@ endif
 WASM    := $(filter wasm,$(GOARCH))
 ifneq ($(WASM),)
 TARGET_FLAGS += -ffreestanding -nostdlibinc
+ifeq ($(WASM_SWITCH),jspi)
+TARGET_FLAGS += -DRT_WASM_JSPI=1
+endif
 endif
 ifeq ($(UNAME_S),Darwin)
 WASMLD  ?= /opt/homebrew/opt/lld@22/bin/wasm-ld
@@ -72,6 +78,9 @@ NODE    ?= node
 WASM_SJLJ_FLAGS := -mexception-handling -mllvm -wasm-enable-sjlj -mllvm -wasm-use-legacy-eh=true
 ASYNCIFY_FLAGS := --asyncify --pass-arg=asyncify-imports@asyncify.start_unwind \
 	--pass-arg=asyncify-removelist@ctx_run
+# JSPI: pointers live across calls go to the shadow stack, where the
+# collector sees them (arch_wasm32.c).
+JSPI_FLAGS := --spill-pointers
 OUT     := $(ROOT)/build/lib$(SUFFIX)
 OBJ     := $(ROOT)/build/rtcore$(SUFFIX)
 # build/lib only ever holds a committed state: with uncommitted changes
@@ -103,8 +112,16 @@ ifeq ($(WASM),)
 CFLAGS_COMMON += -fno-omit-frame-pointer
 endif
 ALL_CFLAGS := $(CFLAGS_COMMON) $(CFLAGS)
+ifeq ($(WASM_SWITCH),jspi)
+# The JSPI engine stack loop calls setjmp, lowered with wasm exceptions.
+$(OBJ)/jspi_wasm32.o $(OBJ)/jspi_wasm32.bc: ALL_CFLAGS += $(WASM_SJLJ_FLAGS)
+endif
 
 C_SRCS  := $(wildcard src/*.c) $(if $(WASM),,$(wildcard gpu/*.c))
+# src/jspi_wasm32.c is only for the JSPI library.
+ifneq ($(WASM_SWITCH),jspi)
+C_SRCS  := $(filter-out src/jspi_wasm32.c,$(C_SRCS))
+endif
 # Cold code (startup, signals, timers, I/O, OS glue) is built for size.
 COLD    := cpu entry io libcall netpoll os_darwin os_linux pcln gcpar poison signal timer util par gpu watchdog
 COLD_OBJS := $(patsubst %,$(OBJ)/%.o,$(COLD))
@@ -155,7 +172,8 @@ ifneq ($(WASM),)
 test: all
 	@WASM=1 OUT=$(OBJ)/test LIB=$(OUT)/librtcore.a LDLIBS= CC="$(CC)" \
 		CFLAGS="$(TARGET_FLAGS) $(WASM_SJLJ_FLAGS) -O1 -g -Iinclude -Itest/wasm -nostdlib -fuse-ld=$(WASMLD) --no-wasm-opt" \
-		POSTLINK="$(WASMOPT) $(ASYNCIFY_FLAGS) -O" RUN="$(NODE) $(ROOT)/tests/wasm/run.mjs" \
+		POSTLINK="$(WASMOPT) $(if $(filter jspi,$(WASM_SWITCH)),$(JSPI_FLAGS),$(ASYNCIFY_FLAGS)) -O" \
+		RUN="$(NODE) $(if $(filter jspi,$(WASM_SWITCH)),$(abspath test/wasm/jspi.mjs),$(ROOT)/tests/wasm/run.mjs)" \
 		sh test/run.sh $(TEST_SRCS)
 else
 test: all
