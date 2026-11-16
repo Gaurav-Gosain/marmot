@@ -49,22 +49,25 @@ void pieceTypes(MLIRContext *ctx, Type t, uint64_t base, std::vector<std::pair<u
 
 constexpr size_t kMaxPieces = 32;
 
+// The result's class and width are part of the key: sitofp of one value
+// to f32 and to f64 has the same operation and operands.
 struct CseKey {
-  uint8_t op, w;
+  uint8_t op, w, cls, rw;
   uint16_t aux;
   VId a, b, c;
   int64_t imm;
   uint32_t sym;
   bool operator==(const CseKey &o) const {
-    return op == o.op && w == o.w && aux == o.aux && a == o.a && b == o.b && c == o.c && imm == o.imm && sym == o.sym;
+    return op == o.op && w == o.w && cls == o.cls && rw == o.rw && aux == o.aux && a == o.a && b == o.b &&
+           c == o.c && imm == o.imm && sym == o.sym;
   }
 };
 
 struct CseInfo {
-  static CseKey getEmptyKey() { return {255, 0, 0, None, None, None, 0, 0}; }
-  static CseKey getTombstoneKey() { return {254, 0, 0, None, None, None, 0, 0}; }
+  static CseKey getEmptyKey() { return {255, 0, 0, 0, 0, None, None, None, 0, 0}; }
+  static CseKey getTombstoneKey() { return {254, 0, 0, 0, 0, None, None, None, 0, 0}; }
   static unsigned getHashValue(const CseKey &k) {
-    return unsigned(llvm::hash_combine(k.op, k.w, k.aux, k.a, k.b, k.c, k.imm, k.sym));
+    return unsigned(llvm::hash_combine(k.op, k.w, k.cls, k.rw, k.aux, k.a, k.b, k.c, k.imm, k.sym));
   }
   static bool isEqual(const CseKey &a, const CseKey &b) { return a == b; }
 };
@@ -126,7 +129,7 @@ private:
     bool pure = isPure(in.op) && in.op != Op::Copy;
     CseKey key{};
     if (pure) {
-      key = {uint8_t(in.op), in.w, in.aux, in.a, in.b, in.c, in.imm, in.sym};
+      key = {uint8_t(in.op), in.w, uint8_t(c), uint8_t(w), in.aux, in.a, in.b, in.c, in.imm, in.sym};
       if (auto it = cse.find(key); it != cse.end()) return it->second;
     }
     use(in.a);

@@ -6,7 +6,7 @@ set -e
 T0=$(cd "$(dirname "$1")" && pwd)/$(basename "$1"); L=$2; SEEDS=${3:-"1 2 3 4 5"}
 src=$(cd "$(dirname "$0")" && pwd)
 w=$(mktemp -d); trap 'rm -rf "$w"' EXIT; cd "$w"
-for t in intrinsics wide ext card; do
+for t in intrinsics wide ext card cse; do
   "$T0" "$src/$t.mlir" $t.o > /dev/null
   "$L/clang" -O1 -w "$src/${t}_main.c" $t.o -o $t && ./$t > /dev/null && echo "$t: ok"
 done
