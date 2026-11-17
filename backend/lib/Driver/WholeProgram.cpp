@@ -579,7 +579,11 @@ std::string fingerprint(const CompileOptions &opts) {
     os << opts.rtBitcode->fileHash();
   os << "|opts:" << opts.optionKey << "|loopopts:" << loops::cacheKey();
   // Backend switches read from the environment that change objects.
-  for (const char *e : {"MARMOT_CARDSTUB_CALL", "MARMOT_SPLIT_REACH", "MARMOT_BOXSCALAR"})
+  static const char *const envKey[] = {
+#define MARMOT_ENV_KEY(n) #n,
+#include "marmot/Driver/EnvSwitches.def"
+  };
+  for (const char *e : envKey)
     if (const char *v = std::getenv(e))
       os << "|" << e << "=" << v;
   // On by default since the perfcmp gate; objects cached before had it off.

@@ -1,0 +1,72 @@
+// EnvSwitches.def: every environment variable the backend reads (backend/lib,
+// backend/tools and backend/tier0), each in one class:
+//   MARMOT_ENV_KEY(name)    changes objects; fingerprint() adds name=value to
+//                           the object cache key when it is set.
+//   MARMOT_ENV_OWN(name)    changes objects; its own code puts it in the key
+//                           (MARMOT_PARKCLEAR as its value, MARMOT_BACKEND_FLAGS
+//                           through optionKey).
+//   MARMOT_ENV_NOKEY(name)  does not change objects: limits, threads, logs,
+//                           debug output, or a tool without an object cache.
+// backend/test/driver/env-switches.mlir fails when a name read there is in no
+// class, and when a KEY name does not change the key.
+// Keep the order of the KEY entries: it is the order in the key.
+#ifndef MARMOT_ENV_KEY
+#define MARMOT_ENV_KEY(n)
+#endif
+#ifndef MARMOT_ENV_OWN
+#define MARMOT_ENV_OWN(n)
+#endif
+#ifndef MARMOT_ENV_NOKEY
+#define MARMOT_ENV_NOKEY(n)
+#endif
+
+MARMOT_ENV_KEY(MARMOT_CARDSTUB_CALL)
+MARMOT_ENV_KEY(MARMOT_SPLIT_REACH)
+MARMOT_ENV_KEY(MARMOT_BOXSCALAR)
+MARMOT_ENV_KEY(MARMOT_ESCAPE_ROUNDS)
+// tier0 (dev objects use the same key).
+MARMOT_ENV_KEY(MARMOT_TIER0_MIR)
+MARMOT_ENV_KEY(MARMOT_TIER0_NORA)
+MARMOT_ENV_KEY(MARMOT_TIER0_DOMCHECKS)
+MARMOT_ENV_KEY(MARMOT_TIER0_MIR_BISECT)
+MARMOT_ENV_KEY(MARMOT_STACKMAPS)
+
+MARMOT_ENV_OWN(MARMOT_PARKCLEAR)
+MARMOT_ENV_OWN(MARMOT_BACKEND_FLAGS)
+// The target triple, which is in the key.
+MARMOT_ENV_OWN(MACOSX_DEPLOYMENT_TARGET)
+
+MARMOT_ENV_NOKEY(MARMOT_ADMIT_MB)
+MARMOT_ENV_NOKEY(MARMOT_CACHE_MAX_MB)
+MARMOT_ENV_NOKEY(MARMOT_FAST_PARSE)
+MARMOT_ENV_NOKEY(MARMOT_GPU_REMARKS)
+MARMOT_ENV_NOKEY(MARMOT_IRSTATS)
+MARMOT_ENV_NOKEY(MARMOT_IRSTATS_FNS)
+MARMOT_ENV_NOKEY(MARMOT_LOOPS_DEBUG)
+// Read only by the opt plugin entry (Loops/Plugin.cpp), which has no cache.
+MARMOT_ENV_NOKEY(MARMOT_LOOPS_GPU)
+MARMOT_ENV_NOKEY(MARMOT_LOOPS_NOPAR)
+MARMOT_ENV_NOKEY(MARMOT_LOOPS_REMARKS)
+MARMOT_ENV_NOKEY(MARMOT_MAX_JOBS)
+MARMOT_ENV_NOKEY(MARMOT_MAX_MEM_MB)
+MARMOT_ENV_NOKEY(MARMOT_MAX_SECONDS)
+MARMOT_ENV_NOKEY(MARMOT_MEMLOG)
+MARMOT_ENV_NOKEY(MARMOT_PARSE_CHECK)
+MARMOT_ENV_NOKEY(MARMOT_PARSE_THREADS)
+// marmot-pcln, which has no object cache.
+MARMOT_ENV_NOKEY(MARMOT_PCLN_VERSION)
+MARMOT_ENV_NOKEY(MARMOT_SPLIT_DUMP)
+MARMOT_ENV_NOKEY(MARMOT_TIER0_THREADS)
+MARMOT_ENV_NOKEY(MARMOT_VERIFY)
+MARMOT_ENV_NOKEY(TIER0_MIR_STATS)
+MARMOT_ENV_NOKEY(TIER0_MIR_DUMP)
+MARMOT_ENV_NOKEY(TIER0_MIR_TIME)
+MARMOT_ENV_NOKEY(TIER0_MIR_WHY)
+MARMOT_ENV_NOKEY(TIER0_OPSTATS)
+// tier0-run, a test tool without an object cache.
+MARMOT_ENV_NOKEY(READER_THREADS)
+MARMOT_ENV_NOKEY(TIER0_THREADS)
+
+#undef MARMOT_ENV_KEY
+#undef MARMOT_ENV_OWN
+#undef MARMOT_ENV_NOKEY
