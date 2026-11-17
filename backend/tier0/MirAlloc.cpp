@@ -93,6 +93,8 @@ void allocate(const Func &f, const TargetRegs &t, Alloc &a) {
   std::vector<uint32_t> defBlock(nv, ~0u);
   std::vector<std::pair<uint32_t, uint32_t>> span(nb);  // block start, terminator position
   std::vector<uint32_t> clobber;                        // positions of calls
+  std::vector<std::pair<uint32_t, uint32_t>> plainCalls; // (position, instruction) of Op::Call clobbers
+  std::vector<uint32_t> uses(nv, 0);
   std::vector<std::pair<VId, uint32_t>> far;            // (value, block) uses in another block
   auto wanted = [&](VId v) { return a.loc[v].k == Loc::None; };
   // A call followed by unreachable (a panic) does not return, so nothing it
@@ -148,9 +150,13 @@ void allocate(const Func &f, const TargetRegs &t, Alloc &a) {
       const Inst &in = f.insts[i];
       if (in.dead || a.fused[i]) continue;
       uint32_t at = p++;
-      if (isCall(in, t) && !noReturn(b, i)) clobber.push_back(at);
+      if (isCall(in, t) && !noReturn(b, i)) {
+        clobber.push_back(at);
+        if (in.op == Op::Call) plainCalls.push_back({at, i});
+      }
       forUses(f, a, in, [&](VId v) {
         if (!wanted(v)) return;
+        uses[v]++;
         touch(v, at);
         if (defBlock[v] != bi) far.push_back({v, bi});
       });
@@ -243,6 +249,16 @@ void allocate(const Func &f, const TargetRegs &t, Alloc &a) {
     auto it = std::upper_bound(clobber.begin(), clobber.end(), start[v]);
     return it != clobber.end() && *it < end[v];
   };
+  // Calls strictly inside v's interval: all of them, and the plain ones
+  // (Op::Call, where the emitter can save registers around).
+  auto inside = [&](const std::vector<uint32_t> &ps, VId v) {
+    auto lo = std::upper_bound(ps.begin(), ps.end(), start[v]);
+    auto hi = std::lower_bound(ps.begin(), ps.end(), end[v]);
+    return lo < hi ? unsigned(hi - lo) : 0u;
+  };
+  std::vector<uint32_t> plainPos;
+  for (auto [p, i] : plainCalls) plainPos.push_back(p);
+  std::vector<char> saved(nv, 0);
   std::vector<VId> spilled;
   auto scan = [&](bool fp) {
     const RegClass &rc = fp ? t.fpr : t.gpr;
@@ -361,6 +377,16 @@ void allocate(const Func &f, const TargetRegs &t, Alloc &a) {
       }
       int r = cross ? -1 : pick(freeCaller, rc.caller);
       if (r < 0) r = pick(freeCallee, rc.callee);
+      // No callee saved register for an interval with calls inside: a
+      // caller saved one, stored and reloaded around each call, when its
+      // uses outnumber twice the calls (the slot form costs a load per use).
+      if (r < 0 && cross && t.callSave) {
+        unsigned nc = inside(plainPos, v);
+        if (nc == inside(clobber, v) && uses[v] > 2 * nc) {
+          r = pick(freeCaller, rc.caller);
+          if (r >= 0) saved[v] = 1;
+        }
+      }
       if (r >= 0) {
         a.loc[v].k = Loc::Reg;
         a.loc[v].reg = uint8_t(r);
@@ -380,6 +406,7 @@ void allocate(const Func &f, const TargetRegs &t, Alloc &a) {
         VId x = active[size_t(fk)];
         a.loc[v] = a.loc[x];
         a.loc[x] = Loc();
+        saved[x] = 0;
         spilled.push_back(x);
         active[size_t(fk)] = v;
       } else {
@@ -397,7 +424,12 @@ void allocate(const Func &f, const TargetRegs &t, Alloc &a) {
       if (std::find(rc.callee.begin(), rc.callee.end(), r) != rc.callee.end())
         (fp ? a.calleeFpr : a.calleeGpr) |= 1u << r;
     }
-  // Spill slots, shared by intervals that do not overlap.
+  // Spill slots, shared by intervals that do not overlap; the values saved
+  // around calls get one too and keep their register.
+  a.saveSlot.assign(nv, ~0u);
+  a.saves.assign(f.insts.size(), {});
+  for (VId v = 0; v < nv; v++)
+    if (saved[v] && a.loc[v].k == Loc::Reg) spilled.push_back(v);
   std::stable_sort(spilled.begin(), spilled.end(), [&](VId x, VId y) { return start[x] < start[y]; });
   std::vector<uint32_t> slotEnd;  // per slot, the end of its current interval
   for (VId v : spilled) {
@@ -412,6 +444,12 @@ void allocate(const Func &f, const TargetRegs &t, Alloc &a) {
       slotEnd.push_back(0);
     }
     slotEnd[s] = end[v];
+    if (saved[v] && a.loc[v].k == Loc::Reg) {
+      a.saveSlot[v] = s;
+      for (auto [p, i] : plainCalls)
+        if (p > start[v] && p < end[v]) a.saves[i].push_back(v);
+      continue;
+    }
     a.loc[v].k = Loc::Slot;
     a.loc[v].slot = s;
   }

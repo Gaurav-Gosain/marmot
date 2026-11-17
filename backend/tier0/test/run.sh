@@ -21,6 +21,12 @@ done
 pat='[ _](a|swaplen|keep)(-0x4)?$'
 n0=$("$L/llvm-objdump" -r inline0.o | grep -cE "$pat"); n1=$("$L/llvm-objdump" -r inline1.o | grep -cE "$pat")
 [ "$n0" = 5 ] && [ "$n1" = 1 ] && echo "inline: ok ($n0 -> $n1 calls)" || { echo "inline: $n0 -> $n1 calls (want 5 -> 1)"; exit 1; }
+# Values saved around calls (MARMOT_TIER0_CALLSAVE=1, MIR, x86-64): same result, other code.
+for c in 0 1; do
+  MARMOT_TIER0_MIR=1 MARMOT_TIER0_CALLSAVE=$c "$T0" "$src/callsave.mlir" cs$c.o > /dev/null
+  "$L/clang" -O1 -w "$src/callsave_main.c" cs$c.o -o cs$c && ./cs$c
+done
+if [ "$(uname)" = Darwin ] || cmp -s cs0.o cs1.o; then echo "callsave: ok (same code)"; else echo "callsave: ok"; fi
 if [ "$(uname)" = Darwin ]; then sec=__DATA,__marmot_tlinks,regular,live_support; gc=-dead_strip; else sec=marmot_tlinks; gc=--gc-sections,-z,start-stop-gc; fi
 sed "s/SECTION/$sec/" "$src/tlinks.mlir" > tlinks.mlir
 "$T0" tlinks.mlir tlinks.o > /dev/null

@@ -40,6 +40,10 @@ const TargetRegs &regs() {
     // Two-address results in their first operand's register (MARMOT_TIER0_TIE=0 turns it off).
     const char *tie = getenv("MARMOT_TIER0_TIE");
     r.tieFirst = !(tie && *tie == '0');
+    // MARMOT_TIER0_CALLSAVE=1: values over calls may stay in caller saved
+    // registers, stored and reloaded around each call (Alloc::saves).
+    const char *e = getenv("MARMOT_TIER0_CALLSAVE");
+    r.callSave = e && *e == '1';
     return r;
   }();
   return t;
@@ -265,6 +269,7 @@ private:
   void cmpFlags(const Inst &c);
   void fminmax(const Inst &in, bool max, bool num);
   void call(const Inst &in);
+  void callSaves(const Inst &in, bool reload);
   void ret(const Inst &in);
   void edgeMoves(uint32_t e);
   void callSym(const std::string &name) {
@@ -622,8 +627,29 @@ void Emitter::edgeMoves(uint32_t ei) {
   if (!moves.empty()) parallelMove(moves, *this);
 }
 
+// Stores (before a call) or reloads (after it) the values that live in
+// caller saved registers over the call.
+void Emitter::callSaves(const Inst &in, bool reload) {
+  if (al.saves.empty()) return;
+  for (VId v : al.saves[size_t(&in - f.insts.data())]) {
+    unsigned r = al.loc[v].reg;
+    int64_t off = int64_t(slotOff(al.saveSlot[v]));
+    if (f.vals[v].cls != Cls::Int) {
+      if (reload)
+        a.loadF(r, X::RSP, d32(off), dbl(v));
+      else
+        a.storeF(r, X::RSP, d32(off), dbl(v));
+    } else if (reload) {
+      a.load(r, X::RSP, d32(off), 8);
+    } else {
+      a.store(r, X::RSP, d32(off), 8);
+    }
+  }
+}
+
 void Emitter::call(const Inst &in) {
   const CallRec &c = f.calls[in.extra];
+  callSaves(in, false);
   auto op = cast<LL::CallOp>(c.op);
   auto args = op.getArgOperands();
   bool mem = c.sretObj >= 0;
@@ -659,7 +685,10 @@ void Emitter::call(const Inst &in) {
     a.callReg(S0);
   else
     callSym(symName(f.syms[c.sym]));
-  if (c.results.empty()) return;
+  if (c.results.empty()) {
+    callSaves(in, true);
+    return;
+  }
   std::vector<std::pair<uint64_t, Type>> parts;
   flatten(op.getResult().getType(), 0, parts);
   if (parts.size() != c.results.size()) unsupported("mir: result pieces");
@@ -693,6 +722,7 @@ void Emitter::call(const Inst &in) {
     a.loadF(x, X::RSP, d32(int64_t(tempOff)), dx);
   }
   parallelMove(moves, *this);
+  callSaves(in, true);
 }
 
 void Emitter::ret(const Inst &in) {

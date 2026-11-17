@@ -40,6 +40,9 @@ struct TargetRegs {
   // and, or, xor, mul or shift may take the register of its first operand
   // when that operand's interval ends there (the emitter skips the mov).
   bool tieFirst = false;
+  // The emitter stores and reloads the values of Alloc::saves around calls,
+  // so an interval with calls inside may live in a caller saved register.
+  bool callSave = false;
 };
 
 struct Alloc {
@@ -53,6 +56,11 @@ struct Alloc {
   // Input: per value, the register it would best live in (where a call,
   // the return or the prologue moves it), or -1. Taken when free.
   std::vector<int16_t> hint;
+  // With TargetRegs::callSave: per value kept in a caller saved register over
+  // calls, its slot (~0u for the others); per instruction (a call), the values
+  // to store to their slots before it and load after it.
+  std::vector<uint32_t> saveSlot;
+  std::vector<std::vector<VId>> saves;
 };
 
 bool isCall(const Inst &in, const TargetRegs &t);
