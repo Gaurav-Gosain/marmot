@@ -131,6 +131,12 @@ func slicebytetostring(b []byte) string {
 	if len(b) == 0 {
 		return ""
 	}
+	if len(b) == 1 {
+		// As gc: a one-byte string points into staticuint64s and needs no
+		// allocation (fmt.Sprint("n") and the like). The value's byte is the
+		// first byte of its word: every marmot target is little-endian.
+		return unsafe.String((*byte)(unsafe.Pointer(&staticuint64s[b[0]])), 1)
+	}
 	s, buf := rawstring(len(b))
 	copy(buf, b)
 	return s
