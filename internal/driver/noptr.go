@@ -7,10 +7,11 @@ import (
 )
 
 // noptr reports whether codegen puts package variables without pointers in
-// the sections the collector skips (codegen/noptr.go): MARMOT_NOPTR=1, for
-// now, until measured. tier0 takes the sections too (41bd1170, a4091518).
+// the sections the collector skips (codegen/noptr.go): on by default,
+// MARMOT_NOPTR=0 turns it off. tier0 takes the sections too (41bd1170,
+// a4091518).
 func (b *build) noptr() bool {
-	return os.Getenv("MARMOT_NOPTR") == "1"
+	return os.Getenv("MARMOT_NOPTR") != "0"
 }
 
 // noptrScript gathers the pointer-free variables (ELF .data.marmot.noptr.*
