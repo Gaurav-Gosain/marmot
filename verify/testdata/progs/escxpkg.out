@@ -1,0 +1,11 @@
+variadic 1,2s3
+returned 4,5 6
+errorf wrapped base 10 and 10,11 base 10
+join a20
+b20
+ctx 30,-30
+list 40,80
+list ptr 40,80
+map 50,7 50,7
+go 60,9 60,9
+sprint p=70,3 n=70
