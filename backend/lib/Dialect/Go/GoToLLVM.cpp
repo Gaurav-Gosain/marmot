@@ -10,6 +10,7 @@
 // runtime panic function and argument types; it takes the panic arguments as
 // block arguments, calls the noreturn runtime function, and is unreachable
 // after. The branch is weighted as never taken.
+#include <cstdlib>
 #include "marmot/Dialect/Go/Passes.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -257,7 +258,63 @@ private:
     return success();
   }
 
+  // MARMOT_BOXSCALAR=1: a heap box of a small scalar needs no allocation,
+  // as gc and the frontend's own path do it: a 1-byte value (bool, int8,
+  // uint8) points into runtime.staticuint64s, and 2, 4 and 8-byte integers
+  // and floats go through runtime.convT16, convT32 and convT64 (which use
+  // the static words for 0 to 255). An interface's data is never written,
+  // so the shared words are safe. Returns a null Value for other types.
+  FailureOr<Value> boxScalar(BoxOp op) {
+    static const bool on = [] {
+      const char *e = std::getenv("MARMOT_BOXSCALAR");
+      return e && *e == '1';
+    }();
+    Type t = op.getValue().getType();
+    if (!on || !t.isIntOrFloat())
+      return Value();
+    unsigned bits = t.getIntOrFloatBitWidth();
+    Location loc = op.getLoc();
+    Value v = op.getValue();
+    if (bits <= 8 && isa<IntegerType>(t)) {
+      StringRef sym = "runtime.staticuint64s";
+      Operation *g = symbols.lookup(sym);
+      auto arrTy = LLVM::LLVMArrayType::get(b.getI64Type(), 256);
+      if (!g) {
+        OpBuilder::InsertionGuard guard(b);
+        b.setInsertionPointToEnd(module.getBody());
+        auto decl = LLVM::GlobalOp::create(b, module.getLoc(), arrTy, /*isConstant=*/false,
+                                           LLVM::Linkage::External, sym, Attribute());
+        symbols.insert(decl);
+      } else if (!isa<LLVM::GlobalOp>(g)) {
+        return Value();
+      }
+      Value base = LLVM::AddressOfOp::create(b, loc, ptrTy, sym).getResult();
+      Value idx = bits == 64 ? v : LLVM::ZExtOp::create(b, loc, b.getI64Type(), v).getResult();
+      return LLVM::GEPOp::create(b, loc, ptrTy, b.getI64Type(), base, ValueRange{idx})
+          .getResult();
+    }
+    if (bits != 16 && bits != 32 && bits != 64)
+      return Value();
+    Type it = b.getIntegerType(bits);
+    if (isa<FloatType>(t))
+      v = LLVM::BitcastOp::create(b, loc, it, v);
+    auto fn = runtimeFunc(op, ("convT" + Twine(bits)).str(), ptrTy, {it});
+    if (failed(fn))
+      return failure();
+    return call(loc, *fn, {v});
+  }
+
   LogicalResult lower(BoxOp op) {
+    if (!op.getStack()) {
+      FailureOr<Value> s = boxScalar(op);
+      if (failed(s))
+        return failure();
+      if (*s) {
+        op.replaceAllUsesWith(*s);
+        op.erase();
+        return success();
+      }
+    }
     FailureOr<Value> p =
         op.getStack()
             ? FailureOr<Value>(entryAlloca(op->getParentOfType<LLVM::LLVMFuncOp>(),
