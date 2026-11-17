@@ -38,6 +38,7 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/xxhash.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Host.h"
@@ -1023,6 +1024,20 @@ std::unique_ptr<llvm::Module> translateLowered(ParsedModule &pm, const std::stri
   }
   lmod->setTargetTriple(tm.getTargetTriple());
   lmod->setDataLayout(tm.createDataLayout());
+  // The source file name goes into the object (the ELF FILE symbol, and the
+  // PGO names of local functions), so it must not depend on where the input
+  // is or what it is called: the same module under another path must give
+  // the same object. A hash of the names the module defines keeps modules
+  // apart without the path.
+  {
+    std::string names;
+    for (const llvm::GlobalValue &g : lmod->global_values())
+      if (!g.isDeclaration()) {
+        names += g.getName();
+        names += '\0';
+      }
+    lmod->setSourceFileName("go-" + llvm::utohexstr(llvm::xxh3_64bits(names), true, 16));
+  }
   associateTypeLinks(*lmod);
   pm.module = nullptr; // free MLIR memory before the LLVM pipeline
   times.translate += timer.lap();
