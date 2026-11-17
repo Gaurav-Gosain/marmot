@@ -26,6 +26,7 @@
 
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Bitcode/BitcodeReader.h"
@@ -272,8 +273,13 @@ std::string qualify(const GlobalValue &gv, unsigned mod) {
   return localize(qualifyRaw(gv), mod);
 }
 
-void collectRefs(const Constant *c, SmallPtrSetImpl<const GlobalValue *> &out,
-                 SmallPtrSetImpl<const Constant *> &seen) {
+// RefSet keeps insertion order (the order of the IR): summaries list refs in
+// it, and the dev import walk follows that order up to its budget. A pointer
+// keyed set iterates in address order above its small size, which differed
+// from run to run and changed which bodies a module imported.
+using RefSet = SmallSetVector<const GlobalValue *, 16>;
+
+void collectRefs(const Constant *c, RefSet &out, SmallPtrSetImpl<const Constant *> &seen) {
   SmallVector<const Constant *, 16> work{c};
   while (!work.empty()) {
     const Constant *k = work.pop_back_val();
@@ -289,7 +295,7 @@ void collectRefs(const Constant *c, SmallPtrSetImpl<const GlobalValue *> &out,
   }
 }
 
-void refsOf(const GlobalValue &gv, SmallPtrSetImpl<const GlobalValue *> &out) {
+void refsOf(const GlobalValue &gv, RefSet &out) {
   SmallPtrSet<const Constant *, 32> seen;
   if (auto *f = dyn_cast<Function>(&gv)) {
     for (const BasicBlock &bb : *f)
@@ -336,7 +342,7 @@ bool isAllocCallee(StringRef n) {
 // Those uses can reach getitab, typehash or typeequal (lib/src/runtime), which
 // read the fields and methods tables.
 void descriptorEscapes(const GlobalValue &gv, std::set<std::string> &out) {
-  SmallPtrSet<const GlobalValue *, 16> refs;
+  RefSet refs;
   if (auto *f = dyn_cast<Function>(&gv)) {
     for (const BasicBlock &bb : *f)
       for (const Instruction &inst : bb) {
@@ -419,7 +425,7 @@ std::string summarize(Module &m, StringRef pkg) {
   auto add = [&](GlobalValue &gv) {
     if (gv.isDeclaration())
       return;
-    SmallPtrSet<const GlobalValue *, 16> refs;
+    RefSet refs;
     refsOf(gv, refs);
     if (gv.hasAppendingLinkage()) {
       for (const GlobalValue *r : refs)

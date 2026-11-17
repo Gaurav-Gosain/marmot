@@ -1,6 +1,7 @@
 // RuntimeBitcode.cpp: see RuntimeBitcode.h.
 #include "marmot/Driver/RuntimeBitcode.h"
 
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Bitcode/BitcodeReader.h"
@@ -22,8 +23,11 @@ namespace marmot {
 namespace {
 
 // Collects the global values a function body references, looking through
-// constant expressions.
-void collectRefs(const Function &f, SmallPtrSetImpl<const GlobalValue *> &out) {
+// constant expressions, in a fixed order: touchesLocalState's answer for a
+// function in a cycle depends on the order it visits callees in, so a
+// pointer keyed set (address order) made it differ from run to run.
+using RefSet = SmallSetVector<const GlobalValue *, 16>;
+void collectRefs(const Function &f, RefSet &out) {
   SmallVector<const Constant *, 16> work;
   SmallPtrSet<const Constant *, 16> seen;
   for (const BasicBlock &bb : f)
@@ -54,7 +58,7 @@ public:
     if (it != memo.end())
       return it->second;
     memo[f] = false; // cycles: assume clean, the other path decides
-    SmallPtrSet<const GlobalValue *, 16> refs;
+    RefSet refs;
     collectRefs(*f, refs);
     bool bad = false;
     for (const GlobalValue *gv : refs) {
