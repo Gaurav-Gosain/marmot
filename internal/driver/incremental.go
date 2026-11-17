@@ -40,7 +40,9 @@ func (b *build) incremental() bool {
 		return true
 	}
 	c := b.cfg
-	return !c.Release && !b.wpo() && c.Dialect != "go" && !c.Test && !c.NoCache &&
+	// -nocache keeps this mode, with a types cache of its own in the work
+	// directory (typesCache), so its output is that of a cold cached build.
+	return !c.Release && !b.wpo() && c.Dialect != "go" && !c.Test &&
 		(c.Emit == "exe" || c.Emit == "obj") && !specialize.Enabled(false)
 }
 
@@ -105,7 +107,12 @@ func (b *build) moduleCached(p *packages.Package, base string) bool {
 }
 
 // typesCache is the export data and go list cache of incremental loads.
-func (b *build) typesCache() string { return filepath.Join(b.cfg.Root, "build", "cache", "types") }
+func (b *build) typesCache() string {
+	if b.cfg.NoCache && b.work != "" {
+		return filepath.Join(b.work, "types") // -nocache: nothing from earlier builds
+	}
+	return filepath.Join(b.cfg.Root, "build", "cache", "types")
+}
 
 // incrementalConfig sets up cfg for an incremental load.
 func (b *build) incrementalConfig(cfg *loader.Config) {
