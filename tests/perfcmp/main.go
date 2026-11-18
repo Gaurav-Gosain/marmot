@@ -164,28 +164,26 @@ func main() {
 			maxLoad = l
 		}
 	}
-	for _, mode := range strings.Split(*flModes, ",") {
-		fmt.Printf("\n== %s\n%-12s %10s %10s %7s %10s %10s %7s %9s %9s %7s %9s %9s %7s\n", mode,
-			"program", "wall A", "wall B", "B/A", "cpu A", "cpu B", "B/A", "rss A", "rss B", "B/A", "size A", "size B", "B/A")
-		var lw, lc, lr []float64
-		var nw, nc []float64         // per side and program: median of the odd runs over the even ones
-		var busy, used, wall float64 // -cpus: busy time of those CPUs, the runs' CPU time, wall time (s)
-		nIdent := 0                  // -skip-identical: programs left out as byte-identical
-		// Build everything first, then let the load of the builds (the compiler uses
-		// every core) decay before timing: the load sampled during the runs is the
-		// machine's, not perfcmp's own.
-		type built struct {
-			bins  [2]string
-			sizes [2]int64
-			ok    bool
-		}
+	// Build every mode first (A and B), then time every mode: one build phase, then one
+	// timed phase. The compiler uses every core, so builds between the timed modes would
+	// put their load next to the timing; and a job that waits for exclusive use of the
+	// machine only for its timed phase needs the builds done before it asks.
+	modes := strings.Split(*flModes, ",")
+	type built struct {
+		bins  [2]string
+		sizes [2]int64
+		ok    bool
+	}
+	builds := make([][]built, len(modes))
+	buildFails := make([][]string, len(modes))
+	for mi, mode := range modes {
 		bs := make([]built, len(progs))
 		for k, p := range progs {
 			bs[k].ok = true
 			for i, s := range sides {
 				bin, _, err := build(s, p, mode, work)
 				if err != nil {
-					fmt.Printf("%-12s build %s failed: %v\n", p.name, s.label, err)
+					buildFails[mi] = append(buildFails[mi], fmt.Sprintf("%-12s build %s failed: %v", p.name, s.label, err))
 					o.failed = append(o.failed, fmt.Sprintf("%s %s: build %s failed", p.name, mode, s.label))
 					bs[k].ok = false
 					break
@@ -196,6 +194,21 @@ func main() {
 				}
 			}
 		}
+		builds[mi] = bs
+	}
+	for mi, mode := range modes {
+		fmt.Printf("\n== %s\n%-12s %10s %10s %7s %10s %10s %7s %9s %9s %7s %9s %9s %7s\n", mode,
+			"program", "wall A", "wall B", "B/A", "cpu A", "cpu B", "B/A", "rss A", "rss B", "B/A", "size A", "size B", "B/A")
+		var lw, lc, lr []float64
+		var nw, nc []float64         // per side and program: median of the odd runs over the even ones
+		var busy, used, wall float64 // -cpus: busy time of those CPUs, the runs' CPU time, wall time (s)
+		nIdent := 0                  // -skip-identical: programs left out as byte-identical
+		for _, l := range buildFails[mi] {
+			fmt.Println(l)
+		}
+		bs := builds[mi]
+		// Let the load of the builds decay before timing: the load sampled during the
+		// runs is the machine's, not perfcmp's own. After the first mode this returns at once.
 		settle()
 		for k, p := range progs {
 			sampleLoad()
