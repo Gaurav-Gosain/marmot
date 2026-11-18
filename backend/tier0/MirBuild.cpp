@@ -757,6 +757,52 @@ bool Builder::decideByDominators() {
     Key k;
     if (edgeKey(b, k)) addWithUnsigned(k);
   };
+  // MARMOT_TIER0_RANGES=1 (with MARMOT_TIER0_DOMCHECKS=1, whose walk this
+  // is): an unsigned compare of a value with a constant
+  // that the value's range decides: a value narrower than the compare
+  // (canonical, zero extended) is below 2^width, x & M is at most M, x urem
+  // C below C, x >> k (64 bits) below 2^(64-k). A byte index into a 256
+  // entry table, or i & (n-1) into n entries, needs no bounds check.
+  static const bool rangesOn = [] {
+    const char *e = getenv("MARMOT_TIER0_RANGES");
+    return e && *e == '1';
+  }();
+  auto maxOf = [&](VId v, unsigned w) -> uint64_t {
+    uint64_t all = w >= 64 ? ~0ull : (1ull << w) - 1, k;
+    if (isConst(v, k)) return k & all;
+    const Val &x = f.vals[v];
+    uint64_t m = all;
+    if (x.cls == Cls::Int && x.width < w) m = (1ull << x.width) - 1;
+    const Inst *d = defOf(v);
+    if (!d || d->dead || d->w != w) return m;
+    if (d->op == Op::And && (isConst(d->b, k) || isConst(d->a, k))) return std::min<uint64_t>(m, k & all);
+    if (d->op == Op::URem && isConst(d->b, k) && k) return std::min<uint64_t>(m, k - 1);
+    if (d->op == Op::LShr && w == 64 && isConst(d->b, k) && k > 0 && k < 64) return std::min<uint64_t>(m, (1ull << (64 - k)) - 1);
+    return m;
+  };
+  auto byRange = [&](P p, const Inst &c) -> int {
+    if (!rangesOn) return -1;
+    uint64_t k;
+    VId x;
+    if (isConst(c.b, k) && !isConst(c.a, k)) {
+      isConst(c.b, k);
+      x = c.a;
+    } else if (isConst(c.a, k) && !isConst(c.b, k)) {
+      isConst(c.a, k);
+      x = c.b;
+      p = swp(p);  // k p' x  ->  x p k
+    } else {
+      return -1;
+    }
+    uint64_t m = maxOf(x, c.w);
+    switch (p) {
+    case P::ult: return m < k ? 1 : -1;
+    case P::ule: return m <= k ? 1 : -1;
+    case P::uge: return m < k ? 0 : -1;
+    case P::ugt: return m <= k ? 0 : -1;
+    default: return -1;
+    }
+  };
   // Dominator tree children, then a preorder walk with an undo log.
   std::vector<std::vector<uint32_t>> kids(rpo.size());
   for (uint32_t i = 1; i < rpo.size(); i++)
@@ -774,6 +820,7 @@ bool Builder::decideByDominators() {
     int decided = -1;
     if (facts.count(key(p, *c, false)) || facts.count(key(p, *c, true))) decided = 1;
     else if (facts.count(key(inv(p), *c, false)) || facts.count(key(inv(p), *c, true))) decided = 0;
+    else decided = byRange(p, *c);
     if (decided < 0) return;
     Inst &t = f.insts[f.blocks[b].end - 1];
     uint32_t keep = decided ? t.extra : t.aux2, drop = decided ? t.aux2 : t.extra;
