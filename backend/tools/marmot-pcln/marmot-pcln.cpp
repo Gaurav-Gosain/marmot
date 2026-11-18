@@ -31,6 +31,7 @@
 #include "llvm/Object/MachO.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -82,6 +83,11 @@ static cl::opt<std::string> emitSourceMap(
     cl::desc("Write the DWARF lines of a linked wasm module as a source map (version 3) to "
              "this file, for wasm-opt --input-source-map"),
     cl::value_desc("path"));
+static cl::opt<std::string> dwarfDir(
+    "dwarf-dir", cl::desc("Also write DWARF line tables (MARMOT_DWARF=1): one file per section "
+                          "in this directory, named after the section without its dot"));
+static cl::opt<bool> dwarfSubprograms("dwarf-subprograms", cl::init(true),
+                                      cl::desc("With -dwarf-dir: a DW_TAG_subprogram per function"));
 static cl::opt<bool> namesOnly("names", cl::desc("Print the table name of each symbol read "
                                                  "from stdin, one per line (tests)"));
 
@@ -284,6 +290,49 @@ void scanSymbols(const ObjectFile &obj, StringMap<uint64_t> &out,
   }
 }
 
+// writeDwarfDir writes the DWARF sections for t into -dwarf-dir, if set,
+// one file per section (debug_line, ...), and symbols.keep: the names of
+// bin's function symbols, which the driver keeps (objcopy --keep-symbols);
+// perf takes function names from the symbol table, and the data symbols
+// (type:, go:) were 80% of it.
+int writeDwarfDir(const pcln::Table &t, uint32_t quantum, const ObjectFile &bin) {
+  if (dwarfDir.empty())
+    return 0;
+  if (std::error_code ec = sys::fs::create_directories(dwarfDir))
+    return fail(dwarfDir + ": " + ec.message());
+  {
+    std::string path = dwarfDir + "/symbols.keep";
+    std::error_code ec;
+    raw_fd_ostream os(path, ec);
+    if (ec)
+      return fail(path + ": " + ec.message());
+    for (const SymbolRef &sym : bin.symbols()) {
+      auto type = sym.getType();
+      auto name = sym.getName();
+      if (!type || !name) {
+        consumeError(type.takeError());
+        consumeError(name.takeError());
+        continue;
+      }
+      if (*type == SymbolRef::ST_Function && !name->empty())
+        os << *name << "\n";
+    }
+  }
+  auto secs = pcln::writeDwarf(t, quantum, dwarfSubprograms, renameMain);
+  size_t total = 0;
+  for (auto &[name, data] : secs) {
+    std::string path = dwarfDir + "/" + name.substr(1);
+    std::error_code ec;
+    raw_fd_ostream os(path, ec);
+    if (ec)
+      return fail(path + ": " + ec.message());
+    os << data;
+    total += data.size();
+  }
+  errs() << "marmot-pcln: DWARF " << total << " bytes in " << secs.size() << " sections\n";
+  return 0;
+}
+
 int fromFragments() {
   std::vector<std::string> frags;
   if (!readList(fragsList, frags))
@@ -402,6 +451,8 @@ int fromFragments() {
     pcln::addParsed(parsed[i], lookup, t);
   }
   pcln::addTextSymbols(text, t);
+  if (int rc = writeDwarfDir(t, quantumOf(bin), bin))
+    return rc;
   std::string table = pcln::encode(t, pcln::imageBase(bin), quantumOf(bin), version, renameMain);
   uint32_t dropped = 0;
   if (!patch.empty()) {
@@ -811,6 +862,8 @@ int main(int argc, char **argv) {
   pcln::addTextSymbols(obj, t);
   if (baseBin.getBinary())
     pcln::addTextSymbols(*baseBin.getBinary(), t);
+  if (int rc = writeDwarfDir(t, quantumOf(obj), obj))
+    return rc;
   std::string table = pcln::encode(t, base, quantumOf(obj), version, renameMain);
   std::error_code ec;
   raw_fd_ostream os(output, ec);

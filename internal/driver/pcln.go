@@ -113,6 +113,65 @@ func (b *build) backendBuildArgs(emit string) []string {
 	return a
 }
 
+// dwarf reports whether the binary keeps DWARF line tables and its symbol
+// table (MARMOT_DWARF): marmot-pcln writes them from the pc table's rows, so
+// gdb and lldb break at file:line and perf shows function names and lines.
+// ELF only. MARMOT_DWARF=1 compresses the sections (zlib), raw leaves them
+// uncompressed, nosub also leaves out the subprogram entries (names then
+// come from the symbol table).
+func (b *build) dwarf() bool {
+	switch os.Getenv("MARMOT_DWARF") {
+	case "1", "raw", "nosub":
+		return b.goos != "darwin" && b.goarch != "wasm"
+	}
+	return false
+}
+
+// dwarfArgs are marmot-pcln's arguments that write the DWARF sections into dir.
+func (b *build) dwarfArgs(dir string) []string {
+	if !b.dwarf() {
+		return nil
+	}
+	a := []string{"-dwarf-dir", dir}
+	if os.Getenv("MARMOT_DWARF") == "nosub" {
+		a = append(a, "-dwarf-subprograms=false")
+	}
+	return a
+}
+
+// finishELF writes out from the first link tmp: the pc table tbl and the
+// C origin sections added, the linker's DWARF and symbols removed. With
+// MARMOT_DWARF, the function symbols stay and the DWARF sections
+// marmot-pcln wrote into dir go in with the table, in the same objcopy run.
+func (b *build) finishELF(tmp, tbl, dir string, origins []string, out string) error {
+	if !b.dwarf() {
+		if err := b.run(llvmTool("llvm-objcopy"), "--strip-all", tmp, tmp+".s"); err != nil {
+			return err
+		}
+		return b.run(llvmTool("llvm-objcopy"), append(append([]string{"--add-section", ".marmot_pcln=" + tbl}, origins...), tmp+".s", out)...)
+	}
+	// Only function symbols stay (marmot-pcln lists them): perf needs them,
+	// the data symbols were 80% of the table.
+	args := []string{"--strip-all", "--keep-symbols=" + filepath.Join(dir, "symbols.keep"), "--add-section", ".marmot_pcln=" + tbl}
+	if ents, err := os.ReadDir(dir); err == nil {
+		for _, e := range ents {
+			if strings.HasPrefix(e.Name(), "debug_") {
+				args = append(args, "--add-section", "."+e.Name()+"="+filepath.Join(dir, e.Name()))
+			}
+		}
+	}
+	args = append(append(args, origins...), tmp)
+	if os.Getenv("MARMOT_DWARF") == "raw" {
+		return b.run(llvmTool("llvm-objcopy"), append(args, out)...)
+	}
+	// llvm-objcopy compresses only the sections it read, not the ones it
+	// adds in the same run: a second run compresses them.
+	if err := b.run(llvmTool("llvm-objcopy"), append(args, tmp+".s")...); err != nil {
+		return err
+	}
+	return b.run(llvmTool("llvm-objcopy"), "--compress-debug-sections=zlib", tmp+".s", out)
+}
+
 func (b *build) pclnTool() string {
 	return filepath.Join(b.cfg.Root, "build", "bin", "marmot-pcln")
 }
@@ -137,15 +196,13 @@ func (b *build) linkWithPcln(objs []string, link func(extra []string, out string
 			return err
 		}
 		tbl := filepath.Join(b.work, "pcln.bin")
-		if err := b.run(b.pclnTool(), append(b.pclnArgs(tbl), tmp)...); err != nil {
+		dir := filepath.Join(b.work, "dwarf")
+		if err := b.run(b.pclnTool(), append(append(b.pclnArgs(tbl), b.dwarfArgs(dir)...), tmp)...); err != nil {
 			b.logf("pcln: %v (no table)", err)
 			return b.run(llvmTool("llvm-objcopy"), "--strip-all", tmp, out)
 		}
 		origins := b.cOriginSectionArgs(tmp, b.rtLib("librtcore.a"))
-		if err := b.run(llvmTool("llvm-objcopy"), "--strip-all", tmp, tmp+".s"); err != nil {
-			return err
-		}
-		return b.run(llvmTool("llvm-objcopy"), append(append([]string{"--add-section", ".marmot_pcln=" + tbl}, origins...), tmp+".s", out)...)
+		return b.finishELF(tmp, tbl, dir, origins, out)
 	}
 	// The first link carries a placeholder section so that both links have
 	// the same load commands and __TEXT does not move.
@@ -199,13 +256,12 @@ func (b *build) linkWithFragsELF(objs []string, link func(extra []string, out st
 	if err == nil {
 		tbl := filepath.Join(b.work, "pcln.bin")
 		args := append([]string{"-frags", list}, b.pclnVersionArgs()...)
+		dir := filepath.Join(b.work, "dwarf")
+		args = append(args, b.dwarfArgs(dir)...)
 		if err = b.run(b.pclnTool(), append(args, "-binary", tmp, "-o", tbl)...); err == nil {
 			origins := b.cOriginSectionArgs(tmp, b.rtLib("librtcore.a"))
-			if err := b.run(llvmTool("llvm-objcopy"), "--strip-all", tmp, tmp+".s"); err != nil {
-				return err
-			}
 			b.logf("pcln table added (fragments)")
-			return b.run(llvmTool("llvm-objcopy"), append(append([]string{"--add-section", ".marmot_pcln=" + tbl}, origins...), tmp+".s", out)...)
+			return b.finishELF(tmp, tbl, dir, origins, out)
 		}
 	}
 	b.logf("pcln: fragments: %v (no table)", err)

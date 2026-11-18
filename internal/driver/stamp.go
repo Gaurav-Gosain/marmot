@@ -66,7 +66,7 @@ func (b *build) buildStamp(goos, goarch string) string {
 	if b.tier1() {
 		fileSig(h, filepath.Join(b.tier1Spool(), "epoch"))
 	}
-	for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_NO_BACKEND", "MARMOT_DIALECT", "MARMOT_KEEP_SYMBOLS", "MARMOT_LINKMAP", "MARMOT_WPO", "MARMOT_SPEC", "MARMOT_BACKEND_FLAGS", "MARMOT_PCLN_VERSION", "MARMOT_ESCAPE_ROUNDS", "GOAMD64"} {
+	for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_NO_BACKEND", "MARMOT_DIALECT", "MARMOT_KEEP_SYMBOLS", "MARMOT_LINKMAP", "MARMOT_WPO", "MARMOT_SPEC", "MARMOT_BACKEND_FLAGS", "MARMOT_PCLN_VERSION", "MARMOT_DWARF", "MARMOT_ESCAPE_ROUNDS", "GOAMD64"} {
 		fmt.Fprintf(h, "%s=%s\n", k, os.Getenv(k))
 	}
 	writeNoFlags(h)
@@ -322,4 +322,6 @@ var noCodeEffect = map[string]bool{
 	"MARMOT_CPUPROFILE": true, "MARMOT_MEMPROFILE": true,
 	"MARMOT_CHECK_CPUPROFILE": true, "MARMOT_CHECK_MEMPROFILE": true,
 	"MARMOT_OUTPUT": true, "MARMOT_DAEMON": true, "MARMOT_SLOTS": true, "MARMOT_SLOTS_DIR": true,
+	// Only the link step reads it (pcln.go); the executable stamp has it.
+	"MARMOT_DWARF": true,
 }

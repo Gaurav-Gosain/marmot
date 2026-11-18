@@ -149,6 +149,7 @@ change the cap.
 | `MARMOT_FAST_PARSE=0` | Dev builds read the compiler's intermediate text with the general MLIR parser instead of the fast reader (the default). Slower builds, same output. |
 | `MARMOT_VERIFY=1` | Verify every module before code generation, also in dev builds (they skip it by default). |
 | `MARMOT_TIER1=0` | Turn off background tier 1: after a dev build returns, the packages it compiled are compiled again with LLVM at -O2 on idle cores, and later builds link those objects. |
+| `MARMOT_DWARF=1` | Linux: keep DWARF line tables and the function symbols in the binary. gdb and lldb can then stop at file:line, and `perf report` shows function names and lines. The binary is larger. `MARMOT_DWARF=raw` does not compress the sections. Delve does not work with marmot binaries. |
 
 ## Tests, benchmarks and profiles
 

@@ -110,6 +110,16 @@ void addParsed(Fragment &f, const std::function<uint64_t(llvm::StringRef)> &addr
 std::string encode(Table &t, uint64_t base, uint32_t quantum, unsigned version,
                    const std::function<std::string(const std::string &)> &rename);
 
+// DWARF line tables for t (MARMOT_DWARF=1): version 4, one compile unit per
+// Go package, DW_LANG_Go. Returns section name -> contents (.debug_info,
+// .debug_abbrev, .debug_line, .debug_str, .debug_ranges, .debug_aranges),
+// empty when no function has a source row. quantum: as for encode.
+// subprograms: one DW_TAG_subprogram per function (names also come from the
+// symbol table). rename maps function names, may be empty.
+std::map<std::string, std::string>
+writeDwarf(const Table &t, uint32_t quantum, bool subprograms,
+           const std::function<std::string(const std::string &)> &rename);
+
 // Image base: Mach-O __TEXT vmaddr; ELF lowest loadable address.
 uint64_t imageBase(const llvm::object::ObjectFile &obj);
 

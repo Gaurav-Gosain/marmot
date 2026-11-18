@@ -1,4 +1,4 @@
-add_library(MarmotPcln STATIC Pcln.cpp)
+add_library(MarmotPcln STATIC Pcln.cpp PclnDwarf.cpp)
 # No LLVM libraries of its own: marmot-pcln links it with static ones, the
 # driver with the shared ones (two copies of LLVMSupport in one binary split
 # the target registry).
