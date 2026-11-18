@@ -2031,7 +2031,12 @@ public:
     std::vector<Function *> fns;
     for (Function &F : M)
       if (!F.isDeclaration() && !F.hasAvailableExternallyLinkage() && !F.hasOptNone() &&
-          !F.hasFnAttribute("marmot-par-body") && !F.hasOptSize() && !F.hasMinSize())
+          !F.hasFnAttribute("marmot-par-body") && !F.hasOptSize() && !F.hasMinSize() &&
+          // Cost policy: no standard library code (frontend's "marmot-std" on
+          // functions of standard packages; generic instances do not carry it).
+          // Without a profile those loops are cold in most programs, and
+          // versioning them only costs size and moves the layout of hot code.
+          !F.hasFnAttribute("marmot-std"))
         fns.push_back(&F);
     bool changed = false;
     unsigned total = 0;
@@ -2083,7 +2088,7 @@ public:
             }
             formLCSSARecursively(*L, DT, &LI, &SE);
             std::string why;
-            if (versionBoundsChecks(*F, L, LI, SE, DT, AA, why, /*hoistLoads=*/true)) {
+            if (versionBoundsChecks(*F, L, LI, SE, DT, AA, why, /*cacheLoads=*/true)) {
               if (opts.remarks)
                 errs() << "loops: " << F->getName() << ": loop " << L->getHeader()->getName()
                        << ": versioned (version-only mode)\n";

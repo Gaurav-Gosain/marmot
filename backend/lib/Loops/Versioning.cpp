@@ -107,8 +107,8 @@ void checkLoopInfo(Function &F, LoopInfo &LI, DominatorTree &DT) {
 class Versioner {
 public:
   Versioner(Function &F, LoopInfo &LI, ScalarEvolution &SE, DominatorTree &DT, AAResults &AA,
-            bool hoist)
-      : F(F), LI(LI), SE(SE), DT(DT), AA(AA), hoist(hoist) {}
+            bool cache)
+      : F(F), LI(LI), SE(SE), DT(DT), AA(AA), cache(cache) {}
   bool run(Loop *L, std::string &why);
 
 private:
@@ -123,7 +123,7 @@ private:
   // each run of M, the outermost loop around L where its inputs are
   // invariant and nothing writes the loaded memory. Later entries reuse the
   // minimum and maximum. Without a loop M other than L, L is not versioned.
-  bool hoist;
+  bool cache;
   Loop *M = nullptr;
   std::string why;
   std::vector<Cond> conds;
@@ -153,7 +153,7 @@ private:
   //   with the same step (its preheader incoming value) plus an invariant offset.
   // The values stay the same, so the precondition is unchanged. The pinned
   // values dominate L's preheader only: a precondition expanded further out
-  // (hoisted check loops) must not use them (expansion is at L's preheader).
+  // must not use them (expansion is at L's preheader).
   DenseMap<const SCEV *, Value *> pinVals;
   Loop *pinLoop = nullptr;
   void collectPinVals(Loop *L) {
@@ -257,7 +257,7 @@ private:
   bool checkCondition(Loop *L, BranchInst *br, BasicBlock *exit);
   bool side(Loop *L, const SCEV *S, Side &out);
   int loadBound(Loop *L, LoadInst *ld);
-  bool findHoist(Loop *L);
+  bool findCacheLoop(Loop *L);
   void emitCheckLoops(BasicBlock *&at);
   // Blocks emitCheckLoops made: each loop's body (a one-block loop) and the
   // block after it.
@@ -668,7 +668,7 @@ bool Versioner::run(Loop *L, std::string &whyOut) {
   for (LoadCond &c : loadConds)
     if (!exp.isSafeToExpandAt(c.other, pre->getTerminator()))
       return done(reject("precondition not expandable before the loop"));
-  if (hoist && !loads.empty() && !findHoist(L))
+  if (cache && !loads.empty() && !findCacheLoop(L))
     return done(false);
 
   formLCSSARecursively(*L, DT, &LI, &SE);
@@ -845,9 +845,9 @@ bool Versioner::run(Loop *L, std::string &whyOut) {
   return true;
 }
 
-// Picks M for the cached check loops (see hoist). Fails with a reason when
+// Picks M for the cached check loops (see cache). Fails with a reason when
 // L is the only candidate.
-bool Versioner::findHoist(Loop *L) {
+bool Versioner::findCacheLoop(Loop *L) {
   Loop *best = nullptr;
   for (Loop *P = L->getParentLoop(); P; P = P->getParentLoop()) {
     if (!P->getLoopPreheader())
@@ -881,7 +881,7 @@ bool Versioner::findHoist(Loop *L) {
     best = P;
   }
   if (!best)
-    return reject("loaded bound check loop cannot be hoisted out of the loop");
+    return reject("loaded bound check loop cannot be cached outside the loop");
   M = best;
   return true;
 }
@@ -949,8 +949,8 @@ void Versioner::emitCheckLoops(BasicBlock *&at) {
 } // namespace
 
 bool versionBoundsChecks(Function &F, Loop *L, LoopInfo &LI, ScalarEvolution &SE,
-                         DominatorTree &DT, AAResults &AA, std::string &why, bool hoistLoads) {
-  Versioner v(F, LI, SE, DT, AA, hoistLoads);
+                         DominatorTree &DT, AAResults &AA, std::string &why, bool cacheLoads) {
+  Versioner v(F, LI, SE, DT, AA, cacheLoads);
   return v.run(L, why);
 }
 

@@ -5,40 +5,40 @@
 // check loop still runs only after the guard's scalar conditions hold, so its
 // reads are where the original loop's reads are.
 // RUN: env MARMOT_LOOPS_VERSION=1 %backend -O2 -verify-loop-info -loops-remarks -emit=llvm -o %t.ll %s 2>&1 | %FileCheck %s --check-prefix=REMARK
-// RUN: %FileCheck %s --check-prefix=HOIST < %t.ll
+// RUN: %FileCheck %s --check-prefix=CACHE < %t.ll
 // Without the switch and without -par no loop is versioned.
 // RUN: env -u MARMOT_LOOPS_VERSION %backend -O2 -emit=llvm -o %t2.ll %s
 // RUN: %FileCheck %s --check-prefix=OFF < %t2.ll
 
 // REMARK-DAG: loops: colsum: loop {{.*}}: versioned (version-only mode)
-// REMARK-DAG: loops: colsumw: loop {{.*}}: not versioned: loaded bound check loop cannot be hoisted out of the loop
+// REMARK-DAG: loops: colsumw: loop {{.*}}: not versioned: loaded bound check loop cannot be cached outside the loop
 // REMARK-DAG: loops: colsumif: loop {{.*}}: versioned (version-only mode)
 
 // done is false on entry to the outer loop; the guard (k < nrows over k in
 // [0, 63]) leads to bcv.cache, which runs the check loop only when done is
 // false.
-// HOIST-LABEL: define i64 @colsum(
-// HOIST: [[G:%[0-9]+]] = icmp sgt i64 %1, 63
-// HOIST: %bcv.done.0 = phi i1 [ false,
-// HOIST: br i1 [[G]], label %bcv.cache, label %.slow.pre
-// HOIST: bcv.cache:
-// HOIST-NEXT: br i1 %bcv.done.0, label %bcv.use, label %bcv.load
-// HOIST: bcv.load:
-// HOIST: bcv.use:
-// HOIST: call void @panicIndex(
-// HOIST-LABEL: define i64 @colsumw(
-// HOIST-NOT: bcv.cache
-// HOIST: call void @panicIndex(
+// CACHE-LABEL: define i64 @colsum(
+// CACHE: [[G:%[0-9]+]] = icmp sgt i64 %1, 63
+// CACHE: %bcv.done.0 = phi i1 [ false,
+// CACHE: br i1 [[G]], label %bcv.cache, label %.slow.pre
+// CACHE: bcv.cache:
+// CACHE-NEXT: br i1 %bcv.done.0, label %bcv.use, label %bcv.load
+// CACHE: bcv.load:
+// CACHE: bcv.use:
+// CACHE: call void @panicIndex(
+// CACHE-LABEL: define i64 @colsumw(
+// CACHE-NOT: bcv.cache
+// CACHE: call void @panicIndex(
 // The bound of the row index comes from an if around the loops (no k < nrows
 // check in the inner loop). The check loop must not run before that if, nor
 // when the outer loop runs zero times: it stays behind bcv.cache inside the
 // outer loop.
-// HOIST-LABEL: define i64 @colsumif(
-// HOIST: icmp sgt i64 %1, 63
-// HOIST: br i1 {{.*}}, label %bcv.cache, label %.loopexit
-// HOIST: bcv.cache:
-// HOIST: %bcv.done.0 = phi i1
-// HOIST: br i1 %bcv.done.0, label %bcv.use, label %bcv.load
+// CACHE-LABEL: define i64 @colsumif(
+// CACHE: icmp sgt i64 %1, 63
+// CACHE: br i1 {{.*}}, label %bcv.cache, label %.loopexit
+// CACHE: bcv.cache:
+// CACHE: %bcv.done.0 = phi i1
+// CACHE: br i1 %bcv.done.0, label %bcv.use, label %bcv.load
 // OFF-NOT: bcv.
 
 !row = !llvm.struct<(ptr, i64, i64)>
