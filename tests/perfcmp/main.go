@@ -30,14 +30,21 @@
 // -cpus. Each mode then prints how much other work ran on those CPUs during the
 // timed runs (information only, not part of the verdict).
 //
+// MARMOT_BENCH_GATE (set by remote.sh for a job of class late) names a command that
+// takes exclusive use of the host. perfcmp runs it after all builds, waits for it to
+// print "ready", times, and closes its stdin when the timing ends, which gives the
+// host back. Without the variable perfcmp times right after its builds.
+//
 // Exit status: 0 ok, 1 WORSE, 2 usage, 3 no quiet window in -wait,
 // 4 INCONCLUSIVE, 5 FAILED.
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"os/exec"
@@ -196,6 +203,16 @@ func main() {
 		}
 		builds[mi] = bs
 	}
+	giveBack := func() {}
+	if g := os.Getenv("MARMOT_BENCH_GATE"); g != "" {
+		release, err := takeGate(g)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "perfcmp:", err)
+			exit(exitNoWindow)
+		}
+		atExit(release)
+		giveBack = release
+	}
 	for mi, mode := range modes {
 		fmt.Printf("\n== %s\n%-12s %10s %10s %7s %10s %10s %7s %9s %9s %7s %9s %9s %7s\n", mode,
 			"program", "wall A", "wall B", "B/A", "cpu A", "cpu B", "B/A", "rss A", "rss B", "B/A", "size A", "size B", "B/A")
@@ -351,6 +368,7 @@ func main() {
 			o.noisy = true
 		}
 	}
+	giveBack() // the timed runs are over: other jobs may run again
 	fmt.Printf("\nload at end: %s\n", loadavg())
 	sampleLoad()
 	o.maxLoad, o.cpus = maxLoad, runtime.NumCPU()
@@ -451,6 +469,46 @@ func exit(code int) {
 	}
 	cleanups = nil
 	os.Exit(code)
+}
+
+// takeGate runs the gate command (sh CMD), waits until it prints "ready", and returns
+// the function that gives the gate back: it closes the command's stdin and waits for it
+// to end. The function is safe to call more than once.
+func takeGate(cmd string) (func(), error) {
+	fmt.Fprintf(os.Stderr, "perfcmp: builds done; waiting for exclusive use of the host (%s)\n", cmd)
+	c := exec.Command("sh", cmd)
+	c.Stderr = os.Stderr
+	in, err := c.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	out, err := c.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := c.Start(); err != nil {
+		return nil, fmt.Errorf("gate command %s: %v", cmd, err)
+	}
+	var once sync.Once
+	held := false
+	release := func() {
+		once.Do(func() {
+			in.Close()
+			io.Copy(io.Discard, out)
+			c.Wait()
+			if held {
+				fmt.Fprintln(os.Stderr, "perfcmp: timing done; the host is free for other jobs")
+			}
+		})
+	}
+	line, err := bufio.NewReader(out).ReadString('\n')
+	if strings.TrimSpace(line) != "ready" {
+		release()
+		return nil, fmt.Errorf("gate command %s did not print ready (got %q, %v)", cmd, line, err)
+	}
+	held = true
+	fmt.Fprintln(os.Stderr, "perfcmp: the host is ours; timing")
+	return release, nil
 }
 
 // dropLock removes the timing lock if this process holds it.
