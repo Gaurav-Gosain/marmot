@@ -2019,8 +2019,9 @@ private:
 
 // Rule V without parallelization (MARMOT_LOOPS_VERSION=1, opts.versionOnly): version the
 // innermost loops whose only extra exits are bounds checks, in builds without -par. Uses
-// the pin and stride forms of rule V (VersionOnlyRules), not loaded bounds. No hoisting of
-// check loops. At most 8 loops per function, loops of at most 200 instructions.
+// the loaded-bound, pin and stride forms of rule V (VersionOnlyRules); a loaded bound's
+// check loop runs once per run of an enclosing loop (cached), or the loop is not
+// versioned. At most 8 loops per function, loops of at most 200 instructions.
 class VersionOnlyPass : public PassInfoMixin<VersionOnlyPass> {
 public:
   explicit VersionOnlyPass(Options o) : opts(o) {}
@@ -2082,7 +2083,7 @@ public:
             }
             formLCSSARecursively(*L, DT, &LI, &SE);
             std::string why;
-            if (versionBoundsChecks(*F, L, LI, SE, DT, AA, why)) {
+            if (versionBoundsChecks(*F, L, LI, SE, DT, AA, why, /*hoistLoads=*/true)) {
               if (opts.remarks)
                 errs() << "loops: " << F->getName() << ": loop " << L->getHeader()->getName()
                        << ": versioned (version-only mode)\n";

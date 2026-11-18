@@ -27,6 +27,7 @@
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
+#include "llvm/Transforms/Utils/PromoteMemToReg.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
 using namespace llvm;
@@ -69,6 +70,8 @@ struct Cond {
 struct LoadBound {
   LoadInst *ld;
   const SCEV *base, *start, *step, *count;
+  // count before pinning (pinned values exist only at L's preheader).
+  const SCEV *rawCount = nullptr;
   Value *mn = nullptr, *mx = nullptr;
   Value *vbase = nullptr, *vstart = nullptr, *vstep = nullptr, *vcount = nullptr;
 };
@@ -89,10 +92,23 @@ struct Side {
   int load = -1;
 };
 
+// -verify-loop-info: LoopInfo after a change must equal a fresh one, block by
+// block (LoopInfo::verify does nothing in a release build of LLVM).
+void checkLoopInfo(Function &F, LoopInfo &LI, DominatorTree &DT) {
+  LoopInfo fresh(DT);
+  for (BasicBlock &bb : F) {
+    Loop *a = LI.getLoopFor(&bb), *b = fresh.getLoopFor(&bb);
+    if (!a != !b || (a && (a->getHeader() != b->getHeader() || a->getLoopDepth() != b->getLoopDepth())))
+      report_fatal_error(Twine("loops: LoopInfo out of date after versioning in ") + F.getName() +
+                         " at block " + bb.getName());
+  }
+}
+
 class Versioner {
 public:
-  Versioner(Function &F, LoopInfo &LI, ScalarEvolution &SE, DominatorTree &DT, AAResults &AA)
-      : F(F), LI(LI), SE(SE), DT(DT), AA(AA) {}
+  Versioner(Function &F, LoopInfo &LI, ScalarEvolution &SE, DominatorTree &DT, AAResults &AA,
+            bool hoist)
+      : F(F), LI(LI), SE(SE), DT(DT), AA(AA), hoist(hoist) {}
   bool run(Loop *L, std::string &why);
 
 private:
@@ -101,6 +117,14 @@ private:
   ScalarEvolution &SE;
   DominatorTree &DT;
   AAResults &AA;
+  // Cached check loops (versioning-only mode): a loaded bound's check loop
+  // runs at L's guard as before (after the scalar conditions, where the
+  // original code reaches the loads), but only on the first entry of L in
+  // each run of M, the outermost loop around L where its inputs are
+  // invariant and nothing writes the loaded memory. Later entries reuse the
+  // minimum and maximum. Without a loop M other than L, L is not versioned.
+  bool hoist;
+  Loop *M = nullptr;
   std::string why;
   std::vector<Cond> conds;
   std::vector<LoadBound> loads;
@@ -233,7 +257,12 @@ private:
   bool checkCondition(Loop *L, BranchInst *br, BasicBlock *exit);
   bool side(Loop *L, const SCEV *S, Side &out);
   int loadBound(Loop *L, LoadInst *ld);
-  Value *emitCheckLoops(BasicBlock *&at);
+  bool findHoist(Loop *L);
+  void emitCheckLoops(BasicBlock *&at);
+  // Blocks emitCheckLoops made: each loop's body (a one-block loop) and the
+  // block after it.
+  SmallVector<BasicBlock *, 2> checkBodies, checkAfters;
+  Value *loadCondValue(IRBuilder<> &b, BasicBlock *at);
 };
 
 // Rule V, loaded bounds: ld runs in every iteration of every loop between it
@@ -283,6 +312,7 @@ int Versioner::loadBound(Loop *L, LoadInst *ld) {
   } else if (!coef->isZero() && terms.empty()) {
     lb.step = coef;
     lb.count = latchCount(L);
+    lb.rawCount = lb.count;
     if (ruleOn(Rule::BcvPin) && !isa<SCEVCouldNotCompute>(lb.count))
       lb.count = pin(L, lb.count);
   } else if (coef->isZero() && terms.size() == 1 && lo == hi) {
@@ -305,6 +335,9 @@ int Versioner::loadBound(Loop *L, LoadInst *ld) {
     return -1;
   }
   lb.count = SE.getTruncateOrZeroExtend(lb.count, lo->getType());
+  lb.rawCount = lb.rawCount && !isa<SCEVCouldNotCompute>(lb.rawCount)
+                    ? SE.getTruncateOrZeroExtend(lb.rawCount, lo->getType())
+                    : lb.count;
   MemoryLocation loc = MemoryLocation::getBeforeOrAfter(ld->getPointerOperand(),
                                                         ld->getAAMetadata());
   for (BasicBlock *bb : L->blocks())
@@ -635,6 +668,8 @@ bool Versioner::run(Loop *L, std::string &whyOut) {
   for (LoadCond &c : loadConds)
     if (!exp.isSafeToExpandAt(c.other, pre->getTerminator()))
       return done(reject("precondition not expandable before the loop"));
+  if (hoist && !loads.empty() && !findHoist(L))
+    return done(false);
 
   formLCSSARecursively(*L, DT, &LI, &SE);
 
@@ -729,14 +764,77 @@ bool Versioner::run(Loop *L, std::string &whyOut) {
   if (loads.empty()) {
     BranchInst::Create(fastPre, slowPre, cond, preBr->getIterator());
     preBr->eraseFromParent();
+  } else if (M) {
+    // Cached: pre -> bcv.cache (done?) -> [bcv.loads: check loops, store] ->
+    // bcv.use -> fast or slow. The check loops run where they ran before (the
+    // scalar conditions hold and the original code reaches the loads), on
+    // the first entry of L in a run of M. done, min and max live in stack
+    // slots reset at M's preheader, promoted to registers below.
+    LLVMContext &C = F.getContext();
+    Type *i1 = Type::getInt1Ty(C);
+    IRBuilder<> ab(&F.getEntryBlock(), F.getEntryBlock().getFirstInsertionPt());
+    SmallVector<AllocaInst *, 8> slots;
+    AllocaInst *aDone = ab.CreateAlloca(i1, nullptr, "bcv.done");
+    slots.push_back(aDone);
+    SmallVector<std::pair<AllocaInst *, AllocaInst *>, 2> aBounds;
+    for (size_t i = 0; i < loads.size(); i++) {
+      aBounds.push_back({ab.CreateAlloca(i64, nullptr, "bcv.min"), ab.CreateAlloca(i64, nullptr, "bcv.max")});
+      slots.push_back(aBounds.back().first);
+      slots.push_back(aBounds.back().second);
+    }
+    IRBuilder<> mb(M->getLoopPreheader()->getTerminator());
+    mb.CreateStore(ConstantInt::getFalse(C), aDone);
+    for (auto &a : aBounds) {
+      mb.CreateStore(ConstantInt::get(i64, 0), a.first);
+      mb.CreateStore(ConstantInt::get(i64, 0), a.second);
+    }
+    BasicBlock *cache = BasicBlock::Create(C, "bcv.cache", &F, slowPre);
+    BasicBlock *checks0 = BasicBlock::Create(C, "bcv.loads", &F, slowPre);
+    BranchInst::Create(cache, slowPre, cond, preBr->getIterator());
+    preBr->eraseFromParent();
+    BasicBlock *useB = BasicBlock::Create(C, "bcv.use", &F, slowPre);
+    IRBuilder<> qb(cache);
+    qb.CreateCondBr(qb.CreateLoad(i1, aDone, "bcv.done.v"), useB, checks0);
+    BasicBlock *cur = checks0;
+    emitCheckLoops(cur);
+    IRBuilder<> sb(cur);
+    for (size_t i = 0; i < loads.size(); i++) {
+      sb.CreateStore(loads[i].mn, aBounds[i].first);
+      sb.CreateStore(loads[i].mx, aBounds[i].second);
+    }
+    sb.CreateStore(ConstantInt::getTrue(C), aDone);
+    sb.CreateBr(useB);
+    IRBuilder<> ub(useB);
+    for (size_t i = 0; i < loads.size(); i++) {
+      loads[i].mn = ub.CreateLoad(i64, aBounds[i].first, "bound.min.c");
+      loads[i].mx = ub.CreateLoad(i64, aBounds[i].second, "bound.max.c");
+    }
+    ub.CreateCondBr(loadCondValue(ub, useB), fastPre, slowPre);
+    // LoopInfo: the new blocks sit in L's parent loop (M or inside it); each
+    // check loop body is a loop of its own.
+    Loop *P = L->getParentLoop();
+    for (BasicBlock *bb : {cache, checks0, useB})
+      P->addBasicBlockToLoop(bb, LI);
+    for (BasicBlock *bb : checkAfters)
+      P->addBasicBlockToLoop(bb, LI);
+    for (BasicBlock *bb : checkBodies) {
+      Loop *CL = LI.AllocateLoop();
+      P->addChildLoop(CL);
+      CL->addBasicBlockToLoop(bb, LI);
+    }
+    DT.recalculate(F);
+    PromoteMemToReg(slots, DT);
+    if (VerifyLoopInfo)
+      checkLoopInfo(F, LI, DT);
   } else {
     // Scalar conditions first: they keep the check loops' reads in bounds.
     BasicBlock *checks0 = BasicBlock::Create(F.getContext(), "bcv.loads", &F, slowPre);
     BranchInst::Create(checks0, slowPre, cond, preBr->getIterator());
     preBr->eraseFromParent();
     BasicBlock *cur = checks0;
-    Value *c2 = emitCheckLoops(cur);
+    emitCheckLoops(cur);
     IRBuilder<> eb(cur);
+    Value *c2 = loadCondValue(eb, cur);
     eb.CreateCondBr(c2, fastPre, slowPre);
   }
   (void)fast;
@@ -747,10 +845,65 @@ bool Versioner::run(Loop *L, std::string &whyOut) {
   return true;
 }
 
+// Picks M for the cached check loops (see hoist). Fails with a reason when
+// L is the only candidate.
+bool Versioner::findHoist(Loop *L) {
+  Loop *best = nullptr;
+  for (Loop *P = L->getParentLoop(); P; P = P->getParentLoop()) {
+    if (!P->getLoopPreheader())
+      break;
+    bool ok = true;
+    for (LoadBound &lb : loads)
+      for (const SCEV *x : {lb.base, lb.start, lb.step, lb.rawCount})
+        ok &= SE.isLoopInvariant(x, P);
+    for (BasicBlock *bb : P->blocks()) {
+      if (!ok)
+        break;
+      for (Instruction &I : *bb) {
+        if (!I.mayWriteToMemory())
+          continue;
+        if (isa<CallBase>(I) || !isa<StoreInst>(I)) {
+          ok = false;
+          break;
+        }
+        for (LoadBound &lb : loads) {
+          MemoryLocation loc = MemoryLocation::getBeforeOrAfter(lb.ld->getPointerOperand(),
+                                                                lb.ld->getAAMetadata());
+          if (isModSet(AA.getModRefInfo(&I, loc)))
+            ok = false;
+        }
+        if (!ok)
+          break;
+      }
+    }
+    if (!ok)
+      break;
+    best = P;
+  }
+  if (!best)
+    return reject("loaded bound check loop cannot be hoisted out of the loop");
+  M = best;
+  return true;
+}
+
+// The conjunction of the load conditions, built with b at the end of at.
+Value *Versioner::loadCondValue(IRBuilder<> &b, BasicBlock *at) {
+  (void)at;
+  Value *cond = b.getTrue();
+  for (LoadCond &c : loadConds) {
+    Value *other = c.vother;
+    LoadBound &lb = loads[c.load];
+    Value *bound = c.useMax ? lb.mx : lb.mn;
+    Value *t = c.loadLeft ? b.CreateICmp(c.pred, bound, other) : b.CreateICmp(c.pred, other, bound);
+    cond = b.CreateAnd(cond, t, "bcv.ok");
+  }
+  return cond;
+}
+
 // Emits one loop per loaded bound, starting in block `at` (which it leaves
-// pointing at the block after the last loop), and returns the conjunction of
-// the load conditions. Their inputs were expanded in the guard block.
-Value *Versioner::emitCheckLoops(BasicBlock *&at) {
+// pointing at the block after the last loop, without a terminator). The
+// loops' inputs were expanded before.
+void Versioner::emitCheckLoops(BasicBlock *&at) {
   LLVMContext &C = F.getContext();
   Type *i64 = Type::getInt64Ty(C);
   Type *i8 = Type::getInt8Ty(C);
@@ -758,6 +911,8 @@ Value *Versioner::emitCheckLoops(BasicBlock *&at) {
     Value *base = lb.vbase, *start = lb.vstart, *step = lb.vstep, *count = lb.vcount;
     BasicBlock *body = BasicBlock::Create(C, "bcv.load", &F, at->getNextNode());
     BasicBlock *after = BasicBlock::Create(C, "bcv.load.done", &F, body->getNextNode());
+    checkBodies.push_back(body);
+    checkAfters.push_back(after);
     IRBuilder<> b(at);
     b.CreateBr(body);
     IRBuilder<> lb2(body);
@@ -789,24 +944,13 @@ Value *Versioner::emitCheckLoops(BasicBlock *&at) {
     cast<PHINode>(lb.mx)->addIncoming(mx2, body);
     at = after;
   }
-  IRBuilder<> b(at);
-  Value *cond = b.getTrue();
-  for (LoadCond &c : loadConds) {
-    Value *other = c.vother;
-    LoadBound &lb = loads[c.load];
-    Value *bound = c.useMax ? lb.mx : lb.mn;
-    b.SetInsertPoint(at);
-    Value *t = c.loadLeft ? b.CreateICmp(c.pred, bound, other) : b.CreateICmp(c.pred, other, bound);
-    cond = b.CreateAnd(cond, t, "bcv.ok");
-  }
-  return cond;
 }
 
 } // namespace
 
 bool versionBoundsChecks(Function &F, Loop *L, LoopInfo &LI, ScalarEvolution &SE,
-                         DominatorTree &DT, AAResults &AA, std::string &why) {
-  Versioner v(F, LI, SE, DT, AA);
+                         DominatorTree &DT, AAResults &AA, std::string &why, bool hoistLoads) {
+  Versioner v(F, LI, SE, DT, AA, hoistLoads);
   return v.run(L, why);
 }
 

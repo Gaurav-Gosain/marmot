@@ -409,6 +409,53 @@ theorem passes_of_pointwise {σ : Type} (body : List (Instr σ)) (n k : Nat) (s 
     · exact ih (k + 1) _ (fun k' a b s' => h k' (by omega) (by omega) s')
     · trivial
 
+/-! Cached check loops (versioning-only mode). A loaded bound's check loop computes the minimum and
+maximum of the words at addresses `addr j`, j in [0, c]. It runs at L's guard, after the scalar
+conditions, where it always ran, but only on the first entry of L in a run of M; later entries reuse
+its result. The pass caches only when base, start, step and count are invariant in M and no
+instruction of M may write those words (stores by alias analysis, no calls), so the memory at a later
+entry agrees with the memory at the first on every address read, and the cached minimum and maximum
+equal the ones a fresh check loop would compute. Read safety is unchanged: the reads happen at the
+same place as before, behind the same guards, and only when L is entered. -/
+def foldMin (mem : Int → Int) (addr : Nat → Int) : Nat → Int
+  | 0 => mem (addr 0)
+  | n + 1 => min (foldMin mem addr n) (mem (addr (n + 1)))
+
+def foldMax (mem : Int → Int) (addr : Nat → Int) : Nat → Int
+  | 0 => mem (addr 0)
+  | n + 1 => max (foldMax mem addr n) (mem (addr (n + 1)))
+
+theorem hoist_min (m1 m2 : Int → Int) (addr : Nat → Int) (c : Nat)
+    (same : ∀ j, j ≤ c → m1 (addr j) = m2 (addr j)) : foldMin m1 addr c = foldMin m2 addr c := by
+  induction c with
+  | zero => simp [foldMin, same 0 (Nat.le_refl 0)]
+  | succ n ih =>
+    simp only [foldMin]
+    rw [ih (fun j hj => same j (by omega)), same (n + 1) (Nat.le_refl _)]
+
+theorem hoist_max (m1 m2 : Int → Int) (addr : Nat → Int) (c : Nat)
+    (same : ∀ j, j ≤ c → m1 (addr j) = m2 (addr j)) : foldMax m1 addr c = foldMax m2 addr c := by
+  induction c with
+  | zero => simp [foldMax, same 0 (Nat.le_refl 0)]
+  | succ n ih =>
+    simp only [foldMax]
+    rw [ih (fun j hj => same j (by omega)), same (n + 1) (Nat.le_refl _)]
+
+/-- The minimum a check loop computes is at most every word it reads (the precondition
+`other < min` then covers every iteration's loaded bound). -/
+theorem foldMin_le (mem : Int → Int) (addr : Nat → Int) (c : Nat) :
+    ∀ j, j ≤ c → foldMin mem addr c ≤ mem (addr j) := by
+  induction c with
+  | zero => intro j hj; have : j = 0 := by omega
+            subst this; simp [foldMin]
+  | succ n ih =>
+    intro j hj
+    simp only [foldMin]
+    rcases Nat.lt_or_ge j (n + 1) with h | h
+    · exact Int.le_trans (Int.min_le_left _ _) (ih j (by omega))
+    · have : j = n + 1 := by omega
+      subst this; exact Int.min_le_right _ _
+
 end RuleV
 
 
@@ -416,3 +463,6 @@ end RuleV
 #print axioms RuleV.stay_sound
 #print axioms RuleV.nil_sound
 #print axioms RuleV.stride_sound
+#print axioms RuleV.hoist_min
+#print axioms RuleV.hoist_max
+#print axioms RuleV.foldMin_le

@@ -40,11 +40,12 @@ static cl::opt<bool> MaskedJamOn("loops-masked-jam", cl::Hidden,
                                  cl::desc("Rule M: masked jam (outer loop vectorization)"));
 
 // Set while the versioning-only pass runs (VersionOnlyRules): it uses the
-// pin and stride forms of rule V unless the command line sets the switch
-// explicitly (-loops-bcv-stride=false turns one off). Not the loaded-bound
-// form: its check loop runs on every entry of the versioned loop, and for a
-// loop bound by a float reduction's latency (matmul) that costs more cycles
-// than the removed checks save. It needs the check hoisted out of the nest.
+// loaded-bound, pin and stride forms of rule V unless the command line sets
+// the switch explicitly (-loops-bcv-stride=false turns one off). That pass
+// runs a loaded bound's check loop once per run of an enclosing loop (a
+// cache) and does not version a loop whose check loop would run on every
+// entry: for a loop bound by a float reduction's latency (matmul) that costs
+// more cycles than the removed checks save.
 static thread_local bool versionOnlyRules = false;
 
 VersionOnlyRules::VersionOnlyRules() : prev(versionOnlyRules) { versionOnlyRules = true; }
@@ -65,7 +66,7 @@ bool ruleOn(Rule r) {
   case Rule::BcvGrowth:
     return BcvGrowth;
   case Rule::BcvLoaded:
-    return BcvLoaded;
+    return versionOnlyDefault(BcvLoaded);
   case Rule::BcvPin:
     return versionOnlyDefault(BcvPin);
   case Rule::BcvStride:

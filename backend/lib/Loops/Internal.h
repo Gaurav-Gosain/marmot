@@ -43,7 +43,7 @@ bool decomposeAffine(llvm::ScalarEvolution &SE, const llvm::SCEV *S, const llvm:
 // versioning L; why gets a summary or the reason it did not.
 bool versionBoundsChecks(llvm::Function &F, llvm::Loop *L, llvm::LoopInfo &LI,
                          llvm::ScalarEvolution &SE, llvm::DominatorTree &DT,
-                         llvm::AAResults &AA, std::string &why);
+                         llvm::AAResults &AA, std::string &why, bool hoistLoads = false);
 
 // Loop idioms replaced by runtime kernels (Idioms.cpp, Rule D).
 void addIdioms(llvm::ModulePassManager &mpm, const Options &opts);
@@ -62,7 +62,7 @@ void addTile(llvm::FunctionPassManager &fpm, const Options &opts);
 enum class Rule { RtChecks, Privatize, BcvGrowth, BcvLoaded, BcvPin, BcvStride, ByteCount, Scan, Interchange, Jam, MaskedJam };
 bool ruleOn(Rule r);
 // While one is alive on this thread, ruleOn turns on the rule V forms the
-// versioning-only pass uses (BcvPin, BcvStride), unless the
+// versioning-only pass uses (BcvLoaded, BcvPin, BcvStride), unless the
 // command line sets them.
 struct VersionOnlyRules {
   VersionOnlyRules();
