@@ -9,3 +9,7 @@ else()
   add_executable(marmot-backend marmot-backend.cpp)
   target_link_libraries(marmot-backend PRIVATE MarmotDriver ${MARMOT_LLVM_LIBS})
 endif()
+# The object cache keys on the build id (WholeProgram.cpp backendId).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_options(marmot-backend PRIVATE -Wl,--build-id=sha1)
+endif()

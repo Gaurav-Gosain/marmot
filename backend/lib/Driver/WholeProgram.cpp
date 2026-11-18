@@ -50,7 +50,18 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/MDBuilder.h"
 
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/Config/llvm-config.h"
+
 #include <atomic>
+#include <cstring>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
+#elif defined(__linux__)
+#include <elf.h>
+#include <link.h>
+#endif
 #if defined(__linux__)
 #include <malloc.h> // malloc_trim
 #elif defined(__APPLE__)
@@ -567,12 +578,68 @@ double msSince(std::chrono::steady_clock::time_point t) {
       .count();
 }
 
+// The identity of this marmot-backend binary: the linker's build id (ELF
+// NT_GNU_BUILD_ID, Mach-O LC_UUID) of the running executable, read once,
+// plus the LLVM version (a shared libLLVM is not in the executable's bytes).
+// kCacheVersion alone missed code changes: a rebuilt backend reused objects
+// of the old one whenever the module text was the same.
+const std::string &backendId() {
+  static const std::string id = [] {
+    std::string out;
+#if defined(__APPLE__)
+    const auto *h = reinterpret_cast<const mach_header_64 *>(_dyld_get_image_header(0));
+    if (h && h->magic == MH_MAGIC_64) {
+      const auto *lc = reinterpret_cast<const load_command *>(h + 1);
+      for (uint32_t i = 0; i < h->ncmds; ++i) {
+        if (lc->cmd == LC_UUID) {
+          const auto *u = reinterpret_cast<const uuid_command *>(lc);
+          out = toHex(ArrayRef<uint8_t>(u->uuid, sizeof(u->uuid)), true);
+          break;
+        }
+        lc = reinterpret_cast<const load_command *>(reinterpret_cast<const char *>(lc) + lc->cmdsize);
+      }
+    }
+#elif defined(__linux__)
+    dl_iterate_phdr(
+        [](dl_phdr_info *info, size_t, void *data) -> int {
+          // The first object is the executable itself.
+          auto &s = *static_cast<std::string *>(data);
+          for (int i = 0; i < info->dlpi_phnum && s.empty(); ++i) {
+            const ElfW(Phdr) &ph = info->dlpi_phdr[i];
+            if (ph.p_type != PT_NOTE)
+              continue;
+            const char *p = reinterpret_cast<const char *>(info->dlpi_addr + ph.p_vaddr);
+            const char *end = p + ph.p_memsz;
+            while (p + sizeof(ElfW(Nhdr)) <= end) {
+              const auto *n = reinterpret_cast<const ElfW(Nhdr) *>(p);
+              const char *name = p + sizeof(*n);
+              const char *desc = name + ((n->n_namesz + 3) & ~3u);
+              if (desc + n->n_descsz > end)
+                break;
+              if (n->n_type == NT_GNU_BUILD_ID && n->n_namesz == 4 && std::memcmp(name, "GNU", 4) == 0) {
+                s = toHex(ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(desc), n->n_descsz), true);
+                break;
+              }
+              p = desc + ((n->n_descsz + 3) & ~3u);
+            }
+          }
+          return 1;
+        },
+        &out);
+#endif
+    if (out.empty())
+      out = "none";
+    return out + "/llvm-" LLVM_VERSION_STRING;
+  }();
+  return id;
+}
+
 // Everything besides the module's own text that changes what a cache entry
 // holds.
 std::string fingerprint(const CompileOptions &opts) {
   std::string fp;
   raw_string_ostream os(fp);
-  os << kCacheVersion << "|O" << opts.optLevel << "|" << int(opts.emit) << "|"
+  os << kCacheVersion << "|be=" << backendId() << "|O" << opts.optLevel << "|" << int(opts.emit) << "|"
      << "|snc" << opts.stringsNoCopy << "|mf" << opts.mergeFunctions << "|kcs" << opts.keepCallSites << "|" << opts.triple << "|" << opts.cpu
      << (opts.cpu == "native" ? "=" + sys::getHostCPUName().str() : std::string()) << "|"
      << opts.features << "|"
