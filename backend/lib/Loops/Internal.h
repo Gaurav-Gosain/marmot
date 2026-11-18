@@ -62,7 +62,7 @@ void addTile(llvm::FunctionPassManager &fpm, const Options &opts);
 enum class Rule { RtChecks, Privatize, BcvGrowth, BcvLoaded, BcvPin, BcvStride, ByteCount, Scan, Interchange, Jam, MaskedJam };
 bool ruleOn(Rule r);
 // While one is alive on this thread, ruleOn turns on the rule V forms the
-// versioning-only pass uses (BcvLoaded, BcvPin, BcvStride), unless the
+// versioning-only pass uses (BcvPin, BcvStride), unless the
 // command line sets them.
 struct VersionOnlyRules {
   VersionOnlyRules();

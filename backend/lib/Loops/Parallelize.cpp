@@ -2019,7 +2019,7 @@ private:
 
 // Rule V without parallelization (MARMOT_LOOPS_VERSION=1, opts.versionOnly): version the
 // innermost loops whose only extra exits are bounds checks, in builds without -par. Uses
-// the loaded-bound, pin and stride forms of rule V (VersionOnlyRules). No hoisting of
+// the pin and stride forms of rule V (VersionOnlyRules), not loaded bounds. No hoisting of
 // check loops. At most 8 loops per function, loops of at most 200 instructions.
 class VersionOnlyPass : public PassInfoMixin<VersionOnlyPass> {
 public:
