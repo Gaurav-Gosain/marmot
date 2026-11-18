@@ -30,6 +30,8 @@ func TestHealLock(t *testing.T) {
 	}{
 		{"dead pid", "perfcmp pid 999999\n", 0, true},
 		{"live pid", fmt.Sprintf("perfcmp pid %d\n", os.Getpid()), 0, false},
+		{"dead pid, start time", "perfcmp started 2026-11-18T16:34:00+04:00 pid 999999\n", 0, true},
+		{"live pid, start time", lockOwner(), 0, false},
 		{"other format, live", fmt.Sprintf("frontend insn counts %d\n", os.Getpid()), 0, false},
 		{"no pid", "someone\n", time.Hour, false},
 		{"no owner, new", "", 0, false},

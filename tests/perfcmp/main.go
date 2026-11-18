@@ -376,7 +376,12 @@ func dropLock() {
 	}
 }
 
-func lockOwner() string { return fmt.Sprintf("perfcmp pid %d\n", os.Getpid()) }
+// lockOwner is the owner file's text: the start time, so a person can judge
+// a stale lock at a glance, and the pid as the last word (healLock reads it).
+// Fixed for the life of the process, so dropLock can compare it.
+var lockOwner = sync.OnceValue(func() string {
+	return fmt.Sprintf("perfcmp started %s pid %d\n", time.Now().Format(time.RFC3339), os.Getpid())
+})
 
 // missingProgs are -programs names perfcmp cannot find (no such bench program, or
 // sketch and tuios without a tuios tree); each makes the verdict FAILED.
