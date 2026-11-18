@@ -1557,7 +1557,8 @@ void Builder::wide(Operation &o) {
 // else needs it, then die. On arm64 an address with several uses folds only
 // where every use takes the register offset form (offset 0, k 0 or the
 // access size), since otherwise each use would need its own add; one use
-// folds when its offset fits the immediate forms.
+// folds when its offset fits the immediate forms. On x86-64 an address with
+// more than two uses stays (see below).
 void Builder::foldAddresses() {
   static const bool on = [] {
     const char *e = getenv("MARMOT_TIER0_ADDR");
@@ -1606,6 +1607,11 @@ void Builder::foldAddresses() {
   for (VId p = 0; p < nv; p++) {
     if (!addrUses[p] || !ok[p]) continue;
     if (addrUses[p] != f.vals[p].uses || !split(p, splits[p])) ok[p] = 0;
+    // x86-64: an address shared by more than two accesses (the pieces of
+    // a struct element) stays one value: folding it would keep the base and
+    // the index live in its place, one more register over all of them, for
+    // no fewer instructions.
+    else if (x64 && addrUses[p] > 2) ok[p] = 0;
   }
   if (!x64) {
     for (const Inst &in : f.insts)
