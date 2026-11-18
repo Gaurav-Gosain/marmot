@@ -97,9 +97,9 @@ func (b *build) spillParts(i int, m *codegen.Module, parts []codegen.Module, cac
 	return b.spill(i, m, cacheable, keys)
 }
 
-// partOrder: MARMOT_PART_ORDER=1 links parts in package and part order
-// (linkOrder), for now (the default once perfcmp passes).
-var partOrder = os.Getenv("MARMOT_PART_ORDER") == "1"
+// partOrder links parts in package and part order (linkOrder), by default;
+// MARMOT_PART_ORDER=0 links them in module number order.
+var partOrder = os.Getenv("MARMOT_PART_ORDER") != "0"
 
 // linkOrder puts the objects of the parts (after the n first modules) in
 // package and part order. Parts get their module numbers as their

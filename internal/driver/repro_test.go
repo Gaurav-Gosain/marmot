@@ -11,7 +11,7 @@ import (
 // Two cold builds of one program give the same binary, with packages split
 // in many parts (MARMOT_PART_INSTRS small): parts get their module numbers
 // as their packages finish generating, in parallel, and the link must not
-// follow that order (linkOrder, MARMOT_PART_ORDER=1).
+// follow that order (linkOrder; MARMOT_PART_ORDER=0 turns it off).
 func TestReproducibleBuild(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds four programs")
