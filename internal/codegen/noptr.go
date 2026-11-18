@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"go/types"
+	"os"
 	"strings"
 
 	"github.com/Gaurav-Gosain/marmot/internal/mlir"
@@ -147,6 +148,14 @@ func (m *moduleGen) emitGCVars() {
 	sec := "marmot_gcvars"
 	if m.p.opts.GOOS == "darwin" || m.p.opts.GOOS == "ios" {
 		sec = "__DATA,__marmot_gcvars,regular,live_support"
+		// MARMOT_GCVARS_LIVE=0: no live_support. The macOS linker's dead
+		// stripping of live_support records does not always keep the same
+		// variables (one private literal kept in some links and not in
+		// others), so two links of the same objects could differ. Without
+		// it a record keeps its variable alive.
+		if os.Getenv("MARMOT_GCVARS_LIVE") == "0" {
+			sec = "__DATA,__marmot_gcvars,regular"
+		}
 	}
 	rec := mlir.Struct(mlir.Ptr, mlir.I64, mlir.Ptr)
 	var b strings.Builder
