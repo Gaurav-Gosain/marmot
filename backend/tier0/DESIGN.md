@@ -122,7 +122,7 @@ Single pass per function, no IR of its own:
 - `EmitArm64.cpp`, `EmitX64.cpp`: the emitters, deriving from `FuncPlan`; they own instruction
   selection, encoding and target peepholes only.
 
-## MIR (MARMOT_TIER0_MIR=1)
+## MIR (default on, MARMOT_TIER0_MIR=0 turns it off)
 
 The second code generator, on its own IR (`Mir.h`), for both targets:
 
