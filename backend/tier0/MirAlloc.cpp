@@ -269,6 +269,27 @@ void allocate(const Func &f, const TargetRegs &t, Alloc &a) {
       }
       bool cross = crosses(v);
       cur = v;
+      // A two-address result in the register of its first operand, which
+      // ends here: no copy before the operation (and none at a loop's back
+      // edge when the operand is the loop counter).
+      if (t.tieFirst && !fp && f.vals[v].def != ~0u) {
+        const Inst &d = f.insts[f.vals[v].def];
+        bool two = d.op == Op::Add || d.op == Op::Sub || d.op == Op::And || d.op == Op::Or || d.op == Op::Xor ||
+                   d.op == Op::Mul || d.op == Op::Shl || d.op == Op::LShr || d.op == Op::AShr;
+        VId x = d.a;
+        if (two && d.dst == v && x != None && x < nv && a.loc[x].k == Loc::Reg && end[x] == start[v] &&
+            f.vals[x].cls == Cls::Int && !(cross && !(calleeMask >> a.loc[x].reg & 1))) {
+          auto it = std::find(active.begin(), active.end(), x);
+          if (it != active.end()) {
+            *it = active.back();
+            active.pop_back();
+            a.loc[v].k = Loc::Reg;
+            a.loc[v].reg = a.loc[x].reg;
+            active.push_back(v);
+            continue;
+          }
+        }
+      }
       int r = cross ? -1 : pick(freeCaller, rc.caller);
       if (r < 0) r = pick(freeCallee, rc.callee);
       if (r >= 0) {

@@ -36,6 +36,10 @@ struct RegClass {
 struct TargetRegs {
   RegClass gpr, fpr;
   bool fmaIsCall = false;  // FMA is a call to the C library (x86-64-v2)
+  // Two-address operations (x86-64): the result of an integer add, sub,
+  // and, or, xor, mul or shift may take the register of its first operand
+  // when that operand's interval ends there (the emitter skips the mov).
+  bool tieFirst = false;
 };
 
 struct Alloc {

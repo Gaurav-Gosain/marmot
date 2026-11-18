@@ -37,6 +37,9 @@ const TargetRegs &regs() {
     r.gpr.callee = {X::RBX, X::R12, X::R13, X::R14, X::R15};
     r.fpr.caller = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
     r.fmaIsCall = true;
+    // MARMOT_TIER0_TIE=1: two-address results in their first operand's register.
+    const char *tie = getenv("MARMOT_TIER0_TIE");
+    r.tieFirst = tie && *tie == '1';
     return r;
   }();
   return t;
