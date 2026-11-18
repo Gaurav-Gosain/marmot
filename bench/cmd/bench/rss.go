@@ -141,6 +141,7 @@ func rssOnlyRow(r Result, out string) Result {
 		r.Status, r.Error = "run_failed", trunc(err.Error())
 		return r
 	}
+	_, _, r.Footprint = counters(out)
 	r.Status = "ok"
 	return r
 }

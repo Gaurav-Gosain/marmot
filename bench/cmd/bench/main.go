@@ -150,6 +150,10 @@ type Result struct {
 	// cost measure. Only recorded on macOS, where /usr/bin/time -l reports them (optional tool).
 	Instructions int64 `json:"instructions,omitempty"`
 	Cycles       int64 `json:"cycles,omitempty"`
+	// Footprint is the lifetime peak of phys_footprint of one run on macOS (ri_lifetime_max_phys_footprint,
+	// "peak memory footprint" of /usr/bin/time -l). Unlike maxrss it drops when memory is given back
+	// with MADV_FREE_REUSABLE.
+	Footprint int64 `json:"peak_footprint_bytes,omitempty"`
 	// BinSHA256 is the hash of the built binary. Toolchains that differ only in hidden flags must
 	// produce different binaries where the flags matter; the hash lets that be checked.
 	BinSHA256 string `json:"bin_sha256,omitempty"`
@@ -452,7 +456,7 @@ func measure(p Program, t Toolchain) Result {
 			return r
 		}
 	}
-	r.Instructions, r.Cycles = counters(out)
+	r.Instructions, r.Cycles, r.Footprint = counters(out)
 	r.Status = "ok"
 	return r
 }
@@ -927,26 +931,30 @@ func pruned(p Program, t Toolchain) bool {
 var (
 	instrRe  = regexp.MustCompile(`(\d+)\s+instructions retired`)
 	cyclesRe = regexp.MustCompile(`(\d+)\s+cycles elapsed`)
+	footRe   = regexp.MustCompile(`(\d+)\s+peak memory footprint`)
 )
 
 // counters runs the binary once under /usr/bin/time -l on macOS and returns the retired
-// instructions and cycles. Counters do not depend on machine load, unlike wall time. It is
+// instructions, cycles and peak memory footprint. Counters do not depend on machine load, unlike wall time. It is
 // optional: on other systems, or if the tool is missing, it returns zeros.
-func counters(bin string) (instr, cycles int64) {
+func counters(bin string) (instr, cycles, footprint int64) {
 	if runtime.GOOS != "darwin" {
-		return 0, 0
+		return 0, 0, 0
 	}
 	var se bytes.Buffer
 	c := exec.Command("/usr/bin/time", "-l", bin)
 	c.Stderr = &se
 	if _, err := runGroup(c, time.Duration(*timeoutSec)*time.Second); err != nil {
-		return 0, 0
+		return 0, 0, 0
 	}
 	if m := instrRe.FindSubmatch(se.Bytes()); m != nil {
 		instr, _ = strconv.ParseInt(string(m[1]), 10, 64)
 	}
 	if m := cyclesRe.FindSubmatch(se.Bytes()); m != nil {
 		cycles, _ = strconv.ParseInt(string(m[1]), 10, 64)
+	}
+	if m := footRe.FindSubmatch(se.Bytes()); m != nil {
+		footprint, _ = strconv.ParseInt(string(m[1]), 10, 64)
 	}
 	return
 }
