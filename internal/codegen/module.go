@@ -455,6 +455,10 @@ func (m *moduleGen) funcAttrs(fn *ssa.Function, sym string, decl bool) string {
 			pass = append(pass, `["frame-pointer", "non-leaf"]`)
 		}
 	}
+	if local && len(fn.Blocks) > 0 && m.p.stdFunc(fn) {
+		// For the backend's cost policies only; no pass reads it to change code.
+		pass = append(pass, `"marmot-std"`)
+	}
 	if optGCPtr && local && len(fn.Blocks) > 0 && m.p.conservativeFunc(fn) {
 		pass = append(pass, `"marmot-conservative-stack"`)
 	}

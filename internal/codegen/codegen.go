@@ -57,6 +57,9 @@ type Options struct {
 	// MergedGOROOT is where the loader's GOROOT symlinks live; source
 	// locations resolve them.
 	MergedGOROOT string
+	// StdPkgs holds the import paths of the standard library packages
+	// (loader.IsStandard). Their functions get the "marmot-std" attribute.
+	StdPkgs map[string]bool
 	// XDefs sets string variables as the linker's -X does: "pkgpath.name"
 	// to value (go test sets testing.testBinary to "1").
 	XDefs map[string]string

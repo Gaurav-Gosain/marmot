@@ -335,7 +335,7 @@ func buildSSA(pkgs []*packages.Package) (prog *ssa.Program, ssaPkgs []*ssa.Packa
 	// codegen needs them to order variable reads after calls like gc does.
 	user := map[string]bool{}
 	packages.Visit(pkgs, nil, func(p *packages.Package) {
-		if p.Module != nil || p.PkgPath == "command-line-arguments" || !isStd(p.PkgPath) {
+		if !IsStandard(p) {
 			user[p.PkgPath] = true
 		}
 	})
@@ -416,6 +416,12 @@ func InputFiles(cfg Config) ([]string, string, error) {
 		}
 	}
 	return files, goroot, nil
+}
+
+// IsStandard reports whether p is a standard library package: no module
+// and a standard import path.
+func IsStandard(p *packages.Package) bool {
+	return p.Module == nil && isStd(p.PkgPath)
 }
 
 // isStd reports whether path looks like a standard library import path

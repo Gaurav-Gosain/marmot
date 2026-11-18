@@ -328,7 +328,7 @@ func (b *build) run1() (string, error) {
 	if cfg.TrimPath {
 		fileNames = trimNames(lp.GOROOT, lp.All)
 	}
-	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, FilePkgs: filePkgs, FileNames: fileNames, GoDialect: cfg.Dialect == "go", Release: cfg.Release, LineLocs: !b.tier0() && cfg.OptLevel != "0" && os.Getenv("MARMOT_LOC_COLS") != "1", NoptrSections: b.noptr(), GCVars: b.noptr() && !b.tier0() && os.Getenv("MARMOT_GCVARS") != "0", InitSections: os.Getenv("MARMOT_INITSECT") == "1", HomeInstances: b.homeInstances(), MergedGOROOT: lp.GOROOT, XDefs: b.xdefs(),
+	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, FilePkgs: filePkgs, FileNames: fileNames, GoDialect: cfg.Dialect == "go", Release: cfg.Release, LineLocs: !b.tier0() && cfg.OptLevel != "0" && os.Getenv("MARMOT_LOC_COLS") != "1", NoptrSections: b.noptr(), GCVars: b.noptr() && !b.tier0() && os.Getenv("MARMOT_GCVARS") != "0", InitSections: os.Getenv("MARMOT_INITSECT") == "1", HomeInstances: b.homeInstances(), MergedGOROOT: lp.GOROOT, StdPkgs: stdPkgs(lp), XDefs: b.xdefs(),
 		Separate: b.incr, Facts: incrementalFacts(lp), KeepExported: keepExported, ReflectCall: reflectCall,
 		AllocReport: b.allocReport()})
 	if err != nil {
@@ -1097,6 +1097,18 @@ func (b *build) writeXDefs(w io.Writer) {
 	for _, k := range keys {
 		fmt.Fprintf(w, "X %s=%q\n", k, x[k])
 	}
+}
+
+// stdPkgs returns the import paths of the standard library packages of the
+// load.
+func stdPkgs(lp *loader.Program) map[string]bool {
+	m := map[string]bool{}
+	for _, p := range lp.All {
+		if loader.IsStandard(p) {
+			m[p.PkgPath] = true
+		}
+	}
+	return m
 }
 
 // moduleTextVersion changes when the driver changes module text after
