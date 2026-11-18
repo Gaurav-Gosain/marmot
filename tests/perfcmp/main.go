@@ -50,6 +50,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -85,6 +86,7 @@ var (
 	flRetries   = flag.Int("retries", 0, "time an INCONCLUSIVE mode again, with the same binaries, up to this many times (0: no retry)")
 	flRetryWait = flag.Duration("retry-wait", 10*time.Minute, "before a retry, wait at most this long for the load to stay below a quarter of the CPUs for a minute")
 	flRetryTime = flag.Duration("retry-time", 90*time.Minute, "start no retry once the timed runs took this long in total")
+	flSamples   = flag.String("samples", "", "write every timed run to this file, one JSON object a line (for analysis)")
 )
 
 var timingLock = "/tmp/marmot-timing.lock" // a var for the tests
@@ -214,6 +216,12 @@ func main() {
 		}
 		builds[mi] = bs
 	}
+	if *flSamples != "" {
+		f, err := os.Create(*flSamples)
+		check(err)
+		samplesOut = f
+		atExit(func() { f.Close() })
+	}
 	giveBack := func() {}
 	if g := os.Getenv("MARMOT_BENCH_GATE"); g != "" {
 		release, err := takeGate(g)
@@ -302,6 +310,11 @@ func main() {
 					if r == 0 && i == 0 {
 						rounds, keep0 = plan(runs, sm.wall)
 					}
+					kind := "timed"
+					if r == 0 && !keep0 {
+						kind = "warm-up"
+					}
+					logSample(mode, n, p.name, sides[i].label, r, kind, sm)
 					if r > 0 || keep0 {
 						got[i] = append(got[i], sm)
 					}
@@ -334,6 +347,7 @@ func main() {
 						break
 					}
 					used += sm.cpu.Seconds()
+					logSample(mode, n, p.name, sides[i].label, retries, "llc-retry", sm)
 					fmt.Printf("%s: retry %d of %d replaces it (%s wall, was %s; %d LLC misses)\n", what, retries, llcRetries, ms(sm.wall), ms(got[i][j].wall), sm.llc)
 					got[i][j] = sm
 				}
@@ -711,6 +725,20 @@ func (o outcome) printTries() {
 			fmt.Printf("%-8s %3d %8s %6.1f %7.3f %7.3f %7.3f %7.3f %7.3f  %s\n", m, t.n, t.start.Format("15:04:05"), t.load, t.ew, t.ec, t.gw, t.gc, t.gr, res)
 		}
 	}
+}
+
+var samplesOut *os.File
+
+// logSample writes one run to -samples. kind is warm-up (round 0, dropped), timed, or
+// llc-retry (a run again for a timed run that shared the LLC; round is then the retry).
+func logSample(mode string, try int, prog, side string, round int, kind string, s sample) {
+	if samplesOut == nil {
+		return
+	}
+	b, _ := json.Marshal(map[string]any{"mode": mode, "try": try, "program": prog, "side": side,
+		"round": round, "kind": kind, "wall_ns": s.wall.Nanoseconds(), "cpu_ns": s.cpu.Nanoseconds(), "rss": s.rss,
+		"cycles": s.cycles, "llc": s.llc})
+	samplesOut.Write(append(b, '\n'))
 }
 
 // retryFits reports whether a retry that takes as long as the last round, after a wait
