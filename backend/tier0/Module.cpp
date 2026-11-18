@@ -3,7 +3,9 @@
 #include "Mir.h"
 
 #include "mlir/IR/AttrTypeSubElements.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/xxhash.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstring>
@@ -671,6 +673,44 @@ static void lowerCards(ModuleOp module, bool x64) {
     if (auto f = dyn_cast<LL::LLVMFuncOp>(d); f && f.isExternal()) f.erase();
 }
 
+// MARMOT_TIER0_STABLENAMES=1: the suffix that makes this module's local
+// symbols unique (localNames) comes from the names the module defines, as
+// the source file name does in the LLVM path, not from the object cache key.
+// The key changes with every MARMOT_* switch and with the backend build, so
+// the names in .marmot_pcln changed with them and dev builds of the same
+// program by two compilers could not be compared byte for byte. A module
+// that defines no external symbol keeps the key (its local names alone
+// could repeat in another module).
+static std::string stableUnit(ModuleOp module, const std::string &unit) {
+  static const bool on = [] {
+    const char *e = getenv("MARMOT_TIER0_STABLENAMES");
+    return e && *e == '1';
+  }();
+  if (!on) return unit;
+  std::string names;
+  bool external = false;
+  for (Operation &op : module.getBody()->getOperations()) {
+    StringRef n;
+    bool local = false;
+    if (auto f = dyn_cast<LL::LLVMFuncOp>(op)) {
+      if (f.isExternal()) continue;
+      n = f.getSymName();
+      local = isLocalLinkage(f.getLinkage());
+    } else if (auto g = dyn_cast<LL::GlobalOp>(op)) {
+      if (!g.getValueOrNull() && g.getInitializerRegion().empty()) continue;  // a declaration
+      n = g.getSymName();
+      local = isLocalLinkage(g.getLinkage());
+    } else {
+      continue;
+    }
+    external |= !local;
+    names += n;
+    names += '\0';
+  }
+  if (!external) return unit;
+  return llvm::utohexstr(llvm::xxh3_64bits(names), true, 16);
+}
+
 bool emit(ModuleOp module, const std::string &unit, const std::string &outObject, std::string &fragment,
           std::vector<std::string> &fallback, std::vector<std::string> &reasons, Stats &stats,
           std::string &err, Target target, unsigned threads) {
@@ -678,7 +718,7 @@ bool emit(ModuleOp module, const std::string &unit, const std::string &outObject
   lowerCards(module, x64);
   dropUnused(module);
   elfNames = x64;
-  ModuleGen mg(module, unit, x64);
+  ModuleGen mg(module, stableUnit(module, unit), x64);
   mg.threads = threads ? threads : 1;
   // MARMOT_TIER0_THREADS=N forces N threads (tests of the parallel path).
   if (const char *e = getenv("MARMOT_TIER0_THREADS"); e && atoi(e) > 0) mg.threads = unsigned(atoi(e));
