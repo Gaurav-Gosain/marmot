@@ -229,6 +229,7 @@ func (b *build) initKeyBase() {
 		}
 		writeNoFlags(exeSig)
 		b.writeXDefs(exeSig)
+		b.writeToolIDs(exeSig)
 		b.keyBase = hex.EncodeToString(exeSig.Sum(nil))
 	}
 }
