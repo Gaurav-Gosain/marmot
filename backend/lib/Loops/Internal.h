@@ -50,6 +50,7 @@ void addIdioms(llvm::ModulePassManager &mpm, const Options &opts);
 
 // loop-parallelize (Parallelize.cpp).
 void addParallelize(llvm::ModulePassManager &mpm, const Options &opts);
+void addVersionOnly(llvm::ModulePassManager &mpm, const Options &opts);
 // reduction interchange (Interchange.cpp, Rule I).
 void addInterchange(llvm::FunctionPassManager &fpm, const Options &opts);
 // masked jam (MaskedJam.cpp, Rule M).
@@ -58,8 +59,20 @@ void addMaskedJam(llvm::FunctionPassManager &fpm, const Options &opts);
 void addTile(llvm::FunctionPassManager &fpm, const Options &opts);
 // Rules that -par uses only when their switch is on (Rules.cpp): the ones
 // verify has not signed off yet.
-enum class Rule { RtChecks, Privatize, BcvGrowth, BcvLoaded, ByteCount, Scan, Interchange, Jam, MaskedJam };
+enum class Rule { RtChecks, Privatize, BcvGrowth, BcvLoaded, BcvPin, BcvStride, ByteCount, Scan, Interchange, Jam, MaskedJam };
 bool ruleOn(Rule r);
+// While one is alive on this thread, ruleOn turns on the rule V forms the
+// versioning-only pass uses (BcvLoaded, BcvPin, BcvStride), unless the
+// command line sets them.
+struct VersionOnlyRules {
+  VersionOnlyRules();
+  ~VersionOnlyRules();
+  VersionOnlyRules(const VersionOnlyRules &) = delete;
+  VersionOnlyRules &operator=(const VersionOnlyRules &) = delete;
+
+private:
+  bool prev;
+};
 // Hidden option values, for cacheKey (Rules.cpp).
 unsigned mvLevelOption();
 std::string maskedJamOptions();

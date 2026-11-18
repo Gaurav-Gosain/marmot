@@ -108,6 +108,101 @@ private:
   // Header phis that change only on a growth path (append's cap and ptr):
   // when no growth happens they keep their start value.
   ValueToSCEVMapTy frozen;
+
+  // True when s refers to an induction of a loop that does not contain L:
+  // expanding it before L recomputes that loop's exit values from its
+  // inductions, and LSR then keeps extra values live in that loop.
+  bool foreign(Loop *L, const SCEV *s) {
+    return SCEVExprContains(s, [&](const SCEV *x) {
+      auto *ar = dyn_cast<SCEVAddRecExpr>(x);
+      return ar && !ar->getLoop()->contains(L);
+    });
+  }
+
+  // Rewrites foreign parts of a SCEV to IR values that already hold them, so
+  // the expander does not rebuild another loop's exit values from its
+  // inductions:
+  // - a subexpression equal to the SCEV of a value defined outside L that L
+  //   uses, or a header phi's incoming value from the preheader, becomes that
+  //   value (each one dominates L's preheader);
+  // - an induction of L whose start is foreign gets the start of a header phi
+  //   with the same step (its preheader incoming value) plus an invariant offset.
+  // The values stay the same, so the precondition is unchanged. The pinned
+  // values dominate L's preheader only: a precondition expanded further out
+  // (hoisted check loops) must not use them (expansion is at L's preheader).
+  DenseMap<const SCEV *, Value *> pinVals;
+  Loop *pinLoop = nullptr;
+  void collectPinVals(Loop *L) {
+    pinVals.clear();
+    pinLoop = L;
+    BasicBlock *pre = L->getLoopPreheader();
+    auto add = [&](Value *v) {
+      auto *I = dyn_cast<Instruction>(v);
+      if (!I || L->contains(I) || !SE.isSCEVable(I->getType()) ||
+          !DT.dominates(I, pre->getTerminator()))
+        return;
+      const SCEV *s = SE.getSCEV(I);
+      // Closed forms too: an exit value of another loop (an LCSSA phi) has a
+      // SCEV in terms of that loop's start values, which expanding would
+      // keep live across that loop.
+      if (!isa<SCEVUnknown>(s) && !isa<SCEVConstant>(s))
+        pinVals.try_emplace(s, I);
+    };
+    for (PHINode &h : L->getHeader()->phis())
+      add(h.getIncomingValueForBlock(pre));
+    for (BasicBlock *bb : L->blocks())
+      for (Instruction &I : *bb)
+        for (Value *op : I.operands())
+          add(op);
+  }
+  struct Pinner : SCEVRewriteVisitor<Pinner> {
+    Versioner &V;
+    Loop *L;
+    Pinner(Versioner &v, Loop *l) : SCEVRewriteVisitor(v.SE), V(v), L(l) {}
+    const SCEV *visit(const SCEV *s) {
+      auto it = V.pinVals.find(s);
+      if (it != V.pinVals.end())
+        return V.SE.getUnknown(it->second);
+      return SCEVRewriteVisitor::visit(s);
+    }
+    const SCEV *visitAddRecExpr(const SCEVAddRecExpr *e) {
+      if (e->getLoop() != L || !e->isAffine() || !V.foreign(L, e->getStart()))
+        return SCEVRewriteVisitor::visitAddRecExpr(e);
+      // Prefer a header phi of L with the same step whose start differs by a
+      // constant (pop's len-1 against its own len phi): its preheader value
+      // holds exactly this side. Then a value that holds the start, then a
+      // phi with an invariant offset.
+      BasicBlock *pre = L->getLoopPreheader();
+      const SCEV *step = e->getStepRecurrence(V.SE);
+      const SCEV *fallback = nullptr;
+      for (PHINode &h : L->getHeader()->phis()) {
+        if (!V.SE.isSCEVable(h.getType()))
+          continue;
+        auto *ph = dyn_cast<SCEVAddRecExpr>(V.SE.getSCEV(&h));
+        if (!ph || ph->getLoop() != L || !ph->isAffine() || ph->getStepRecurrence(V.SE) != step ||
+            ph->getType() != e->getType())
+          continue;
+        const SCEV *off = V.SE.getMinusSCEV(e->getStart(), ph->getStart());
+        const SCEV *start = V.SE.getAddExpr(V.SE.getUnknown(h.getIncomingValueForBlock(pre)), off);
+        // Same values as e in every iteration: keep e's wrap flags.
+        if (isa<SCEVConstant>(off))
+          return V.SE.getAddRecExpr(start, step, L, e->getNoWrapFlags());
+        if (!fallback && !V.foreign(L, off))
+          fallback = V.SE.getAddRecExpr(start, step, L, e->getNoWrapFlags());
+      }
+      const SCEV *s0 = visit(e->getStart());
+      if (!V.foreign(L, s0))
+        return V.SE.getAddRecExpr(s0, step, L, e->getNoWrapFlags());
+      if (fallback)
+        return fallback;
+      return SCEVRewriteVisitor::visitAddRecExpr(e);
+    }
+  };
+  const SCEV *pin(Loop *L, const SCEV *s) {
+    if (pinLoop != L)
+      collectPinVals(L);
+    return Pinner(*this, L).visit(s);
+  }
   // Assumptions (no-wrap of an induction) under which a loop's exit count is
   // exact; checked at run time like conds.
   SmallVector<const SCEVPredicate *, 4> preds;
@@ -188,6 +283,8 @@ int Versioner::loadBound(Loop *L, LoadInst *ld) {
   } else if (!coef->isZero() && terms.empty()) {
     lb.step = coef;
     lb.count = latchCount(L);
+    if (ruleOn(Rule::BcvPin) && !isa<SCEVCouldNotCompute>(lb.count))
+      lb.count = pin(L, lb.count);
   } else if (coef->isZero() && terms.size() == 1 && lo == hi) {
     // (decomposeAffine widened hi by the inner range; the start is lo.)
     lb.step = terms[0].step;
@@ -252,6 +349,8 @@ bool Versioner::range(Loop *L, const SCEV *S, const SCEV *&mn, const SCEV *&mx) 
   const SCEV *btc = latchCount(L);
   if (isa<SCEVCouldNotCompute>(btc))
     return reject("latch exit count not computable");
+  if (ruleOn(Rule::BcvPin))
+    btc = pin(L, btc);
   btc = SE.getTruncateOrZeroExtend(btc, ty);
   if (!coef->isZero())
     terms.push_back({coef, btc});
@@ -331,6 +430,10 @@ bool Versioner::checkCondition(Loop *L, BranchInst *br, BasicBlock *exit) {
     sa = SCEVParameterRewriter::rewrite(sa, SE, frozen);
     sb = SCEVParameterRewriter::rewrite(sb, SE, frozen);
   }
+  if (ruleOn(Rule::BcvPin)) {
+    sa = pin(L, sa);
+    sb = pin(L, sb);
+  }
   // Normalize to a stay predicate of the form x < y or x <= y (or x != y).
   switch (stay) {
   case ICmpInst::ICMP_UGT:
@@ -357,6 +460,17 @@ bool Versioner::checkCondition(Loop *L, BranchInst *br, BasicBlock *exit) {
   default:
     break;
   }
+  // x != 0 with x affine (pop's len != 0): min(x) > 0, as for a nil check
+  // (RuleV.lean nil_sound). The general x != y form below needs x < y,
+  // which never holds for y = 0.
+  if (ruleOn(Rule::BcvStride) && stay == ICmpInst::ICMP_NE && sb->isZero() &&
+      !SE.isLoopInvariant(sa, L)) {
+    const SCEV *mn, *mx;
+    if (!range(L, sa, mn, mx))
+      return false;
+    conds.push_back({ICmpInst::ICMP_SGT, mn, SE.getZero(sa->getType())});
+    return true;
+  }
   bool isUnsigned = ICmpInst::isUnsigned(stay) || stay == ICmpInst::ICMP_NE;
   bool strict = stay == ICmpInst::ICMP_ULT || stay == ICmpInst::ICMP_SLT ||
                 stay == ICmpInst::ICMP_NE;
@@ -380,6 +494,20 @@ bool Versioner::checkCondition(Loop *L, BranchInst *br, BasicBlock *exit) {
       loadConds.push_back({ICmpInst::ICMP_SGE, SE.getZero(ty), A.load, false, true});
     else
       conds.push_back({ICmpInst::ICMP_SGE, A.mn, SE.getZero(ty)});
+  }
+  // Both sides affine in L with the same step (s[len(s)-1] with a shrinking
+  // length): a_j - b_j is the same in every iteration, so compare the
+  // difference once. The term limits checked by side() keep a_j and b_j
+  // from wrapping, so a_j < b_j iff 0 < b_0 - a_0 (RuleV.lean, equal steps).
+  auto *ra = dyn_cast<SCEVAddRecExpr>(sa), *rb = dyn_cast<SCEVAddRecExpr>(sb);
+  if (ruleOn(Rule::BcvStride) && A.load < 0 && B.load < 0 && ra && rb && ra->getLoop() == L &&
+      rb->getLoop() == L && ra->isAffine() && rb->isAffine() &&
+      ra->getStepRecurrence(SE) == rb->getStepRecurrence(SE)) {
+    const SCEV *d = SE.getMinusSCEV(rb->getStart(), ra->getStart());
+    if (SE.isLoopInvariant(d, L)) {
+      conds.push_back({lt, SE.getZero(ty), d});
+      return true;
+    }
   }
   if (A.load >= 0)
     loadConds.push_back({lt, B.mn, A.load, true, true});

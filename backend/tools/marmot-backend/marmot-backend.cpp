@@ -369,6 +369,8 @@ int main(int argc, char **argv) {
   opts.loops.fastFP = fastFP;
   opts.loops.remarks = loopsRemarks;
   opts.loops.versioning = !noBCV;
+  if (const char *v = std::getenv("MARMOT_LOOPS_VERSION"))
+    opts.loops.versionOnly = std::string(v) == "1";
   opts.loops.typeAlias = typeAlias;
   opts.escape = !noEscape;
   opts.bce = !noBCE;

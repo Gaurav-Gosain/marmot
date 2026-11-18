@@ -252,6 +252,45 @@ theorem stay_sound (st : Stay) (x y : Side) (gx : x.Guard) (gy : y.Guard)
   have ry := y.range gy
   cases st <;> simp only [Stay.pre, Stay.holds] at * <;> omega
 
+/-- Equal steps (-loops-bcv-stride): both sides are add recurrences of L with the same step
+and no inner terms (the start of an add recurrence of L is invariant in L), so x_k - y_k is
+the same in every iteration. The pass compares the difference d = b_y - b_x once, computed
+with wrapping arithmetic; for the unsigned forms it also checks min(x) >= 0. -/
+def Stay.preD : Stay → Int → Int → Prop
+  | .slt, _, d => 0 < d
+  | .sle, _, d => 0 ≤ d
+  | .ult, mnx, d => 0 ≤ mnx ∧ 0 < d
+  | .ule, mnx, d => 0 ≤ mnx ∧ 0 ≤ d
+  | .ne, mnx, d => 0 ≤ mnx ∧ 0 < d
+
+/-- The start of a guarded side without inner terms is in [-2^61, 2^61]. -/
+theorem Aff.start_small (a : Aff) (g : a.Guard) (h : a.ts = []) : -T61 ≤ a.b ∧ a.b ≤ T61 := by
+  have hb := wrap_id g.bw.1 g.bw.2
+  have glo := g.lo
+  simp only [Aff.lo, h, sumLo, Int.add_zero] at glo
+  rw [hb] at glo
+  exact glo
+
+/-- Precondition soundness for equal steps: the guards of both sides (the same ones range()
+adds) and the compare on the wrapped difference imply the stay predicate on the IR values
+in every iteration. -/
+theorem stride_sound (st : Stay) (a b : Aff) (ga : a.Guard) (gb : b.Guard)
+    (hk : a.k = b.k) (ha : a.ts = []) (hb : b.ts = [])
+    (pre : st.preD (wrap a.mn) (wrap (b.b - a.b))) : st.holds (wrap a.val) (wrap b.val) := by
+  obtain ⟨_, hmx, h1, _, hva, _, _⟩ := a.range ga
+  obtain ⟨_, _, _, _, hvb, _, _⟩ := b.range gb
+  have hmn : wrap a.mn = a.mn := (a.range ga).1
+  have sa := a.start_small ga ha
+  have sb := b.start_small gb hb
+  have hd : wrap (b.b - a.b) = b.b - a.b := wrap_id (by omega) (by omega)
+  have hbv := (b.range gb).2.2.2.2.1
+  rw [hmn, hd] at pre
+  rw [hva, hvb]
+  have ea : a.val = a.b + a.k.val := by simp [Aff.val, ha, sumVal]
+  have eb : b.val = b.b + a.k.val := by simp [Aff.val, hb, sumVal, hk]
+  have rb := b.range gb
+  cases st <;> simp only [Stay.preD, Stay.holds] at * <;> omega
+
 /-- Nil check on an address p (as an integer): the precondition min(p) > 0 implies p != 0 in
 every iteration. -/
 theorem nil_sound (p : Side) (g : p.Guard) (pre : 0 < p.mn) : p.val ≠ 0 := by
@@ -376,3 +415,4 @@ end RuleV
 #print axioms RuleV.versioned_eq
 #print axioms RuleV.stay_sound
 #print axioms RuleV.nil_sound
+#print axioms RuleV.stride_sound

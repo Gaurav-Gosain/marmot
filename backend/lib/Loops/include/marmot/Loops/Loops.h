@@ -21,6 +21,7 @@ struct Options {
   bool enable = true;   // master switch (-no-loops turns it off)
   bool parallel = true; // loop-parallelize: outline loops onto rt_parallel_for (-no-par)
   bool versioning = true; // bounds check versioning (-no-bcv)
+  bool versionOnly = false; // rule V without -par (MARMOT_LOOPS_VERSION=1); opt in
   bool typeAlias = false; // go-type-alias: alias metadata from Go type classes (-type-alias); off until validated
   bool gpu = false;       // offer parallel loops to the GPU (backend's -gpu)
   bool fastFP = false;  // -ffast-fp: allow reordering floating point reductions

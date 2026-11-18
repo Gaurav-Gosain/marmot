@@ -2016,10 +2016,121 @@ private:
   Options opts;
 };
 
+
+// Rule V without parallelization (MARMOT_LOOPS_VERSION=1, opts.versionOnly): version the
+// innermost loops whose only extra exits are bounds checks, in builds without -par. Uses
+// the loaded-bound, pin and stride forms of rule V (VersionOnlyRules). No hoisting of
+// check loops. At most 8 loops per function, loops of at most 200 instructions.
+class VersionOnlyPass : public PassInfoMixin<VersionOnlyPass> {
+public:
+  explicit VersionOnlyPass(Options o) : opts(o) {}
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
+    VersionOnlyRules rules;
+    auto &FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+    std::vector<Function *> fns;
+    for (Function &F : M)
+      if (!F.isDeclaration() && !F.hasAvailableExternallyLinkage() && !F.hasOptNone() &&
+          !F.hasFnAttribute("marmot-par-body") && !F.hasOptSize() && !F.hasMinSize())
+        fns.push_back(&F);
+    bool changed = false;
+    unsigned total = 0;
+    for (Function *F : fns) {
+      unsigned n = 0;
+      for (int round = 0; round < 64 && n < 8; round++) {
+        auto &LI = FAM.getResult<LoopAnalysis>(*F);
+        auto &SE = FAM.getResult<ScalarEvolutionAnalysis>(*F);
+        auto &DT = FAM.getResult<DominatorTreeAnalysis>(*F);
+        auto &AA = FAM.getResult<AAManager>(*F);
+        auto &AC = FAM.getResult<AssumptionAnalysis>(*F);
+        for (Loop *L : LI)
+          simplifyLoop(L, &DT, &LI, &SE, &AC, nullptr, /*PreserveLCSSA=*/false);
+        bool did = false;
+        for (Loop *top : LI) {
+          for (Loop *L : top->getLoopsInPreorder()) {
+            if (!L->getSubLoops().empty() || isDecided(L) || !L->isLoopSimplifyForm())
+              continue;
+            if (L->getExitingBlock() == L->getLoopLatch())
+              continue; // no check exits
+            unsigned size = 0;
+            for (BasicBlock *bb : L->blocks())
+              size += bb->size();
+            markDecided(L); // before versioning: the copies inherit the mark
+            if (size > 200)
+              continue;
+            // Cost policy: the precondition runs on every entry, so a short loop
+            // entered often loses (fannkuch's flip loop: +33% instructions).
+            // Version a loop whose maximum trip count is a known constant of at
+            // least 16, or a loop outside any other loop whose trip count is not
+            // a small constant.
+            // Loops that append: growth makes the precondition fail on the
+            // first fill, and the clone costs more than it saves (generic).
+            bool appends = false;
+            for (BasicBlock *bb : L->blocks())
+              for (Instruction &I : *bb)
+                if (auto *cb = dyn_cast<CallBase>(&I))
+                  if (Function *g = cb->getCalledFunction())
+                    appends |= g->getName() == "runtime.growslice";
+            if (appends)
+              continue;
+            unsigned maxTrip = SE.getSmallConstantMaxTripCount(L);
+            bool longLoop = maxTrip >= 16 || (maxTrip == 0 && !L->getParentLoop());
+            if (!longLoop) {
+              if (opts.remarks)
+                errs() << "loops: " << F->getName() << ": loop " << L->getHeader()->getName()
+                       << ": not versioned: cost policy (max trip " << maxTrip << ")\n";
+              continue;
+            }
+            formLCSSARecursively(*L, DT, &LI, &SE);
+            std::string why;
+            if (versionBoundsChecks(*F, L, LI, SE, DT, AA, why)) {
+              if (opts.remarks)
+                errs() << "loops: " << F->getName() << ": loop " << L->getHeader()->getName()
+                       << ": versioned (version-only mode)\n";
+              did = true;
+              break;
+            }
+            if (opts.remarks)
+              errs() << "loops: " << F->getName() << ": loop " << L->getHeader()->getName()
+                     << ": not versioned: " << why << "\n";
+          }
+          if (did)
+            break;
+        }
+        FAM.invalidate(*F, PreservedAnalyses::none());
+        if (!did)
+          break;
+        n++;
+        total++;
+        if (verifyFunction(*F, &errs()))
+          report_fatal_error("loops: version-only produced invalid IR in " + F->getName());
+        changed = true;
+        FunctionPassManager fpm;
+        fpm.addPass(createFunctionToLoopPassAdaptor(LICMPass(LICMOptions()),
+                                                    /*UseMemorySSA=*/true));
+        fpm.run(*F, FAM);
+        FAM.invalidate(*F, PreservedAnalyses::none());
+      }
+    }
+    if (opts.remarks && total)
+      errs() << "loops: version-only: " << total << " loops versioned\n";
+    for (Function *F : fns)
+      for (BasicBlock &bb : *F)
+        if (Instruction *t = bb.getTerminator())
+          t->setMetadata(DoneMD, nullptr);
+    return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
+  }
+
+private:
+  Options opts;
+};
 } // namespace
 
 void addParallelize(ModulePassManager &mpm, const Options &opts) {
   mpm.addPass(ParallelizePass(opts));
+}
+
+void addVersionOnly(ModulePassManager &mpm, const Options &opts) {
+  mpm.addPass(VersionOnlyPass(opts));
 }
 
 bool forceParOption() { return ForcePar; }

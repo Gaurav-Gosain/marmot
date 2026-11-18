@@ -21,6 +21,8 @@ void registerLLVMPasses(PassBuilder &pb, const Options &opts) {
         if (opts.parallel) {
           addIdioms(mpm, opts);
           addParallelize(mpm, opts);
+        } else if (opts.versionOnly && opts.versioning) {
+          addVersionOnly(mpm, opts);
         }
       });
   // Jam chunk loops before the vectorizers, so the SLP vectorizer sees the

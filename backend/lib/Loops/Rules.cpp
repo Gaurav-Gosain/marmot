@@ -26,6 +26,10 @@ static cl::opt<bool> BcvGrowth("loops-bcv-growth", cl::Hidden,
                                cl::desc("Rule V: append growth branches"));
 static cl::opt<bool> BcvLoaded("loops-bcv-loaded", cl::Hidden,
                                cl::desc("Rule V: loaded bounds (check loops)"));
+static cl::opt<bool> BcvPin("loops-bcv-pin", cl::Hidden,
+                            cl::desc("Rule V: use values computed after other loops in the precondition"));
+static cl::opt<bool> BcvStride("loops-bcv-stride", cl::Hidden,
+                               cl::desc("Rule V: compare two sides with equal steps per iteration"));
 static cl::opt<bool> ByteCount("loops-bytecount", cl::Hidden,
                                cl::desc("Rule D: byte count loops to rt_count_byte"));
 static cl::opt<bool> Scan("loops-scan", cl::Hidden, cl::desc("Rule D: parallel prefix scans"));
@@ -34,6 +38,18 @@ static cl::opt<bool> InterchangeOn("loops-interchange", cl::Hidden,
 static cl::opt<bool> JamOn("loops-jam", cl::Hidden, cl::desc("loop-jam of chunk loops"));
 static cl::opt<bool> MaskedJamOn("loops-masked-jam", cl::Hidden,
                                  cl::desc("Rule M: masked jam (outer loop vectorization)"));
+
+// Set while the versioning-only pass runs (VersionOnlyRules): it uses the
+// loaded-bound, pin and stride forms of rule V unless the command line sets
+// the switch explicitly (-loops-bcv-stride=false turns one off).
+static thread_local bool versionOnlyRules = false;
+
+VersionOnlyRules::VersionOnlyRules() : prev(versionOnlyRules) { versionOnlyRules = true; }
+VersionOnlyRules::~VersionOnlyRules() { versionOnlyRules = prev; }
+
+static bool versionOnlyDefault(const cl::opt<bool> &o) {
+  return o.getNumOccurrences() ? bool(o) : (versionOnlyRules || o);
+}
 
 bool ruleOn(Rule r) {
   if (AllRules)
@@ -46,7 +62,11 @@ bool ruleOn(Rule r) {
   case Rule::BcvGrowth:
     return BcvGrowth;
   case Rule::BcvLoaded:
-    return BcvLoaded;
+    return versionOnlyDefault(BcvLoaded);
+  case Rule::BcvPin:
+    return versionOnlyDefault(BcvPin);
+  case Rule::BcvStride:
+    return versionOnlyDefault(BcvStride);
   case Rule::ByteCount:
     return ByteCount;
   case Rule::Scan:
@@ -71,6 +91,10 @@ const char *ruleFlag(Rule r) {
     return "-loops-bcv-growth";
   case Rule::BcvLoaded:
     return "-loops-bcv-loaded";
+  case Rule::BcvPin:
+    return "-loops-bcv-pin";
+  case Rule::BcvStride:
+    return "-loops-bcv-stride";
   case Rule::ByteCount:
     return "-loops-bytecount";
   case Rule::Scan:
@@ -93,6 +117,11 @@ std::string cacheKey() {
   for (Rule r : {Rule::RtChecks, Rule::Privatize, Rule::BcvGrowth, Rule::BcvLoaded, Rule::ByteCount,
                  Rule::Scan, Rule::Interchange, Rule::Jam, Rule::MaskedJam})
     k += ruleOn(r) ? '1' : '0';
+  // Rules added later: only when on, so default keys stay the same.
+  if (ruleOn(Rule::BcvPin))
+    k += "pin";
+  if (ruleOn(Rule::BcvStride))
+    k += "stride";
   k += forceParOption() ? "F" : "-";
   k += tileOption() ? "T" : "-";
   k += "mv" + std::to_string(mvLevelOption());
