@@ -7,5 +7,6 @@ run/mem/regionstore@lifetime  # MARMOT_LIFETIME=all: region store use-after-free
 run/audit/evalorder_gaps  # map index evaluation order differs from gc
 run/audit/math_exp_log_bits  # math.Exp(-745.13) returns 0x1, gc 0x0 (value difference, not a NaN payload)
 goroot/cmp@release  # equal strings built at compile time share their bytes (allowed by the spec; gc keeps them apart)
-run/opt/fma_cases@release  # amd64: one NaN result has other bits than gc (marmot computes it on the CPU, gc folds it at compile time); NaN bits are not specified
+run/opt/fma_cases@O2  # amd64: negMul(Inf, 0, 1) has another NaN sign than gc. LLVM turns -(x*y) + z into z - x*y, and SUBSD keeps the sign of the NaN that x*y makes. gc flips it. Go does not define the sign of a NaN.
+run/opt/fma_cases@release  # amd64: negMul(Inf, 0, 1) has another NaN sign than gc. LLVM turns -(x*y) + z into z - x*y, and SUBSD keeps the sign of the NaN that x*y makes. gc flips it. Go does not define the sign of a NaN.
 run/core/xsys_unix@wasm  # golang.org/x/sys/unix has no wasip1 port (gc cannot build it for wasip1 either)
