@@ -392,13 +392,19 @@ var tComplex128 = mlir.Struct(mlir.F64, mlir.F64)
 // readOnlyBytes reports whether []byte(s) conversion v is only read
 // (len, cap, element loads): then it can alias the string's bytes, as gc
 // does for range loops over []byte(s).
-func readOnlyBytes(v *ssa.Convert) bool {
+//
+// With MARMOT_ROCONV it may also be an argument of a static call that only
+// reads it and does not keep it (roArgOK).
+func (p *Program) readOnlyBytes(v *ssa.Convert) bool {
 	for _, r := range *v.Referrers() {
 		switch x := r.(type) {
 		case *ssa.DebugRef:
 		case *ssa.Call:
 			bi, ok := x.Call.Value.(*ssa.Builtin)
-			if !ok || (bi.Name() != "len" && bi.Name() != "cap") {
+			if ok && (bi.Name() == "len" || bi.Name() == "cap") {
+				continue
+			}
+			if !p.roArgOK(x, v) {
 				return false
 			}
 		case *ssa.IndexAddr:

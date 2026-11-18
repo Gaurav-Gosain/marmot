@@ -676,7 +676,7 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 	case *ssa.Slice:
 		f.slice(v)
 	case *ssa.Convert:
-		if bs, ok := v.Type().Underlying().(*types.Slice); ok && isString(v.X.Type()) && !isRuneElem(bs.Elem()) && readOnlyBytes(v) {
+		if bs, ok := v.Type().Underlying().(*types.Slice); ok && isString(v.X.Type()) && !isRuneElem(bs.Elem()) && f.m.p.readOnlyBytes(v) {
 			x := f.value(v.X)
 			n := f.extractRaw(x, tString, 1)
 			f.vals[v] = f.build(tSlice, f.extractRaw(x, tString, 0), n, n) // no copy

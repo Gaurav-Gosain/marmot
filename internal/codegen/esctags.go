@@ -66,6 +66,18 @@ func (p *Program) ComputeEscTags(pkg *ssa.Package) EscTags {
 			}
 		}
 		out[p.symbol(fn)] = t
+		if optROConv {
+			// "w:" entries: bit i set when parameter i may be written
+			// through (roconv.go). Absent without the switch, so the tags
+			// (and importer keys) of default builds do not change.
+			var w uint64
+			for i := 0; i < n; i++ {
+				if p.paramWritten(fn, i) {
+					w |= 1 << i
+				}
+			}
+			out["w:"+p.symbol(fn)] = w
+		}
 	}
 	return out
 }
@@ -93,6 +105,7 @@ func (t EscTags) Hash() string {
 func (p *Program) SetImportTags(tags map[*ssa.Package]EscTags) {
 	p.escMu.Lock()
 	p.esc = escapeState{}
+	p.wrDone = nil
 	p.escMu.Unlock()
 	p.importTags = tags
 }

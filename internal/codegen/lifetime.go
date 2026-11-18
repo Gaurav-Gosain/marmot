@@ -38,6 +38,8 @@ import (
 //	MARMOT_APPENDMAKE    append(s, make([]T, n)...) without the temporary
 //	MARMOT_DEFERELIDE    open-coded defers without the _defer record when
 //	                     nothing may panic
+//	MARMOT_ROCONV        []byte(s) passed to a callee that only reads it aliases
+//	                     the string (roconv.go)
 //	MARMOT_DEADINIT      drop initializers of package variables nothing reads
 //	                     (only computations that cannot panic; spec audit)
 //
@@ -66,12 +68,13 @@ var (
 	optAppendMake   = lifetimeOn("MARMOT_APPENDMAKE")
 	optDeferElide   = lifetimeOn("MARMOT_DEFERELIDE")
 	optDeadInit     = lifetimeOn("MARMOT_DEADINIT")
+	optROConv       = lifetimeOn("MARMOT_ROCONV")
 )
 
 // LifetimeEnv lists the switch variables (for cache keys).
 var LifetimeEnv = []string{"MARMOT_LIFETIME", "MARMOT_REUSE", "MARMOT_REGIONS", "MARMOT_FRAME_REGIONS",
 	"MARMOT_ALLOCSINK", "MARMOT_ESCAPE_SUMMARY", "MARMOT_XPKG_ESCAPE", "MARMOT_ESCAPE_EXT", "MARMOT_STACKCONV", "MARMOT_BYVALUE", "MARMOT_STACKBOX", "MARMOT_LOOPTEMP",
-	"MARMOT_MAPFUSE", "MARMOT_APPENDMAKE", "MARMOT_DEFERELIDE", "MARMOT_DEADINIT", "MARMOT_EVALORDER", "MARMOT_NO_EVALORDER"}
+	"MARMOT_MAPFUSE", "MARMOT_APPENDMAKE", "MARMOT_DEFERELIDE", "MARMOT_DEADINIT", "MARMOT_EVALORDER", "MARMOT_NO_EVALORDER", "MARMOT_ROCONV"}
 
 // LifetimeSummary describes which lifetime transforms are on.
 func LifetimeSummary() string {

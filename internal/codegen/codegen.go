@@ -105,6 +105,7 @@ func (e *Error) Error() string {
 // After NewProgram it is read only, so modules can be generated in parallel.
 type Program struct {
 	importTags map[*ssa.Package]EscTags // escape tags of every package (esctags.go)
+	wrDone     map[wrKey]bool           // paramWritten summaries (roconv.go); guarded by escMu
 	opts       Options
 	allocMu    sync.Mutex // serializes writes to opts.AllocReport
 	recMu      sync.Mutex
