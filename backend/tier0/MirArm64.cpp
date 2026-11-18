@@ -787,6 +787,7 @@ void Emitter::ret(const Inst &in) {
 bool Emitter::emitPair(const Inst &x, const Inst &y) {
   if (x.op != y.op || (x.op != Op::Load && x.op != Op::Store)) return false;
   if (x.aux != 8 || y.aux != 8 || (x.flags | y.flags) || x.a != y.a || y.imm != x.imm + 8) return false;
+  if (x.c != None || y.c != None) return false;  // indexed
   if (x.imm % 8 || x.imm < -512 || x.imm > 496) return false;
   if (x.op == Op::Load) {
     if (isFp(x.dst) || isFp(y.dst) || x.w == 1 || y.w == 1) return false;
@@ -1072,6 +1073,31 @@ void Emitter::emit(uint32_t i) {
       base = SA;
       off = 0;
     }
+    if (in.c != None) {  // indexed (never atomic): [base, index, lsl #k] or one add
+      unsigned ix = gp(in.c, S1);
+      unsigned k = unsigned(in.imm2);
+      if (off == 0 && (k == 0 || k == log2Size(size))) {
+        uint32_t scaled = k ? 1u << 12 : 0;
+        if (isFp(in.dst)) {
+          unsigned d = dstF(in.dst, F0);
+          e(ldrFReg(d, base, ix, log2Size(size)) | scaled);
+          finF(in.dst, d);
+          return;
+        }
+        unsigned d = dstG(in.dst, S0);
+        e(ldrReg(d, base, ix, log2Size(size)) | scaled);
+        if (in.w == 1) e(ubfx0(d, d, 1));
+        finG(in.dst, d);
+        return;
+      }
+      if (base == SP) {  // shifted-register add reads 31 as xzr: sp + off first
+        addConst(SA, SP, off);
+        base = SA;
+        off = 0;
+      }
+      e(addLsl(SA, base, ix, k));
+      base = SA;
+    }
     if (isFp(in.dst)) {
       unsigned d = dstF(in.dst, F0);
       mem(true, true, d, base, off, size);
@@ -1094,6 +1120,25 @@ void Emitter::emit(uint32_t i) {
       addConst(SA, SP, off);
       base = SA;
       off = 0;
+    }
+    if (in.c != None) {  // indexed (never atomic)
+      unsigned ix = gp(in.c, S1);
+      unsigned k = unsigned(in.imm2);
+      if (off == 0 && (k == 0 || k == log2Size(size))) {
+        uint32_t scaled = k ? 1u << 12 : 0;
+        if (isFp(in.b))
+          e(strFReg(fr(in.b, F0), base, ix, log2Size(size)) | scaled);
+        else
+          e(strReg(gp(in.b, S0), base, ix, log2Size(size)) | scaled);
+        return;
+      }
+      if (base == SP) {  // shifted-register add reads 31 as xzr: sp + off first
+        addConst(SA, SP, off);
+        base = SA;
+        off = 0;
+      }
+      e(addLsl(SA, base, ix, k));
+      base = SA;
     }
     if (isFp(in.b)) {
       mem(false, true, fr(in.b, F0), base, off, size);

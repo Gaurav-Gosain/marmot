@@ -35,13 +35,25 @@ public:
     uint8_t r = uint8_t(0x40 | (w ? 8 : 0) | ((reg >> 3) & 1) << 2 | ((rm >> 3) & 1));
     if (r != 0x40 || force) u8(r);
   }
+  // An index for the next memory operands ([base + index * 2^scale + disp]),
+  // until noIndex(). Not rsp; scale 0..3. Only rm() forms read it.
+  void index(unsigned r, unsigned scale) {
+    ix = int(r);
+    ixScale = scale;
+  }
+  void noIndex() { ix = -1; }
   void modrmReg(unsigned reg, unsigned rm) { u8(uint8_t(0xC0 | (reg & 7) << 3 | (rm & 7))); }
   // [base + disp] with the shortest displacement: none (except for base
   // rbp/r13, which needs one), 8 bits or 32 bits.
   void modrmMem(unsigned reg, unsigned base, int32_t disp) {
     unsigned mod = disp == 0 && (base & 7) != RBP ? 0 : disp >= -128 && disp <= 127 ? 1 : 2;
-    u8(uint8_t(mod << 6 | (reg & 7) << 3 | (base & 7)));
-    if ((base & 7) == RSP) u8(0x24);  // SIB: no index, base rsp/r12
+    if (ix >= 0) {  // [base + index * 2^scale + disp]: SIB
+      u8(uint8_t(mod << 6 | (reg & 7) << 3 | 4));
+      u8(uint8_t(ixScale << 6 | (unsigned(ix) & 7) << 3 | (base & 7)));
+    } else {
+      u8(uint8_t(mod << 6 | (reg & 7) << 3 | (base & 7)));
+      if ((base & 7) == RSP) u8(0x24);  // SIB: no index, base rsp/r12
+    }
     if (mod == 1)
       u8(uint8_t(int8_t(disp)));
     else if (mod == 2)
@@ -55,7 +67,12 @@ public:
   }
   void rm(bool w, std::initializer_list<uint8_t> op, unsigned reg, unsigned base, int32_t disp,
           bool byteReg = false) {
-    rex(w, reg, base, byteReg && reg >= 4);
+    if (ix >= 0) {  // REX.X for an index of r8-r15
+      uint8_t r = uint8_t(0x40 | (w ? 8 : 0) | ((reg >> 3) & 1) << 2 | ((unsigned(ix) >> 3) & 1) << 1 | ((base >> 3) & 1));
+      if (r != 0x40 || (byteReg && reg >= 4)) u8(r);
+    } else {
+      rex(w, reg, base, byteReg && reg >= 4);
+    }
     for (uint8_t o : op) u8(o);
     modrmMem(reg, base, disp);
   }
@@ -283,6 +300,8 @@ public:
 
 private:
   std::vector<uint8_t> &b;
+  int ix = -1;  // index register of memory operands (index()), or -1
+  unsigned ixScale = 0;
   void lockOp(std::initializer_list<uint8_t> op, unsigned s, unsigned base, unsigned size) {
     u8(0xF0);
     plainOp(op, s, base, size);

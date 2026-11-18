@@ -1128,14 +1128,17 @@ void Emitter::emit(uint32_t i) {
     unsigned size = in.aux;
     if (in.dst == None || al.loc[in.dst].k == Loc::None) return;  // nobody reads it
     auto [base, off] = addrOf(in.a, in.imm, S1);
+    if (in.c != None) a.index(gp(in.c, S2), unsigned(in.imm2));
     if (isFp(in.dst)) {
       unsigned d = al.loc[in.dst].k == Loc::Reg ? al.loc[in.dst].reg : F0;
       a.loadF(d, base, d32(off), size == 8);
+      a.noIndex();
       finF(in.dst, d);
       return;
     }
     unsigned d = dstG(in.dst, S0);
     a.load(d, base, d32(off), size);  // atomic loads are plain loads on x86
+    a.noIndex();
     if (in.w == 1) a.andImm(d, 1);
     finG(in.dst, d);
     return;
@@ -1143,6 +1146,24 @@ void Emitter::emit(uint32_t i) {
   case Op::Store: {
     unsigned size = in.aux;
     auto [base, off] = addrOf(in.a, in.imm, S1);
+    if (in.c != None) {  // indexed (never atomic)
+      unsigned ix = gp(in.c, S2);
+      uint64_t bits;
+      if (isFp(in.b)) {
+        unsigned v = fr(in.b, F0);
+        a.index(ix, unsigned(in.imm2));
+        a.storeF(v, base, d32(off), size == 8);
+      } else if (konst(in.b, bits) && (size < 8 || int64_t(bits) == int64_t(int32_t(bits)))) {
+        a.index(ix, unsigned(in.imm2));
+        a.storeImm(base, d32(off), size, int32_t(bits));
+      } else {
+        unsigned v = gp(in.b, S0);
+        a.index(ix, unsigned(in.imm2));
+        a.store(v, base, d32(off), size);
+      }
+      a.noIndex();
+      return;
+    }
     if (isFp(in.b)) {
       a.storeF(fr(in.b, F0), base, d32(off), size == 8);
       return;

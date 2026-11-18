@@ -65,8 +65,10 @@ enum class Op : uint8_t {
   Fshl, Fshr,                         // a, b, c (amount)
   FrameAddr, // the frame pointer
   // Memory and effects.
-  Load,      // [a + imm], aux: size in bytes (1, 2, 4, 8); flags: atomic
-  Store,     // [a + imm] = b, aux: size; flags: atomic (seq_cst on x86-64)
+  Load,      // [a + imm], aux: size in bytes (1, 2, 4, 8); flags: atomic;
+             // with an index c: [a + (c << imm2) + imm] (imm2 0..3; not atomic)
+  Store,     // [a + imm] = b, aux: size; flags: atomic (seq_cst on x86-64);
+             // with an index c as for Load
   Zero,      // aux2 bytes of zeros at [a + imm]
   Copy8,     // memory copy of aux2 bytes from [b + imm2] to [a + imm] (no overlap)
   MemCall,   // memmove / memset: aux 0 memmove(a, b, c), 1 memset(a, b, c)

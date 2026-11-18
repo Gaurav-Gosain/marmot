@@ -381,6 +381,7 @@ private:
   bool decideByDominators();
   void removeDead();
   void dce();
+  void foldAddresses();
 };
 
 void Builder::run() {
@@ -422,6 +423,7 @@ void Builder::run() {
     f.blocks[bidx[&b]].end = uint32_t(f.insts.size());
   }
   decideNilChecks();
+  foldAddresses();
   dce();
 }
 
@@ -1499,6 +1501,81 @@ void Builder::wide(Operation &o) {
 
 // Removes pure instructions whose results nobody uses, last first, so a
 // chain goes in one walk (operands are defined before their users).
+// MARMOT_TIER0_ADDR=1: an address base + (index << k) (+ constant, which
+// the access already holds) becomes the operands of the plain loads and
+// stores that use it, so the target addresses base + index * 2^k + offset in
+// the access itself (x86-64 SIB; arm64 a register offset, or one add with a
+// shifted register) instead of computing the address first. Only addresses
+// that nothing but such accesses use: the add, and the shift when no one
+// else needs it, then die. On arm64 an address with several uses folds only
+// where every use takes the register offset form (offset 0, k 0 or the
+// access size), since otherwise each use would need its own add; one use
+// folds when its offset fits the immediate forms.
+void Builder::foldAddresses() {
+  static const bool on = [] {
+    const char *e = getenv("MARMOT_TIER0_ADDR");
+    return e && *e == '1';
+  }();
+  if (!on) return;
+  auto plain = [](const Inst &in) {
+    return !in.dead && (in.op == Op::Load || in.op == Op::Store) && !(in.flags & (Atomic | Volatile)) && in.c == None;
+  };
+  struct Split {
+    VId base = None, ix = None;
+    unsigned sh = 0;
+  };
+  auto split = [&](VId p, Split &s) {
+    const Inst *d = defOf(p);
+    if (!d || d->dead || d->op != Op::Add || d->w != 64) return false;
+    uint64_t k;
+    if (isConst(d->a, k) || isConst(d->b, k)) return false;
+    s.base = d->a;
+    s.ix = d->b;
+    s.sh = 0;
+    if (const Inst *x = defOf(s.ix); x && !x->dead && x->op == Op::Shl && x->w == 64 && isConst(x->b, k) && k <= 3) {
+      s.ix = x->a;
+      s.sh = unsigned(k);
+    }
+    return true;
+  };
+  // arm64: the access takes the folded address with no extra instruction
+  // (shared: required), or with one add (a single use).
+  auto fitsArm = [&](const Inst &in, const Split &s, bool shared) {
+    unsigned size = in.aux, ls = llvm::Log2_64(size);
+    if (in.imm == 0 && (s.sh == 0 || s.sh == ls)) return true;
+    if (shared) return false;
+    int64_t o = in.imm;
+    return (o >= 0 && o % int64_t(size) == 0 && (o >> ls) < 4096) || (o >= -256 && o < 256);
+  };
+  const size_t nv = f.vals.size();
+  std::vector<uint32_t> addrUses(nv, 0);
+  std::vector<char> ok(nv, 1);
+  for (const Inst &in : f.insts) {
+    if (!plain(in)) continue;
+    addrUses[in.a]++;
+    if (in.op == Op::Store && in.b == in.a) ok[in.a] = 0;  // also stored as a value
+  }
+  std::vector<Split> splits(nv);
+  for (VId p = 0; p < nv; p++) {
+    if (!addrUses[p] || !ok[p]) continue;
+    if (addrUses[p] != f.vals[p].uses || !split(p, splits[p])) ok[p] = 0;
+  }
+  if (!x64) {
+    for (const Inst &in : f.insts)
+      if (plain(in) && addrUses[in.a] && ok[in.a] && !fitsArm(in, splits[in.a], f.vals[in.a].uses > 1)) ok[in.a] = 0;
+  }
+  for (Inst &in : f.insts) {
+    if (!plain(in) || !addrUses[in.a] || !ok[in.a]) continue;
+    const Split &s = splits[in.a];
+    f.vals[in.a].uses--;
+    in.a = s.base;
+    in.c = s.ix;
+    in.imm2 = s.sh;
+    f.vals[s.base].uses++;
+    f.vals[s.ix].uses++;
+  }
+}
+
 void Builder::dce() {
   for (size_t i = f.insts.size(); i-- > 0;) {
     Inst &in = f.insts[i];

@@ -141,6 +141,14 @@ inline uint32_t ldrReg(unsigned rt, unsigned rn, unsigned rm, unsigned size) {
 inline uint32_t strReg(unsigned rt, unsigned rn, unsigned rm, unsigned size) {
   return (size << 30) | 0x38206800u | (rm << 16) | (rn << 5) | rt;
 }
+// SIMD&FP register offset: ldr/str s or d, [rn, rm] (size 2 or 3; | 1 << 12
+// scales rm by the access size).
+inline uint32_t ldrFReg(unsigned rt, unsigned rn, unsigned rm, unsigned size) {
+  return (size << 30) | 0x3C606800u | (rm << 16) | (rn << 5) | rt;
+}
+inline uint32_t strFReg(unsigned rt, unsigned rn, unsigned rm, unsigned size) {
+  return (size << 30) | 0x3C206800u | (rm << 16) | (rn << 5) | rt;
+}
 // STP/LDP of x registers, pre-index and post-index (offset in bytes, multiple of 8).
 inline uint32_t stpPre(unsigned rt, unsigned rt2, unsigned rn, int32_t off) {
   return 0xA9800000u | ((uint32_t(off / 8) & 0x7F) << 15) | (rt2 << 10) | (rn << 5) | rt;
