@@ -1,0 +1,16 @@
+append zero-size: deferred ran true, recovered runtime error: growslice: len out of range
+divide: deferred ran true, recovered runtime error: integer divide by zero
+shift: deferred ran true, recovered runtime error: negative shift amount
+index: deferred ran true, recovered runtime error: index out of range [5] with length 1
+deref: deferred ran true, recovered runtime error: invalid memory address or nil pointer dereference
+store: deferred ran true, recovered assignment to entry in nil map
+compare: deferred ran true, recovered runtime error: comparing uncomparable type []int
+assert: deferred ran true, recovered interface conversion: interface {} is string, not int
+to array: deferred ran true, recovered runtime error: cannot convert slice with length 1 to array or pointer to array with length 4
+make chan: deferred ran true, recovered makechan: size out of range
+close twice: deferred ran true, recovered close of closed channel
+call: deferred ran true, recovered inner
+two defers: deferred ran true, recovered runtime error: integer divide by zero
+two defers ok 105
+safe 41
+goexit: deferred ran true

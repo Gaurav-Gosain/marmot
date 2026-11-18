@@ -163,7 +163,16 @@ func (p *Program) instrMayPanic(instr ssa.Instruction, known map[ssa.Value]bool)
 		}
 		if bi, ok := c.Value.(*ssa.Builtin); ok {
 			switch bi.Name() {
-			case "len", "cap", "print", "println", "append", "copy", "min", "max", "real", "imag", "complex":
+			case "append":
+				// A slice of zero-size elements can have any length without
+				// memory behind it, so its append can overflow the length
+				// (growslice: len out of range). Other slices cannot get that
+				// long.
+				if st, ok := x.Type().Underlying().(*types.Slice); ok && p.sizes().Sizeof(st.Elem()) == 0 {
+					return true
+				}
+				return false
+			case "len", "cap", "print", "println", "copy", "min", "max", "real", "imag", "complex":
 				return false
 			}
 			return true

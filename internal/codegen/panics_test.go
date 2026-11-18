@@ -72,6 +72,8 @@ func makeHuge() []byte          { return make([]byte, 1<<62) }
 func convert(x int) float64     { return float64(x) + float64(len(string(rune(x)))) }
 func iface(x int) any           { return x }
 func closure(x int) func() int  { return func() int { return x } }
+func appendZero(s, t []struct{}) []struct{} { return append(s, t...) }
+func appendBytes(b []byte, s string) []byte { return append(b, s...) }
 `
 
 func TestMayPanic(t *testing.T) {
@@ -97,6 +99,7 @@ func TestMayPanic(t *testing.T) {
 		"send": true, "recv": true, "closeChan": true,
 		"callSafe": false, "callUnsafe": true, "recursive": true, "invoke": true, "dynamic": true,
 		"explicitPanic": true, "builtins": false, "makeConst": true, "makeHuge": true, "assertOK": true, "convert": false, "iface": false, "closure": false,
+		"appendZero": true, "appendBytes": false,
 	}
 	p := &Program{}
 	for name, w := range want {
