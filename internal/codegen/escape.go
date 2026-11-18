@@ -284,7 +284,30 @@ func (p *Program) callLeaks(c *ssa.CallCommon, v ssa.Value, res ssa.Value) bool 
 // the call's value (nil for go and defer).
 func (p *Program) callLeaksF(q *escQuery, c *ssa.CallCommon, v ssa.Value, res ssa.Value, seen map[ssa.Value]bool, noPhi, ret bool) bool {
 	if c.IsInvoke() {
-		return true
+		// One dynamic type (MARMOT_DEVIRT1): the summaries of the method it
+		// reaches, whose parameters are the receiver, then c.Args.
+		from := v.Parent()
+		if res != nil {
+			from = res.Parent()
+		}
+		m := p.invokeCallee(from, c)
+		if m == nil || c.Value == v || !summaryAllowed(v, m) || (!optEscapeExt && m.Signature.Variadic()) {
+			return true
+		}
+		toResult := false
+		for i, a := range c.Args {
+			if a != v || !p.paramEscapesQ(q, m, i+1) {
+				continue
+			}
+			if res == nil || !optEscapeExt || !p.paramToResultQ(q, m, i+1) {
+				return true
+			}
+			toResult = true
+		}
+		if toResult {
+			return p.escapesF(q, res, seen, noPhi, ret)
+		}
+		return false
 	}
 	if c.Value == v {
 		return false // calling the closure itself

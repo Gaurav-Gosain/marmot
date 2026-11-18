@@ -171,7 +171,16 @@ func onlyLoaded(x ssa.Value) bool {
 func (p *Program) callWrites(q *wrQuery, c *ssa.Call, v ssa.Value) bool {
 	cc := &c.Call
 	if cc.IsInvoke() {
-		return true
+		m := p.invokeCallee(c.Parent(), cc)
+		if m == nil {
+			return true
+		}
+		for i, a := range cc.Args {
+			if a == v && p.paramWrittenQ(q, m, i+1) {
+				return true
+			}
+		}
+		return false
 	}
 	if bi, ok := cc.Value.(*ssa.Builtin); ok {
 		switch bi.Name() {
@@ -223,10 +232,10 @@ func (p *Program) importWritten(fn *ssa.Function) (uint64, bool) {
 // passed to call c: the callee never writes the elements and v does not
 // escape it, not even through its results.
 func (p *Program) roArgOK(c *ssa.Call, v ssa.Value) bool {
-	if !optROConv || c.Call.IsInvoke() {
+	if !optROConv {
 		return false
 	}
-	if _, ok := c.Call.Value.(*ssa.Function); !ok {
+	if _, ok := c.Call.Value.(*ssa.Function); !ok && p.invokeCallee(c.Parent(), &c.Call) == nil {
 		return false
 	}
 	q := &wrQuery{running: map[wrKey]bool{}, local: map[wrKey]bool{}}
