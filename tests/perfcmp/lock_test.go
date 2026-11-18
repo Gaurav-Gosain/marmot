@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -150,34 +151,113 @@ func TestDisturbed(t *testing.T) {
 	}
 }
 
+// Tries for the verdict tests: quiet (conclusive), noisy, loaded (on 16 CPUs).
+var (
+	tOK     = try{n: 1, gw: 1, gc: 1, gr: 1, ew: 1.01, ec: 1.01, load: 1}
+	tWorse  = try{n: 1, gw: 1.05, gc: 1.05, gr: 1, ew: 1.01, ec: 1.01, load: 1, worse: true}
+	tNoisy  = try{n: 1, gw: 1, gc: 1, gr: 1, ew: 1.03, ec: 1.01, load: 1}
+	tLoaded = try{n: 1, gw: 1, gc: 1, gr: 1, ew: 1.01, ec: 1.01, load: 9}
+	tLLC    = try{n: 1, gw: 1, gc: 1, gr: 1, ew: 1.01, ec: 1.01, load: 1, disturbed: []string{"matmul O2 B"}}
+)
+
+// nth returns t as try n.
+func nth(t try, n int) try { t.n = n; return t }
+
 func TestVerdict(t *testing.T) {
-	quiet := outcome{maxLoad: 1, cpus: 16}
+	one := func(ts ...try) outcome {
+		return outcome{cpus: 16, modes: []string{"dev"}, tries: [][]try{ts}}
+	}
+	noisyWorse := tNoisy
+	noisyWorse.worse, noisyWorse.gw = true, 1.04
 	for _, c := range []struct {
 		name string
-		o    func(o outcome) outcome
+		o    outcome
 		code int
 		has  string
+		not  string
 	}{
-		{"ok", func(o outcome) outcome { return o }, exitOK, "verdict: ok"},
-		{"worse", func(o outcome) outcome { o.worse = true; return o }, exitWorse, "WORSE"},
-		{"noisy", func(o outcome) outcome { o.noisy = true; o.worse = true; return o }, exitInconclusive, "would have said WORSE"},
-		{"loaded", func(o outcome) outcome { o.maxLoad = 9; return o }, exitInconclusive, "load reached 9.0"},
-		{"disturbed after the retries", func(o outcome) outcome { o.disturbed = []string{"matmul O2 B"}; return o }, exitInconclusive, "after 2 retries: matmul O2 B"},
-		{"disturbed on A=B", func(o outcome) outcome { o.disturbed, o.same = []string{"matmul dev A"}, true; return o }, exitInconclusive, "would have said ok"},
-		{"failed beats all", func(o outcome) outcome {
-			o.failed = []string{"nbody release: build A failed"}
-			o.worse, o.noisy, o.maxLoad, o.same = true, true, 30, true
+		{"ok", one(tOK), exitOK, "verdict: ok (no line worse than the noise rule)", "decided"},
+		{"worse", one(tWorse), exitWorse, "WORSE", ""},
+		{"noisy", one(noisyWorse), exitInconclusive, "would have said WORSE", "tries"},
+		{"loaded", one(tLoaded), exitInconclusive, "load reached 9.0", ""},
+		{"disturbed after the retries", one(tLLC), exitInconclusive, "after 2 retries: matmul O2 B", ""},
+		{"disturbed on A=B", func() outcome { o := one(tLLC); o.same = true; return o }(), exitInconclusive, "would have said ok", ""},
+		{"a quiet try 2 after a disturbed try 1 decides", one(tLLC, nth(tOK, 2)), exitOK, "dev by try 2", "LLC"},
+		{"every program identical", one(try{n: 1, ident: true}), exitOK, "verdict: ok", ""},
+		{"failed beats all", func() outcome {
+			o := one(tLoaded)
+			o.failed, o.same = []string{"nbody release: build A failed"}, true
 			return o
-		}, exitFailed, "nbody release: build A failed"},
-		{"failed on a quiet A=B", func(o outcome) outcome {
+		}(), exitFailed, "nbody release: build A failed", ""},
+		{"failed on a quiet A=B", func() outcome {
+			o := one(tOK)
 			o.same, o.failed = true, []string{"dev: no program measured on both sides"}
 			return o
-		}, exitFailed, "FAILED (1 failure"},
+		}(), exitFailed, "FAILED (1 failure", ""},
+		{"A=B ok", func() outcome { o := one(tOK); o.same = true; return o }(), exitOK, "A=B", ""},
+		// Retries: only a conclusive try decides.
+		{"try 2 decides ok", one(tNoisy, nth(tOK, 2)), exitOK, "(decided: dev by try 2)", ""},
+		{"try 3 decides WORSE", one(tLoaded, nth(tNoisy, 2), nth(tWorse, 3)), exitWorse, "dev by try 3", ""},
+		{"never conclusive", one(tNoisy, nth(tLoaded, 2), nth(tNoisy, 3)), exitInconclusive, "dev after 3 tries", ""},
+		{"stopped", func() outcome {
+			o := one(tNoisy)
+			o.stopped = "no retry: the load did not stay below 4 for a minute in 10m0s"
+			return o
+		}(), exitInconclusive, "did not stay below 4", ""},
+		{"noisy WORSE then quiet ok", one(noisyWorse, nth(tOK, 2)), exitOK, "(decided: dev by try 2; dev try 1 leaned WORSE: wall 1.040 cpu 1.000 rss 1.000)", ""},
+		{"retry bar is stricter", one(tNoisy, nth(try{gw: 1, gc: 1, gr: 1, ew: 1.018, ec: 1.01, load: 1}, 2)), exitInconclusive, "dev after 2 tries", ""},
+		{"retry under the stricter bar", one(tNoisy, nth(try{gw: 1, gc: 1, gr: 1, ew: 1.014, ec: 1.01, load: 1}, 2)), exitOK, "dev by try 2", ""},
+		{"test hook in the line", func() outcome {
+			f := tOK
+			f.forced = true
+			return one(f, nth(tOK, 2))
+		}(), exitOK, "test hook PERFCMP_TEST_NOISY on", ""},
+		{"no hook note without the hook", one(tNoisy, nth(tOK, 2)), exitOK, "dev by try 2)", "test hook"},
+		{"a hole in try 2 is FAILED", func() outcome {
+			o := one(tNoisy, nth(tOK, 2))
+			o.failed = []string{"nbody dev: run B failed"}
+			return o
+		}(), exitFailed, "FAILED", ""},
+		{"try 2 decides one mode, the other never", outcome{cpus: 16, modes: []string{"dev", "release"},
+			tries: [][]try{{tNoisy, nth(tOK, 2)}, {tNoisy, nth(tNoisy, 2)}}}, exitInconclusive, "release after 2 tries", "dev,"},
+		{"one mode decided WORSE, other undecided", outcome{cpus: 16, modes: []string{"dev", "release"},
+			tries: [][]try{{tWorse}, {tNoisy, nth(tNoisy, 2)}}}, exitInconclusive, "release after 2 tries", "dev,"},
+		{"modes decided by different tries", outcome{cpus: 16, modes: []string{"dev", "release"},
+			tries: [][]try{{tNoisy, nth(tOK, 2)}, {tOK}}}, exitOK, "(decided: dev by try 2, release by try 1)", ""},
 	} {
-		line, code := c.o(quiet).verdict()
-		if code != c.code || !strings.Contains(line, c.has) {
+		line, code := c.o.verdict()
+		if code != c.code || !strings.Contains(line, c.has) || (c.not != "" && strings.Contains(line, c.not)) {
 			t.Errorf("%s: %d %q, want %d and %q", c.name, code, line, c.code, c.has)
 		}
+	}
+}
+
+func TestUndecided(t *testing.T) {
+	o := outcome{cpus: 16, modes: []string{"dev", "O2", "release"},
+		tries: [][]try{{tNoisy}, {tOK}, {tLoaded}}}
+	if u := o.undecided(); !slices.Equal(u, []int{0, 2}) {
+		t.Errorf("undecided = %v, want [0 2]", u)
+	}
+	forced := tOK
+	forced.forced = true
+	if forced.conclusive(16) {
+		t.Error("a try marked by PERFCMP_TEST_NOISY is conclusive")
+	}
+}
+
+func TestWarnings(t *testing.T) {
+	noisyWorse := tNoisy
+	noisyWorse.worse, noisyWorse.gw, noisyWorse.gc = true, 1.041, 1.039
+	o := outcome{cpus: 16, modes: []string{"dev", "release"},
+		tries: [][]try{{noisyWorse, nth(tOK, 2)}, {tNoisy, nth(tOK, 2)}}}
+	w := o.warnings()
+	if len(w) != 1 || !strings.Contains(w[0], "dev: an earlier noisy try leaned WORSE (try 1 wall 1.041 cpu 1.039 rss 1.000)") || !strings.Contains(w[0], "try 2 decides ok") {
+		t.Errorf("warnings = %q", w)
+	}
+	// A later WORSE needs no warning: the verdict says WORSE already.
+	o.tries = [][]try{{noisyWorse, nth(tWorse, 2)}, {tOK}}
+	if w := o.warnings(); len(w) != 0 {
+		t.Errorf("warnings = %q, want none", w)
 	}
 }
 
@@ -200,5 +280,24 @@ func TestNotFinite(t *testing.T) {
 	// geomean of nothing is NaN: a mode with no program measured
 	if !math.IsNaN(geomean(nil)) {
 		t.Error("geomean(nil) is a number")
+	}
+}
+
+func TestRetryFits(t *testing.T) {
+	for _, c := range []struct {
+		limit, ran string
+		want       bool
+	}{
+		{"", "", true},
+		{"junk", "10", true},
+		{"10800", "", true},       // no ran file value: no limit
+		{"10800", "7200\n", true}, // 60 min left: 10 + 30 + 5 fits
+		{"10800", "8100", true},   // 45 min left: exactly fits
+		{"10800", "8160", false},  // 44 min left
+		{"10800", "10900", false}, // already past the limit at the start: no retry
+	} {
+		if got := retryFits(30*time.Minute, 10*time.Minute, c.limit, c.ran); got != c.want {
+			t.Errorf("retryFits(%q, %q) = %v, want %v", c.limit, c.ran, got, c.want)
+		}
 	}
 }

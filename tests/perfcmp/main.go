@@ -30,6 +30,14 @@
 // -cpus. Each mode then prints how much other work ran on those CPUs during the
 // timed runs (information only, not part of the verdict).
 //
+// -retries N times a mode again when its try was too noisy or too loaded to judge, or
+// kept a run that shared the LLC after its LLC retries,
+// up to N more times, with the binaries already built. Before each retry perfcmp waits
+// for the load to stay below a quarter of the CPUs for a minute (at most -retry-wait).
+// Such a try carries no verdict: the first conclusive try of a mode decides
+// it. A warning line gives the geomeans of earlier tries that leaned WORSE when a later
+// try decides ok. With retries, a table at the end lists every try.
+//
 // MARMOT_BENCH_GATE (set by remote.sh for a job of class late) names a command that
 // takes exclusive use of the host. perfcmp runs it after all builds, waits for it to
 // print "ready", times, and closes its stdin when the timing ends, which gives the
@@ -60,20 +68,23 @@ import (
 )
 
 var (
-	flA       = flag.String("a", "", "marmot root before (required)")
-	flB       = flag.String("b", "", "marmot root after (required; may equal -a with -a-env/-b-env)")
-	flAEnv    = flag.String("a-env", "", "space separated K=V for side A's builds and runs")
-	flBEnv    = flag.String("b-env", "", "space separated K=V for side B's builds and runs")
-	flModes   = flag.String("modes", "dev,release", "build modes: dev, O2, release")
-	flRuns    = flag.Int("runs", 7, "runs per program and side")
-	flProgs   = flag.String("programs", "", "comma separated programs (default: hello, the bench subset, sketch, tuios)")
-	flTuios   = flag.String("tuios", envOr("MARMOT_TUIOS_SRC", ".work/lead/tuios-src"), "tuios source tree (holds sketch/ too; default $MARMOT_TUIOS_SRC)")
-	flWork    = flag.String("work", "", "the binaries go in a new directory inside this one (default .work/perfcmp)")
-	flKeep    = flag.Bool("keep", false, "keep the binaries")
-	flCPUs    = flag.String("cpus", "", "Linux: run the timed programs on these CPUs only, like 0-3. A pinned program sees only these CPUs. Compare A with B, not with runs without -cpus")
-	flIdent   = flag.Bool("skip-identical", false, "a program whose A and B binaries are byte-identical (once B's tree root path, if it has the length of A's, reads as A's) is not timed: its line says identical, and it is left out of the geomean and the verdict (not with A=B runs)")
-	flRSSWrap = flag.Bool("rsswrap", false, "Linux: measure peak RSS through rsswrap, a small C helper that forks each program (untimed runs), so small programs do not read perfcmp's own RSS")
-	flWait    = flag.Duration("wait", 2*time.Hour, "how long to wait for the timing lock and a load below half the CPUs before giving up (0: no wait, no lock)")
+	flA         = flag.String("a", "", "marmot root before (required)")
+	flB         = flag.String("b", "", "marmot root after (required; may equal -a with -a-env/-b-env)")
+	flAEnv      = flag.String("a-env", "", "space separated K=V for side A's builds and runs")
+	flBEnv      = flag.String("b-env", "", "space separated K=V for side B's builds and runs")
+	flModes     = flag.String("modes", "dev,release", "build modes: dev, O2, release")
+	flRuns      = flag.Int("runs", 7, "runs per program and side")
+	flProgs     = flag.String("programs", "", "comma separated programs (default: hello, the bench subset, sketch, tuios)")
+	flTuios     = flag.String("tuios", envOr("MARMOT_TUIOS_SRC", ".work/lead/tuios-src"), "tuios source tree (holds sketch/ too; default $MARMOT_TUIOS_SRC)")
+	flWork      = flag.String("work", "", "the binaries go in a new directory inside this one (default .work/perfcmp)")
+	flKeep      = flag.Bool("keep", false, "keep the binaries")
+	flCPUs      = flag.String("cpus", "", "Linux: run the timed programs on these CPUs only, like 0-3. A pinned program sees only these CPUs. Compare A with B, not with runs without -cpus")
+	flIdent     = flag.Bool("skip-identical", false, "a program whose A and B binaries are byte-identical (once B's tree root path, if it has the length of A's, reads as A's) is not timed: its line says identical, and it is left out of the geomean and the verdict (not with A=B runs)")
+	flRSSWrap   = flag.Bool("rsswrap", false, "Linux: measure peak RSS through rsswrap, a small C helper that forks each program (untimed runs), so small programs do not read perfcmp's own RSS")
+	flWait      = flag.Duration("wait", 2*time.Hour, "how long to wait for the timing lock and a load below half the CPUs before giving up (0: no wait, no lock)")
+	flRetries   = flag.Int("retries", 0, "time an INCONCLUSIVE mode again, with the same binaries, up to this many times (0: no retry)")
+	flRetryWait = flag.Duration("retry-wait", 10*time.Minute, "before a retry, wait at most this long for the load to stay below a quarter of the CPUs for a minute")
+	flRetryTime = flag.Duration("retry-time", 90*time.Minute, "start no retry once the timed runs took this long in total")
 )
 
 var timingLock = "/tmp/marmot-timing.lock" // a var for the tests
@@ -213,22 +224,50 @@ func main() {
 		atExit(release)
 		giveBack = release
 	}
-	for mi, mode := range modes {
-		fmt.Printf("\n== %s\n%-12s %10s %10s %7s %10s %10s %7s %9s %9s %7s %9s %9s %7s\n", mode,
+	// Time every mode, then time again the modes whose try was too noisy or too loaded to
+	// judge, with the same binaries, up to -retries more times. Only a conclusive try decides
+	// a mode; see outcome.verdict.
+	o.cpus, o.modes, o.tries = runtime.NumCPU(), modes, make([][]try, len(modes))
+	testNoisy := map[string]bool{} // PERFCMP_TEST_NOISY: modes whose first try counts as noisy (tests only)
+	for _, m := range strings.Split(os.Getenv("PERFCMP_TEST_NOISY"), ",") {
+		if m != "" {
+			testNoisy[m] = true
+		}
+	}
+	// timeMode times mode mi as try n. The 1 minute load lags about a minute, so a sample
+	// in the first minute counts for prev too, the try timed just before it.
+	timeMode := func(mi, n int, prev *try) try {
+		mode := modes[mi]
+		hdr := mode
+		if n > 1 {
+			hdr = fmt.Sprintf("%s (try %d)", mode, n)
+		}
+		start, modeLoad := time.Now(), 0.0
+		seeLoad := func() {
+			l := load1()
+			maxLoad, modeLoad = max(maxLoad, l), max(modeLoad, l)
+			if prev != nil && time.Since(start) < time.Minute {
+				prev.load = max(prev.load, l)
+			}
+		}
+		fmt.Printf("\n== %s\n%-12s %10s %10s %7s %10s %10s %7s %9s %9s %7s %9s %9s %7s\n", hdr,
 			"program", "wall A", "wall B", "B/A", "cpu A", "cpu B", "B/A", "rss A", "rss B", "B/A", "size A", "size B", "B/A")
 		var lw, lc, lr []float64
 		var nw, nc []float64         // per side and program: median of the odd runs over the even ones
 		var busy, used, wall float64 // -cpus: busy time of those CPUs, the runs' CPU time, wall time (s)
 		nIdent := 0                  // -skip-identical: programs left out as byte-identical
-		for _, l := range buildFails[mi] {
-			fmt.Println(l)
+		var disturbedRuns []string   // runs that shared the LLC after their retries
+		if n == 1 {
+			for _, l := range buildFails[mi] {
+				fmt.Println(l)
+			}
 		}
 		bs := builds[mi]
 		// Let the load of the builds decay before timing: the load sampled during the
 		// runs is the machine's, not perfcmp's own. After the first mode this returns at once.
 		settle()
 		for k, p := range progs {
-			sampleLoad()
+			seeLoad()
 			if !bs[k].ok {
 				continue
 			}
@@ -282,8 +321,8 @@ func main() {
 					}
 					what := fmt.Sprintf("%-12s %s run %d had %d LLC misses, %.0f times the side's least (%d)", p.name, sides[i].label, j+1, got[i][j].llc, float64(got[i][j].llc)/float64(max(lo, 1)), lo)
 					if retries == llcRetries {
-						fmt.Printf("%s: no retry left, the run stays and the verdict is INCONCLUSIVE\n", what)
-						o.disturbed = append(o.disturbed, fmt.Sprintf("%s %s %s", p.name, mode, sides[i].label))
+						fmt.Printf("%s: no retry left, the run stays and this try of %s gives no verdict\n", what, mode)
+						disturbedRuns = append(disturbedRuns, fmt.Sprintf("%s %s %s", p.name, mode, sides[i].label))
 						break
 					}
 					retries++
@@ -305,7 +344,7 @@ func main() {
 			if !ok {
 				continue
 			}
-			sampleLoad()
+			seeLoad()
 			for i := range got {
 				if len(got[i]) >= 4 {
 					ev, od := halves(got[i])
@@ -340,7 +379,7 @@ func main() {
 		}
 		if len(lw) == 0 && nIdent > 0 && len(o.failed) == 0 {
 			fmt.Printf("%-12s every program measured is byte-identical on both sides: nothing to judge in %s\n", "geomean", mode)
-			continue
+			return try{n: n, start: start, gw: 1, gc: 1, gr: 1, ew: 1, ec: 1, load: modeLoad, ident: true}
 		}
 		gw, gc, gr := geomean(lw), geomean(lc), geomean(lr)
 		if len(lw) == 0 {
@@ -349,9 +388,6 @@ func main() {
 			o.failed = append(o.failed, fmt.Sprintf("%s: the %s geomean is not a number", mode, bad))
 		}
 		mark := verdict(gw, gc, gr)
-		if mark == "WORSE" {
-			o.worse = true
-		}
 		fmt.Printf("%-12s %10s %10s %7.3f %10s %10s %7.3f %9s %9s %7.3f %s\n", "geomean", "", "", gw, "", "", gc, "", "", gr, mark)
 		// The noise of this mode: each side against itself, the odd runs over the even
 		// ones, geomean over programs, scaled to the full medians the verdict compares
@@ -364,16 +400,55 @@ func main() {
 		if pinned != nil && wall > 0 {
 			fmt.Printf("other work on CPUs %s during the timed runs: %.1f%% of one CPU (information only)\n", *flCPUs, 100*max(busy-used, 0)/wall)
 		}
-		if ew > 1.02 || ec > 1.02 {
-			o.noisy = true
+		t := try{n: n, start: start, gw: gw, gc: gc, gr: gr, ew: ew, ec: ec, load: modeLoad,
+			worse: mark == "WORSE", forced: n == 1 && testNoisy[mode], disturbed: disturbedRuns}
+		if *flRetries > 0 {
+			// In the log before any wait: a run killed at its time limit keeps it.
+			fmt.Printf("try %d of %s: %s\n", n, mode, t.result(o.cpus, t.conclusive(o.cpus)))
+		}
+		return t
+	}
+	pending := make([]int, len(modes))
+	for i := range pending {
+		pending[i] = i
+	}
+	var timed time.Duration
+	for n := 1; ; n++ {
+		t0 := time.Now()
+		var prev *try
+		for _, mi := range pending {
+			o.tries[mi] = append(o.tries[mi], timeMode(mi, n, prev))
+			prev = &o.tries[mi][len(o.tries[mi])-1]
+		}
+		round := time.Since(t0)
+		timed += round
+		if pending = o.undecided(); len(pending) == 0 || len(o.failed) > 0 || n > *flRetries {
+			break
+		}
+		if timed > *flRetryTime {
+			o.stopped = fmt.Sprintf("no retry: the timed runs took %v, more than -retry-time", timed.Round(time.Minute))
+			break
+		}
+		if limit, ran := runTimeLeft(); !retryFits(round, *flRetryWait, limit, ran) {
+			o.stopped = fmt.Sprintf("no retry: it would not end 5 minutes before the job's run time limit (%s s, %s s used)", strings.TrimSpace(limit), strings.TrimSpace(ran))
+			break
+		}
+		if !quietFor(time.Minute, *flRetryWait) {
+			o.stopped = fmt.Sprintf("no retry: the load did not stay below %d for a minute in %v", o.cpus/4, *flRetryWait)
+			break
 		}
 	}
 	giveBack() // the timed runs are over: other jobs may run again
 	fmt.Printf("\nload at end: %s\n", loadavg())
 	sampleLoad()
-	o.maxLoad, o.cpus = maxLoad, runtime.NumCPU()
-	if o.maxLoad > float64(o.cpus)/2 {
-		fmt.Printf("warning: load reached %.1f, above half the %d CPUs: timings are noisy, rerun on a quiet machine\n", o.maxLoad, o.cpus)
+	if maxLoad > float64(o.cpus)/2 {
+		fmt.Printf("warning: load reached %.1f, above half the %d CPUs: timings are noisy, rerun on a quiet machine\n", maxLoad, o.cpus)
+	}
+	if o.retried() {
+		o.printTries()
+	}
+	for _, w := range o.warnings() {
+		fmt.Println(w)
 	}
 	line, code := o.verdict()
 	fmt.Println(line)
@@ -390,46 +465,300 @@ const (
 	exitFailed       = 5
 )
 
+// try is one timed pass over one mode.
+type try struct {
+	n          int       // 1 for the first try
+	start      time.Time // when the try started
+	gw, gc, gr float64   // geomeans B/A: wall, cpu, rss
+	ew, ec     float64   // noise lines: wall, cpu
+	load       float64   // the highest 1 minute load seen while the try ran
+	worse      bool      // the geomean line said WORSE
+	forced     bool      // PERFCMP_TEST_NOISY counted the try as noisy (tests only)
+	disturbed  []string  // program, mode and side of a run that shared the LLC after its retries
+	ident      bool      // -skip-identical left every program out: nothing to judge
+}
+
+// retryNoise is the noise bar of a retry. The noise line comes from the same samples as
+// the ratios, so the first of several tries under a bar tends to underestimate its noise;
+// a retry must clear a stricter bar than the first try.
+const retryNoise = 1.015
+
+func (t try) noisy() bool {
+	bar := 1.02
+	if t.n > 1 {
+		bar = retryNoise
+	}
+	return t.forced || t.ew > bar || t.ec > bar
+}
+
+func (t try) loaded(cpus int) bool { return t.load > float64(cpus)/2 }
+
+// result says what the try decided, for the tries table and the line after each try.
+// "leaned WORSE" means the try's geomean line said WORSE (wall or cpu above 1.02, or rss
+// above 1.03) although the try carries no verdict.
+func (t try) result(cpus int, decides bool) string {
+	if decides {
+		if t.worse {
+			return "decides: WORSE"
+		}
+		return "decides: ok"
+	}
+	var why []string
+	if t.forced {
+		why = append(why, "PERFCMP_TEST_NOISY")
+	} else if t.noisy() {
+		why = append(why, "noise")
+	}
+	if t.loaded(cpus) {
+		why = append(why, fmt.Sprintf("load %.1f", t.load))
+	}
+	if len(t.disturbed) > 0 {
+		why = append(why, "LLC shared: "+strings.Join(t.disturbed, ", "))
+	}
+	s := "no verdict: " + strings.Join(why, ", ")
+	if t.worse {
+		s += "; leaned WORSE"
+	}
+	return s
+}
+
+// conclusive: the try can judge 2%. Only a conclusive try gives a mode its verdict.
+func (t try) conclusive(cpus int) bool {
+	return t.ident || !t.noisy() && !t.loaded(cpus) && len(t.disturbed) == 0
+}
+
 // outcome is what a run found; verdict turns it into the last line and the exit status.
 type outcome struct {
-	failed             []string // builds or runs that failed, ratios that are not numbers
-	disturbed          []string // program, mode and side with a disturbed run after the retries
-	worse, noisy, same bool
-	maxLoad            float64
-	cpus               int
+	failed  []string // builds or runs that failed, ratios that are not numbers
+	same    bool     // A=B
+	cpus    int
+	modes   []string
+	tries   [][]try // per mode, in the order they ran
+	stopped string  // why retries stopped before -retries, "" when they did not
+}
+
+// decider is the index of the try that decides mode mi (its first conclusive try), or -1.
+func (o outcome) decider(mi int) int {
+	for i, t := range o.tries[mi] {
+		if t.conclusive(o.cpus) {
+			return i
+		}
+	}
+	return -1
+}
+
+// undecided lists the modes without a conclusive try.
+func (o outcome) undecided() []int {
+	var u []int
+	for mi := range o.modes {
+		if o.decider(mi) < 0 {
+			u = append(u, mi)
+		}
+	}
+	return u
+}
+
+// retried: some mode was timed more than once.
+func (o outcome) retried() bool {
+	for _, ts := range o.tries {
+		if len(ts) > 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// tryCount is the most tries any mode had.
+func (o outcome) tryCount() int {
+	n := 0
+	for _, ts := range o.tries {
+		n = max(n, len(ts))
+	}
+	return n
 }
 
 // verdict: FAILED before anything else (a comparison with a hole in it is never ok), then
-// INCONCLUSIVE (too loaded or too noisy to judge 2%), then WORSE, then ok.
+// INCONCLUSIVE (a mode without a conclusive try: too loaded or too noisy to judge 2%, or a
+// run that shared the LLC after its LLC retries), then
+// WORSE, then ok. A noisy or loaded try carries no verdict, even after a retry: a mode is
+// WORSE or ok by its first conclusive try only.
 func (o outcome) verdict() (string, int) {
 	if len(o.failed) > 0 {
 		return fmt.Sprintf("verdict: FAILED (%d %s, so B was not judged against A: %s)", len(o.failed), plural(len(o.failed), "failure", "failures"), strings.Join(o.failed, "; ")), exitFailed
 	}
-	loaded := o.maxLoad > float64(o.cpus)/2
-	if loaded || o.noisy || len(o.disturbed) > 0 {
-		why := []string{}
-		if loaded {
-			why = append(why, fmt.Sprintf("the load reached %.1f on %d CPUs", o.maxLoad, o.cpus))
+	worse := false
+	for mi := range o.modes {
+		if d := o.decider(mi); d >= 0 && o.tries[mi][d].worse {
+			worse = true
 		}
-		if o.noisy {
+	}
+	if und := o.undecided(); len(und) > 0 {
+		load, noisy, names := 0.0, false, []string{}
+		var dist []string
+		for _, mi := range und {
+			last := o.tries[mi][len(o.tries[mi])-1]
+			if last.loaded(o.cpus) {
+				load = max(load, last.load)
+			}
+			noisy = noisy || last.noisy()
+			dist = append(dist, last.disturbed...)
+			worse = worse || last.worse
+			names = append(names, o.modes[mi])
+		}
+		why := []string{}
+		if load > 0 {
+			why = append(why, fmt.Sprintf("the load reached %.1f on %d CPUs", load, o.cpus))
+		}
+		if noisy {
 			why = append(why, "the noise line of a mode is above 1.02, the 2% the rule judges")
 		}
-		if len(o.disturbed) > 0 {
-			why = append(why, fmt.Sprintf("other work shared the LLC in a run after %d retries: %s", llcRetries, strings.Join(o.disturbed, ", ")))
+		if len(dist) > 0 {
+			why = append(why, fmt.Sprintf("other work shared the LLC in a run after %d retries: %s", llcRetries, strings.Join(dist, ", ")))
+		}
+		if n := o.tryCount(); n > 1 {
+			why = append(why, fmt.Sprintf("%s after %d tries", strings.Join(names, ", "), n))
+		}
+		if o.stopped != "" {
+			why = append(why, o.stopped)
 		}
 		would := "ok"
-		if o.worse {
+		if worse {
 			would = "WORSE"
 		}
-		return fmt.Sprintf("verdict: INCONCLUSIVE (%s; this run cannot judge the 2%% rule, it would have said %s; rerun on a quiet machine, the Linux host through at.sh)", strings.Join(why, ", and "), would), exitInconclusive
+		return fmt.Sprintf("verdict: INCONCLUSIVE (%s; this run cannot judge the 2%% rule, it would have said %s; rerun on a quiet machine, the Linux host through at.sh)%s", strings.Join(why, ", and "), would, o.hookNote()), exitInconclusive
 	}
+	by := ""
+	if o.retried() {
+		var d []string
+		for mi, m := range o.modes {
+			d = append(d, fmt.Sprintf("%s by try %d", m, o.decider(mi)+1))
+		}
+		by = " (decided: " + strings.Join(d, ", ") + o.leans() + ")"
+	}
+	by += o.hookNote()
 	if o.same {
-		return "verdict: ok (A=B: the noise is within the rule, this machine can judge it now)", exitOK
+		return "verdict: ok (A=B: the noise is within the rule, this machine can judge it now)" + by, exitOK
 	}
-	if o.worse {
-		return "verdict: WORSE (a geomean of B is more than 2% slower or 3% bigger in memory than A; lines marked WORSE show where)", exitWorse
+	if worse {
+		return "verdict: WORSE (a geomean of B is more than 2% slower or 3% bigger in memory than A; lines marked WORSE show where)" + by, exitWorse
 	}
-	return "verdict: ok (no line worse than the noise rule)", exitOK
+	return "verdict: ok (no line worse than the noise rule)" + by, exitOK
+}
+
+// warnings: a mode that a later try decided ok after an earlier, noisy try leaned WORSE.
+// The noisy try carries no verdict and the exit status stays; the line gives its geomeans
+// for review.
+func (o outcome) warnings() []string {
+	var w []string
+	for mi, m := range o.modes {
+		d := o.decider(mi)
+		if d <= 0 || o.tries[mi][d].worse {
+			continue
+		}
+		leaned := false
+		var g []string
+		for _, t := range o.tries[mi][:d] {
+			leaned = leaned || t.worse
+			g = append(g, fmt.Sprintf("try %d wall %.3f cpu %.3f rss %.3f", t.n, t.gw, t.gc, t.gr))
+		}
+		if leaned {
+			w = append(w, fmt.Sprintf("warning: %s: an earlier noisy try leaned WORSE (%s); a noisy try carries no verdict, try %d decides ok", m, strings.Join(g, "; "), d+1))
+		}
+	}
+	return w
+}
+
+// leans lists, for the verdict line, the earlier tries that leaned WORSE in a mode a later
+// try decided ok: "; dev try 1 leaned WORSE: wall 1.041 cpu 1.039 rss 1.000". Scripts read
+// the last line only, so the lean must be there and not only in a warning above it.
+func (o outcome) leans() string {
+	s := ""
+	for mi, m := range o.modes {
+		d := o.decider(mi)
+		if d <= 0 || o.tries[mi][d].worse {
+			continue
+		}
+		for _, t := range o.tries[mi][:d] {
+			if t.worse {
+				s += fmt.Sprintf("; %s try %d leaned WORSE: wall %.3f cpu %.3f rss %.3f", m, t.n, t.gw, t.gc, t.gr)
+			}
+		}
+	}
+	return s
+}
+
+// hookNote marks a verdict that PERFCMP_TEST_NOISY changed: such a run is a test of the
+// retry path and never a gate.
+func (o outcome) hookNote() string {
+	for _, ts := range o.tries {
+		for _, t := range ts {
+			if t.forced {
+				return " (test hook PERFCMP_TEST_NOISY on: not a gate result)"
+			}
+		}
+	}
+	return ""
+}
+
+// printTries prints every try of every mode and what it decided.
+func (o outcome) printTries() {
+	fmt.Printf("\ntries (a noisy or loaded try carries no verdict; the first conclusive try decides its mode):\n")
+	fmt.Printf("%-8s %3s %8s %6s %7s %7s %7s %7s %7s  %s\n", "mode", "try", "start", "load", "noise w", "noise c", "wall", "cpu", "rss", "result")
+	for mi, m := range o.modes {
+		d := o.decider(mi)
+		for i, t := range o.tries[mi] {
+			res := t.result(o.cpus, i == d)
+			fmt.Printf("%-8s %3d %8s %6.1f %7.3f %7.3f %7.3f %7.3f %7.3f  %s\n", m, t.n, t.start.Format("15:04:05"), t.load, t.ew, t.ec, t.gw, t.gc, t.gr, res)
+		}
+	}
+}
+
+// retryFits reports whether a retry that takes as long as the last round, after a wait
+// of at most wait, ends 5 minutes before the job's run time limit. remote.sh sets
+// MARMOT_RUN_LIMIT (seconds) and MARMOT_RAN_FILE, the run time so far, which counts from
+// when the job holds its locks and stops while a bench freezes the job. limit and ran are
+// those two values as text; an empty or bad value puts no limit.
+func retryFits(round, wait time.Duration, limit, ran string) bool {
+	l, err1 := strconv.Atoi(strings.TrimSpace(limit))
+	r, err2 := strconv.Atoi(strings.TrimSpace(ran))
+	if err1 != nil || err2 != nil || l <= 0 {
+		return true
+	}
+	return wait+round+5*time.Minute <= time.Duration(l-r)*time.Second
+}
+
+// runTimeLeft reads MARMOT_RUN_LIMIT and the MARMOT_RAN_FILE for retryFits.
+func runTimeLeft() (limit, ran string) {
+	limit = os.Getenv("MARMOT_RUN_LIMIT")
+	if f := os.Getenv("MARMOT_RAN_FILE"); f != "" {
+		if b, err := os.ReadFile(f); err == nil {
+			ran = string(b)
+		} else {
+			ran = "0" // no tick yet
+		}
+	}
+	return limit, ran
+}
+
+// quietFor waits until the 1 minute load has stayed below a quarter of the CPUs for hold,
+// at most wait. It reports whether that happened.
+func quietFor(hold, wait time.Duration) bool {
+	limit := float64(runtime.NumCPU()) / 4
+	fmt.Fprintf(os.Stderr, "perfcmp: retry: waiting for the load to stay below %.0f for %v (now %.1f)\n", limit, hold, load1())
+	var since time.Time
+	for end := time.Now().Add(wait); time.Now().Before(end); time.Sleep(5 * time.Second) {
+		if load1() >= limit {
+			since = time.Time{}
+			continue
+		}
+		if since.IsZero() {
+			since = time.Now()
+		}
+		if time.Since(since) >= hold {
+			return true
+		}
+	}
+	return false
 }
 
 func plural(n int, one, many string) string {
