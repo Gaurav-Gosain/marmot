@@ -427,6 +427,9 @@ func benchNames(repo string) []string {
 	return n
 }
 
+// buildJobs caps the parallelism of the builds (MARMOT_MAX_JOBS): the CPUs of a queue job.
+const buildJobs = 8
+
 func build(s side, p program, mode, work string) (string, time.Duration, error) {
 	bin := filepath.Join(work, fmt.Sprintf("%s-%s-%s", p.name, mode, s.label))
 	args := []string{"build", "-o", bin}
@@ -446,7 +449,14 @@ func build(s side, p program, mode, work string) (string, time.Duration, error) 
 	// driver's limit per tool run, default 10m) are raised for builds only, so a large -release
 	// build (tuios) on a loaded machine is not killed. The build is not timed for the verdict.
 	// -a-env and -b-env can still set them.
-	cmd.Env = append(os.Environ(), append([]string{"MARMOT_ROOT=" + s.root, "MARMOT_OUTPUT=plain", "CGO_ENABLED=0", "MARMOT_TIER1=0", "MARMOT_MAX_SECONDS=1800", "MARMOT_TOOL_TIMEOUT=30m"}, s.env...)...)
+	// MARMOT_MAX_JOBS: at most buildJobs MLIR workers and backend jobs (default: every core). A
+	// queue job has 8 CPUs, so more workers add memory, not speed. It does not change the code,
+	// and MARMOT_MAX_JOBS in the environment or -a-env and -b-env win over it.
+	env := []string{"MARMOT_ROOT=" + s.root, "MARMOT_OUTPUT=plain", "CGO_ENABLED=0", "MARMOT_TIER1=0", "MARMOT_MAX_SECONDS=1800", "MARMOT_TOOL_TIMEOUT=30m"}
+	if os.Getenv("MARMOT_MAX_JOBS") == "" {
+		env = append(env, fmt.Sprintf("MARMOT_MAX_JOBS=%d", min(runtime.NumCPU(), buildJobs)))
+	}
+	cmd.Env = append(os.Environ(), append(env, s.env...)...)
 	t0 := time.Now()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
