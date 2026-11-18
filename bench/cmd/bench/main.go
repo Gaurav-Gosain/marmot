@@ -253,7 +253,11 @@ func main() {
 		return
 	}
 
-	lockBenchmarks()
+	// -size-only and -rss-only time nothing: they do not take the timing lock, so a queue job
+	// that runs them holds no lock and can freeze while a timed run goes.
+	if !*sizeOnly && !*rssOnly {
+		lockBenchmarks()
+	}
 	usesMarmot := false
 	for _, t := range tcl {
 		if strings.HasPrefix(t.Name, "marmot") {
