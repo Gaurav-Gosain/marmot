@@ -1,0 +1,18 @@
+7 [7 7 0 0 0 0 0] [7 7 0 0 0 0 0 7 7 7]
+0 true old
+1 false 
+2 false 
+3 false 
+9 [1 2 3 0 0 0 0 0 0]
+3 true true
+5
+1
+201 3
+[9 0 0] [src size]
+negative int: panic: runtime error: makeslice: len out of range
+negative int8: panic: runtime error: makeslice: len out of range
+huge uint64: panic: runtime error: makeslice: len out of range
+negative before slice use: panic: runtime error: makeslice: len out of range
+[src size]
+hello 5 true
+nonzero tail 0

@@ -445,7 +445,13 @@ func (f *funcGen) findAppendMake() {
 		return
 	}
 	for _, b := range f.fn.Blocks {
+		var prev ssa.Instruction // the previous instruction, debug refs aside
 		for _, instr := range b.Instrs {
+			if _, dbg := instr.(*ssa.DebugRef); dbg {
+				continue
+			}
+			before := prev
+			prev = instr
 			c, ok := instr.(*ssa.Call)
 			if !ok || len(c.Call.Args) != 2 {
 				continue
@@ -453,8 +459,11 @@ func (f *funcGen) findAppendMake() {
 			if bi, ok := c.Call.Value.(*ssa.Builtin); !ok || bi.Name() != "append" {
 				continue
 			}
+			// The make must come right before the append: appendZeros checks
+			// the length at the append, so nothing may run in between (a
+			// negative length panics before any later instruction).
 			ms, ok := c.Call.Args[1].(*ssa.MakeSlice)
-			if !ok || ms.Cap != ms.Len || ms.Block() != b {
+			if !ok || ms.Cap != ms.Len || ms.Block() != b || before != ssa.Instruction(ms) {
 				continue
 			}
 			only := true
