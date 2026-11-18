@@ -174,6 +174,7 @@ type Meta struct {
 	ColdRuns   int               `json:"cold_build_runs"`
 	GitRev     string            `json:"git_rev"`
 	Hyperfine  string            `json:"hyperfine"`
+	RSSMethod  string            `json:"rss_method,omitempty"`
 	Notes      string            `json:"notes"`
 	TimeoutSec int               `json:"program_timeout_sec"`
 }
@@ -202,6 +203,7 @@ var (
 	maxLoad    = flag.Float64("max-load", 12, "retry a program when the load average is above this at start or end; 0 disables")
 	notes      = flag.String("notes", "", "free text stored in the results file")
 	sizeOnly   = flag.Bool("size-only", false, "build once and record size and output check only, no timing")
+	rssOnly    = flag.Bool("rss-only", false, "build once and record size, output check and peak RSS only, no timing")
 	resume     = flag.Bool("resume", false, "continue the results file of this label and date: skip program and toolchain pairs already measured without noise")
 	redo       = flag.String("redo", "", "with -resume: comma separated programs whose old rows are discarded and measured again")
 	redoMarmot = flag.Bool("redo-marmot", false, "with -resume: discard every marmot row so all marmot toolchains are measured again (go and tinygo rows are kept)")
@@ -220,6 +222,7 @@ func main() {
 	check(err)
 	work = filepath.Join(root, ".work", "bench", *label)
 	check(os.MkdirAll(work, 0o755))
+	setupRSS(work)
 
 	progs := discover()
 	if *programs != "" {
@@ -375,7 +378,7 @@ func measure(p Program, t Toolchain) Result {
 	os.Remove(out)
 	env := append(append(os.Environ(), "GOCACHE="+gocacheDir(), "MARMOT_MAX_JOBS=2", "MARMOT_CACHE_MAX_MB=512"), append(tier1Off(), t.Env...)...)
 
-	if *sizeOnly {
+	if *sizeOnly || *rssOnly {
 		c := exec.Command(t.Build(root, p.Pkg, out, len(t.Env) > 0)[0], t.Build(root, p.Pkg, out, len(t.Env) > 0)[1:]...)
 		c.Dir, c.Env = root, env
 		if o, err := runGroup(c, 10*time.Minute); err != nil {
@@ -388,6 +391,9 @@ func measure(p Program, t Toolchain) Result {
 			return r
 		}
 		r.Size, r.SizeStripped = fi.Size(), strippedSize(out)
+		if *rssOnly {
+			return rssOnlyRow(r, out)
+		}
 		r.Status = "ok"
 		return r
 	}
@@ -440,6 +446,12 @@ func measure(p Program, t Toolchain) Result {
 		return r
 	}
 	r.RSS = medianInt(rss)
+	if rssHelper != "" {
+		if r.RSS, err = peakRSS(out, os.Environ(), time.Duration(*timeoutSec)*time.Second); err != nil {
+			r.Status, r.Error = "run_failed", trunc(err.Error())
+			return r
+		}
+	}
 	r.Instructions, r.Cycles = counters(out)
 	r.Status = "ok"
 	return r
@@ -634,6 +646,7 @@ func collectMeta(tcl []Toolchain) Meta {
 		m.GitRev += " (snapshot " + filepath.Base(snapDir) + ")"
 	}
 	m.Hyperfine = "built-in timer: wall clock, rusage CPU time and Maxrss, no external tools"
+	m.RSSMethod = rssMethod()
 	m.Versions["go"] = sh("go", "version")
 	m.Versions["tinygo"] = sh("tinygo", "version")
 	if v := sh(marmotBin(root), "version"); v != "" {
