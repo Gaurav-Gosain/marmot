@@ -673,18 +673,19 @@ static void lowerCards(ModuleOp module, bool x64) {
     if (auto f = dyn_cast<LL::LLVMFuncOp>(d); f && f.isExternal()) f.erase();
 }
 
-// MARMOT_TIER0_STABLENAMES=1: the suffix that makes this module's local
+// The suffix that makes this module's local
 // symbols unique (localNames) comes from the names the module defines, as
 // the source file name does in the LLVM path, not from the object cache key.
 // The key changes with every MARMOT_* switch and with the backend build, so
 // the names in .marmot_pcln changed with them and dev builds of the same
 // program by two compilers could not be compared byte for byte. A module
 // that defines no external symbol keeps the key (its local names alone
-// could repeat in another module).
+// could repeat in another module). MARMOT_TIER0_STABLENAMES=0 goes back to
+// the key for every module.
 static std::string stableUnit(ModuleOp module, const std::string &unit) {
   static const bool on = [] {
     const char *e = getenv("MARMOT_TIER0_STABLENAMES");
-    return e && *e == '1';
+    return !(e && *e == '0');
   }();
   if (!on) return unit;
   std::string names;
