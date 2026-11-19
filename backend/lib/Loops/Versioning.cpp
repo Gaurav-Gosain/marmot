@@ -23,6 +23,7 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -104,11 +105,16 @@ void checkLoopInfo(Function &F, LoopInfo &LI, DominatorTree &DT) {
   }
 }
 
+static cl::opt<bool> NoPrune("loops-bcv-no-prune", cl::Hidden,
+                             cl::desc("Rule V: keep guard conditions that others imply (measurement)"));
+static cl::opt<bool> RemarkConds("loops-remarks-conds", cl::Hidden,
+                                 cl::desc("Rule V: print each run time condition of a guard"));
+
 class Versioner {
 public:
   Versioner(Function &F, LoopInfo &LI, ScalarEvolution &SE, DominatorTree &DT, AAResults &AA,
-            bool cache)
-      : F(F), LI(LI), SE(SE), DT(DT), AA(AA), cache(cache) {}
+            bool cache, int maxConds)
+      : F(F), LI(LI), SE(SE), DT(DT), AA(AA), cache(cache), maxConds(maxConds) {}
   bool run(Loop *L, std::string &why);
 
 private:
@@ -125,6 +131,10 @@ private:
   // minimum and maximum. Without a loop M other than L, L is not versioned.
   bool cache;
   Loop *M = nullptr;
+  // A short loop (the caller's cost policy): version only when the
+  // precondition has no check loop and at most maxConds run time conditions,
+  // so it costs a few compares per entry. -1: no limit.
+  int maxConds;
   std::string why;
   std::vector<Cond> conds;
   std::vector<LoadBound> loads;
@@ -258,6 +268,7 @@ private:
   bool side(Loop *L, const SCEV *S, Side &out);
   int loadBound(Loop *L, LoadInst *ld);
   bool findCacheLoop(Loop *L);
+  void pruneImplied(std::vector<Cond> &cs);
   void emitCheckLoops(BasicBlock *&at);
   // Blocks emitCheckLoops made: each loop's body (a one-block loop) and the
   // block after it.
@@ -668,6 +679,34 @@ bool Versioner::run(Loop *L, std::string &whyOut) {
   for (LoadCond &c : loadConds)
     if (!exp.isSafeToExpandAt(c.other, pre->getTerminator()))
       return done(reject("precondition not expandable before the loop"));
+  // Drop conditions another condition implies, by integer order on one value:
+  // the same lhs SCEV against constants (x >= 0 implies x >= -2^61; x < 11
+  // implies x <= 2^61), and exact duplicates. Each compares one machine value
+  // with a constant in the same signedness, so no wraparound is involved.
+  // Versioning-only mode for now, so -par output stays the same.
+  if (cache && !NoPrune)
+    pruneImplied(runtime);
+  if (RemarkConds) {
+    for (Cond &c : runtime) {
+      errs() << "loops: guard: " << F.getName() << ": " << L->getHeader()->getName() << ": "
+             << ICmpInst::getPredicateName(c.pred) << " " << *c.lhs << " , " << *c.rhs << "\n";
+    }
+    for (const SCEVPredicate *p : preds) {
+      errs() << "loops: guard: " << F.getName() << ": " << L->getHeader()->getName() << ": pred ";
+      p->print(errs());
+    }
+    errs() << "loops: guard: " << F.getName() << ": " << L->getHeader()->getName() << ": total "
+           << runtime.size() << " conds, " << preds.size() << " preds, " << loadConds.size()
+           << " load conds, " << loads.size() << " check loops\n";
+  }
+  if (maxConds >= 0) {
+    if (!loads.empty())
+      return done(reject("short loop: the precondition needs a check loop"));
+    size_t n = runtime.size() + preds.size() + loadConds.size();
+    if (n > size_t(maxConds))
+      return done(reject("short loop: the precondition has " + std::to_string(n) +
+                         " run time conditions"));
+  }
   if (cache && !loads.empty() && !findCacheLoop(L))
     return done(false);
 
@@ -838,11 +877,103 @@ bool Versioner::run(Loop *L, std::string &whyOut) {
     eb.CreateCondBr(c2, fastPre, slowPre);
   }
   (void)fast;
+  if (RemarkConds) {
+    size_t n = 0;
+    for (Instruction &I : *pre)
+      n += !isa<DbgInfoIntrinsic>(I);
+    errs() << "loops: guard: " << F.getName() << ": " << L->getHeader()->getName()
+           << ": guard block instructions " << n << "\n";
+  }
   whyOut = std::to_string(checks.size()) + " checks, " + std::to_string(grows.size()) +
            " growth branches, " +
            std::to_string(runtime.size() + preds.size() + loadConds.size()) +
            " run time conditions, " + std::to_string(loads.size()) + " check loops";
   return true;
+}
+
+// A condition x pred C, with x a SCEV and C a constant, as a bound on x:
+// lower (x >= lo) or upper (x <= hi), signed or unsigned.
+struct ConstBound {
+  const SCEV *x;
+  bool isSigned, upper;
+  APInt c; // inclusive bound
+};
+
+static std::optional<ConstBound> asConstBound(ICmpInst::Predicate pred, const SCEV *lhs,
+                                              const SCEV *rhs) {
+  // Put the constant on the right.
+  if (isa<SCEVConstant>(lhs) && !isa<SCEVConstant>(rhs)) {
+    std::swap(lhs, rhs);
+    pred = ICmpInst::getSwappedPredicate(pred);
+  }
+  auto *k = dyn_cast<SCEVConstant>(rhs);
+  if (!k || isa<SCEVConstant>(lhs))
+    return std::nullopt;
+  APInt c = k->getAPInt();
+  switch (pred) {
+  case ICmpInst::ICMP_SLE:
+    return ConstBound{lhs, true, true, c};
+  case ICmpInst::ICMP_SLT:
+    if (c.isMinSignedValue())
+      return std::nullopt;
+    return ConstBound{lhs, true, true, c - 1};
+  case ICmpInst::ICMP_SGE:
+    return ConstBound{lhs, true, false, c};
+  case ICmpInst::ICMP_SGT:
+    if (c.isMaxSignedValue())
+      return std::nullopt;
+    return ConstBound{lhs, true, false, c + 1};
+  case ICmpInst::ICMP_ULE:
+    return ConstBound{lhs, false, true, c};
+  case ICmpInst::ICMP_ULT:
+    if (c.isZero())
+      return std::nullopt;
+    return ConstBound{lhs, false, true, c - 1};
+  case ICmpInst::ICMP_UGE:
+    return ConstBound{lhs, false, false, c};
+  case ICmpInst::ICMP_UGT:
+    if (c.isMaxValue())
+      return std::nullopt;
+    return ConstBound{lhs, false, false, c + 1};
+  default:
+    return std::nullopt;
+  }
+}
+
+// a implies b when both bound the same value in the same direction and
+// signedness and a's bound is at least as tight.
+static bool boundImplies(const ConstBound &a, const ConstBound &b) {
+  if (a.x != b.x || a.isSigned != b.isSigned || a.upper != b.upper ||
+      a.c.getBitWidth() != b.c.getBitWidth())
+    return false;
+  if (a.upper)
+    return a.isSigned ? a.c.sle(b.c) : a.c.ule(b.c);
+  return a.isSigned ? a.c.sge(b.c) : a.c.uge(b.c);
+}
+
+void Versioner::pruneImplied(std::vector<Cond> &cs) {
+  std::vector<Cond> out;
+  std::vector<std::optional<ConstBound>> bs;
+  for (Cond &c : cs)
+    bs.push_back(asConstBound(c.pred, c.lhs, c.rhs));
+  for (size_t i = 0; i < cs.size(); i++) {
+    bool implied = false;
+    for (size_t j = 0; j < cs.size() && !implied; j++) {
+      if (i == j)
+        continue;
+      // Exact duplicates: keep the first.
+      if (cs[j].pred == cs[i].pred && cs[j].lhs == cs[i].lhs && cs[j].rhs == cs[i].rhs) {
+        implied = j < i;
+        continue;
+      }
+      // Equal bounds imply each other: keep the first of them.
+      if (bs[i] && bs[j] && boundImplies(*bs[j], *bs[i]))
+        implied = !boundImplies(*bs[i], *bs[j]) || j < i;
+    }
+    if (!implied)
+      out.push_back(cs[i]);
+  }
+  cs = std::move(out);
 }
 
 // Picks M for the cached check loops (see cache). Fails with a reason when
@@ -949,8 +1080,9 @@ void Versioner::emitCheckLoops(BasicBlock *&at) {
 } // namespace
 
 bool versionBoundsChecks(Function &F, Loop *L, LoopInfo &LI, ScalarEvolution &SE,
-                         DominatorTree &DT, AAResults &AA, std::string &why, bool cacheLoads) {
-  Versioner v(F, LI, SE, DT, AA, cacheLoads);
+                         DominatorTree &DT, AAResults &AA, std::string &why, bool cacheLoads,
+                         int maxConds) {
+  Versioner v(F, LI, SE, DT, AA, cacheLoads, maxConds);
   return v.run(L, why);
 }
 

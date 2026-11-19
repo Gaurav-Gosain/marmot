@@ -13,6 +13,15 @@
 // Without the switch and without -par no loop is versioned.
 // RUN: env -u MARMOT_LOOPS_VERSION %backend -O2 -emit=llvm -o %t4.ll %s
 // RUN: %FileCheck %s --check-prefix=OFF < %t4.ll
+// Pruning: guard conditions another condition implies (same value, constant
+// bounds, same signedness) are dropped; -loops-bcv-no-prune keeps them.
+// RUN: env MARMOT_LOOPS_VERSION=1 %backend -O2 -loops-remarks-conds -emit=llvm -o %t5.ll %s 2>&1 | %FileCheck %s --check-prefix=PRUNE
+// RUN: env MARMOT_LOOPS_VERSION=1 %backend -O2 -loops-remarks-conds -loops-bcv-no-prune -emit=llvm -o %t6.ll %s 2>&1 | %FileCheck %s --check-prefix=NOPRUNE
+// PRUNE: guard: froms: .preheader: sge %2 , 0
+// PRUNE-NOT: guard: froms: .preheader: sge %2 , -2305843009213693952
+// PRUNE: guard: froms: .preheader: total 4 conds
+// NOPRUNE: guard: froms: .preheader: sge %2 , -2305843009213693952
+// NOPRUNE: guard: froms: .preheader: total 7 conds
 // OFF-NOT: bcv.ok
 
 // REMARK: loops: pop: loop {{.*}}: versioned (version-only mode)
@@ -132,6 +141,29 @@ module {
     llvm.return %r : i64
   ^panic(%x: i64, %y: i64):
     llvm.call @panicIndex(%x, %y) : (i64, i64) -> ()
+    llvm.unreachable
+  }
+  // i from s to n with i < len checked unsigned: min(i) = s >= 0 implies the
+  // term limit s >= -2^61, which the guard drops (pruning).
+  llvm.func @froms(%p: !llvm.ptr, %len: i64, %s: i64, %n: i64) -> i64 {
+    %c0 = llvm.mlir.constant(0 : i64) : i64
+    %c1 = llvm.mlir.constant(1 : i64) : i64
+    %z = llvm.icmp "slt" %s, %n : i64
+    llvm.cond_br %z, ^loop(%s, %c0 : i64, i64), ^done(%c0 : i64)
+  ^loop(%i: i64, %acc: i64):
+    %ok = llvm.icmp "ult" %i, %len : i64
+    llvm.cond_br %ok, ^body, ^panic(%i : i64)
+  ^body:
+    %a = llvm.getelementptr %p[%i] : (!llvm.ptr, i64) -> !llvm.ptr, i64
+    %v = llvm.load %a : !llvm.ptr -> i64
+    %acc2 = llvm.add %acc, %v : i64
+    %i2 = llvm.add %i, %c1 : i64
+    %c = llvm.icmp "slt" %i2, %n : i64
+    llvm.cond_br %c, ^loop(%i2, %acc2 : i64, i64), ^done(%acc2 : i64)
+  ^done(%r: i64):
+    llvm.return %r : i64
+  ^panic(%x: i64):
+    llvm.call @panicIndex(%x, %len) : (i64, i64) -> ()
     llvm.unreachable
   }
 }

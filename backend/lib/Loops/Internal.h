@@ -43,7 +43,10 @@ bool decomposeAffine(llvm::ScalarEvolution &SE, const llvm::SCEV *S, const llvm:
 // versioning L; why gets a summary or the reason it did not.
 bool versionBoundsChecks(llvm::Function &F, llvm::Loop *L, llvm::LoopInfo &LI,
                          llvm::ScalarEvolution &SE, llvm::DominatorTree &DT,
-                         llvm::AAResults &AA, std::string &why, bool cacheLoads = false);
+                         llvm::AAResults &AA, std::string &why, bool cacheLoads = false,
+                         int maxConds = -1);
+// -loops-version-short (Parallelize.cpp), for cacheKey.
+unsigned versionShortOption(); // 0 when off, else the condition limit
 
 // Loop idioms replaced by runtime kernels (Idioms.cpp, Rule D).
 void addIdioms(llvm::ModulePassManager &mpm, const Options &opts);

@@ -126,6 +126,9 @@ std::string cacheKey() {
     k += "pin";
   if (ruleOn(Rule::BcvStride))
     k += "stride";
+  // Later options: only when on, so default keys stay the same.
+  if (unsigned vs = versionShortOption())
+    k += "vs" + std::to_string(vs);
   k += forceParOption() ? "F" : "-";
   k += tileOption() ? "T" : "-";
   k += "mv" + std::to_string(mvLevelOption());

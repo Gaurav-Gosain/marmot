@@ -70,6 +70,12 @@ constexpr uint64_t GrainWorkInner = 200000;
 } // namespace
 // Testing aid: run every accepted loop in parallel, however small, so test
 // suites with small loops exercise the parallel path (chunks of 1 iteration).
+static cl::opt<bool> VersionShort(
+    "loops-version-short", cl::Hidden,
+    cl::desc("Versioning-only mode: also version short nested loops whose precondition is at "
+             "most -loops-version-short-conds compares and needs no check loop"));
+static cl::opt<unsigned> VersionShortConds("loops-version-short-conds", cl::Hidden, cl::init(4),
+                                           cl::desc("Limit for -loops-version-short"));
 static cl::opt<bool> ForcePar("loops-force-par", cl::Hidden,
                               cl::desc("Loop optimizer: parallelize accepted loops of any size"));
 namespace {
@@ -2080,7 +2086,13 @@ public:
               continue;
             unsigned maxTrip = SE.getSmallConstantMaxTripCount(L);
             bool longLoop = maxTrip >= 16 || (maxTrip == 0 && !L->getParentLoop());
-            if (!longLoop) {
+            // -loops-version-short: a short loop may still be versioned when
+            // its precondition costs a few compares per entry (fannkuch's flip
+            // loop, bound by a loaded k): versionBoundsChecks checks that.
+            int maxConds = -1;
+            if (!longLoop && VersionShort)
+              maxConds = int(VersionShortConds);
+            if (!longLoop && maxConds < 0) {
               if (opts.remarks)
                 errs() << "loops: " << F->getName() << ": loop " << L->getHeader()->getName()
                        << ": not versioned: cost policy (max trip " << maxTrip << ")\n";
@@ -2088,7 +2100,7 @@ public:
             }
             formLCSSARecursively(*L, DT, &LI, &SE);
             std::string why;
-            if (versionBoundsChecks(*F, L, LI, SE, DT, AA, why, /*cacheLoads=*/true)) {
+            if (versionBoundsChecks(*F, L, LI, SE, DT, AA, why, /*cacheLoads=*/true, maxConds)) {
               if (opts.remarks)
                 errs() << "loops: " << F->getName() << ": loop " << L->getHeader()->getName()
                        << ": versioned (version-only mode)\n";
@@ -2140,6 +2152,7 @@ void addVersionOnly(ModulePassManager &mpm, const Options &opts) {
 }
 
 bool forceParOption() { return ForcePar; }
+unsigned versionShortOption() { return VersionShort ? VersionShortConds : 0; }
 
 } // namespace loops
 } // namespace marmot
