@@ -899,7 +899,20 @@ RT_API void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uint
   return rt_alloc_slow(size, kind, ptrmap, elemsize);
 }
 
+#if RT_OS_LINUX
+// MARMOT_NOHUGE=1 (Linux): no transparent huge pages for the card table, the
+// heap metadata and the heap's first 2 MiB. With THP=always, the first touch
+// of a 2 MiB-aligned region commits a whole huge page, so a program that
+// uses a few hundred KiB of heap pays 2 MiB or more for each of them.
+static bool rt_nohuge;
+#define HUGE_PAGE ((uintptr_t)2 << 20)
+#endif
+
 void malloc_init(void) {
+#if RT_OS_LINUX
+  const char *nh = rt_getenv("MARMOT_NOHUGE");
+  rt_nohuge = nh && nh[0] == '1';
+#endif
   cards_init();
   os_data_segments_init();
   poison_init();
@@ -907,6 +920,20 @@ void malloc_init(void) {
   fixalloc_init(&span_alloc, sizeof(mspan));
   for (int k = 0; k < 5; k++) fixalloc_init(&bits_alloc[k], (uintptr_t)8 << k);
   arena_init();
+#if RT_OS_LINUX
+  if (rt_nohuge) {
+    if (rt_card_table) os_nohuge(rt_card_table, card_table_size);
+    uintptr_t npages = (rt_arena_end - rt_arena_start) >> PAGE_SHIFT;
+    os_nohuge(rt_pagemap, npages * sizeof(mspan *));
+    os_nohuge(rt_heapbits, (rt_arena_end - rt_arena_start) / (8 * WORDSZ));
+    // Only up to the end of the first huge page region that holds at least
+    // 2 MiB of heap: a program that needs more pays small page faults
+    // there only (a 4 MiB region cost sketch 10% of its 7 ms).
+    uintptr_t e = (rt_arena_start + HUGE_PAGE + HUGE_PAGE - 1) & ~(HUGE_PAGE - 1);
+    if (e > rt_arena_end) e = rt_arena_end;
+    os_nohuge((void *)rt_arena_start, e - rt_arena_start);
+  }
+#endif
   // Keep the first page unused: rt_arena_start itself is stored in the data
   // segment, which the GC scans conservatively.
   spin_lock(&heap_lock);
