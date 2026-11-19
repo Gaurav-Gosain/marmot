@@ -879,12 +879,27 @@ func (b *build) amd64CPU() string {
 
 // logBackendTimes prints the backend's phase totals (-time).
 func (b *build) logBackendTimes() {
+	b.printRemarks()
 	if !b.cfg.Verbose {
 		return
 	}
 	for l := range strings.SplitSeq(b.lastOutput, "\n") {
 		if strings.HasPrefix(l, "sum of jobs") || strings.HasPrefix(l, "batch:") || strings.HasPrefix(l, "startup") {
 			b.logf("backend: %s", strings.Join(strings.Fields(l), " "))
+		}
+	}
+}
+
+// printRemarks prints the backend's loop and GPU remarks ("loops: ..." and
+// "gpu: ..." lines), which it writes only when asked: MARMOT_BACKEND_FLAGS
+// with -loops-remarks, or MARMOT_GPU_REMARKS set.
+func (b *build) printRemarks() {
+	if !strings.Contains(os.Getenv("MARMOT_BACKEND_FLAGS"), "-loops-remarks") && os.Getenv("MARMOT_GPU_REMARKS") == "" {
+		return
+	}
+	for l := range strings.SplitSeq(b.lastOutput, "\n") {
+		if strings.HasPrefix(l, "loops: ") || strings.HasPrefix(l, "gpu: ") {
+			fmt.Fprintln(b.cfg.Stderr, l)
 		}
 	}
 }
