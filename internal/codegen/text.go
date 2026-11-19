@@ -21,6 +21,9 @@ func NewText(s string) *Text {
 	return t
 }
 
+// add appends b as a piece. It keeps b, not a copy: pass a chunk that is no
+// longer written (a finished textBuf chunk) or a fresh slice, never a buffer
+// that is reused.
 func (t *Text) add(b []byte) {
 	if len(b) > 0 {
 		t.segs = append(t.segs, b)
