@@ -80,6 +80,13 @@ void os_release(void *p, uintptr_t n) {
   if (hi > lo) madvise((void *)lo, hi - lo, MADV_FREE_REUSABLE);
 }
 
+void os_reuse(void *p, uintptr_t n) {
+  if (!rt_madv_reuse) return;
+  uintptr_t lo = ((uintptr_t)p + rt_pagesize - 1) & ~(rt_pagesize - 1);
+  uintptr_t hi = ((uintptr_t)p + n) & ~(rt_pagesize - 1);
+  if (hi > lo) madvise((void *)lo, hi - lo, MADV_FREE_REUSE);
+}
+
 void os_protect_none(void *p, uintptr_t n) { mprotect(p, n, PROT_NONE); }
 
 int32_t os_ncpu(void) {

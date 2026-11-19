@@ -30,6 +30,9 @@ mspan **allspans;
 int32_t nallspans;
 static int32_t capallspans;
 _Atomic uint64_t heap_live;
+#if RT_OS_DARWIN
+bool rt_madv_reuse;  // unless MARMOT_MADV_REUSE=0 (os_reuse)
+#endif
 uint64_t heap_sys, heap_released;
 _Atomic uint64_t stat_mallocs, stat_total_alloc, stat_frees;
 uint64_t next_gc = 4 << 20;
@@ -236,6 +239,20 @@ static void span_struct_free(mspan *s) {
 // merged into an unreleased one counts as backed again (its pages are
 // released again by the next scavenge, which counts them then).
 static void merge_released(mspan *s, mspan *o) {
+#if RT_OS_DARWIN
+  if (s->released != o->released && rt_madv_reuse) {
+    // darwin (unless MARMOT_MADV_REUSE=0): release the backed half too, so the
+    // merged span stays released and phys_footprint stays exact. Free
+    // pages cost nothing to give back there (MADV_FREE_REUSABLE faults
+    // nothing until the system takes them).
+    mspan *b = s->released ? o : s;
+    os_release((void *)b->base, b->npages * PAGE_SIZE);
+    b->needzero = 1;
+    heap_released += b->npages * PAGE_SIZE;
+    s->released = 1;
+    return;
+  }
+#endif
   if (s->released != o->released) heap_released -= (s->released ? s->npages : o->npages) * PAGE_SIZE;
   s->released &= o->released;
 }
@@ -329,6 +346,7 @@ static mspan *page_alloc(uintptr_t npages) {
     pagemap_set(s->base, s->npages, s);
   }
   if (s->released) {
+    os_reuse((void *)s->base, s->npages * PAGE_SIZE);
     heap_released -= s->npages * PAGE_SIZE;
     s->released = 0;
   }
@@ -588,6 +606,7 @@ static void mcache_refill(mcache *c, uint32_t spc) {
   s->freeindex = 0;
   refill_alloc_cache(s);
   // Pages released inside it come back as the cache allocates from it.
+  if (s->partrel) os_reuse((void *)s->base, s->npages * PAGE_SIZE);
   heap_released -= s->partrel;
   s->partrel = 0;
   uint32_t nw = (s->nelems + 63) / 64;
@@ -902,6 +921,11 @@ void malloc_init(void) {
   bool ok;
   int64_t n = rt_atoi(rt_getenv("MARMOT_GCSTRESS"), &ok);
   if (ok && n > 0) rt_gcstress = n;
+#if RT_OS_DARWIN
+  // On by default; MARMOT_MADV_REUSE=0 turns it off.
+  const char *mr = rt_getenv("MARMOT_MADV_REUSE");
+  rt_madv_reuse = !(mr && mr[0] == '0');
+#endif
   const char *g = rt_getenv("GOGC");
   if (g && __builtin_strcmp(g, "off") == 0) {
     gc_percent = -1;

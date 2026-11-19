@@ -104,6 +104,16 @@ void os_unmap(void *p, uintptr_t n);
 // Tell the OS the whole pages inside [p, p+n) may be discarded; later reads
 // see zero or old data.
 void os_release(void *p, uintptr_t n);
+// Before memory given back with os_release is used again. darwin (unless
+// MARMOT_MADV_REUSE=0): madvise MADV_FREE_REUSE, so phys_footprint counts the
+// pages again (without it the footprint reads low). Nothing elsewhere: the
+// macro keeps Linux and wasm code as it was.
+#if RT_OS_DARWIN
+void os_reuse(void *p, uintptr_t n);
+extern bool rt_madv_reuse;
+#else
+#define os_reuse(p, n) ((void)0)
+#endif
 void os_protect_none(void *p, uintptr_t n);
 int32_t os_ncpu(void);
 int64_t os_nanotime(void);

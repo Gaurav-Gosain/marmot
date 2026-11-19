@@ -94,7 +94,10 @@ static rchunk *chunk_get(uintptr_t need) {
       npool--;
     }
     spin_unlock(&region_lock);
-    if (c) return c;
+    if (c) {
+      os_reuse((void *)chunk_data(c), c->size);  // regions_trim may have released it
+      return c;
+    }
     need = STD_DATA;
   } else {
     // Reuse a dedicated chunk that is big enough.
@@ -104,7 +107,10 @@ static rchunk *chunk_get(uintptr_t need) {
     rchunk *c = *pp;
     if (c) *pp = c->next;
     spin_unlock(&region_lock);
-    if (c) return c;
+    if (c) {
+      os_reuse((void *)chunk_data(c), c->size);  // released when it was pooled
+      return c;
+    }
   }
   uintptr_t bytes = big ? (sizeof(rchunk) + need + rt_pagesize - 1) & ~(rt_pagesize - 1) : CHUNK_SIZE;
   rchunk *c = os_map(bytes);
