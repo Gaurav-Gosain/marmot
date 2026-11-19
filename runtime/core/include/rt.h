@@ -326,7 +326,8 @@ int32_t rt_gpu_info_get(rt_gpu_info *out);  // 1 with a GPU (fills out), else 0
 void *rt_gpu_module(const void *image, uintptr_t len);
 // Register a module image at startup (a constructor in the program, before
 // main): with MARMOT_GPU=1 the startup thread that creates the context also
-// loads it, so the first rt_gpu_for does not compile. At most 16.
+// loads it, so the first rt_gpu_for does not compile. An image that fails to
+// load is not tried again.
 void rt_gpu_register(const void *image, uintptr_t len);
 void *rt_gpu_function(void *module, const char *name);
 void *rt_gpu_alloc(uintptr_t bytes);        // device buffer from a pool, NULL on failure
@@ -343,23 +344,41 @@ int32_t rt_gpu_sync(void);
 int32_t rt_gpu_should_offload(int64_t n, double ops, double bytes_in, double bytes_out);
 int64_t rt_gpu_break_even(double ops, double bytes_in, double bytes_out);
 
-// Loop offload entry for compiled code. Runs kernel kname(ptr
-// ctx, i64 n) (the outlined parallel-for body, one thread per iteration,
-// blocks of 256) over [0, n). ranges list every byte the loop may touch
-// (flags: 1 read, 2 written): they are copied to the device and written ones
-// back; 8-byte words of ctx pointing into a range are rewritten to the device
-// copy; ctx (at most 4096 bytes) is copied to the device and back (words the
-// kernel changed are kept). Returns false, having done nothing, unless
-// MARMOT_GPU=1, a GPU is present, the cost model (cost = operations per
-// iteration) prefers it and setup succeeds; the caller then runs its CPU
-// loop. Failures after the launch are fatal.
+// Loop offload entry for compiled code. Runs kernel kname(ptr ctx, i64 base,
+// i64 count) (the outlined parallel-for body, one thread per iteration of
+// [base, base+count), blocks of 256) over [0, n), in slices of about 50 ms
+// when the device has a display watchdog.
+//
+// Each range is one object the loop touches: [base, base+bytes) is copied to
+// a device buffer (flags 1: read; a range written whole and never read is not
+// copied in), and for flags 2 exactly [base+woff, base+woff+wbytes), the bytes
+// the loop writes, is copied back. Each ptrs entry names an 8-byte pointer word
+// of ctx (byte offset off) that points into or near ranges[range]: it is moved
+// to the device copy with the same offset from the range base. ctx (at most
+// 4096 bytes) is copied to the device and back (words the kernel changed are
+// kept).
+//
+// Returns false, having done nothing, unless MARMOT_GPU=1, a GPU is present,
+// no base is nil, no written range overlaps another, the cost model (cost =
+// operations per iteration) prefers the GPU and setup succeeds; the caller
+// then runs its CPU loop. Failures after the first launch are fatal. A call
+// made while GPU setup still runs waits for it only when the CPU would take
+// over a second; MARMOT_GPU_WAIT=1 always waits and MARMOT_GPU_FORCE=1 skips
+// the cost model (both for tests). MARMOT_GPUTRACE=1 prints where each call
+// ran and why.
 typedef struct rt_gpu_range {
   void *base;
   int64_t bytes;
   int64_t flags;
+  int64_t woff, wbytes;
 } rt_gpu_range;
+typedef struct rt_gpu_ptr {
+  int64_t off;    // byte offset of the pointer word in ctx
+  int64_t range;  // index into ranges
+} rt_gpu_ptr;
 _Bool rt_gpu_for(const char *ptx, int64_t ptxlen, const char *kname, int64_t n, void *ctx,
-                 int64_t ctxsize, rt_gpu_range *ranges, int64_t nranges, int64_t cost);
+                 int64_t ctxsize, rt_gpu_range *ranges, int64_t nranges, int64_t cost,
+                 rt_gpu_ptr *ptrs, int64_t nptrs);
 
 // ---- Locks (for the Go runtime's own data structures) ----
 

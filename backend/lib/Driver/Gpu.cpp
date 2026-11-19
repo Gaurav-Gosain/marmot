@@ -63,6 +63,62 @@ std::unique_ptr<TargetMachine> nvptxMachine(const std::string &arch, std::string
 #endif
 }
 
+// Intrinsics a kernel may use: those the NVPTX backend lowers to PTX
+// instructions. Others (llvm.sin, llvm.exp, llvm.pow, ...) become calls to
+// library functions that a PTX module does not have. memcpy and memmove are
+// left out: a copy can move pointer values, which the runtime's copy back must
+// not store into the heap.
+bool ptxIntrinsic(CallBase *cb) {
+  switch (cb->getIntrinsicID()) {
+  case Intrinsic::sqrt:
+  case Intrinsic::fabs:
+  case Intrinsic::fma:
+  case Intrinsic::fmuladd:
+  case Intrinsic::floor:
+  case Intrinsic::ceil:
+  case Intrinsic::trunc:
+  case Intrinsic::rint:
+  case Intrinsic::nearbyint:
+  case Intrinsic::roundeven:
+  case Intrinsic::copysign:
+  case Intrinsic::minnum:
+  case Intrinsic::maxnum:
+  case Intrinsic::minimum:
+  case Intrinsic::maximum:
+  case Intrinsic::smin:
+  case Intrinsic::smax:
+  case Intrinsic::umin:
+  case Intrinsic::umax:
+  case Intrinsic::abs:
+  case Intrinsic::ctpop:
+  case Intrinsic::ctlz:
+  case Intrinsic::cttz:
+  case Intrinsic::bswap:
+  case Intrinsic::bitreverse:
+  case Intrinsic::fshl:
+  case Intrinsic::fshr:
+  case Intrinsic::sadd_with_overflow:
+  case Intrinsic::uadd_with_overflow:
+  case Intrinsic::ssub_with_overflow:
+  case Intrinsic::usub_with_overflow:
+  case Intrinsic::smul_with_overflow:
+  case Intrinsic::umul_with_overflow:
+  case Intrinsic::lifetime_start:
+  case Intrinsic::lifetime_end:
+  case Intrinsic::assume:
+  case Intrinsic::expect:
+  case Intrinsic::experimental_noalias_scope_decl:
+  case Intrinsic::nvvm_read_ptx_sreg_ctaid_x:
+  case Intrinsic::nvvm_read_ptx_sreg_ntid_x:
+  case Intrinsic::nvvm_read_ptx_sreg_tid_x:
+    return true;
+  case Intrinsic::memset:
+    return isa<ConstantInt>(cb->getArgOperand(2));
+  default:
+    return false;
+  }
+}
+
 // Defined functions reachable by calls from root.
 SetVector<Function *> callClosure(Function *root) {
   SetVector<Function *> out;
@@ -98,6 +154,11 @@ std::string compileKernel(Module &host, Function *body, const std::string &arch,
             err = body->getName().str() + ": GPU body calls an external function";
             return "";
           }
+          if (c->isIntrinsic() && !ptxIntrinsic(cb)) {
+            err = body->getName().str() + ": GPU body uses " + c->getName().str() +
+                  ", which has no PTX lowering here";
+            return "";
+          }
         }
       }
   ValueToValueMapTy vmap;
@@ -126,7 +187,9 @@ std::string compileKernel(Module &host, Function *body, const std::string &arch,
       f.setLinkage(GlobalValue::InternalLinkage);
   }
   Function *dbody = cast<Function>(vmap[body]);
-  // kernel(ctx, n): one thread per iteration.
+  // kernel(ctx, base, n): one thread per iteration of [base, base+n). The
+  // runtime launches a long loop in slices (display watchdog), each with its
+  // own base.
   LLVMContext &ctx = dev->getContext();
   Type *i64 = Type::getInt64Ty(ctx);
   Type *ptr = PointerType::get(ctx, 0);
@@ -134,7 +197,7 @@ std::string compileKernel(Module &host, Function *body, const std::string &arch,
   for (char &c : kname)
     if (!isAlnum(c) && c != '_')
       c = '_';
-  auto *kty = FunctionType::get(Type::getVoidTy(ctx), {ptr, i64}, false);
+  auto *kty = FunctionType::get(Type::getVoidTy(ctx), {ptr, i64, i64}, false);
   Function *k = Function::Create(kty, GlobalValue::ExternalLinkage, kname, *dev);
   k->setCallingConv(CallingConv::PTX_Kernel);
   BasicBlock *entry = BasicBlock::Create(ctx, "entry", k);
@@ -147,9 +210,10 @@ std::string compileKernel(Module &host, Function *body, const std::string &arch,
   Value *bid = sreg(Intrinsic::nvvm_read_ptx_sreg_ctaid_x);
   Value *bdim = sreg(Intrinsic::nvvm_read_ptx_sreg_ntid_x);
   Value *tid = sreg(Intrinsic::nvvm_read_ptx_sreg_tid_x);
-  Value *i = b.CreateAdd(b.CreateMul(bid, bdim), tid);
-  b.CreateCondBr(b.CreateICmpULT(i, k->getArg(1)), run, done);
+  Value *idx = b.CreateAdd(b.CreateMul(bid, bdim), tid);
+  b.CreateCondBr(b.CreateICmpULT(idx, k->getArg(2)), run, done);
   b.SetInsertPoint(run);
+  Value *i = b.CreateAdd(k->getArg(1), idx);
   b.CreateCall(dbody, {k->getArg(0), i, b.CreateAdd(i, ConstantInt::get(i64, 1))});
   b.CreateBr(done);
   b.SetInsertPoint(done);
@@ -201,10 +265,12 @@ bool lowerGpuLoops(Module &m, const std::string &gpuArch, std::string &err) {
   LLVMContext &ctx = m.getContext();
   Type *i64 = Type::getInt64Ty(ctx);
   Type *ptr = PointerType::get(ctx, 0);
-  // rt_gpu_for(ptx, ptxlen, kname, n, ctx, ctxsize, ranges, nranges, costPerIter) -> i1
+  // rt_gpu_for(ptx, ptxlen, kname, n, ctx, ctxsize, ranges, nranges, costPerIter, ptrs,
+  //            nptrs) -> i1
   FunctionCallee gpuFor = m.getOrInsertFunction(
       "rt_gpu_for", FunctionType::get(Type::getInt1Ty(ctx),
-                                      {ptr, i64, ptr, i64, ptr, i64, ptr, i64, i64}, false));
+                                      {ptr, i64, ptr, i64, ptr, i64, ptr, i64, i64, ptr, i64},
+                                      false));
   DenseMap<Function *, std::pair<Constant *, std::pair<Constant *, uint64_t>>> compiled;
   DenseSet<Function *> failed;
 
@@ -213,8 +279,9 @@ bool lowerGpuLoops(Module &m, const std::string &gpuArch, std::string &err) {
     if (auto *cb = dyn_cast<CallBase>(u.getUser()); cb && cb->isCallee(&u))
       calls.push_back(cb);
   for (CallBase *cb : calls) {
-    if (cb->arg_size() != 7 || !cb->getType()->isIntegerTy(1)) {
-      err = "marmot_gpu_for is i1 (body, n, ctx, ctxsize, ranges, nranges, costPerIter)";
+    if (cb->arg_size() != 9 || !cb->getType()->isIntegerTy(1)) {
+      err = "marmot_gpu_for is i1 (body, n, ctx, ctxsize, ranges, nranges, costPerIter, ptrs, "
+            "nptrs)";
       return false;
     }
     auto *body = dyn_cast<Function>(cb->getArgOperand(0)->stripPointerCasts());
@@ -240,7 +307,8 @@ bool lowerGpuLoops(Module &m, const std::string &gpuArch, std::string &err) {
       repl = b.CreateCall(gpuFor, {ptxG, ConstantInt::get(i64, kn.second), kn.first,
                                    cb->getArgOperand(1), cb->getArgOperand(2),
                                    cb->getArgOperand(3), cb->getArgOperand(4),
-                                   cb->getArgOperand(5), cb->getArgOperand(6)});
+                                   cb->getArgOperand(5), cb->getArgOperand(6),
+                                   cb->getArgOperand(7), cb->getArgOperand(8)});
     } else {
       repl = ConstantInt::getFalse(ctx); // the caller's CPU path runs
     }

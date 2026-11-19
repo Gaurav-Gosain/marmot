@@ -37,6 +37,7 @@ typedef unsigned long long CUdeviceptr;
 #define CU_DEVICE_ATTRIBUTE_CLOCK_RATE 13
 #define CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR 75
 #define CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR 76
+#define CU_DEVICE_ATTRIBUTE_KERNEL_EXEC_TIMEOUT 17
 
 static struct {
   CUresult (*Init)(unsigned);
@@ -74,17 +75,20 @@ static rt_spin gpu_lock;  // module cache and buffer pool
 static int gpu_state;  // 0 not tried, 1 ready, 2 unavailable, 3 in progress
 static CUcontext ctx;
 static CUdevice dev;
-static int sm_count, cc_major, cc_minor, clock_khz;
+static int sm_count, cc_major, cc_minor, clock_khz, exec_timeout;
 static size_t mem_total;
 
 // MARMOT_GPUTRACE=1: one stderr line per expensive step, with its time.
 static int gpu_trace = -1;
-static void trace(const char *what, int64_t t0) {
+static bool gpu_trace_on(void) {
   if (gpu_trace < 0) {
     const char *e = rt_getenv("MARMOT_GPUTRACE");
     gpu_trace = e && e[0] == '1';
   }
-  if (!gpu_trace) return;
+  return gpu_trace;
+}
+static void trace(const char *what, int64_t t0) {
+  if (!gpu_trace_on()) return;
   rt_print("gpu: ");
   rt_print(what);
   rt_print(" ");
@@ -128,17 +132,30 @@ static bool resolve(void *h) {
   return true;
 }
 
+// MARMOT_GPU_FAULT=nolib|nodevice|badptx|oom|kernel|watchdog (tests): pretend
+// that libcuda is missing, that there is no device, that every module fails to
+// load, that device allocation fails, that a kernel fails after its launch, or
+// that the device has a display watchdog (launches run in slices). Every case but kernel must end on the CPU path with the right
+// result; kernel must be fatal.
+static bool fault(const char *what) {
+  const char *e = rt_getenv("MARMOT_GPU_FAULT");
+  if (!e) return false;
+  int i = 0;
+  while (what[i] && e[i] == what[i]) i++;
+  return what[i] == 0 && e[i] == 0;
+}
+
 static bool gpu_init_locked(void) {
   const char *e = rt_getenv("MARMOT_GPU");
   if (e && e[0] == '0') return false;
   int64_t t0 = os_nanotime();
-  void *h = dlopen("libcuda.so.1", RTLD_NOW | RTLD_LOCAL);
-  if (!h) h = dlopen("libcuda.so", RTLD_NOW | RTLD_LOCAL);
+  void *h = fault("nolib") ? NULL : dlopen("libcuda.so.1", RTLD_NOW | RTLD_LOCAL);
+  if (!h && !fault("nolib")) h = dlopen("libcuda.so", RTLD_NOW | RTLD_LOCAL);
   if (!h || !resolve(h)) return false;
   trace("dlopen", t0);
   t0 = os_nanotime();
   int n = 0;
-  if (cu.Init(0) != 0 || cu.DeviceGetCount(&n) != 0 || n < 1) return false;
+  if (cu.Init(0) != 0 || cu.DeviceGetCount(&n) != 0 || n < 1 || fault("nodevice")) return false;
   trace("cuInit", t0);
   t0 = os_nanotime();
   if (cu.DeviceGet(&dev, 0) != 0) return false;
@@ -147,6 +164,7 @@ static bool gpu_init_locked(void) {
   cu.DeviceGetAttribute(&cc_major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, dev);
   cu.DeviceGetAttribute(&cc_minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, dev);
   cu.DeviceGetAttribute(&clock_khz, CU_DEVICE_ATTRIBUTE_CLOCK_RATE, dev);
+  cu.DeviceGetAttribute(&exec_timeout, CU_DEVICE_ATTRIBUTE_KERNEL_EXEC_TIMEOUT, dev);
   cu.DeviceTotalMem(&mem_total, dev);
   if (cu.PrimaryCtxRetain(&ctx, dev) != 0) return false;
   cu.CtxSetCurrent(ctx);
@@ -187,12 +205,31 @@ RT_API int32_t rt_gpu_available(void) { return gpu_enter() ? 1 : 0; }
 
 // ---- modules ----
 
+// Loaded modules by image address. mod is NULL for an image that failed to
+// load: it is not tried again (an old driver that rejects the PTX would
+// otherwise repeat the JIT on every call). The table grows as needed.
 typedef struct modent {
   const void *image;
   CUmodule mod;
 } modent;
-static modent mods[64];
-static int nmods;
+static modent *mods;
+static int nmods, capmods;
+
+// Room for one more entry in a table of n of cap elements of size sz;
+// called with gpu_lock held. False when out of memory.
+static bool table_room(void **tab, int n, int *cap, uintptr_t sz) {
+  if (n < *cap) return true;
+  int nc = *cap ? *cap * 2 : 64;
+  void *p = os_map((uintptr_t)nc * sz);
+  if (!p) return false;
+  if (*tab) {
+    __builtin_memcpy(p, *tab, (uintptr_t)n * sz);
+    os_unmap(*tab, (uintptr_t)*cap * sz);
+  }
+  *tab = p;
+  *cap = nc;
+  return true;
+}
 
 // ---- cubin cache: PTX compiled once per (PTX, driver, device) ----
 //
@@ -345,10 +382,10 @@ RT_API void *rt_gpu_module(const void *image, uintptr_t len) {
   CUmodule mod = NULL;
   int64_t t0 = os_nanotime();
   rt_entersyscall();  // PTX JIT can take milliseconds
-  CUresult r = load_module(&mod, image, len);
+  CUresult r = fault("badptx") ? 1 : load_module(&mod, image, len);
   rt_exitsyscall();
-  trace("module load", t0);
-  if (r != 0) return NULL;
+  trace(r == 0 ? "module load" : "module load failed (not tried again)", t0);
+  if (r != 0) mod = NULL;
   spin_lock(&gpu_lock);
   for (int i = 0; i < nmods; i++)
     if (mods[i].image == image) {  // loaded by another thread meanwhile
@@ -356,7 +393,7 @@ RT_API void *rt_gpu_module(const void *image, uintptr_t len) {
       spin_unlock(&gpu_lock);
       return m;
     }
-  if (nmods < 64) mods[nmods++] = (modent){image, mod};
+  if (table_room((void **)&mods, nmods, &capmods, sizeof(modent))) mods[nmods++] = (modent){image, mod};
   spin_unlock(&gpu_lock);
   return mod;
 }
@@ -391,7 +428,7 @@ static int size_class(uintptr_t n) {
 }
 
 RT_API void *rt_gpu_alloc(uintptr_t bytes) {
-  if (!gpu_enter()) return NULL;
+  if (!gpu_enter() || fault("oom")) return NULL;
   int c = size_class(bytes);
   spin_lock(&gpu_lock);
   dbuf *b = dpool[c];
@@ -682,42 +719,60 @@ RT_API int64_t rt_gpu_break_even(double ops, double bytes_in, double bytes_out) 
 
 // ---- rt_gpu_for: the loop compiler's entry ----
 //
-// Runs the outlined parallel-for body as kernel kname(ptr ctx, i64 n), one
-// thread per iteration, blocks of 256. Memory: the ranges (every byte the
-// loop may touch) are merged where they overlap, copied to device buffers,
-// and written ranges copied back; 8-byte words of ctx that point into a
-// range are rewritten to the device copy (and restored afterwards, unless
-// the kernel changed them). ctx itself is copied to the device and back
-// (reduction slots). Returns false without doing anything when offload is
-// off (opt-in MARMOT_GPU=1), there is no GPU, the cost model prefers the
-// CPU, or any CUDA step fails before the launch; the caller then runs its
-// CPU path.
-
-typedef struct mrange {
-  uintptr_t lo, hi;
-  int64_t flags;
-  void *dev;
-} mrange;
+// Runs the outlined parallel-for body as kernel kname(ptr ctx, i64 base, i64
+// count), one thread per iteration, blocks of 256. Memory: each range is
+// copied to its own device buffer, mapped pointer words of ctx are moved to
+// those buffers, and the written bytes of each range are copied back. See
+// rt.h for the contract.
 
 static bool gpu_for_enabled(void) {
   const char *e = rt_getenv("MARMOT_GPU");
   return e && e[0] == '1';
 }
 
+// Test switches: MARMOT_GPU_WAIT=1 waits for setup instead of running early
+// loops on the CPU; MARMOT_GPU_FORCE=1 skips the cost model.
+static bool env_on(const char *name) {
+  const char *e = rt_getenv(name);
+  return e && e[0] == '1';
+}
+
+static void trace_cpu(const char *kname, const char *why) {
+  if (!gpu_trace_on()) return;
+  rt_print("gpu: ");
+  rt_print(kname);
+  rt_print(" on the CPU: ");
+  rt_print(why);
+  rt_print("\n");
+}
+
 // Modules registered at startup (rt_gpu_register), loaded by the prewarm
 // thread so the first rt_gpu_for finds them compiled.
-static struct {
+typedef struct regent {
   const void *image;
   uintptr_t len;
-} reg[16];
-static int nreg;
+} regent;
+// Constructors call rt_gpu_register before the runtime starts: the first
+// 16 entries live in static storage, more go to mapped memory.
+static regent reg_static[16];
+static regent *reg = reg_static;
+static int nreg, capreg = 16;
 static int prewarm_busy;  // 1 while the prewarm thread runs
 
 RT_API void rt_gpu_register(const void *image, uintptr_t len) {
-  if (nreg < 16) {
-    reg[nreg].image = image;
-    reg[nreg++].len = len;
+  spin_lock(&gpu_lock);
+  if (nreg == capreg) {
+    int nc = capreg * 4;
+    regent *p = os_map((uintptr_t)nc * sizeof(regent));
+    if (p) {
+      __builtin_memcpy(p, reg, (uintptr_t)nreg * sizeof(regent));
+      if (reg != reg_static) os_unmap(reg, (uintptr_t)capreg * sizeof(regent));
+      reg = p;
+      capreg = nc;
+    }
   }
+  if (nreg < capreg) reg[nreg++] = (regent){image, len};
+  spin_unlock(&gpu_lock);
 }
 
 static void prewarm_thread(void *arg) {
@@ -748,95 +803,166 @@ static bool gpu_settled(void) {
 }
 
 RT_API bool rt_gpu_for(const char *ptx, int64_t ptxlen, const char *kname, int64_t n, void *ctx,
-                       int64_t ctxsize, rt_gpu_range *ranges, int64_t nranges, int64_t cost) {
-  if (n <= 0 || nranges < 0 || nranges > 64 || ctxsize < 0 || ctxsize > 4096) return false;
-  if (!gpu_for_enabled() || !gpu_settled() || !gpu_enter()) return false;
-  // Merge ranges (insertion sort by base; at most 64).
-  mrange mr[64];
-  int nm = 0;
-  uint64_t total = 0;
+                       int64_t ctxsize, rt_gpu_range *ranges, int64_t nranges, int64_t cost,
+                       rt_gpu_ptr *ptrs, int64_t nptrs) {
+  if (n <= 0 || nranges < 0 || nranges > 64 || nptrs < 0 || nptrs > 64 || ctxsize < 0 ||
+      ctxsize > 4096)
+    return false;
+  if (!gpu_for_enabled()) return false;
+  // Every range must be a real object (a nil base would fault in the copy,
+  // where the CPU path panics), and a written range must not overlap any other
+  // one (the copy back would overwrite it). The loop compiler proves both; this
+  // is the last line of defense.
+  uint64_t in_bytes = 0, out_bytes = 0;
   for (int64_t i = 0; i < nranges; i++) {
-    if (ranges[i].bytes <= 0) continue;
-    mrange r = {(uintptr_t)ranges[i].base, (uintptr_t)ranges[i].base + (uintptr_t)ranges[i].bytes,
-                ranges[i].flags, NULL};
-    int j = nm++;
-    while (j > 0 && mr[j - 1].lo > r.lo) {
-      mr[j] = mr[j - 1];
-      j--;
+    rt_gpu_range *r = &ranges[i];
+    if (r->bytes < 0 || r->woff < 0 || r->wbytes < 0 || r->woff + r->wbytes > r->bytes) return false;
+    if (r->bytes == 0) continue;
+    if ((uintptr_t)r->base < 65536) {
+      trace_cpu(kname, "a nil base");
+      return false;
     }
-    mr[j] = r;
+    if (r->flags & 2)
+      for (int64_t j = 0; j < nranges; j++) {
+        uintptr_t lo = (uintptr_t)r->base, hi = lo + (uintptr_t)r->bytes;
+        uintptr_t lo2 = (uintptr_t)ranges[j].base, hi2 = lo2 + (uintptr_t)ranges[j].bytes;
+        if (j != i && ranges[j].bytes > 0 && lo < hi2 && lo2 < hi) {
+          trace_cpu(kname, "a written range overlaps another range");
+          return false;
+        }
+      }
+    if (r->flags & 1 || r->woff != 0 || r->wbytes != r->bytes) in_bytes += (uint64_t)r->bytes;
+    if (r->flags & 2) out_bytes += (uint64_t)r->wbytes;
   }
-  int w = 0;
-  for (int i = 0; i < nm; i++) {
-    if (w > 0 && mr[i].lo <= mr[w - 1].hi) {
-      if (mr[i].hi > mr[w - 1].hi) mr[w - 1].hi = mr[i].hi;
-      mr[w - 1].flags |= mr[i].flags;
-    } else {
-      mr[w++] = mr[i];
+  for (int64_t k = 0; k < nptrs; k++)
+    if (ptrs[k].off < 0 || ptrs[k].off + 8 > ctxsize || ptrs[k].range < 0 || ptrs[k].range >= nranges)
+      return false;
+  if (!gpu_settled()) {
+    // Setup (0.1 to 0.5 s) is still running on the prewarm thread. Wait for it
+    // when the CPU would take clearly longer than setup can (a big loop early in
+    // main); otherwise run this call on the CPU.
+    int32_t procs = atomic_load(&sched.nprocs);
+    double cpu_ns = (double)n * (double)(cost > 0 ? cost : 1) / (2.0 * (procs > 0 ? procs : 1));
+    if (!env_on("MARMOT_GPU_WAIT") && cpu_ns < 1e9) {
+      trace_cpu(kname, "GPU setup not finished");
+      return false;
     }
+    rt_entersyscall();
+    while (!gpu_settled()) os_usleep(500);
+    rt_exitsyscall();
   }
-  nm = w;
-  uint64_t out_bytes = 0;
-  for (int i = 0; i < nm; i++) {
-    total += mr[i].hi - mr[i].lo;
-    if (mr[i].flags & 2) out_bytes += mr[i].hi - mr[i].lo;
-  }
+  if (!gpu_enter()) return false;
   calibrate();
   double g, c;
-  estimate(n, cost > 0 ? (double)cost : 1.0, (double)total / (double)n, (double)out_bytes / (double)n, &g, &c);
-  if (g >= c) return false;
+  estimate(n, cost > 0 ? (double)cost : 1.0, (double)in_bytes / (double)n, (double)out_bytes / (double)n, &g, &c);
+  if (g >= c && !env_on("MARMOT_GPU_FORCE")) {
+    trace_cpu(kname, "the cost model predicts the CPU is faster");
+    return false;
+  }
 
   void *mod = rt_gpu_module(ptx, (uintptr_t)ptxlen);
   void *fn = rt_gpu_function(mod, kname);
-  if (!fn) return false;
+  if (!fn) {
+    trace_cpu(kname, "the kernel did not load");
+    return false;
+  }
   bool ok = true;
   int64_t tp = os_nanotime();
-  for (int i = 0; i < nm && ok; i++) {
-    uintptr_t len = mr[i].hi - mr[i].lo;
-    mr[i].dev = rt_gpu_alloc(len);
-    ok = mr[i].dev && rt_gpu_copy_in(mr[i].dev, (void *)mr[i].lo, len) == 0;
+  void *dev[64] = {0};
+  for (int64_t i = 0; i < nranges && ok; i++) {
+    rt_gpu_range *r = &ranges[i];
+    if (r->bytes == 0) continue;
+    dev[i] = rt_gpu_alloc((uintptr_t)r->bytes);
+    // A range written whole and never read needs no copy in.
+    bool need_in = (r->flags & 1) || r->woff != 0 || r->wbytes != r->bytes;
+    ok = dev[i] && (!need_in || rt_gpu_copy_in(dev[i], r->base, (uintptr_t)r->bytes) == 0);
   }
-  // ctx with pointers rewritten.
+  // ctx with each mapped pointer word moved to the device copy of its range.
+  // The word may point before or past the bytes the loop touches (y[k+i] with
+  // the base y): the offset from the range start is kept as it is.
   uint8_t sent[4096];
   __builtin_memcpy(sent, ctx, (size_t)ctxsize);
-  for (int64_t o = 0; o + 8 <= ctxsize; o += 8) {
+  for (int64_t k = 0; k < nptrs; k++) {
+    rt_gpu_range *r = &ranges[ptrs[k].range];
     uintptr_t v;
-    __builtin_memcpy(&v, sent + o, 8);
-    for (int i = 0; i < nm; i++)
-      if (v >= mr[i].lo && v < mr[i].hi) {
-        v = (uintptr_t)mr[i].dev + (v - mr[i].lo);
-        __builtin_memcpy(sent + o, &v, 8);
-        break;
-      }
+    __builtin_memcpy(&v, sent + ptrs[k].off, 8);
+    v = (uintptr_t)dev[ptrs[k].range] + (v - (uintptr_t)r->base);
+    __builtin_memcpy(sent + ptrs[k].off, &v, 8);
   }
   void *dctx = ok ? rt_gpu_alloc(ctxsize > 0 ? (uintptr_t)ctxsize : 8) : NULL;
   ok = ok && dctx && rt_gpu_copy_in(dctx, sent, (uintptr_t)ctxsize) == 0;
-  if (ok) {
-    CUdeviceptr dp = (CUdeviceptr)(uintptr_t)dctx;
-    int64_t nn = n;
-    void *params[2] = {&dp, &nn};
-    uint64_t grid = ((uint64_t)n + 255) / 256;
+  // kernel(ctx, base, count). With a display watchdog (the driver kills a
+  // kernel that runs for seconds) the loop runs in slices: the first sized
+  // for about 5 ms by the cost model, each next one scaled from the time the
+  // last one took, to about 50 ms.
+  CUdeviceptr dp = (CUdeviceptr)(uintptr_t)dctx;
+  int64_t base = 0, cnt = n;
+  bool slice = exec_timeout || fault("watchdog");
+  if (slice) {
+    double ops_per_ns = (double)sm_count * 128.0 * (clock_khz / 1e6) * 0.25;
+    double per_iter = (double)(cost > 0 ? cost : 1) / (ops_per_ns > 0 ? ops_per_ns : 1);
+    cnt = (int64_t)(5e6 / (per_iter > 1e-3 ? per_iter : 1e-3));
+    if (cnt < 256) cnt = 256;
+  }
+  bool launched = false;
+  int slices = 0;
+  while (ok && base < n) {
+    if (cnt > n - base) cnt = n - base;
+    void *params[3] = {&dp, &base, &cnt};
+    uint64_t grid = ((uint64_t)cnt + 255) / 256;
+    int64_t ts = os_nanotime();
     ok = grid <= 0x7fffffffu &&
          cu.LaunchKernel(fn, (unsigned)grid, 1, 1, 256, 1, 1, 0, NULL, params, NULL) == 0;
+    if (!ok) {
+      // Nothing ran yet: the CPU path may still run. After a slice, it may not.
+      if (launched) rt_throw("GPU kernel launch failed");
+      break;
+    }
+    launched = true;
+    slices++;
+    base += cnt;
+    if (slice && base < n) {
+      // From the first launch on, failures are fatal: the CPU path must not
+      // run again over partly written memory.
+      if (rt_gpu_sync() != 0) rt_throw("GPU kernel failed");
+      int64_t dt = os_nanotime() - ts;
+      if (dt < 1000) dt = 1000;
+      double scale = 50e6 / (double)dt;
+      if (scale > 8) scale = 8;
+      int64_t next = (int64_t)((double)cnt * scale);
+      cnt = next > 256 ? next : 256;
+    }
   }
   trace("rt_gpu_for copy in + launch", tp);
   tp = os_nanotime();
   if (!ok) {
-    for (int i = 0; i < nm; i++)
-      if (mr[i].dev) rt_gpu_free(mr[i].dev, mr[i].hi - mr[i].lo);
+    for (int64_t i = 0; i < nranges; i++)
+      if (dev[i]) rt_gpu_free(dev[i], (uintptr_t)ranges[i].bytes);
     if (dctx) rt_gpu_free(dctx, (uintptr_t)ctxsize);
+    trace_cpu(kname, "a GPU step failed before the launch");
     return false;
   }
-  // From here the work is done on the device: failures are fatal, since
-  // the CPU path must not run again over partly written memory.
-  if (rt_gpu_sync() != 0) rt_throw("GPU kernel failed");
+  if (rt_gpu_sync() != 0 || fault("kernel")) rt_throw("GPU kernel failed");
   trace("rt_gpu_for kernel", tp);
+  if (gpu_trace_on()) {
+    rt_print("gpu: ");
+    rt_print(kname);
+    rt_print(" on the GPU, ");
+    rt_printu((uint64_t)n);
+    rt_print(" iterations in ");
+    rt_printu((uint64_t)slices);
+    rt_print(" launches\n");
+  }
   tp = os_nanotime();
-  for (int i = 0; i < nm; i++) {
-    if ((mr[i].flags & 2) &&
-        rt_gpu_copy_out((void *)mr[i].lo, mr[i].dev, mr[i].hi - mr[i].lo) != 0)
+  // Copy back exactly the bytes the loop writes: other goroutines may write
+  // the bytes around them.
+  for (int64_t i = 0; i < nranges; i++) {
+    rt_gpu_range *r = &ranges[i];
+    if (!dev[i]) continue;
+    if ((r->flags & 2) && r->wbytes > 0 &&
+        rt_gpu_copy_out((char *)r->base + r->woff, (char *)dev[i] + r->woff, (uintptr_t)r->wbytes) != 0)
       rt_throw("GPU copy back failed");
-    rt_gpu_free(mr[i].dev, mr[i].hi - mr[i].lo);
+    rt_gpu_free(dev[i], (uintptr_t)r->bytes);
   }
   if (ctxsize > 0) {
     uint8_t back[4096];

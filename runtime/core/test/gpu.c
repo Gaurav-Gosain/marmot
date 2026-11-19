@@ -5,6 +5,13 @@
 // wasm: skip (needs libc headers)
 #include "rtest.h"
 #include <stdio.h>
+#include <time.h>
+
+static int64_t now_ns(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
+}
 
 #pragma clang fp contract(off)
 
@@ -43,8 +50,8 @@ void marmot_main(void) {
     CHECK(rt_gpu_module(ptx, sizeof ptx) == 0 && rt_gpu_alloc(64) == 0);
     CHECK(rt_gpu_launch(0, 10, 0, 0, 0) == -1 && rt_gpu_should_offload(1 << 30, 100, 8, 8) == 0);
     CHECK(rt_gpu_break_even(10, 8, 8) == -1);
-    rt_gpu_range rg = {0, 0, 0};
-    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", 100, &rg, 8, &rg, 1, 1000000));
+    rt_gpu_range rg = {0, 0, 0, 0, 0};
+    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", 100, &rg, 8, &rg, 1, 1000000, 0, 0));
     out("ok\n");
     return;
   }
@@ -110,24 +117,42 @@ void marmot_main(void) {
       for (uint64_t k = 0; k < m; k++) s = s + A[r * m + k] * B[k * m + c];
       CHECK(u64f(C[r * m + c]) == u64f(s));
     }
-  // rt_gpu_for: ranges overlap (x is the first half of a buffer, y the
-  // second half and also listed whole), pointers in ctx rewritten, the
-  // reduction slot comes back, untouched bytes stay.
+  // rt_gpu_for: x read, y read and written (y is one element into its range,
+  // so the copy back covers exactly y), ctx pointers moved by the ptrs map,
+  // the reduction slot comes back, the element before y and after it stay.
   {
     int64_t m2 = 1000003;
-    double *buf = rt_alloc((uintptr_t)(2 * m2 + 1) * 8, RT_ALLOC_NOSCAN, 0, 0);
+    double *buf = rt_alloc((uintptr_t)(2 * m2 + 2) * 8, RT_ALLOC_NOSCAN, 0, 0);
     double *exp = rt_alloc((uintptr_t)m2 * 8, RT_ALLOC_NOSCAN, 0, 0);
-    for (int64_t i = 0; i < 2 * m2 + 1; i++) buf[i] = (double)i / 7.0;
+    for (int64_t i = 0; i < 2 * m2 + 2; i++) buf[i] = (double)i / 7.0;
+    double *x = buf, *y = buf + m2 + 1;
     double av = 1.25;
-    for (int64_t i = 0; i < m2; i++) exp[i] = av * buf[i] + buf[m2 + i];
-    struct { double a; double *x; double *y; uint64_t count; } c = {av, buf, buf + m2, 5};
-    rt_gpu_range rg[3] = {{buf, m2 * 8, 1}, {buf + m2, m2 * 8, 3}, {buf, (2 * m2 + 1) * 8, 1}};
-    CHECK(rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", m2, &c, sizeof c, rg, 3, 100000));
-    CHECK(c.count == 5 + (uint64_t)m2 && c.x == buf && c.y == buf + m2 && c.a == av);
-    for (int64_t i = 0; i < m2; i++) CHECK(u64f(buf[m2 + i]) == u64f(exp[i]) && u64f(buf[i]) == u64f((double)i / 7.0));
-    CHECK(buf[2 * m2] == (double)(2 * m2) / 7.0);
+    for (int64_t i = 0; i < m2; i++) exp[i] = av * x[i] + y[i];
+    struct { double a; double *x; double *y; uint64_t count; } c = {av, x, y, 5};
+    rt_gpu_range rg[2] = {{x, m2 * 8, 1, 0, 0}, {y - 1, (m2 + 2) * 8, 3, 8, m2 * 8}};
+    rt_gpu_ptr pm[2] = {{8, 0}, {16, 1}};
+    CHECK(rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", m2, &c, sizeof c, rg, 2, 100000, pm, 2));
+    CHECK(c.count == 5 + (uint64_t)m2 && c.x == x && c.y == y && c.a == av);
+    for (int64_t i = 0; i < m2; i++) CHECK(u64f(y[i]) == u64f(exp[i]) && u64f(x[i]) == u64f((double)i / 7.0));
+    CHECK(buf[m2] == (double)m2 / 7.0 && buf[2 * m2 + 1] == (double)(2 * m2 + 1) / 7.0);
     // Too little work: the cost model declines.
-    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", 10, &c, sizeof c, rg, 3, 1));
+    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", 10, &c, sizeof c, rg, 2, 1, pm, 2));
+    // A nil base, a written range that overlaps another one, a bad map: no GPU.
+    rt_gpu_range nil[2] = {{0, m2 * 8, 1, 0, 0}, rg[1]};
+    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", m2, &c, sizeof c, nil, 2, 100000, pm, 2));
+    rt_gpu_range ov[2] = {{buf, (2 * m2 + 2) * 8, 1, 0, 0}, rg[1]};
+    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", m2, &c, sizeof c, ov, 2, 100000, pm, 2));
+    rt_gpu_ptr bad[1] = {{8, 2}};
+    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", m2, &c, sizeof c, rg, 2, 100000, bad, 1));
+    CHECK(c.count == 5 + (uint64_t)m2);
+  }
+  // A module that fails to load is remembered: the second call does not retry.
+  {
+    static const char bad[] = ".version 99.0\n.target sm_999\n.address_size 64\n";
+    CHECK(rt_gpu_module(bad, sizeof bad) == 0);
+    int64_t t0 = now_ns();
+    CHECK(rt_gpu_module(bad, sizeof bad) == 0);
+    CHECK(now_ns() - t0 < 1000000);
   }
   // Pool reuse.
   void *p1 = rt_gpu_alloc(5000);

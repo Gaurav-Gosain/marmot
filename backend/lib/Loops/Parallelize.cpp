@@ -67,6 +67,10 @@ constexpr uint64_t MinParallelWork = 200000;
 // than starting the helpers is worth (rtcore: under ~10 us stays serial).
 constexpr uint64_t MinParallelWorkInner = 2000000;
 constexpr uint64_t GrainWorkInner = 200000;
+// GPU offer: the most work one iteration (one GPU thread) may do. A display
+// GPU's driver kills a kernel that runs for seconds; one thread runs about
+// 0.4 units per ns, so this bound is about 100 ms.
+constexpr uint64_t MaxGpuIterCost = 40000000;
 } // namespace
 // Testing aid: run every accepted loop in parallel, however small, so test
 // suites with small loops exercise the parallel path (chunks of 1 iteration).
@@ -164,12 +168,17 @@ struct Plan {
   std::vector<RangeSource> disjoint;
   // GPU offer: every access is in one of these whole-loop
   // byte ranges [s, e); flags 1 read, 2 written. Empty when not offered.
+  // ws, we: the bytes the loop writes (stores only; dense, so the copy back
+  // writes nothing the loop does not). base: the object's base pointer.
   struct GpuRange {
     const SCEV *s, *e;
     int64_t flags;
+    const SCEV *ws = nullptr, *we = nullptr;
+    Value *base = nullptr;
   };
   std::vector<GpuRange> gpuRanges;
   bool gpuOK = false;
+  std::string gpuWhy; // why the loop is not offered (for remarks)
   // Reduction arrays (hist[b]++): an alloca or global of `bytes` bytes
   // whose only accesses in L are `x = x + v` on elements of type elem. Each
   // chunk works on a zeroed private copy and adds it into the object at the
@@ -311,6 +320,7 @@ private:
   bool analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs);
   bool rowAccess(Loop *L, Plan &P, Access &a);
   void privatize(Loop *L, Plan &P, std::vector<Access> &accs);
+  const char *gpuUnitProblem(Loop *L, const std::vector<Access *> &accs);
   bool interleaved(Loop *L, Plan &P, Access &x, Access &y);
   bool decompose(const SCEV *S, Loop *L, const SCEV *&coef, const SCEV *&lo,
                  const SCEV *&hi);
@@ -443,9 +453,12 @@ bool Parallelizer::visit(Loop *L) {
     Plan P;
     P.loop = L;
     if (analyze(L, P)) {
+      std::string gpuNote;
+      if (opts.gpu)
+        gpuNote = P.gpuOK ? ", GPU kernel" : ", not offered to the GPU: " + P.gpuWhy;
       remark(L, "parallel, " + Twine(P.reds.size()) + " reductions, " +
                     Twine(P.leChecks.size() + P.overlaps.size()) +
-                    " run time checks, cost/iter " + Twine(P.costPerIter));
+                    " run time checks, cost/iter " + Twine(P.costPerIter) + gpuNote);
       markDecided(L);
       writeReport(P);
       transform(P);
@@ -563,6 +576,11 @@ bool Parallelizer::analyze(Loop *L, Plan &P) {
   if (!liveOuts(L, P))
     return false;
   P.costPerIter = std::max<uint64_t>(1, cost(L));
+  if (P.gpuOK && P.costPerIter > MaxGpuIterCost) {
+    P.gpuOK = false;
+    P.gpuRanges.clear();
+    P.gpuWhy = "one iteration is too long for one GPU thread";
+  }
   // Values used in the loop but defined outside it.
   SetVector<Value *> ins;
   for (BasicBlock *bb : L->blocks())
@@ -579,6 +597,22 @@ bool Parallelizer::analyze(Loop *L, Plan &P) {
   for (Value *v : P.liveIns)
     if (v->getType()->isTokenTy() || v->getType()->isMetadataTy())
       return reject("token or metadata live-in");
+  // GPU offer: the kernel reaches each object through a pointer live-in that
+  // the runtime moves to the object's device copy.
+  for (auto &g : P.gpuRanges) {
+    if (!P.gpuOK)
+      break;
+    const SCEV *gb = SE.getPointerBase(SE.getSCEV(g.base));
+    bool passed = any_of(P.liveIns, [&](Value *v) {
+      return v->getType()->isPointerTy() && SE.getPointerBase(SE.getSCEV(v)) == gb;
+    });
+    if (!passed) {
+      P.gpuOK = false;
+      P.gpuRanges.clear();
+      P.gpuWhy = "an object not reached through a pointer live-in";
+      break;
+    }
+  }
   // Run time checks must be expandable in the preheader.
   SCEVExpander exp(SE, "par");
   Instruction *at = L->getLoopPreheader()->getTerminator();
@@ -1080,6 +1114,74 @@ void Parallelizer::privatize(Loop *L, Plan &P, std::vector<Access> &accs) {
   }
 }
 
+// GPU offer, one object: why the loop cannot run as a kernel over it, or
+// null. The runtime copies the object to the device and copies the bytes the
+// loop writes back, so:
+//   - no access may move a pointer value (the copy back would store pointers
+//     into the heap without write barriers);
+//   - the stores of one iteration must fill [lo, lo + |stride|) exactly,
+//     unconditionally, in L itself (not in an inner loop), so that the stores
+//     of all iterations cover the written range with no gap. A gap would be
+//     copied back too and could undo another goroutine's write there.
+static bool hasPointer(Type *t) {
+  if (t->isPtrOrPtrVectorTy())
+    return true;
+  if (auto *st = dyn_cast<StructType>(t))
+    return any_of(st->elements(), hasPointer);
+  if (auto *at = dyn_cast<ArrayType>(t))
+    return hasPointer(at->getElementType());
+  if (auto *vt = dyn_cast<VectorType>(t))
+    return hasPointer(vt->getElementType());
+  return false;
+}
+
+const char *Parallelizer::gpuUnitProblem(Loop *L, const std::vector<Access *> &accs) {
+  SmallVector<std::pair<int64_t, int64_t>, 4> spans;
+  const SCEV *coef = nullptr, *ref = nullptr;
+  for (Access *a : accs) {
+    Type *t = a->store ? cast<StoreInst>(a->inst)->getValueOperand()->getType()
+                       : a->inst->getType();
+    if (hasPointer(t))
+      return "the loop loads or stores pointer values";
+    if (!a->store)
+      continue;
+    if (LI.getLoopFor(a->inst->getParent()) != L)
+      return "a store in an inner loop";
+    if (!DT.dominates(a->inst->getParent(), L->getLoopLatch()))
+      return "a conditional store";
+    // Offsets relative to the first store: y[k+i] has the invariant offset
+    // 8k, and y[k+i].a, y[k+i].b differ from it by constants.
+    if (!a->lo || a->lo != a->hi)
+      return "a store at a varying offset";
+    if (!ref)
+      ref = a->lo;
+    auto *d = dyn_cast<SCEVConstant>(SE.getMinusSCEV(a->lo, ref));
+    if (!d || d->getAPInt().getSignificantBits() > 63)
+      return "stores at offsets that differ by a non-constant amount";
+    int64_t o = d->getAPInt().getSExtValue();
+    spans.push_back({o, o + int64_t(a->size)});
+    coef = a->coef;
+  }
+  if (spans.empty())
+    return nullptr;
+  auto *cc = dyn_cast_or_null<SCEVConstant>(coef);
+  if (!cc || cc->getAPInt().getSignificantBits() > 63)
+    return "a store stride that is not a constant";
+  int64_t width = cc->getAPInt().getSExtValue();
+  if (width < 0)
+    width = -width;
+  llvm::sort(spans);
+  int64_t end = spans[0].first;
+  for (auto &[s, e] : spans) {
+    if (s > end)
+      return "stores leave gaps (store width less than stride)";
+    end = std::max(end, e);
+  }
+  if (end - spans[0].first != width)
+    return "stores leave gaps (store width less than stride)";
+  return nullptr;
+}
+
 // Rule P, memory part: different iterations touch disjoint bytes of every
 // object some iteration writes.
 bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
@@ -1297,15 +1399,35 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
   // reduction arrays live in the caller's frame or in globals, which a kernel
   // cannot reach, and each chunk clears and merges a private copy: no offer.
   P.gpuOK = P.privs.empty();
+  if (!P.gpuOK)
+    P.gpuWhy = "privatized reduction arrays";
   for (Unit &u : units) {
+    if (!P.gpuOK)
+      break;
     if (u.family >= 0 || u.variant || !u.s || !u.e) {
       P.gpuOK = false;
+      P.gpuWhy = u.family >= 0 ? "row family ([][]T rows)"
+                 : u.variant  ? "access through a pointer computed in the loop"
+                              : "access range not known";
       break;
     }
     bool read = false;
     for (Access *a : u.accs)
       read |= !a->store;
-    P.gpuRanges.push_back({u.s, u.e, (read ? 1 : 0) | (u.store ? 2 : 0)});
+    if (const char *bad = gpuUnitProblem(L, u.accs)) {
+      P.gpuOK = false;
+      P.gpuWhy = bad;
+      break;
+    }
+    Plan::GpuRange g{u.s, u.e, (read ? 1 : 0) | (u.store ? 2 : 0)};
+    g.base = u.base;
+    for (Access *a : u.accs)
+      if (a->store) {
+        auto [s, e] = range(*a);
+        g.ws = g.ws ? SE.getUMinExpr(g.ws, s) : s;
+        g.we = g.we ? SE.getUMaxExpr(g.we, e) : e;
+      }
+    P.gpuRanges.push_back(g);
   }
   if (!P.gpuOK)
     P.gpuRanges.clear();
@@ -1765,12 +1887,18 @@ void Parallelizer::transform(Plan &P) {
   }
   // GPU ranges, expanded with the other conditions (before any block split).
   bool gpu = opts.gpu && P.gpuOK;
-  SmallVector<std::pair<Value *, Value *>, 8> gpuVals;
+  struct GpuVals {
+    Value *s, *e, *ws, *we;
+  };
+  SmallVector<GpuVals, 8> gpuVals;
   if (gpu)
     for (auto &g : P.gpuRanges) {
-      Value *gs = exp.expandCodeFor(g.s, i64, at);
-      Value *ge = exp.expandCodeFor(g.e, i64, at);
-      gpuVals.push_back({gs, ge});
+      GpuVals v{exp.expandCodeFor(g.s, i64, at), exp.expandCodeFor(g.e, i64, at), nullptr, nullptr};
+      if (g.ws) {
+        v.ws = exp.expandCodeFor(g.ws, i64, at);
+        v.we = exp.expandCodeFor(g.we, i64, at);
+      }
+      gpuVals.push_back(v);
     }
   if (!P.disjoint.empty()) {
     Value *rows = emitRowCheck(P, exp, at);
@@ -1814,25 +1942,56 @@ void Parallelizer::transform(Plan &P) {
     // into rt_gpu_for, or into false without a GPU target.
     body->addFnAttr("marmot-gpu-body");
     const DataLayout &DL = F.getDataLayout();
-    StructType *rty = StructType::get(C, {ptr, i64, i64});
+    // rt_gpu_range {base, bytes, flags, woff, wbytes}: one per object.
+    StructType *rty = StructType::get(C, {ptr, i64, i64, i64, i64});
     ArrayType *aty = ArrayType::get(rty, gpuVals.size());
     // No memory accesses (mandelbrot's rows): no ranges, a null array.
     Value *ranges = gpuVals.empty() ? static_cast<Value *>(ConstantPointerNull::get(
                                           PointerType::getUnqual(C)))
                                     : eb.CreateAlloca(aty, nullptr, "par.ranges");
     for (size_t i = 0; i < gpuVals.size(); i++) {
+      GpuVals &v = gpuVals[i];
       Value *slot = pb.CreateConstInBoundsGEP2_32(aty, ranges, 0, i);
-      pb.CreateStore(pb.CreateIntToPtr(gpuVals[i].first, ptr), pb.CreateStructGEP(rty, slot, 0));
-      pb.CreateStore(pb.CreateSub(gpuVals[i].second, gpuVals[i].first),
-                     pb.CreateStructGEP(rty, slot, 1));
+      pb.CreateStore(pb.CreateIntToPtr(v.s, ptr), pb.CreateStructGEP(rty, slot, 0));
+      pb.CreateStore(pb.CreateSub(v.e, v.s), pb.CreateStructGEP(rty, slot, 1));
       pb.CreateStore(ConstantInt::get(i64, P.gpuRanges[i].flags), pb.CreateStructGEP(rty, slot, 2));
+      Value *woff = v.ws ? pb.CreateSub(v.ws, v.s) : ConstantInt::get(i64, 0);
+      Value *wbytes = v.ws ? pb.CreateSub(v.we, v.ws) : ConstantInt::get(i64, 0);
+      pb.CreateStore(woff, pb.CreateStructGEP(rty, slot, 3));
+      pb.CreateStore(wbytes, pb.CreateStructGEP(rty, slot, 4));
+    }
+    // rt_gpu_ptr {off, range}: each pointer live-in whose base is one of the
+    // objects moves to that object's device copy.
+    SmallVector<std::pair<uint64_t, uint64_t>, 8> ptrMap;
+    const StructLayout *SL = DL.getStructLayout(ctxTy);
+    for (unsigned i = 0; i < P.liveIns.size(); i++) {
+      Value *v = P.liveIns[i];
+      if (!v->getType()->isPointerTy())
+        continue;
+      const SCEV *vb = SE.getPointerBase(SE.getSCEV(v));
+      for (size_t r = 0; r < P.gpuRanges.size(); r++)
+        if (vb == SE.getPointerBase(SE.getSCEV(P.gpuRanges[r].base))) {
+          ptrMap.push_back({SL->getElementOffset(i), r});
+          break;
+        }
+    }
+    StructType *mty = StructType::get(C, {i64, i64});
+    ArrayType *maty = ArrayType::get(mty, ptrMap.size());
+    Value *ptrs = ptrMap.empty() ? static_cast<Value *>(ConstantPointerNull::get(
+                                       PointerType::getUnqual(C)))
+                                 : eb.CreateAlloca(maty, nullptr, "par.ptrs");
+    for (size_t i = 0; i < ptrMap.size(); i++) {
+      Value *slot = pb.CreateConstInBoundsGEP2_32(maty, ptrs, 0, i);
+      pb.CreateStore(ConstantInt::get(i64, ptrMap[i].first), pb.CreateStructGEP(mty, slot, 0));
+      pb.CreateStore(ConstantInt::get(i64, ptrMap[i].second), pb.CreateStructGEP(mty, slot, 1));
     }
     FunctionCallee gf = M.getOrInsertFunction(
         "marmot_gpu_for",
-        FunctionType::get(Type::getInt1Ty(C), {ptr, i64, ptr, i64, ptr, i64, i64}, false));
+        FunctionType::get(Type::getInt1Ty(C), {ptr, i64, ptr, i64, ptr, i64, i64, ptr, i64}, false));
     Value *done = pb.CreateCall(
         gf, {body, tc, ctx, ConstantInt::get(i64, DL.getTypeAllocSize(ctxTy)), ranges,
-             ConstantInt::get(i64, gpuVals.size()), ConstantInt::get(i64, P.costPerIter)});
+             ConstantInt::get(i64, gpuVals.size()), ConstantInt::get(i64, P.costPerIter), ptrs,
+             ConstantInt::get(i64, ptrMap.size())});
     BasicBlock *cpu = BasicBlock::Create(C, "par.cpu", &F, header);
     BasicBlock *join = BasicBlock::Create(C, "par.done", &F, header);
     pb.CreateCondBr(done, join, cpu);
