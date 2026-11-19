@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Gaurav-Gosain/marmot/internal/codegen"
@@ -396,7 +397,7 @@ func (b *build) run1() (string, error) {
 		var wg sync.WaitGroup
 		sem := make(chan struct{}, genJobs())
 		for _, i := range order {
-			if !need(i) || mods[i].Text != "" || mods[i].Path != "" {
+			if !need(i) || mods[i].Text != nil || mods[i].Path != "" {
 				continue
 			}
 			wg.Add(1)
@@ -405,11 +406,16 @@ func (b *build) run1() (string, error) {
 				defer wg.Done()
 				defer func() { <-sem }()
 				var parts []codegen.Module
+				var failed atomic.Bool // a part of package i failed to save in the cache
 				switch {
 				case i == len(pkgs):
 					mods[i], errs[i] = cg.GenerateMain(mainSSA)
 				case b.partInstrs() > 0:
-					parts, errs[i] = cg.GenerateParts(pkgs[i], b.partInstrs())
+					// Each part after the first is written out as soon as it is
+					// generated (spillPart), so their texts are not all held.
+					parts, errs[i] = cg.GenerateParts(pkgs[i], b.partInstrs(), func(c int, pm *codegen.Module) error {
+						return b.spillPart(i, c, pm, cacheable(i), &failed, pkgKeys, n)
+					})
 					if errs[i] == nil {
 						mods[i], parts = parts[0], parts[1:]
 					}
@@ -417,7 +423,7 @@ func (b *build) run1() (string, error) {
 					mods[i], errs[i] = cg.Generate(pkgs[i])
 				}
 				if errs[i] == nil {
-					errs[i] = b.spillParts(i, &mods[i], parts, cacheable(i), pkgKeys, n)
+					errs[i] = b.spillParts(i, &mods[i], parts, cacheable(i), &failed, pkgKeys, n)
 				}
 			}()
 		}
@@ -444,7 +450,7 @@ func (b *build) run1() (string, error) {
 		if out == "" {
 			out = defaultOutput(lp.Packages[0], cfg.Emit)
 		}
-		return out, os.WriteFile(out, []byte(mods[root].Text), 0o644)
+		return out, os.WriteFile(out, []byte(mods[root].Text.String()), 0o644)
 	}
 	// Modules without a package key (file arguments, the entry module) are
 	// always generated; they are small.
@@ -489,7 +495,7 @@ func (b *build) run1() (string, error) {
 	// program's 350 MB of text.
 	eachParallel(len(pkgs), func(i int) {
 		if cacheable(i) && mods[i].Path == "" {
-			mods[i].Path = b.saveModule(pkgKeys[i], mods[i].Text)
+			mods[i].Path = b.saveModule(pkgKeys[i], mods[i].Text.Segments())
 		}
 	})
 	// The package key stands for a module's text (the MLIR cache relies on
@@ -513,7 +519,7 @@ func (b *build) run1() (string, error) {
 		// The root package's module.
 		for i, p := range pkgs {
 			if p == mainSSA {
-				return out, os.WriteFile(out, []byte(mods[i].Text), 0o644)
+				return out, os.WriteFile(out, []byte(mods[i].Text.String()), 0o644)
 			}
 		}
 	}
@@ -567,9 +573,9 @@ func (b *build) spill(i int, m *codegen.Module, cacheable bool, keys []string) e
 		return nil
 	}
 	if cacheable {
-		if p := b.saveModule(keys[i], m.Text); p != "" {
+		if p := b.saveModule(keys[i], m.Text.Segments()); p != "" {
 			b.saveTagKey(i, keys[i])
-			m.Path, m.Text = p, ""
+			m.Path, m.Text = p, nil
 			if b.stream != nil {
 				b.stream.send(i, p, keys[i]+"-"+moduleTextVersion)
 			}
@@ -577,10 +583,10 @@ func (b *build) spill(i int, m *codegen.Module, cacheable bool, keys []string) e
 		}
 	}
 	p := filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", i))
-	if err := writeModuleFile(p, b.moduleHead(m), m.Text); err != nil {
+	if err := writeModuleFile(p, b.moduleHead(m), m.Text.Segments()); err != nil {
 		return err
 	}
-	m.Path, m.Text = p, ""
+	m.Path, m.Text = p, nil
 	if b.stream != nil {
 		b.stream.send(i, p, "")
 	}
@@ -632,9 +638,9 @@ func (b *build) compile(mods []codegen.Module, emit string, want int) ([]string,
 	eachParallel(len(mods), func(i int) {
 		m := mods[i]
 		ins[i] = m.Path
-		if m.Text != "" {
+		if m.Text != nil {
 			ins[i] = filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", i))
-			werrs[i] = writeModuleFile(ins[i], b.moduleHead(&m), m.Text)
+			werrs[i] = writeModuleFile(ins[i], b.moduleHead(&m), m.Text.Segments())
 		}
 		objs[i] = filepath.Join(b.work, fmt.Sprintf("m%03d%s", i, ext))
 	})

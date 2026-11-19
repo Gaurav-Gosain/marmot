@@ -102,7 +102,13 @@ func (p *Program) Generate(pkg *ssa.Package) (Module, error) {
 // first part also holds the globals, the package init, the static data and
 // the package's type descriptors. Shared code (instances, wrappers) is
 // linkonce, so it may repeat across the parts.
-func (p *Program) GenerateParts(pkg *ssa.Package, partInstrs int) ([]Module, error) {
+//
+// done, if not nil, is called with each part after the first as soon as it is
+// generated (index i from 1), from the goroutine that generated it, so the
+// caller can write the part out and drop its text instead of holding the text
+// of every part until the last is done. done may change the module (for
+// example set Path and clear Text); the result holds it as done left it.
+func (p *Program) GenerateParts(pkg *ssa.Package, partInstrs int, done func(i int, m *Module) error) ([]Module, error) {
 	fns := p.byPkg[pkg]
 	total := p.PackageInstrs(pkg)
 	if partInstrs <= 0 || total <= partInstrs*3/2 {
@@ -135,6 +141,9 @@ func (p *Program) GenerateParts(pkg *ssa.Package, partInstrs int) ([]Module, err
 		}
 		wg.Go(func() {
 			mods[i], errs[i] = p.generatePart(pkg, parts[i], i == 0, pkg.Pkg.Path(), sets[i])
+			if errs[i] == nil && i > 0 && done != nil {
+				errs[i] = done(i, &mods[i])
+			}
 		})
 	}
 	wg.Wait()
@@ -273,7 +282,7 @@ func (m *moduleGen) finish(name string) (Module, error) {
 	m.emitGCVars()
 	m.emitUsed()
 	keys := make([]string, 0, len(m.decls))
-	size := m.defs.Len() + m.locDefs.Len() + 128
+	size := 0
 	for k, d := range m.decls {
 		if !m.defined[k] {
 			keys = append(keys, k)
@@ -281,22 +290,29 @@ func (m *moduleGen) finish(name string) (Module, error) {
 		}
 	}
 	sort.Strings(keys)
-	var out strings.Builder
-	out.Grow(size)
+	// The text keeps the chunks of locDefs and defs as they are: no joined
+	// copy (see Text). The declarations go in one piece.
+	out := &Text{}
 	// Method pruning is whole-program: modules depend on its result.
 	if m.p.usedMethodsHash != "" {
-		fmt.Fprintf(&out, "// methods: %s\n", m.p.usedMethodsHash)
+		out.add([]byte(fmt.Sprintf("// methods: %s\n", m.p.usedMethodsHash)))
 	}
 	// Location aliases come first: the parser then resolves each op's
 	// loc(#locN) at once instead of through a forward reference.
-	m.locDefs.writeTo(&out)
-	out.WriteString("module {\n")
-	for _, k := range keys {
-		out.WriteString(m.decls[k])
+	for _, c := range m.locDefs.chunks {
+		out.add(c)
 	}
-	m.defs.writeTo(&out)
-	out.WriteString("}\n")
-	return Module{Name: name, Text: out.String()}, nil
+	decls := make([]byte, 0, len("module {\n")+size)
+	decls = append(decls, "module {\n"...)
+	for _, k := range keys {
+		decls = append(decls, m.decls[k]...)
+	}
+	out.add(decls)
+	for _, c := range m.defs.chunks {
+		out.add(c)
+	}
+	out.add([]byte("}\n"))
+	return Module{Name: name, Text: out}, nil
 }
 
 // funcRef makes fn available in this module under its symbol and returns the

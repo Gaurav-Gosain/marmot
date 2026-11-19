@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -277,19 +278,22 @@ func (b *build) cachedModule(k string) (string, bool) {
 
 // saveModule stores the MLIR text of the package with key k and returns
 // its path.
-func (b *build) saveModule(k, text string) string {
+func (b *build) saveModule(k string, segs [][]byte) string {
 	dir := filepath.Join(b.cfg.Root, "build", "cache", "mlir")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "" // as a failed write: the caller compiles without the cache
 	}
 	p := filepath.Join(dir, k+".mlir")
 	var head []byte
-	if strings.HasPrefix(text, partsHeader) {
-		// The parts line stays first (cachedParts reads it).
-		n := strings.IndexByte(text, '\n') + 1
-		head, text = []byte(text[:n]), text[n:]
+	if len(segs) > 0 && bytes.HasPrefix(segs[0], []byte(partsHeader)) {
+		// The parts line stays first (cachedParts reads it). spillParts
+		// puts it in a piece of its own, first.
+		if n := bytes.IndexByte(segs[0], '\n') + 1; n > 0 {
+			head = segs[0][:n]
+			segs = append([][]byte{segs[0][n:]}, segs[1:]...)
+		}
 	}
-	if writeModuleFile(p, head, text) == nil {
+	if writeModuleFile(p, head, segs) == nil {
 		return p
 	}
 	return ""

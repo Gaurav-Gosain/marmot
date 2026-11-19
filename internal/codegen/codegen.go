@@ -82,7 +82,7 @@ type Options struct {
 // Module is the MLIR text for one Go package (or the synthetic entry module).
 type Module struct {
 	Name string // import path, or "marmot:main" for the entry module
-	Text string
+	Text *Text
 	// Path is set instead of Text when the driver reuses the cached MLIR
 	// file of an unchanged package (codegen skipped).
 	Path string

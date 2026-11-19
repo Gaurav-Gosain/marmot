@@ -168,7 +168,7 @@ func (b *build) checkIncremental(lp *loader.Program, pkgs []*ssa.Package, mods [
 		return nil
 	}
 	for i, sp := range pkgs {
-		if mods[i].Path != "" || mods[i].Text != "" {
+		if mods[i].Path != "" || mods[i].Text != nil {
 			continue
 		}
 		if ip := lp.Incremental[sp.Pkg.Path()]; ip != nil && !ip.FromSource {

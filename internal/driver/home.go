@@ -30,7 +30,7 @@ func (b *build) addInstances(cg *codegen.Program, n int) error {
 	b.partIDs = append(b.partIDs, instancesPart)
 	b.partMu.Unlock()
 	p := filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", j))
-	if err := writeModuleFile(p, nil, mod.Text); err != nil {
+	if err := writeModuleFile(p, nil, mod.Text.Segments()); err != nil {
 		return err
 	}
 	b.partMu.Lock()
@@ -39,6 +39,6 @@ func (b *build) addInstances(cg *codegen.Program, n int) error {
 	if b.stream != nil {
 		b.stream.send(j, p, "")
 	}
-	b.logf("instances module: %d bytes", len(mod.Text))
+	b.logf("instances module: %d bytes", mod.Text.Len())
 	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/Gaurav-Gosain/marmot/internal/codegen"
 )
@@ -59,42 +60,58 @@ func (b *build) addPart(m codegen.Module, key string, n int, id partID) {
 }
 
 // spillParts writes the module of package i and its other parts, if any.
-func (b *build) spillParts(i int, m *codegen.Module, parts []codegen.Module, cacheable bool, keys []string, n int) error {
+// Parts that spillPart wrote already (GenerateParts calls it as each part is
+// done) have a Path and no text, and are left as they are.
+// failed is shared with those spillPart calls.
+func (b *build) spillParts(i int, m *codegen.Module, parts []codegen.Module, cacheable bool, failed *atomic.Bool, keys []string, n int) error {
 	if len(parts) == 0 {
 		return b.spill(i, m, cacheable, keys)
 	}
-	m.Text = partsHeader + strconv.Itoa(len(parts)+1) + "\n" + m.Text
+	m.Text.Prepend(partsHeader + strconv.Itoa(len(parts)+1) + "\n")
 	for c := range parts {
-		pm := &parts[c]
-		if cacheable {
-			k := partKey(keys[i], c+1)
-			if p := b.saveModule(k, pm.Text); p != "" {
-				pm.Path, pm.Text = p, ""
-				b.addPart(*pm, k+"-"+moduleTextVersion, n, partID{i, c + 1})
-				continue
-			}
-			cacheable = false
+		if parts[c].Text == nil {
+			continue
 		}
-		b.partMu.Lock()
-		j := n + len(b.parts)
-		b.parts = append(b.parts, codegen.Module{})
-		b.partKeys = append(b.partKeys, "")
-		b.partIDs = append(b.partIDs, partID{i, c + 1})
-		b.partMu.Unlock()
-		p := filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", j))
-		if err := writeModuleFile(p, nil, pm.Text); err != nil {
+		if err := b.spillPart(i, c+1, &parts[c], cacheable, failed, keys, n); err != nil {
 			return err
-		}
-		pm.Path, pm.Text = p, ""
-		b.partMu.Lock()
-		b.parts[j-n] = *pm
-		b.partMu.Unlock()
-		if b.stream != nil {
-			b.stream.send(j, p, "")
 		}
 	}
 	// The first part last: a cached first part means every part is cached.
-	return b.spill(i, m, cacheable, keys)
+	return b.spill(i, m, cacheable && !failed.Load(), keys)
+}
+
+// spillPart writes part c (from 1) of package i to the MLIR cache when the
+// package is cacheable and no part failed to save there (failed), else to the
+// work directory, and drops its text. A failed save sets failed: the parts
+// after it, and the first part, then go to the work directory.
+func (b *build) spillPart(i, c int, pm *codegen.Module, cacheable bool, failed *atomic.Bool, keys []string, n int) error {
+	if cacheable && !failed.Load() {
+		k := partKey(keys[i], c)
+		if p := b.saveModule(k, pm.Text.Segments()); p != "" {
+			pm.Path, pm.Text = p, nil
+			b.addPart(*pm, k+"-"+moduleTextVersion, n, partID{i, c})
+			return nil
+		}
+		failed.Store(true)
+	}
+	b.partMu.Lock()
+	j := n + len(b.parts)
+	b.parts = append(b.parts, codegen.Module{})
+	b.partKeys = append(b.partKeys, "")
+	b.partIDs = append(b.partIDs, partID{i, c})
+	b.partMu.Unlock()
+	p := filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", j))
+	if err := writeModuleFile(p, nil, pm.Text.Segments()); err != nil {
+		return err
+	}
+	pm.Path, pm.Text = p, nil
+	b.partMu.Lock()
+	b.parts[j-n] = *pm
+	b.partMu.Unlock()
+	if b.stream != nil {
+		b.stream.send(j, p, "")
+	}
+	return nil
 }
 
 // partOrder links parts in package and part order (linkOrder), by default;
