@@ -100,8 +100,8 @@ func hasPointers(t types.Type) bool {
 // runtime scans a variable with a record by its bits and conservatively
 // only what no record and no pointer-free section covers (C data, runtime
 // package variables). Records go in a section the linker concatenates, like
-// the type links: Mach-O __DATA,__marmot_gcvars (live_support: a record
-// stays only while its variable is live), ELF marmot_gcvars (the backend
+// the type links: Mach-O __DATA,__marmot_gcvars (a record keeps its
+// variable alive), ELF marmot_gcvars (the backend
 // links each record's section to its variable's, SHF_LINK_ORDER), found by
 // section bounds and __start_/__stop_marmot_gcvars.
 type gcvar struct {
@@ -147,14 +147,14 @@ func (m *moduleGen) emitGCVars() {
 	}
 	sec := "marmot_gcvars"
 	if m.p.opts.GOOS == "darwin" || m.p.opts.GOOS == "ios" {
-		sec = "__DATA,__marmot_gcvars,regular,live_support"
-		// MARMOT_GCVARS_LIVE=0: no live_support. The macOS linker's dead
-		// stripping of live_support records does not always keep the same
-		// variables (one private literal kept in some links and not in
-		// others), so two links of the same objects could differ. Without
-		// it a record keeps its variable alive.
-		if os.Getenv("MARMOT_GCVARS_LIVE") == "0" {
-			sec = "__DATA,__marmot_gcvars,regular"
+		// No live_support by default. The macOS linker's dead stripping of
+		// live_support records does not always keep the same variables (one
+		// private literal kept in some links and not in others), so two
+		// links of the same objects could differ. Without it a record keeps
+		// its variable alive. MARMOT_GCVARS_LIVE=1 restores live_support.
+		sec = "__DATA,__marmot_gcvars,regular"
+		if os.Getenv("MARMOT_GCVARS_LIVE") == "1" {
+			sec += ",live_support"
 		}
 	}
 	rec := mlir.Struct(mlir.Ptr, mlir.I64, mlir.Ptr)
