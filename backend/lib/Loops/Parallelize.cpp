@@ -1293,8 +1293,10 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
         if (j != i)
           P.pairs.push_back({int(i), int(j), "private"});
   P.accesses = accs;
-  // GPU offer: only plain objects with known whole-loop ranges.
-  P.gpuOK = true;
+  // GPU offer: only plain objects with known whole-loop ranges. Privatized
+  // reduction arrays live in the caller's frame or in globals, which a kernel
+  // cannot reach, and each chunk clears and merges a private copy: no offer.
+  P.gpuOK = P.privs.empty();
   for (Unit &u : units) {
     if (u.family >= 0 || u.variant || !u.s || !u.e) {
       P.gpuOK = false;
