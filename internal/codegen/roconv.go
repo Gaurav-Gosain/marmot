@@ -16,8 +16,7 @@ import (
 // (jsonwire.AppendQuote(b, []byte(s), ...) in encoding/json).
 //
 // String bytes may be in read-only memory, so a write the analysis misses
-// is a crash: every unknown counts as a write. Design and review:
-// .work/experiments/frontend-design-roconv.md (revision 2).
+// is a crash: every unknown counts as a write.
 
 // wrKey is a parameter of a function.
 type wrKey struct {

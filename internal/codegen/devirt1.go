@@ -15,9 +15,6 @@ import (
 // h := fnv.New64a(); h.Write([]byte(msg)) keeps []byte(msg) off the heap.
 // The call itself still goes through the itab: the analysis needs only
 // that the callee is known, not that the call is direct.
-//
-// Design and review: .work/experiments/frontend-design-roconv.md (Part B,
-// rules 6 to 9).
 
 // dynType returns the one concrete type the dynamic type of interface
 // value v can have (nil interfaces aside), or nil when unknown.
