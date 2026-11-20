@@ -6,6 +6,37 @@ import (
 	"testing"
 )
 
+func TestSameBinary(t *testing.T) {
+	dir := t.TempDir()
+	w := func(name, s string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	ra, rb, rc := "/t/trees/aaaa1", "/t/trees/bbbb2", "/t/trees/cc3"
+	a := w("a", "\x7fELF "+ra+"/lib/src/fmt/print.go x "+ra+"/bench/p.go")
+	b := w("b", "\x7fELF "+rb+"/lib/src/fmt/print.go x "+rb+"/bench/p.go")
+	c := w("c", "\x7fELF "+rb+"/lib/src/fmt/print.go y "+rb+"/bench/p.go")
+	d := w("d", "\x7fELF "+rc+"/lib/src/fmt/print.go x "+rc+"/bench/p.go")
+	for _, tc := range []struct {
+		name         string
+		x, y, rx, ry string
+		want         bool
+	}{
+		{"roots differ, rest same", a, b, ra, rb, true},
+		{"roots differ, other bytes too", a, c, ra, rb, false},
+		{"same root, files differ", a, b, ra, ra, false},
+		{"roots of other lengths", a, d, ra, rc, false},
+		{"byte-identical", a, a, ra, rb, true},
+	} {
+		if got := sameBinary(tc.x, tc.y, tc.rx, tc.ry); got != tc.want {
+			t.Errorf("%s: sameBinary = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestSameFile(t *testing.T) {
 	dir := t.TempDir()
 	w := func(name string, b []byte) string {
