@@ -54,6 +54,7 @@
 #include "llvm/Config/llvm-config.h"
 
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -2616,6 +2617,31 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   }
   total.link += msSince(t2);
 
+  // -split-adapt: the program's bitcode size, rounded down to a quarter
+  // octave so that most edits keep the value (it is part of every module's
+  // key). It depends only on the program, not on the job count, so the
+  // groups and the output are the same on every machine.
+  uint64_t adaptBytes = 0;
+  if (opts.splitAdapt && opts.splitInstrs) {
+    uint64_t sum = 0;
+    for (const ModuleInfo &m : mods)
+      sum += m.bitcode.size();
+    if (sum) {
+      unsigned q = unsigned(std::floor(std::log2(double(sum)) * 4));
+      adaptBytes = uint64_t(std::exp2(q / 4.0));
+    }
+  }
+  // The split threshold of a module of n instructions and bytes of bitcode:
+  // the program's instructions (estimated at this module's density) over
+  // 16, about two groups for each of 8 jobs, within [2000, splitInstrs].
+  // Without -split-adapt, splitInstrs.
+  auto splitThreshold = [&](uint64_t n, uint64_t bytes) -> unsigned {
+    if (!adaptBytes || !bytes)
+      return opts.splitInstrs;
+    uint64_t est = n * adaptBytes / bytes / 16;
+    return unsigned(std::clamp<uint64_t>(est, std::min(2000u, opts.splitInstrs), opts.splitInstrs));
+  };
+
   // Phase 3, largest live code first.
   std::stable_sort(order.begin(), order.end(), [&](unsigned a, unsigned b) {
     return mods[a].bitcode.size() > mods[b].bitcode.size();
@@ -2652,6 +2678,8 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     std::string key;
     if (cacheObjects) {
       std::string k = info.keyB + "|wpo|" + byTypeKey + "|" + prunableKey + "|";
+      if (adaptBytes)
+        k += "adapt" + std::to_string(adaptBytes) + "|";
       std::vector<std::string> liveDefs;
       for (const Def &d : info.defs)
         if (isLive(d.qname))
@@ -2856,8 +2884,9 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         n += f.getInstructionCount();
         nfuncs += !f.isDeclaration();
       }
-      if (n > opts.splitInstrs) {
-        unsigned half = std::max(1u, opts.splitInstrs / 2);
+      unsigned limit = splitThreshold(n, info.bitcode.size());
+      if (n > limit) {
+        unsigned half = std::max(1u, limit / 2);
         unsigned k = std::min({16u, nfuncs, (n + half - 1) / half});
         auto bcs = splitModule(*m, k, info.keyB);
         std::string list;

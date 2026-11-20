@@ -39,6 +39,9 @@ struct CompileOptions {
   // Dev batch: split a module above this many instructions into groups
   // compiled in parallel (0: never).
   unsigned splitInstrs = 0;
+  // -split-adapt (-wpo): the split threshold follows the program size
+  // (splitThreshold in WholeProgram.cpp), at most splitInstrs.
+  bool splitAdapt = false;
   // Batch: write a pc table fragment OUT.pcln next to each object.
   bool pclnFragments = false;
   bool mergeFunctions = false; // MergeFunctions at -Os/-Oz (off: recover frames)

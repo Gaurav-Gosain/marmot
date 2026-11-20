@@ -110,6 +110,11 @@ static cl::opt<unsigned> splitLarge(
     cl::desc("Batch without -wpo: split modules above N instructions into function groups "
              "compiled in parallel; writes OUT.parts (0: off)"),
     cl::init(0));
+static cl::opt<bool> splitAdapt(
+    "split-adapt",
+    cl::desc("With -wpo and -split-large: split a module above about a sixteenth of the "
+             "program's instructions, at least 2000, at most the -split-large value"),
+    cl::init(false));
 static cl::opt<bool> pclnFrags(
     "pcln-frags", cl::desc("Batch: write a pc table fragment OUT.pcln next to each object"));
 static cl::opt<bool> mergeFunctions(
@@ -335,6 +340,7 @@ int main(int argc, char **argv) {
   opts.wpoImportBudget = importBudget;
   opts.wpoImportTransitive = !importDirect;
   opts.splitInstrs = splitLarge;
+  opts.splitAdapt = splitAdapt;
   opts.stringsNoCopy = stringsNoCopy;
   opts.keepCallSites = keepCallSites;
   opts.optionKey = optionKey(argc, argv);
