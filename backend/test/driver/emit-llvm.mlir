@@ -1,5 +1,5 @@
-// RUN: %backend -emit=llvm -o - %s | %FileCheck %s
-// RUN: %backend -O0 -emit=llvm -o - %s | %FileCheck %s --check-prefix=O0
+// RUN: %backend -target arm64-apple-macosx14.0 -emit=llvm -o - %s | %FileCheck %s
+// RUN: %backend -target arm64-apple-macosx14.0 -O0 -emit=llvm -o - %s | %FileCheck %s --check-prefix=O0
 // RUN: %backend -target x86_64-apple-macosx14.0 -emit=llvm -o - %s | %FileCheck %s --check-prefix=X86
 
 // CHECK: target triple = "{{arm64|aarch64}}-apple-macosx

@@ -2,8 +2,8 @@
 // function from different call sites stay two calls (log TestAll: Println and
 // Printf inlined into one function both call output; merged, runtime.Caller
 // lost an inlined frame).
-// RUN: %backend -O2 -emit=asm -o - %s | %FileCheck %s --check-prefix=MERGED
-// RUN: %backend -O2 -keep-call-sites -emit=asm -o - %s | %FileCheck %s --check-prefix=KEPT
+// RUN: %backend -target arm64-apple-macosx14.0 -O2 -emit=asm -o - %s | %FileCheck %s --check-prefix=MERGED
+// RUN: %backend -target arm64-apple-macosx14.0 -O2 -keep-call-sites -emit=asm -o - %s | %FileCheck %s --check-prefix=KEPT
 // MERGED-LABEL: {{_?}}p.both:
 // MERGED: bl {{_?}}p.output
 // MERGED-NOT: bl {{_?}}p.output
