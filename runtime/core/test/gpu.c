@@ -51,7 +51,7 @@ void marmot_main(void) {
     CHECK(rt_gpu_launch(0, 10, 0, 0, 0) == -1 && rt_gpu_should_offload(1 << 30, 100, 8, 8) == 0);
     CHECK(rt_gpu_break_even(10, 8, 8) == -1);
     rt_gpu_range rg = {0, 0, 0, 0, 0};
-    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", 100, &rg, 8, &rg, 1, 1000000, 0, 0));
+    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", 100, &rg, 8, &rg, 1, 1000000, 0, 0, 0));
     out("ok\n");
     return;
   }
@@ -131,19 +131,19 @@ void marmot_main(void) {
     struct { double a; double *x; double *y; uint64_t count; } c = {av, x, y, 5};
     rt_gpu_range rg[2] = {{x, m2 * 8, 1, 0, 0}, {y - 1, (m2 + 2) * 8, 3, 8, m2 * 8}};
     rt_gpu_ptr pm[2] = {{8, 0}, {16, 1}};
-    CHECK(rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", m2, &c, sizeof c, rg, 2, 100000, pm, 2));
+    CHECK(rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", m2, &c, sizeof c, rg, 2, 100000, pm, 2, 0));
     CHECK(c.count == 5 + (uint64_t)m2 && c.x == x && c.y == y && c.a == av);
     for (int64_t i = 0; i < m2; i++) CHECK(u64f(y[i]) == u64f(exp[i]) && u64f(x[i]) == u64f((double)i / 7.0));
     CHECK(buf[m2] == (double)m2 / 7.0 && buf[2 * m2 + 1] == (double)(2 * m2 + 1) / 7.0);
     // Too little work: the cost model declines.
-    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", 10, &c, sizeof c, rg, 2, 1, pm, 2));
+    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", 10, &c, sizeof c, rg, 2, 1, pm, 2, 0));
     // A nil base, a written range that overlaps another one, a bad map: no GPU.
     rt_gpu_range nil[2] = {{0, m2 * 8, 1, 0, 0}, rg[1]};
-    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", m2, &c, sizeof c, nil, 2, 100000, pm, 2));
+    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", m2, &c, sizeof c, nil, 2, 100000, pm, 2, 0));
     rt_gpu_range ov[2] = {{buf, (2 * m2 + 2) * 8, 1, 0, 0}, rg[1]};
-    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", m2, &c, sizeof c, ov, 2, 100000, pm, 2));
+    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", m2, &c, sizeof c, ov, 2, 100000, pm, 2, 0));
     rt_gpu_ptr bad[1] = {{8, 2}};
-    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", m2, &c, sizeof c, rg, 2, 100000, bad, 1));
+    CHECK(!rt_gpu_for(ptx, sizeof ptx, "saxpy_ctx", m2, &c, sizeof c, rg, 2, 100000, bad, 1, 0));
     CHECK(c.count == 5 + (uint64_t)m2);
   }
   // A module that fails to load is remembered: the second call does not retry.

@@ -345,9 +345,10 @@ int32_t rt_gpu_should_offload(int64_t n, double ops, double bytes_in, double byt
 int64_t rt_gpu_break_even(double ops, double bytes_in, double bytes_out);
 
 // Loop offload entry for compiled code. Runs kernel kname(ptr ctx, i64 base,
-// i64 count) (the outlined parallel-for body, one thread per iteration of
-// [base, base+count), blocks of 256) over [0, n), in slices of about 50 ms
-// when the device has a display watchdog.
+// i64 count, i64 inner) (the outlined parallel-for body, one thread per
+// iteration of [base, base+count), blocks of 256) over [0, n), in slices of
+// about 50 ms when the device has a display watchdog. inner is 0 for a loop,
+// and the inner trip count for a 2-D nest run as n = rows * inner threads.
 //
 // Each range is one object the loop touches: [base, base+bytes) is copied to
 // a device buffer (flags 1: read; a range written whole and never read is not
@@ -378,7 +379,7 @@ typedef struct rt_gpu_ptr {
 } rt_gpu_ptr;
 _Bool rt_gpu_for(const char *ptx, int64_t ptxlen, const char *kname, int64_t n, void *ctx,
                  int64_t ctxsize, rt_gpu_range *ranges, int64_t nranges, int64_t cost,
-                 rt_gpu_ptr *ptrs, int64_t nptrs);
+                 rt_gpu_ptr *ptrs, int64_t nptrs, int64_t inner);
 
 // ---- Locks (for the Go runtime's own data structures) ----
 

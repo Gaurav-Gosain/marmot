@@ -40,8 +40,31 @@ func main() {
 type buildFlags struct {
 	out, opt, trace, pgo, emit, tags, gc, target, dialect, buildmode            *string
 	strip, pgoGen, release, work, verbose, printCmd, nocache, allocs, allocsAll *bool
-	static, trimpath                                                            *bool
+	static, trimpath, gpuRemarks                                                *bool
+	gpu                                                                         *gpuFlag
 	output                                                                      outputFlags
+}
+
+// gpuFlag is -gpu (PTX for sm_75, the oldest GPU generation supported) or
+// -gpu=sm_XX.
+type gpuFlag struct{ arch string }
+
+func (g *gpuFlag) String() string   { return g.arch }
+func (g *gpuFlag) IsBoolFlag() bool { return true }
+func (g *gpuFlag) Set(s string) error {
+	switch s {
+	case "true":
+		g.arch = "sm_75"
+	case "false":
+		g.arch = ""
+	default:
+		n := strings.TrimPrefix(s, "sm_")
+		if n == s || n == "" || strings.Trim(n, "0123456789") != "" {
+			return fmt.Errorf("-gpu takes an NVIDIA architecture such as sm_75 or sm_86, not %q", s)
+		}
+		g.arch = s
+	}
+	return nil
 }
 
 // newBuildFlags defines the flags of build and run. The same set drives
@@ -65,6 +88,9 @@ func newBuildFlags(name string) (*flag.FlagSet, *buildFlags) {
 	b.nocache = fs.Bool("nocache", false, "do not use the object cache")
 	b.allocs = fs.Bool("allocs", false, "report the allocation sites of the main module: heap or stack, and why (rebuilds without the object cache)")
 	b.allocsAll = fs.Bool("allocs-all", false, "like -allocs, for every package")
+	b.gpu = &gpuFlag{}
+	fs.Var(b.gpu, "gpu", "offload parallel loops to an NVIDIA GPU when one is present at run time (PTX for sm_75, or -gpu=sm_XX; run with MARMOT_GPU=1)")
+	b.gpuRemarks = fs.Bool("gpu-remarks", false, "with -gpu: print, for each parallel loop, whether it became a GPU kernel and why not (rebuilds without the object cache)")
 	b.static = fs.Bool("static", false, "link a static executable (Linux: with the musl C library, after marmot sysroot add -libc musl GOOS/GOARCH)")
 	b.gc = fs.String("gc", "precise", "garbage collector: precise or none")
 	b.buildmode = fs.String("buildmode", "exe", "exe, or pie: a position independent executable on Linux (with packed relative relocations)")
@@ -148,6 +174,10 @@ func cmdBuild(args []string, run bool) int {
 		Verbose: *verbose, PrintCmd: *printCmd, NoCache: *nocache, GC: *gc, Target: *target,
 		Dialect: *dialect, Patterns: patterns, Stderr: os.Stderr, Release: *release, PGOGen: *pgoGen, PGO: *pgo, Strip: *strip, Trace: *trace,
 		Static: *b.static, TrimPath: *b.trimpath, BuildMode: *b.buildmode,
+		GPU: b.gpu.arch, GPURemarks: *b.gpuRemarks,
+	}
+	if cfg.GPURemarks {
+		cfg.NoCache = true // cached objects skip the passes that write the remarks
 	}
 	if *tags != "" {
 		cfg.Tags = strings.Split(*tags, ",")

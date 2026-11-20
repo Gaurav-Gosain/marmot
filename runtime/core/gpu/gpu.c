@@ -720,7 +720,7 @@ RT_API int64_t rt_gpu_break_even(double ops, double bytes_in, double bytes_out) 
 // ---- rt_gpu_for: the loop compiler's entry ----
 //
 // Runs the outlined parallel-for body as kernel kname(ptr ctx, i64 base, i64
-// count), one thread per iteration, blocks of 256. Memory: each range is
+// count, i64 inner), one thread per iteration, blocks of 256. Memory: each range is
 // copied to its own device buffer, mapped pointer words of ctx are moved to
 // those buffers, and the written bytes of each range are copied back. See
 // rt.h for the contract.
@@ -804,9 +804,9 @@ static bool gpu_settled(void) {
 
 RT_API bool rt_gpu_for(const char *ptx, int64_t ptxlen, const char *kname, int64_t n, void *ctx,
                        int64_t ctxsize, rt_gpu_range *ranges, int64_t nranges, int64_t cost,
-                       rt_gpu_ptr *ptrs, int64_t nptrs) {
+                       rt_gpu_ptr *ptrs, int64_t nptrs, int64_t inner) {
   if (n <= 0 || nranges < 0 || nranges > 64 || nptrs < 0 || nptrs > 64 || ctxsize < 0 ||
-      ctxsize > 4096)
+      ctxsize > 4096 || inner < 0)
     return false;
   if (!gpu_for_enabled()) return false;
   // Every range must be a real object (a nil base would fault in the copy,
@@ -908,7 +908,7 @@ RT_API bool rt_gpu_for(const char *ptx, int64_t ptxlen, const char *kname, int64
   int slices = 0;
   while (ok && base < n) {
     if (cnt > n - base) cnt = n - base;
-    void *params[3] = {&dp, &base, &cnt};
+    void *params[4] = {&dp, &base, &cnt, &inner};
     uint64_t grid = ((uint64_t)cnt + 255) / 256;
     int64_t ts = os_nanotime();
     ok = grid <= 0x7fffffffu &&

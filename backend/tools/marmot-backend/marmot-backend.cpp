@@ -182,7 +182,7 @@ static cl::opt<std::string> pgoGen(
     cl::value_desc("pattern"), cl::cat(cat));
 static cl::opt<std::string> gpuArch(
     "gpu", cl::ValueOptional,
-    cl::desc("Offload marked parallel loops to an NVIDIA GPU (PTX for ARCH, default sm_86)"),
+    cl::desc("Offload marked parallel loops to an NVIDIA GPU (PTX for ARCH, default sm_75)"),
     cl::value_desc("arch"), cl::cat(cat));
 static cl::opt<bool> keepTailCalls(
     "keep-tail-calls",
@@ -359,7 +359,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   if (gpuArch.getNumOccurrences())
-    opts.gpuArch = gpuArch.empty() ? "sm_86" : std::string(gpuArch);
+    opts.gpuArch = gpuArch.empty() ? "sm_75" : std::string(gpuArch);
   opts.loops.gpu = !opts.gpuArch.empty();
 
   if (pgoGen.getNumOccurrences())

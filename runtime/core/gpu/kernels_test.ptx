@@ -180,10 +180,10 @@ KDONE:
   ret;
 }
 
-// rt_gpu_for convention: kernel(ptr ctx, i64 base, i64 n) runs iterations
-// [base, base+n). ctx = {f64 a; ptr x; ptr y; u64 count}: y[i] = a*x[i] + y[i],
+// rt_gpu_for convention: kernel(ptr ctx, i64 base, i64 n, i64 inner) runs
+// iterations [base, base+n); inner is 0 here (a loop, not a 2-D nest). ctx = {f64 a; ptr x; ptr y; u64 count}: y[i] = a*x[i] + y[i],
 // and count += 1 per iteration (a reduction slot updated with an atomic).
-.visible .entry saxpy_ctx(.param .u64 ctx, .param .u64 base, .param .u64 n)
+.visible .entry saxpy_ctx(.param .u64 ctx, .param .u64 base, .param .u64 n, .param .u64 inner)
 {
   .reg .pred p;
   .reg .b32 r<3>;

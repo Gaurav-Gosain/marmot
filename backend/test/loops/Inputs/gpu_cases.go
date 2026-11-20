@@ -56,6 +56,35 @@ func evens(y []float64) {
 	}
 }
 
+// A 2-D kernel: one GPU thread per (i, j), the k loop inside the thread in
+// the same order as on the CPU, so float results are the same.
+//
+//go:noinline
+func mmul64(a, b, c []float64, n int) {
+	for i := 0; i < n; i++ {
+		for j := 0; j < n; j++ {
+			s := 0.0
+			for k := 0; k < n; k++ {
+				s += a[i*n+k] * b[k*n+j]
+			}
+			c[i*n+j] = s
+		}
+	}
+}
+
+//go:noinline
+func mmul32(a, b, c []float32, n int) {
+	for i := 0; i < n; i++ {
+		for j := 0; j < n; j++ {
+			var s float32
+			for k := 0; k < n; k++ {
+				s += a[i*n+k] * b[k*n+j]
+			}
+			c[i*n+j] = s
+		}
+	}
+}
+
 //go:noinline
 func nilWrite(p *[n]float64) (msg string) {
 	defer func() {
@@ -119,6 +148,23 @@ func main() {
 		ws += v
 	}
 	println("evens", int64(ws))
+
+	const m = 192
+	a64, b64, c64 := make([]float64, m*m), make([]float64, m*m), make([]float64, m*m)
+	a32, b32, c32 := make([]float32, m*m), make([]float32, m*m), make([]float32, m*m)
+	for i := range a64 {
+		a64[i] = float64(i%13)/7 - 0.75
+		b64[i] = float64(i%11)/3 + 0.125
+		a32[i], b32[i] = float32(a64[i]), float32(b64[i])
+	}
+	mmul64(a64, b64, c64, m)
+	mmul32(a32, b32, c32, m)
+	var h64, h32 uint64
+	for i := range c64 {
+		h64 = h64*31 + math.Float64bits(c64[i])
+		h32 = h32*31 + uint64(math.Float32bits(c32[i]))
+	}
+	println("mmul", h64, h32)
 
 	var np *[n]float64
 	println("nil", nilWrite(np))

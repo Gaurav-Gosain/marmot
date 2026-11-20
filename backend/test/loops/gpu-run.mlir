@@ -9,9 +9,22 @@
 // the loop pass does not accept yet), a strided writer next to
 // another goroutine's writer (not offered: it would copy back the other
 // goroutine's elements), a nil array pointer (the runtime refuses it, the CPU
-// path panics and the panic is recovered).
+// path panics and the panic is recovered), and float64 and float32 matmuls
+// as 2-D kernels (one thread per element of c, bit-identical results).
 // REQUIRES: nvptx
-// RUN: MARMOT_BACKEND_FLAGS="-gpu -loops-rtchecks" %marmot build -nocache -release -o %t %S/Inputs/gpu_cases.go
+// RUN: MARMOT_BACKEND_FLAGS="-loops-rtchecks" %marmot build -nocache -release -gpu -o %t %S/Inputs/gpu_cases.go
+// The embedded PTX is for sm_75 unless -gpu names another architecture.
+// RUN: grep -a -q ".target sm_75" %t
+// -gpu-remarks says which loops became kernels and why the others did not.
+// RUN: MARMOT_BACKEND_FLAGS="-loops-rtchecks" %marmot build -release -gpu -gpu-remarks -o %t.r %S/Inputs/gpu_cases.go 2>&1 | %FileCheck %s --check-prefix=REMARK
+// REMARK-DAG: loops: main.saxpyOff: {{.*}}GPU kernel
+// REMARK-DAG: loops: main.evens: {{.*}}not offered to the GPU: stores leave gaps
+// REMARK-DAG: loops: main.mmul64: {{.*}}GPU kernel (2-D)
+// REMARK-DAG: loops: main.mmul32: {{.*}}GPU kernel (2-D)
+// RUN: MARMOT_BACKEND_FLAGS="-loops-rtchecks" %marmot build -nocache -release -gpu=sm_86 -o %t.86 %S/Inputs/gpu_cases.go
+// RUN: grep -a -q ".target sm_86" %t.86
+// RUN: if %marmot build -gpu=volta -o %t.bad %S/Inputs/gpu_cases.go > %t.bad.out 2>&1; then exit 1; fi; grep -q "NVIDIA architecture" %t.bad.out
+// RUN: if %marmot build -gpu -target wasip1/wasm -o %t.wasm %S/Inputs/gpu_cases.go > %t.wasm.out 2>&1; then exit 1; fi; grep -q "native target" %t.wasm.out
 // RUN: MARMOT_GPU=0 %t > %t.cpu 2>&1 && diff %t.cpu %S/Inputs/gpu_cases.expected
 // println writes to stderr, as the trace does: split them by the "gpu: " prefix.
 // RUN: MARMOT_GPU=1 MARMOT_GPU_WAIT=1 MARMOT_GPU_FORCE=1 MARMOT_GPU_CACHE=0 MARMOT_GPUTRACE=1 %t > %t.trace 2>&1
@@ -25,3 +38,5 @@
 // CHECK-DAG: saxpyOff{{.*}} on the GPU
 // CHECK-DAG: reduce{{.*}} on the GPU
 // CHECK-DAG: fill{{.*}} on the GPU
+// CHECK-DAG: mmul64{{.*}} on the GPU, 36864 iterations
+// CHECK-DAG: mmul32{{.*}} on the GPU, 36864 iterations

@@ -14,7 +14,7 @@
 // CHECK-LABEL: define void @saxpy_off(
 // CHECK: store i64 1, ptr
 // CHECK: store i64 3, ptr
-// CHECK: call i1 @rt_gpu_for({{.*}}, i64 2, i64 {{[0-9]+}}, ptr {{.*}}%par.ptrs{{.*}}, i64 2)
+// CHECK: call i1 @rt_gpu_for({{.*}}, i64 2, i64 {{[0-9]+}}, ptr {{.*}}%par.ptrs{{.*}}, i64 2, i64 0)
 // CHECK-LABEL: define void @fields(
 // CHECK: call i1 @rt_gpu_for(
 module {

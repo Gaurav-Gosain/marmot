@@ -179,6 +179,15 @@ struct Plan {
   std::vector<GpuRange> gpuRanges;
   bool gpuOK = false;
   std::string gpuWhy; // why the loop is not offered (for remarks)
+  // 2-D offer: L's one inner loop J runs j in [0, innerEnd) with step 1; the
+  // GPU runs one thread per (i, j) through a second body that runs one j.
+  bool gpu2 = false;
+  Loop *inner = nullptr;
+  PHINode *innerIV = nullptr;
+  Value *innerEnd = nullptr;
+  ICmpInst *innerCmp = nullptr;
+  uint64_t innerCost = 1;
+  Function *body2 = nullptr;
   // Reduction arrays (hist[b]++): an alloca or global of `bytes` bytes
   // whose only accesses in L are `x = x + v` on elements of type elem. Each
   // chunk works on a zeroed private copy and adds it into the object at the
@@ -293,6 +302,10 @@ private:
   const DataLayout &DL;
 
   std::string why;
+  // outline's map from L's values to the chunk function's (for the 2-D GPU
+  // body, cloned from the chunk function).
+  ValueToValueMapTy outVmap;
+  Function *outlineInner(Plan &P, Function *body);
   bool extraExits = false; // analyze rejected L only for its extra exits
   // Analysis of the fast copy Rule V would make: exits other than the
   // latch's are ignored (they would be gone).
@@ -320,7 +333,8 @@ private:
   bool analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs);
   bool rowAccess(Loop *L, Plan &P, Access &a);
   void privatize(Loop *L, Plan &P, std::vector<Access> &accs);
-  const char *gpuUnitProblem(Loop *L, const std::vector<Access *> &accs);
+  const char *gpuUnitProblem(Loop *L, const std::vector<Access *> &accs, bool &twoD);
+  bool gpuInner(Loop *L, Plan &P);
   bool interleaved(Loop *L, Plan &P, Access &x, Access &y);
   bool decompose(const SCEV *S, Loop *L, const SCEV *&coef, const SCEV *&lo,
                  const SCEV *&hi);
@@ -455,7 +469,8 @@ bool Parallelizer::visit(Loop *L) {
     if (analyze(L, P)) {
       std::string gpuNote;
       if (opts.gpu)
-        gpuNote = P.gpuOK ? ", GPU kernel" : ", not offered to the GPU: " + P.gpuWhy;
+        gpuNote = P.gpuOK ? (P.gpu2 ? ", GPU kernel (2-D)" : ", GPU kernel")
+                          : ", not offered to the GPU: " + P.gpuWhy;
       remark(L, "parallel, " + Twine(P.reds.size()) + " reductions, " +
                     Twine(P.leChecks.size() + P.overlaps.size()) +
                     " run time checks, cost/iter " + Twine(P.costPerIter) + gpuNote);
@@ -576,7 +591,7 @@ bool Parallelizer::analyze(Loop *L, Plan &P) {
   if (!liveOuts(L, P))
     return false;
   P.costPerIter = std::max<uint64_t>(1, cost(L));
-  if (P.gpuOK && P.costPerIter > MaxGpuIterCost) {
+  if (P.gpuOK && !P.gpu2 && P.costPerIter > MaxGpuIterCost) {
     P.gpuOK = false;
     P.gpuRanges.clear();
     P.gpuWhy = "one iteration is too long for one GPU thread";
@@ -597,6 +612,10 @@ bool Parallelizer::analyze(Loop *L, Plan &P) {
   for (Value *v : P.liveIns)
     if (v->getType()->isTokenTy() || v->getType()->isMetadataTy())
       return reject("token or metadata live-in");
+  if (P.gpuOK && P.gpu2 && !gpuInner(L, P)) {
+    P.gpuOK = false;
+    P.gpuRanges.clear();
+  }
   // GPU offer: the kernel reaches each object through a pointer live-in that
   // the runtime moves to the object's device copy.
   for (auto &g : P.gpuRanges) {
@@ -1135,14 +1154,58 @@ static bool hasPointer(Type *t) {
   return false;
 }
 
-const char *Parallelizer::gpuUnitProblem(Loop *L, const std::vector<Access *> &accs) {
+const char *Parallelizer::gpuUnitProblem(Loop *L, const std::vector<Access *> &accs, bool &twoD) {
   SmallVector<std::pair<int64_t, int64_t>, 4> spans;
   const SCEV *coef = nullptr, *ref = nullptr;
+  Loop *J = L->getSubLoops().size() == 1 ? L->getSubLoops()[0] : nullptr;
   for (Access *a : accs) {
     Type *t = a->store ? cast<StoreInst>(a->inst)->getValueOperand()->getType()
                        : a->inst->getType();
     if (hasPointer(t))
       return "the loop loads or stores pointer values";
+  }
+  // A store in the one inner loop J (c[i*n+j] in a matmul): the loop can run
+  // as a 2-D kernel, one thread per (i, j), when the object has exactly that
+  // store, every j writes the next element (step = store size), every i the
+  // next row (L's stride = J's trip count times the size), and every load of
+  // the object reads the stored element.
+  StoreInst *inJ = nullptr;
+  for (Access *a : accs)
+    if (a->store && J && LI.getLoopFor(a->inst->getParent()) == J)
+      inJ = cast<StoreInst>(a->inst);
+  if (inJ) {
+    int stores = 0;
+    for (Access *a : accs)
+      stores += a->store;
+    if (stores != 1)
+      return "more than one store to an object written in an inner loop";
+    if (!DT.dominates(inJ->getParent(), J->getLoopLatch()))
+      return "a conditional store";
+    auto *ar = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(inJ->getPointerOperand()));
+    uint64_t size = DL.getTypeStoreSize(inJ->getValueOperand()->getType());
+    auto *step = ar && ar->getLoop() == J ? dyn_cast<SCEVConstant>(ar->getStepRecurrence(SE)) : nullptr;
+    if (!step || step->getAPInt() != size)
+      return "an inner loop store that does not write consecutive elements";
+    const SCEV *btcJ = SE.getBackedgeTakenCount(J);
+    if (isa<SCEVCouldNotCompute>(btcJ))
+      return "an inner loop trip count that is not known";
+    Access *sa = nullptr;
+    for (Access *a : accs)
+      if (a->store)
+        sa = a;
+    Type *cty = sa->coef->getType();
+    const SCEV *row = SE.getMulExpr(SE.getAddExpr(SE.getTruncateOrZeroExtend(btcJ, cty), SE.getOne(cty)),
+                                    SE.getConstant(cty, size));
+    if (row != sa->coef)
+      return "rows with gaps (row stride is not the inner trip count times the element size)";
+    for (Access *a : accs)
+      if (!a->store && SE.getSCEV(cast<LoadInst>(a->inst)->getPointerOperand()) !=
+                           SE.getSCEV(inJ->getPointerOperand()))
+        return "a load of a written object at another element";
+    twoD = true;
+    return nullptr;
+  }
+  for (Access *a : accs) {
     if (!a->store)
       continue;
     if (LI.getLoopFor(a->inst->getParent()) != L)
@@ -1180,6 +1243,47 @@ const char *Parallelizer::gpuUnitProblem(Loop *L, const std::vector<Access *> &a
   if (end - spans[0].first != width)
     return "stores leave gaps (store width less than stride)";
   return nullptr;
+}
+
+// 2-D GPU offer: L's one inner loop J must count j from 0 by 1 to a bound
+// set before L (so the second body can run any one j), carry nothing from
+// one j to the next but j itself, and hold every store of L.
+bool Parallelizer::gpuInner(Loop *L, Plan &P) {
+  Loop *J = L->getSubLoops()[0];
+  auto fail = [&](const char *why) {
+    P.gpuWhy = why;
+    return false;
+  };
+  if (!P.reds.empty())
+    return fail("a reduction in a loop offered as a 2-D kernel");
+  for (BasicBlock *bb : L->blocks())
+    for (Instruction &I : *bb)
+      if (isa<StoreInst>(I) && LI.getLoopFor(bb) != J)
+        return fail("stores both in the loop and in its inner loop");
+  std::optional<Loop::LoopBounds> B = J->getBounds(SE);
+  PHINode *iv = J->getInductionVariable(SE);
+  ICmpInst *cmp = J->getLatchCmpInst();
+  if (!B || !iv || !cmp)
+    return fail("an inner loop without a simple counter");
+  auto *init = dyn_cast<ConstantInt>(&B->getInitialIVValue());
+  auto *step = dyn_cast_or_null<ConstantInt>(B->getStepValue());
+  Value *fin = &B->getFinalIVValue();
+  ICmpInst::Predicate pred = B->getCanonicalPredicate();
+  if (!init || !init->isZero() || !step || !step->isOne() || !L->isLoopInvariant(fin) ||
+      (pred != ICmpInst::ICMP_ULT && pred != ICmpInst::ICMP_SLT && pred != ICmpInst::ICMP_NE) ||
+      (cmp->getOperand(0) != fin && cmp->getOperand(1) != fin) || !fin->getType()->isIntegerTy())
+    return fail("an inner loop that does not count from 0 by 1 to a bound set before the loop");
+  for (PHINode &phi : J->getHeader()->phis())
+    if (&phi != iv)
+      return fail("an inner loop that carries a value from one iteration to the next");
+  P.inner = J;
+  P.innerIV = iv;
+  P.innerEnd = fin;
+  P.innerCmp = cmp;
+  P.innerCost = std::max<uint64_t>(1, cost(J));
+  if (P.innerCost > MaxGpuIterCost)
+    return fail("one iteration is too long for one GPU thread");
+  return true;
 }
 
 // Rule P, memory part: different iterations touch disjoint bytes of every
@@ -1414,7 +1518,7 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
     bool read = false;
     for (Access *a : u.accs)
       read |= !a->store;
-    if (const char *bad = gpuUnitProblem(L, u.accs)) {
+    if (const char *bad = gpuUnitProblem(L, u.accs, P.gpu2)) {
       P.gpuOK = false;
       P.gpuWhy = bad;
       break;
@@ -1518,6 +1622,49 @@ uint64_t Parallelizer::cost(Loop *L) {
   return total;
 }
 
+// The 2-D GPU body: a copy of the chunk function body(ctx, lo, hi) with two
+// more parameters jlo, jhi, whose inner loop J runs j in [jlo, jhi) instead
+// of [0, n1). The kernel calls it with lo = i, hi = i+1, jlo = j, jhi = j+1.
+Function *Parallelizer::outlineInner(Plan &P, Function *body) {
+  LLVMContext &C = F.getContext();
+  Type *i64 = Type::getInt64Ty(C);
+  Type *ptr = PointerType::getUnqual(C);
+  auto *fty = FunctionType::get(Type::getVoidTy(C), {ptr, i64, i64, i64, i64}, false);
+  Function *b2 = Function::Create(fty, GlobalValue::InternalLinkage, body->getName() + "2",
+                                  F.getParent());
+  ValueToValueMapTy vm;
+  for (unsigned i = 0; i < 3; i++)
+    vm[body->getArg(i)] = b2->getArg(i);
+  SmallVector<ReturnInst *, 4> rets;
+  CloneFunctionInto(b2, body, vm, CloneFunctionChangeType::LocalChangesOnly, rets);
+  b2->removeFnAttr("marmot-par-body");
+  auto at = [&](Value *v) -> Value * {
+    auto it = outVmap.find(v);
+    Value *inBody = it == outVmap.end() ? v : static_cast<Value *>(it->second);
+    auto it2 = vm.find(inBody);
+    return it2 == vm.end() ? inBody : static_cast<Value *>(it2->second);
+  };
+  auto *iv = dyn_cast_or_null<PHINode>(at(P.innerIV));
+  auto *cmp = dyn_cast_or_null<ICmpInst>(at(P.innerCmp));
+  auto *latch = dyn_cast_or_null<BasicBlock>(at(P.inner->getLoopLatch()));
+  Value *fin = at(P.innerEnd);
+  if (!iv || !cmp || !latch || (cmp->getOperand(0) != fin && cmp->getOperand(1) != fin)) {
+    b2->eraseFromParent();
+    return nullptr;
+  }
+  Value *jlo = b2->getArg(3), *jhi = b2->getArg(4);
+  IRBuilder<> eb(&*b2->getEntryBlock().getFirstInsertionPt());
+  Type *ity = iv->getType();
+  Value *lo = eb.CreateZExtOrTrunc(jlo, ity, "jlo");
+  Value *hi = eb.CreateZExtOrTrunc(jhi, fin->getType(), "jhi");
+  for (unsigned k = 0; k < iv->getNumIncomingValues(); k++)
+    if (iv->getIncomingBlock(k) != latch)
+      iv->setIncomingValue(k, lo);
+  cmp->setOperand(cmp->getOperand(0) == fin ? 0 : 1, hi);
+  b2->setName(body->getName() + "2");
+  return b2;
+}
+
 Function *Parallelizer::outline(Plan &P, StructType *ctxTy) {
   Loop *L = P.loop;
   Module &M = *F.getParent();
@@ -1540,7 +1687,8 @@ Function *Parallelizer::outline(Plan &P, StructType *ctxTy) {
   BasicBlock *entry = BasicBlock::Create(C, "entry", body);
   BasicBlock *exit = BasicBlock::Create(C, "exit", body);
   IRBuilder<> b(entry);
-  ValueToValueMapTy vmap;
+  ValueToValueMapTy &vmap = outVmap;
+  vmap.clear();
   for (unsigned i = 0; i < P.liveIns.size(); i++) {
     Value *v = P.liveIns[i];
     Value *addr = b.CreateStructGEP(ctxTy, ctx, i);
@@ -1937,10 +2085,16 @@ void Parallelizer::transform(Plan &P) {
   FunctionCallee rpf = M.getOrInsertFunction(
       "rt_parallel_for", FunctionType::get(Type::getVoidTy(C), {i64, i64, ptr, ptr}, false));
   BasicBlock *last = par;
+  // 2-D offer: the kernel runs body2 once per (i, j).
+  Function *gpuBody = body;
+  if (gpu && P.gpu2) {
+    gpuBody = outlineInner(P, body);
+    gpu = gpuBody != nullptr;
+  }
   if (gpu) {
     // Offer the loop to the GPU; the backend turns the call
     // into rt_gpu_for, or into false without a GPU target.
-    body->addFnAttr("marmot-gpu-body");
+    gpuBody->addFnAttr("marmot-gpu-body");
     const DataLayout &DL = F.getDataLayout();
     // rt_gpu_range {base, bytes, flags, woff, wbytes}: one per object.
     StructType *rty = StructType::get(C, {ptr, i64, i64, i64, i64});
@@ -1985,13 +2139,24 @@ void Parallelizer::transform(Plan &P) {
       pb.CreateStore(ConstantInt::get(i64, ptrMap[i].first), pb.CreateStructGEP(mty, slot, 0));
       pb.CreateStore(ConstantInt::get(i64, ptrMap[i].second), pb.CreateStructGEP(mty, slot, 1));
     }
+    // 1-D: n = tc iterations of L, inner = 0. 2-D: n = tc * n1 threads, inner
+    // = n1; n = 0 (no GPU) when the product overflows.
+    Value *gn = tc, *inner = ConstantInt::get(i64, 0);
+    uint64_t gcost = P.costPerIter;
+    if (P.gpu2) {
+      inner = pb.CreateZExtOrTrunc(P.innerEnd, i64, "par.n1");
+      Value *mul = pb.CreateBinaryIntrinsic(Intrinsic::umul_with_overflow, tc, inner);
+      gn = pb.CreateSelect(pb.CreateExtractValue(mul, 1), ConstantInt::get(i64, 0),
+                           pb.CreateExtractValue(mul, 0), "par.n2");
+      gcost = P.innerCost;
+    }
     FunctionCallee gf = M.getOrInsertFunction(
-        "marmot_gpu_for",
-        FunctionType::get(Type::getInt1Ty(C), {ptr, i64, ptr, i64, ptr, i64, i64, ptr, i64}, false));
+        "marmot_gpu_for", FunctionType::get(Type::getInt1Ty(C),
+                                            {ptr, i64, ptr, i64, ptr, i64, i64, ptr, i64, i64}, false));
     Value *done = pb.CreateCall(
-        gf, {body, tc, ctx, ConstantInt::get(i64, DL.getTypeAllocSize(ctxTy)), ranges,
-             ConstantInt::get(i64, gpuVals.size()), ConstantInt::get(i64, P.costPerIter), ptrs,
-             ConstantInt::get(i64, ptrMap.size())});
+        gf, {gpuBody, gn, ctx, ConstantInt::get(i64, DL.getTypeAllocSize(ctxTy)), ranges,
+             ConstantInt::get(i64, gpuVals.size()), ConstantInt::get(i64, gcost), ptrs,
+             ConstantInt::get(i64, ptrMap.size()), inner});
     BasicBlock *cpu = BasicBlock::Create(C, "par.cpu", &F, header);
     BasicBlock *join = BasicBlock::Create(C, "par.done", &F, header);
     pb.CreateCondBr(done, join, cpu);

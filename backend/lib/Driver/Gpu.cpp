@@ -59,7 +59,7 @@ std::unique_ptr<TargetMachine> nvptxMachine(const std::string &arch, std::string
   TargetOptions to;
   to.AllowFPOpFusion = FPOpFusion::Strict; // Go: no contraction into fma
   return std::unique_ptr<TargetMachine>(t->createTargetMachine(
-      triple, arch, "+ptx80", to, std::nullopt, std::nullopt, CodeGenOptLevel::Aggressive));
+      triple, arch, "", to, std::nullopt, std::nullopt, CodeGenOptLevel::Aggressive));
 #endif
 }
 
@@ -197,7 +197,10 @@ std::string compileKernel(Module &host, Function *body, const std::string &arch,
   for (char &c : kname)
     if (!isAlnum(c) && c != '_')
       c = '_';
-  auto *kty = FunctionType::get(Type::getVoidTy(ctx), {ptr, i64, i64}, false);
+  // kernel(ctx, base, count, inner). A 2-D body (ctx, lo, hi, jlo, jhi) runs
+  // one (i, j) of a nest: the linear index k gives i = k / inner, j = k % inner.
+  auto *kty = FunctionType::get(Type::getVoidTy(ctx), {ptr, i64, i64, i64}, false);
+  bool twoD = dbody->arg_size() == 5;
   Function *k = Function::Create(kty, GlobalValue::ExternalLinkage, kname, *dev);
   k->setCallingConv(CallingConv::PTX_Kernel);
   BasicBlock *entry = BasicBlock::Create(ctx, "entry", k);
@@ -214,7 +217,13 @@ std::string compileKernel(Module &host, Function *body, const std::string &arch,
   b.CreateCondBr(b.CreateICmpULT(idx, k->getArg(2)), run, done);
   b.SetInsertPoint(run);
   Value *i = b.CreateAdd(k->getArg(1), idx);
-  b.CreateCall(dbody, {k->getArg(0), i, b.CreateAdd(i, ConstantInt::get(i64, 1))});
+  Value *one = ConstantInt::get(i64, 1);
+  if (twoD) {
+    Value *row = b.CreateUDiv(i, k->getArg(3)), *col = b.CreateURem(i, k->getArg(3));
+    b.CreateCall(dbody, {k->getArg(0), row, b.CreateAdd(row, one), col, b.CreateAdd(col, one)});
+  } else {
+    b.CreateCall(dbody, {k->getArg(0), i, b.CreateAdd(i, one)});
+  }
   b.CreateBr(done);
   b.SetInsertPoint(done);
   b.CreateRetVoid();
@@ -266,10 +275,10 @@ bool lowerGpuLoops(Module &m, const std::string &gpuArch, std::string &err) {
   Type *i64 = Type::getInt64Ty(ctx);
   Type *ptr = PointerType::get(ctx, 0);
   // rt_gpu_for(ptx, ptxlen, kname, n, ctx, ctxsize, ranges, nranges, costPerIter, ptrs,
-  //            nptrs) -> i1
+  //            nptrs, inner) -> i1
   FunctionCallee gpuFor = m.getOrInsertFunction(
       "rt_gpu_for", FunctionType::get(Type::getInt1Ty(ctx),
-                                      {ptr, i64, ptr, i64, ptr, i64, ptr, i64, i64, ptr, i64},
+                                      {ptr, i64, ptr, i64, ptr, i64, ptr, i64, i64, ptr, i64, i64},
                                       false));
   DenseMap<Function *, std::pair<Constant *, std::pair<Constant *, uint64_t>>> compiled;
   DenseSet<Function *> failed;
@@ -279,9 +288,9 @@ bool lowerGpuLoops(Module &m, const std::string &gpuArch, std::string &err) {
     if (auto *cb = dyn_cast<CallBase>(u.getUser()); cb && cb->isCallee(&u))
       calls.push_back(cb);
   for (CallBase *cb : calls) {
-    if (cb->arg_size() != 9 || !cb->getType()->isIntegerTy(1)) {
+    if (cb->arg_size() != 10 || !cb->getType()->isIntegerTy(1)) {
       err = "marmot_gpu_for is i1 (body, n, ctx, ctxsize, ranges, nranges, costPerIter, ptrs, "
-            "nptrs)";
+            "nptrs, inner)";
       return false;
     }
     auto *body = dyn_cast<Function>(cb->getArgOperand(0)->stripPointerCasts());
@@ -308,7 +317,8 @@ bool lowerGpuLoops(Module &m, const std::string &gpuArch, std::string &err) {
                                    cb->getArgOperand(1), cb->getArgOperand(2),
                                    cb->getArgOperand(3), cb->getArgOperand(4),
                                    cb->getArgOperand(5), cb->getArgOperand(6),
-                                   cb->getArgOperand(7), cb->getArgOperand(8)});
+                                   cb->getArgOperand(7), cb->getArgOperand(8),
+                                   cb->getArgOperand(9)});
     } else {
       repl = ConstantInt::getFalse(ctx); // the caller's CPU path runs
     }

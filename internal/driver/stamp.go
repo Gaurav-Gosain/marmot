@@ -75,6 +75,9 @@ func (b *build) buildStamp(goos, goarch string) string {
 		fileSig(h, f)
 	}
 	fmt.Fprintf(h, "pgo-gen=%v strip=%v static=%v %s trace=%s trimpath=%v buildmode=%s\n", b.cfg.PGOGen, b.cfg.Strip, b.cfg.Static, os.Getenv("MARMOT_STRIP"), b.cfg.Trace, b.cfg.TrimPath, b.cfg.BuildMode)
+	if b.cfg.GPU != "" { // only then: stamps of builds without -gpu stay as they were
+		fmt.Fprintf(h, "gpu=%s\n", b.cfg.GPU)
+	}
 	if b.cfg.PGO != "" {
 		fileSig(h, b.cfg.PGO)
 	}
@@ -217,6 +220,9 @@ func (b *build) initKeyBase() {
 			fileSig(exeSig, exe)
 		}
 		fmt.Fprintf(exeSig, "%s %s %s %s %v tier0=%v %s/%s trimpath=%v\n", b.cfg.OptLevel, b.cfg.Emit, b.cfg.Dialect, b.cfg.GC, b.cfg.Release, b.tier0(), b.goos, b.goarch, b.cfg.TrimPath)
+		if b.cfg.GPU != "" {
+			fmt.Fprintf(exeSig, "gpu=%s\n", b.cfg.GPU)
+		}
 		for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_DIALECT", "MARMOT_SPEC"} {
 			fmt.Fprintf(exeSig, "%s=%s\n", k, os.Getenv(k))
 		}

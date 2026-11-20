@@ -49,6 +49,10 @@ type Config struct {
 	Strip    bool   // -s: no pc table
 	TrimPath bool   // -trimpath: no directory of this machine in the output (trimNames)
 	Static   bool   // -static: a static executable (Linux: musl)
+	// GPU: -gpu, the NVIDIA architecture of the embedded PTX ("" without it).
+	// GPURemarks: -gpu-remarks, print the loop and GPU remarks.
+	GPU        string
+	GPURemarks bool
 	// BuildMode: "exe" (default) or "pie", a position independent ELF
 	// executable (pie.go).
 	BuildMode string
@@ -253,6 +257,12 @@ func (b *build) run1() (string, error) {
 		return "", err
 	}
 	b.goos, b.goarch = goos, goarch
+	if cfg.GPU != "" && goarch == "wasm" {
+		return "", fmt.Errorf("-gpu needs a native target: %s/%s programs cannot load the CUDA driver", goos, goarch)
+	}
+	if cfg.GPURemarks && cfg.GPU == "" {
+		return "", fmt.Errorf("-gpu-remarks reports on -gpu builds: add -gpu")
+	}
 	if cfg.Static && goos != "linux" {
 		return "", fmt.Errorf("-static links Linux executables (with musl); %s executables link the system C library dynamically: add -target linux/%s", goos, goarch)
 	}
@@ -855,6 +865,13 @@ func (b *build) backendArgs(emitKind, batch string) []string {
 	if cpu := b.amd64CPU(); cpu != "" && !strings.Contains(os.Getenv("MARMOT_BACKEND_FLAGS"), "-mcpu") {
 		args = append(args, "-mcpu="+cpu)
 	}
+	if b.cfg.GPU != "" {
+		args = append(args, "-gpu="+b.cfg.GPU)
+		if b.cfg.GPURemarks {
+			args = append(args, "-loops-remarks")
+			os.Setenv("MARMOT_GPU_REMARKS", "1") // the backend's kernel compiler reads it
+		}
+	}
 	args = append(args, b.backendBuildArgs(b.cfg.Emit)...)
 	if b.cfg.Verbose {
 		args = append(args, "-time")
@@ -894,7 +911,8 @@ func (b *build) logBackendTimes() {
 // "gpu: ..." lines), which it writes only when asked: MARMOT_BACKEND_FLAGS
 // with -loops-remarks, or MARMOT_GPU_REMARKS set.
 func (b *build) printRemarks() {
-	if !strings.Contains(os.Getenv("MARMOT_BACKEND_FLAGS"), "-loops-remarks") && os.Getenv("MARMOT_GPU_REMARKS") == "" {
+	if !b.cfg.GPURemarks && !strings.Contains(os.Getenv("MARMOT_BACKEND_FLAGS"), "-loops-remarks") &&
+		os.Getenv("MARMOT_GPU_REMARKS") == "" {
 		return
 	}
 	for l := range strings.SplitSeq(b.lastOutput, "\n") {
