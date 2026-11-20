@@ -433,7 +433,7 @@ void Builder::run() {
 void Builder::decideNilChecks() {
   static const bool dom = [] {
     const char *e = getenv("MARMOT_TIER0_DOMCHECKS");
-    return e && *e == '1';
+    return !(e && *e == '0');  // on by default; =0 turns it off
   }();
   if (dom) {
     if (decideByDominators()) removeDead();
@@ -484,7 +484,7 @@ void Builder::decideNilChecks() {
   if (any) removeDead();
 }
 
-// Facts from dominating compares (MARMOT_TIER0_DOMCHECKS=1): a compare
+// Facts from dominating compares (on by default, MARMOT_TIER0_DOMCHECKS=0 off): a compare
 // with the same predicate and operands as one whose branch dominates this
 // block on one side is decided. A block with one predecessor learns the
 // compare of the edge into it; every block knows what its dominators knew.
@@ -757,7 +757,7 @@ bool Builder::decideByDominators() {
     Key k;
     if (edgeKey(b, k)) addWithUnsigned(k);
   };
-  // MARMOT_TIER0_RANGES=1 (with MARMOT_TIER0_DOMCHECKS=1, whose walk this
+  // Ranges (on by default, MARMOT_TIER0_RANGES=0 off; inside the DOMCHECKS walk, which this
   // is): an unsigned compare of a value with a constant
   // that the value's range decides: a value narrower than the compare
   // (canonical, zero extended) is below 2^width, x & M is at most M, x urem
@@ -765,7 +765,7 @@ bool Builder::decideByDominators() {
   // entry table, or i & (n-1) into n entries, needs no bounds check.
   static const bool rangesOn = [] {
     const char *e = getenv("MARMOT_TIER0_RANGES");
-    return e && *e == '1';
+    return !(e && *e == '0');  // on by default; =0 turns it off
   }();
   auto maxOf = [&](VId v, unsigned w) -> uint64_t {
     uint64_t all = w >= 64 ? ~0ull : (1ull << w) - 1, k;
@@ -1548,7 +1548,7 @@ void Builder::wide(Operation &o) {
 
 // Removes pure instructions whose results nobody uses, last first, so a
 // chain goes in one walk (operands are defined before their users).
-// MARMOT_TIER0_ADDR=1: an address base + (index << k) (+ constant, which
+// Indexed addresses (on by default, MARMOT_TIER0_ADDR=0 off): base + (index << k) (+ constant, which
 // the access already holds) becomes the operands of the plain loads and
 // stores that use it, so the target addresses base + index * 2^k + offset in
 // the access itself (x86-64 SIB; arm64 a register offset, or one add with a
@@ -1562,7 +1562,7 @@ void Builder::wide(Operation &o) {
 void Builder::foldAddresses() {
   static const bool on = [] {
     const char *e = getenv("MARMOT_TIER0_ADDR");
-    return e && *e == '1';
+    return !(e && *e == '0');  // on by default; =0 turns it off
   }();
   if (!on) return;
   auto plain = [](const Inst &in) {
