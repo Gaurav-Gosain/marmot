@@ -869,7 +869,10 @@ bool splitReachOn() {
   return on;
 }
 
-std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback) {
+// byCalls (-split-adapt): functions are grouped by call graph instead of by
+// name hash (clusterByCalls), so a caller and the callees the inliner would
+// take stay in one group.
+std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback, bool byCalls = false) {
   // Stable suffix: the smallest strong external definition of the module
   // (a symbol only this module defines).
   std::string anchor;
@@ -956,8 +959,12 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback) 
             return *t;
     return gv;
   };
+  DenseMap<const GlobalValue *, unsigned> cluster; // byCalls: function -> group
   auto groupOf = [&](const GlobalValue &gv) {
-    return unsigned(xxh3_64bits(homeOf(gv).getName()) % k);
+    const GlobalValue &h = homeOf(gv);
+    if (auto it = cluster.find(&h); it != cluster.end())
+      return it->second;
+    return unsigned(xxh3_64bits(h.getName()) % k);
   };
   auto copyable = [](const GlobalValue &gv) {
     return gv.hasLinkOnceLinkage() || gv.hasWeakLinkage() ||
@@ -968,6 +975,91 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback) 
            !f.hasFnAttribute(Attribute::NoInline) &&
            !f.hasFnAttribute(Attribute::OptimizeNone) && !f.getFunctionType()->isVarArg();
   };
+  // byCalls: union the functions of the module along call edges whose callee
+  // the inliner may take (one caller, or at most kClusterCallee
+  // instructions), single-caller edges first, then smaller callees, while a
+  // cluster stays within its share of the module (total / k). The clusters
+  // go to the least loaded group, largest first. Every order is by size and
+  // name, so the groups depend only on the module.
+  if (byCalls) {
+    constexpr unsigned kClusterCallee = 150;
+    std::vector<Function *> fns;
+    DenseMap<const Function *, unsigned> idx;
+    for (Function &f : m)
+      if (!f.isDeclaration() && !copyable(f)) {
+        idx[&f] = fns.size();
+        fns.push_back(&f);
+      }
+    unsigned nf = fns.size();
+    std::vector<unsigned> parent(nf), callers(nf);
+    std::vector<uint64_t> size(nf);
+    uint64_t total = 0;
+    for (unsigned i = 0; i < nf; ++i) {
+      parent[i] = i;
+      size[i] = std::max(1u, fns[i]->getInstructionCount());
+      total += size[i];
+    }
+    std::vector<std::pair<unsigned, unsigned>> edges;
+    DenseSet<std::pair<unsigned, unsigned>> seenEdge;
+    for (unsigned i = 0; i < nf; ++i)
+      for (const BasicBlock &bb : *fns[i])
+        for (const Instruction &inst : bb)
+          if (auto *cb = dyn_cast<CallBase>(&inst))
+            if (auto *c = cb->getCalledFunction())
+              if (auto it = idx.find(c); it != idx.end() && it->second != i &&
+                                         seenEdge.insert({i, it->second}).second) {
+                edges.push_back({i, it->second});
+                ++callers[it->second];
+              }
+    auto inlinable = [&](unsigned j) {
+      return !fns[j]->hasFnAttribute(Attribute::NoInline) &&
+             !fns[j]->hasFnAttribute(Attribute::OptimizeNone) &&
+             (callers[j] == 1 || size[j] <= kClusterCallee);
+    };
+    llvm::erase_if(edges, [&](const std::pair<unsigned, unsigned> &e) { return !inlinable(e.second); });
+    llvm::sort(edges, [&](const auto &a, const auto &b) {
+      auto key = [&](const std::pair<unsigned, unsigned> &e) {
+        return std::make_tuple(callers[e.second] == 1 ? 0 : 1, size[e.second], fns[e.second]->getName(),
+                               fns[e.first]->getName());
+      };
+      return key(a) < key(b);
+    });
+    std::function<unsigned(unsigned)> find = [&](unsigned x) {
+      while (parent[x] != x)
+        x = parent[x] = parent[parent[x]];
+      return x;
+    };
+    std::vector<uint64_t> csize = size;
+    uint64_t cap = std::max<uint64_t>(1, (total + k - 1) / k);
+    for (auto [a, b] : edges) {
+      unsigned ra = find(a), rb = find(b);
+      if (ra == rb || csize[ra] + csize[rb] > cap)
+        continue;
+      if (fns[rb]->getName() < fns[ra]->getName())
+        std::swap(ra, rb); // the root is the member with the smallest name
+      parent[rb] = ra;
+      csize[ra] += csize[rb];
+    }
+    std::vector<unsigned> roots;
+    DenseMap<unsigned, SmallVector<unsigned, 8>> members;
+    for (unsigned i = 0; i < nf; ++i) {
+      unsigned r = find(i);
+      auto &v = members[r];
+      if (v.empty())
+        roots.push_back(r);
+      v.push_back(i);
+    }
+    llvm::sort(roots, [&](unsigned a, unsigned b) {
+      return csize[a] != csize[b] ? csize[a] > csize[b] : fns[a]->getName() < fns[b]->getName();
+    });
+    std::vector<uint64_t> load(k, 0);
+    for (unsigned r : roots) {
+      unsigned g = unsigned(std::min_element(load.begin(), load.end()) - load.begin());
+      load[g] += csize[r];
+      for (unsigned i : members[r])
+        cluster[fns[i]] = g;
+    }
+  }
   // Small callees of each group's functions, two levels deep.
   std::vector<DenseSet<const GlobalValue *>> imports(k);
   for (Function &f : m) {
@@ -2679,7 +2771,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     if (cacheObjects) {
       std::string k = info.keyB + "|wpo|" + byTypeKey + "|" + prunableKey + "|";
       if (adaptBytes)
-        k += "adapt" + std::to_string(adaptBytes) + "|";
+        k += "adapt-calls" + std::to_string(adaptBytes) + "|";
       std::vector<std::string> liveDefs;
       for (const Def &d : info.defs)
         if (isLive(d.qname))
@@ -2888,7 +2980,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       if (n > limit) {
         unsigned half = std::max(1u, limit / 2);
         unsigned k = std::min({16u, nfuncs, (n + half - 1) / half});
-        auto bcs = splitModule(*m, k, info.keyB);
+        auto bcs = splitModule(*m, k, info.keyB, adaptBytes != 0);
         std::string list;
         std::lock_guard<std::mutex> lock(mu);
         for (unsigned g = 0; g < k; ++g) {
