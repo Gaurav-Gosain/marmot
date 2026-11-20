@@ -1034,6 +1034,34 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback, 
     };
     std::vector<uint64_t> csize = size;
     uint64_t cap = std::max<uint64_t>(1, (total + k - 1) / k);
+    // The channel and scheduler core of the runtime goes to one cluster
+    // whatever its size: its functions call each other on every channel
+    // operation, and cut apart they lost inlining (pingpong -release 5%
+    // slower). Local names carry the split suffix, so prefixes match.
+    static const char *const kCorePrefixes[] = {
+        "runtime.chan",      "runtime.(*hchan)",   "runtime.(*waitq)",  "runtime.select",
+        "runtime.gopark",    "runtime.goready",    "runtime.notify",    "runtime.recv",
+        "runtime.send",      "runtime.canSpin",    "runtime.acquireSudog", "runtime.releaseSudog",
+        "runtime.typedmem",  "runtime.lock",       "runtime.unlock",    "runtime.memmove",
+        "runtime.memclr",    "runtime.closechan",  "runtime.makechan"};
+    int core = -1;
+    for (unsigned i = 0; i < nf; ++i) {
+      StringRef name = fns[i]->getName();
+      if (!llvm::any_of(kCorePrefixes, [&](const char *p) { return name.starts_with(p); }))
+        continue;
+      if (core < 0) {
+        core = int(i);
+        continue;
+      }
+      unsigned ra = find(unsigned(core)), rb = find(i);
+      if (ra == rb)
+        continue;
+      if (fns[rb]->getName() < fns[ra]->getName())
+        std::swap(ra, rb);
+      parent[rb] = ra;
+      csize[ra] += csize[rb];
+      core = int(ra);
+    }
     for (auto [a, b] : edges) {
       unsigned ra = find(a), rb = find(b);
       if (ra == rb || csize[ra] + csize[rb] > cap)
@@ -2822,7 +2850,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     if (cacheObjects) {
       std::string k = info.keyB + "|wpo|" + byTypeKey + "|" + prunableKey + "|";
       if (adaptBytes)
-        k += "adapt-calls2" + std::to_string(adaptBytes) + "|";
+        k += "adapt-calls4" + std::to_string(adaptBytes) + "|";
       std::vector<std::string> liveDefs;
       for (const Def &d : info.defs)
         if (isLive(d.qname))
