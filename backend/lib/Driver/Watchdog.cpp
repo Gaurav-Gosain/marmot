@@ -4,6 +4,7 @@
 // (macOS and Linux below).
 #include "marmot/Driver/Watchdog.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -17,6 +18,7 @@
 #if defined(__APPLE__)
 #include <mach/mach.h>
 #include <malloc/malloc.h>
+#include <sys/sysctl.h>
 #elif defined(__linux__)
 #include <csignal>
 #include <fstream>
@@ -37,6 +39,35 @@ uint64_t envLimit(const char *name, uint64_t def) {
   char *end = nullptr;
   unsigned long long n = std::strtoull(v, &end, 10);
   return (end && *end == 0) ? n : def;
+}
+
+// The machine's physical memory in bytes; 0 if unknown.
+uint64_t hostMemory() {
+#if defined(__APPLE__)
+  uint64_t mem = 0;
+  size_t len = sizeof(mem);
+  if (sysctlbyname("hw.memsize", &mem, &len, nullptr, 0) != 0)
+    return 0;
+  return mem;
+#elif defined(__linux__)
+  long pages = sysconf(_SC_PHYS_PAGES), size = sysconf(_SC_PAGESIZE);
+  return pages > 0 && size > 0 ? uint64_t(pages) * uint64_t(size) : 0;
+#else
+  return 0;
+#endif
+}
+
+// The memory limit in MB. MARMOT_MAX_MEM_MB when set (0: no limit).
+// Otherwise a quarter of the machine's memory, at least 3072 and at most
+// 8192. The admission budgets in WholeProgram.cpp still plan against
+// 3072 MB, so the extra room above that only absorbs estimate errors: a
+// cold -release build of tuios on an 18 GB Mac passed 3072 MB once with
+// two large split groups in flight.
+uint64_t memoryLimitMB() {
+  if (const char *v = std::getenv("MARMOT_MAX_MEM_MB"); v && *v)
+    return envLimit("MARMOT_MAX_MEM_MB", 3072);
+  uint64_t quarter = (hostMemory() >> 20) / 4;
+  return std::max<uint64_t>(3072, std::min<uint64_t>(quarter, 8192));
 }
 
 // Memory charged to this process in bytes: what would have to be in RAM if
@@ -83,6 +114,10 @@ uint64_t memoryInUse() {
                "compiling %s\n",
                what, (unsigned long long)value, unit, (unsigned long long)limit, unit,
                env, names.empty() ? "(no module)" : names.c_str());
+  std::fprintf(stderr,
+               "marmot-backend: to allow more, set %s to a higher value (for example "
+               "%s=%llu), or set %s=0 to remove the limit.\n",
+               env, env, (unsigned long long)(limit * 2), env);
   std::fflush(stderr);
   _exit(3);
 }
@@ -125,7 +160,7 @@ void startWatchdog(bool background) {
   (void)background;
   return;
 #endif
-  uint64_t maxMB = envLimit("MARMOT_MAX_MEM_MB", 3072);
+  uint64_t maxMB = memoryLimitMB();
   // A background run (the tier 1 runner) outlives the build that started it
   // and runs at idle priority as long as it takes: no time limit and no
   // parent check, only the memory limit.

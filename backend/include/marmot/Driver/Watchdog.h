@@ -10,7 +10,8 @@ namespace marmot {
 // Starts a background thread that ends the process with exit status 3 and
 // a message on stderr when
 //  - resident plus compressed (macOS phys_footprint) or swapped (Linux)
-//    memory passes MARMOT_MAX_MEM_MB (default 3072),
+//    memory passes MARMOT_MAX_MEM_MB (default: a quarter of the machine's
+//    memory, at least 3072 and at most 8192),
 //  - wall time passes MARMOT_MAX_SECONDS (default 300, plus what
 //    watchdogAddTime added for the size of the input),
 // and that exits quietly with status 3 when the parent process dies. A limit
