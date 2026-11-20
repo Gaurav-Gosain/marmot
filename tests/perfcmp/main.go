@@ -62,6 +62,7 @@ var (
 	flWork  = flag.String("work", "", "the binaries go in a new directory inside this one (default .work/perfcmp)")
 	flKeep  = flag.Bool("keep", false, "keep the binaries")
 	flCPUs  = flag.String("cpus", "", "Linux: run the timed programs on these CPUs only, like 0-3. A pinned program sees only these CPUs. Compare A with B, not with runs without -cpus")
+	flIdent = flag.Bool("skip-identical", false, "a program whose A and B binaries are byte-identical is not timed: its line says identical, and it is left out of the geomean and the verdict (not with A=B runs)")
 	flWait  = flag.Duration("wait", 2*time.Hour, "how long to wait for the timing lock and a load below half the CPUs before giving up (0: no wait, no lock)")
 )
 
@@ -156,6 +157,7 @@ func main() {
 		var lw, lc, lr []float64
 		var nw, nc []float64         // per side and program: median of the odd runs over the even ones
 		var busy, used, wall float64 // -cpus: busy time of those CPUs, the runs' CPU time, wall time (s)
+		nIdent := 0                  // -skip-identical: programs left out as byte-identical
 		// Build everything first, then let the load of the builds (the compiler uses
 		// every core) decay before timing: the load sampled during the runs is the
 		// machine's, not perfcmp's own.
@@ -185,6 +187,11 @@ func main() {
 		for k, p := range progs {
 			sampleLoad()
 			if !bs[k].ok {
+				continue
+			}
+			if *flIdent && !same && sameFile(bs[k].bins[0], bs[k].bins[1]) {
+				nIdent++
+				fmt.Printf("%-12s identical: the A and B binaries are byte-identical (%s), not timed, not in the geomean or the verdict\n", p.name, mb(bs[k].sizes[0]))
 				continue
 			}
 			bins, sizes, ok := bs[k].bins, bs[k].sizes, true
@@ -243,6 +250,10 @@ func main() {
 			fmt.Printf("%-12s %10s %10s %7.3f %10s %10s %7.3f %9s %9s %7.3f %9s %9s %7.3f %s%s\n", p.name,
 				ms(a.wall), ms(b.wall), rw, ms(a.cpu), ms(b.cpu), rc, mb(a.rss), mb(b.rss), rr,
 				mb(sizes[0]), mb(sizes[1]), float64(sizes[1])/float64(max(sizes[0], 1)), mark, note)
+		}
+		if len(lw) == 0 && nIdent > 0 && len(o.failed) == 0 {
+			fmt.Printf("%-12s every program measured is byte-identical on both sides: nothing to judge in %s\n", "geomean", mode)
+			continue
 		}
 		gw, gc, gr := geomean(lw), geomean(lc), geomean(lr)
 		if len(lw) == 0 {
