@@ -1043,7 +1043,10 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback, 
         "runtime.gopark",    "runtime.goready",    "runtime.notify",    "runtime.recv",
         "runtime.send",      "runtime.canSpin",    "runtime.acquireSudog", "runtime.releaseSudog",
         "runtime.typedmem",  "runtime.lock",       "runtime.unlock",    "runtime.memmove",
-        "runtime.memclr",    "runtime.closechan",  "runtime.makechan"};
+        "runtime.memclr",    "runtime.closechan",  "runtime.makechan",  "runtime.malloc",
+        "runtime.newobject", "runtime.makeslice",  "runtime.growslice", "runtime.newproc",
+        "runtime.rawstring", "runtime.slicebytetostring", "runtime.concatstring", "runtime.slicecopy",
+        "runtime.memcmp",    "runtime.cmpstring"};
     int core = -1;
     for (unsigned i = 0; i < nf; ++i) {
       StringRef name = fns[i]->getName();
@@ -2850,7 +2853,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     if (cacheObjects) {
       std::string k = info.keyB + "|wpo|" + byTypeKey + "|" + prunableKey + "|";
       if (adaptBytes)
-        k += "adapt-calls4" + std::to_string(adaptBytes) + "|";
+        k += "adapt-calls5" + std::to_string(adaptBytes) + "|";
       std::vector<std::string> liveDefs;
       for (const Def &d : info.defs)
         if (isLive(d.qname))
