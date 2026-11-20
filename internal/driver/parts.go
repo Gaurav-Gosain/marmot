@@ -68,11 +68,11 @@ func (b *build) spillParts(i int, m *codegen.Module, parts []codegen.Module, cac
 		return b.spill(i, m, cacheable, keys)
 	}
 	m.Text.Prepend(partsHeader + strconv.Itoa(len(parts)+1) + "\n")
+	// Register the parts in part order, as before parts were written early: the
+	// order of b.parts reaches the output (pc table, relocations), so it must
+	// not follow the order in which the parts' generation finished.
 	for c := range parts {
-		if parts[c].Text == nil {
-			continue
-		}
-		if err := b.spillPart(i, c+1, &parts[c], cacheable, failed, keys, n); err != nil {
+		if err := b.registerPart(i, c+1, &parts[c], cacheable, failed, keys, n); err != nil {
 			return err
 		}
 	}
@@ -80,19 +80,41 @@ func (b *build) spillParts(i int, m *codegen.Module, parts []codegen.Module, cac
 	return b.spill(i, m, cacheable && !failed.Load(), keys)
 }
 
-// spillPart writes part c (from 1) of package i to the MLIR cache when the
-// package is cacheable and no part failed to save there (failed), else to the
-// work directory, and drops its text. A failed save sets failed: the parts
-// after it, and the first part, then go to the work directory.
+// spillPart writes part c (from 1) of package i as soon as it is generated and
+// drops its text: to the MLIR cache when the package is cacheable and no part
+// failed to save there (failed), else to a file of its own in the work
+// directory. A failed save sets failed: later parts, and the first part, then
+// go to the work directory. registerPart adds the part to the build later, in
+// part order.
 func (b *build) spillPart(i, c int, pm *codegen.Module, cacheable bool, failed *atomic.Bool, keys []string, n int) error {
 	if cacheable && !failed.Load() {
-		k := partKey(keys[i], c)
-		if p := b.saveModule(k, pm.Text.Segments()); p != "" {
+		if p := b.saveModule(partKey(keys[i], c), pm.Text.Segments()); p != "" {
 			pm.Path, pm.Text = p, nil
-			b.addPart(*pm, k+"-"+moduleTextVersion, n, partID{i, c})
 			return nil
 		}
 		failed.Store(true)
+	}
+	p := filepath.Join(b.work, fmt.Sprintf("p%03d-%d.mlir", i, c))
+	if err := writeModuleFile(p, nil, pm.Text.Segments()); err != nil {
+		return err
+	}
+	pm.Path, pm.Text = p, nil
+	return nil
+}
+
+// registerPart adds part c (from 1) of package i to the build's modules, writing
+// it first if spillPart has not: a part in the MLIR cache with its key, else as
+// the work directory's next m%03d.mlir (a part spillPart wrote there is renamed).
+func (b *build) registerPart(i, c int, pm *codegen.Module, cacheable bool, failed *atomic.Bool, keys []string, n int) error {
+	if pm.Text != nil {
+		if err := b.spillPart(i, c, pm, cacheable, failed, keys, n); err != nil {
+			return err
+		}
+	}
+	if filepath.Dir(pm.Path) != b.work {
+		k := partKey(keys[i], c)
+		b.addPart(*pm, k+"-"+moduleTextVersion, n, partID{i, c})
+		return nil
 	}
 	b.partMu.Lock()
 	j := n + len(b.parts)
@@ -101,10 +123,10 @@ func (b *build) spillPart(i, c int, pm *codegen.Module, cacheable bool, failed *
 	b.partIDs = append(b.partIDs, partID{i, c})
 	b.partMu.Unlock()
 	p := filepath.Join(b.work, fmt.Sprintf("m%03d.mlir", j))
-	if err := writeModuleFile(p, nil, pm.Text.Segments()); err != nil {
+	if err := os.Rename(pm.Path, p); err != nil {
 		return err
 	}
-	pm.Path, pm.Text = p, nil
+	pm.Path = p
 	b.partMu.Lock()
 	b.parts[j-n] = *pm
 	b.partMu.Unlock()
