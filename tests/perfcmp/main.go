@@ -51,19 +51,20 @@ import (
 )
 
 var (
-	flA     = flag.String("a", "", "marmot root before (required)")
-	flB     = flag.String("b", "", "marmot root after (required; may equal -a with -a-env/-b-env)")
-	flAEnv  = flag.String("a-env", "", "space separated K=V for side A's builds and runs")
-	flBEnv  = flag.String("b-env", "", "space separated K=V for side B's builds and runs")
-	flModes = flag.String("modes", "dev,release", "build modes: dev, O2, release")
-	flRuns  = flag.Int("runs", 7, "runs per program and side")
-	flProgs = flag.String("programs", "", "comma separated programs (default: hello, the bench subset, sketch, tuios)")
-	flTuios = flag.String("tuios", envOr("MARMOT_TUIOS_SRC", ".work/lead/tuios-src"), "tuios source tree (holds sketch/ too; default $MARMOT_TUIOS_SRC)")
-	flWork  = flag.String("work", "", "the binaries go in a new directory inside this one (default .work/perfcmp)")
-	flKeep  = flag.Bool("keep", false, "keep the binaries")
-	flCPUs  = flag.String("cpus", "", "Linux: run the timed programs on these CPUs only, like 0-3. A pinned program sees only these CPUs. Compare A with B, not with runs without -cpus")
-	flIdent = flag.Bool("skip-identical", false, "a program whose A and B binaries are byte-identical (once B's tree root path, if it has the length of A's, reads as A's) is not timed: its line says identical, and it is left out of the geomean and the verdict (not with A=B runs)")
-	flWait  = flag.Duration("wait", 2*time.Hour, "how long to wait for the timing lock and a load below half the CPUs before giving up (0: no wait, no lock)")
+	flA       = flag.String("a", "", "marmot root before (required)")
+	flB       = flag.String("b", "", "marmot root after (required; may equal -a with -a-env/-b-env)")
+	flAEnv    = flag.String("a-env", "", "space separated K=V for side A's builds and runs")
+	flBEnv    = flag.String("b-env", "", "space separated K=V for side B's builds and runs")
+	flModes   = flag.String("modes", "dev,release", "build modes: dev, O2, release")
+	flRuns    = flag.Int("runs", 7, "runs per program and side")
+	flProgs   = flag.String("programs", "", "comma separated programs (default: hello, the bench subset, sketch, tuios)")
+	flTuios   = flag.String("tuios", envOr("MARMOT_TUIOS_SRC", ".work/lead/tuios-src"), "tuios source tree (holds sketch/ too; default $MARMOT_TUIOS_SRC)")
+	flWork    = flag.String("work", "", "the binaries go in a new directory inside this one (default .work/perfcmp)")
+	flKeep    = flag.Bool("keep", false, "keep the binaries")
+	flCPUs    = flag.String("cpus", "", "Linux: run the timed programs on these CPUs only, like 0-3. A pinned program sees only these CPUs. Compare A with B, not with runs without -cpus")
+	flIdent   = flag.Bool("skip-identical", false, "a program whose A and B binaries are byte-identical (once B's tree root path, if it has the length of A's, reads as A's) is not timed: its line says identical, and it is left out of the geomean and the verdict (not with A=B runs)")
+	flRSSWrap = flag.Bool("rsswrap", false, "Linux: measure peak RSS through rsswrap, a small C helper that forks each program (untimed runs), so small programs do not read perfcmp's own RSS")
+	flWait    = flag.Duration("wait", 2*time.Hour, "how long to wait for the timing lock and a load below half the CPUs before giving up (0: no wait, no lock)")
 )
 
 var timingLock = "/tmp/marmot-timing.lock" // a var for the tests
@@ -125,6 +126,9 @@ func main() {
 		atExit(func() { os.RemoveAll(work) })
 	}
 	sketchInput(abs(*flTuios), work)
+	if *flRSSWrap {
+		setupRSS(work)
+	}
 	if *flWait > 0 {
 		if !takeLock(*flWait) {
 			fmt.Fprintf(os.Stderr, "perfcmp: no quiet window with %s free in %v: not timing\n", timingLock, *flWait)
@@ -241,6 +245,21 @@ func main() {
 				}
 			}
 			a, b := median(got[0]), median(got[1])
+			if rssHelper != "" {
+				for i, sd := range []*sample{&a, &b} {
+					r, err := peakRSS(sides[i], p, bins[i])
+					if err != nil {
+						fmt.Printf("%-12s rss %s failed: %v\n", p.name, sides[i].label, err)
+						o.failed = append(o.failed, fmt.Sprintf("%s %s: rss %s failed", p.name, mode, sides[i].label))
+						ok = false
+						break
+					}
+					sd.rss = r
+				}
+				if !ok {
+					continue
+				}
+			}
 			rw, rc, rr := ratio(b.wall, a.wall), ratio(b.cpu, a.cpu), float64(b.rss)/float64(a.rss)
 			if bad := notFinite(rw, rc, rr); bad != "" {
 				o.failed = append(o.failed, fmt.Sprintf("%s %s: %s ratio is not a number", p.name, mode, bad))
