@@ -937,11 +937,14 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback, 
     for (GlobalVariable *v : dead)
       v->eraseFromParent();
   }
+  DenseSet<const GlobalValue *> wasLocal; // byCalls: local before the split
   for (GlobalValue &gv : m.global_values()) {
     if (gv.isDeclaration() || !gv.hasLocalLinkage())
       continue;
     if (auto *v = dyn_cast<GlobalVariable>(&gv); v && v->hasAppendingLinkage())
       continue;
+    if (byCalls && !gv.hasComdat())
+      wasLocal.insert(&gv);
     gv.setName((gv.hasName() ? gv.getName().str() : std::string("anon")) + suffix);
     gv.setLinkage(GlobalValue::ExternalLinkage);
     gv.setVisibility(GlobalValue::HiddenVisibility);
@@ -1088,6 +1091,48 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback, 
   // input instructions). Weak definitions cannot be dropped, so group 0
   // keeps every one; it also holds the appending arrays and what they list.
   // A comdat goes whole.
+  // byCalls: a symbol that was local and that nothing outside its group
+  // uses (no user in another group, no imported or copyable user, not
+  // imported itself) becomes internal again in its group. As a hidden
+  // external symbol the inliner treated it as callable from elsewhere: a
+  // single-caller callee lost the last-call bonus, and runtime.chanrecv no
+  // longer inlined chanrecvBuf although both were in one group.
+  DenseSet<const GlobalValue *> keepLocal;
+  if (byCalls) {
+    DenseSet<const GlobalValue *> imported;
+    for (const auto &s : imports)
+      for (const GlobalValue *gv : s)
+        imported.insert(gv);
+    for (const GlobalValue *gv : wasLocal) {
+      if (copyable(*gv) || imported.contains(gv))
+        continue;
+      unsigned home = groupOf(*gv);
+      bool ok = true;
+      SmallVector<const User *, 16> work(gv->user_begin(), gv->user_end());
+      DenseSet<const User *> seenUser;
+      while (ok && !work.empty()) {
+        const User *u = work.pop_back_val();
+        if (!seenUser.insert(u).second)
+          continue;
+        const GlobalValue *owner = nullptr;
+        if (auto *inst = dyn_cast<Instruction>(u))
+          owner = inst->getFunction();
+        else if (auto *ug = dyn_cast<GlobalValue>(u))
+          owner = ug;
+        else if (isa<Constant>(u)) {
+          for (const User *uu : u->users())
+            work.push_back(uu);
+          continue;
+        }
+        auto *ov = dyn_cast_or_null<GlobalVariable>(owner);
+        if (!owner || isa<GlobalAlias>(owner) || copyable(*owner) || imported.contains(owner) ||
+            (ov && ov->hasAppendingLinkage()) || groupOf(*owner) != home)
+          ok = false;
+      }
+      if (ok)
+        keepLocal.insert(gv);
+    }
+  }
   const bool byReach = splitReachOn();
   DenseMap<const GlobalValue *, SmallVector<const GlobalValue *, 4>> refs;
   if (byReach) {
@@ -1183,6 +1228,12 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback, 
         f->setLinkage(GlobalValue::AvailableExternallyLinkage);
         f->setVisibility(GlobalValue::DefaultVisibility);
       }
+    for (const GlobalValue *gv : keepLocal)
+      if (groupOf(*gv) == g)
+        if (auto *ng = dyn_cast_or_null<GlobalValue>(vmap.lookup(gv)); ng && !ng->isDeclaration()) {
+          ng->setVisibility(GlobalValue::DefaultVisibility);
+          ng->setLinkage(GlobalValue::InternalLinkage);
+        }
     if (g != 0)
       for (GlobalVariable &v : make_early_inc_range(part->globals()))
         if (v.hasAppendingLinkage())
@@ -2771,7 +2822,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     if (cacheObjects) {
       std::string k = info.keyB + "|wpo|" + byTypeKey + "|" + prunableKey + "|";
       if (adaptBytes)
-        k += "adapt-calls" + std::to_string(adaptBytes) + "|";
+        k += "adapt-calls2" + std::to_string(adaptBytes) + "|";
       std::vector<std::string> liveDefs;
       for (const Def &d : info.defs)
         if (isLive(d.qname))
