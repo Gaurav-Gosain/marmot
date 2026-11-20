@@ -156,16 +156,17 @@ public:
   void movsx32(unsigned d, unsigned s) { rr(true, {0x63}, d, s); }
 
   // --- integer arithmetic (64-bit unless noted): d = d op s ---
-  void add(unsigned d, unsigned s) { rr(true, {0x01}, s, d); }
-  void sub(unsigned d, unsigned s) { rr(true, {0x29}, s, d); }
-  void and_(unsigned d, unsigned s) { rr(true, {0x21}, s, d); }
-  void or_(unsigned d, unsigned s) { rr(true, {0x09}, s, d); }
-  void xor_(unsigned d, unsigned s) { rr(true, {0x31}, s, d); }
+  // w false: the 32-bit form, which zero extends its result to 64 bits.
+  void add(unsigned d, unsigned s, bool w = true) { rr(w, {0x01}, s, d); }
+  void sub(unsigned d, unsigned s, bool w = true) { rr(w, {0x29}, s, d); }
+  void and_(unsigned d, unsigned s, bool w = true) { rr(w, {0x21}, s, d); }
+  void or_(unsigned d, unsigned s, bool w = true) { rr(w, {0x09}, s, d); }
+  void xor_(unsigned d, unsigned s, bool w = true) { rr(w, {0x31}, s, d); }
   void cmp(unsigned a, unsigned c) { rr(true, {0x39}, c, a); }  // flags of a - c
   void test(unsigned a, unsigned c) { rr(true, {0x85}, c, a); }
   void adc(unsigned d, unsigned s) { rr(true, {0x11}, s, d); }
   void sbb(unsigned d, unsigned s) { rr(true, {0x19}, s, d); }
-  void imul(unsigned d, unsigned s) { rr(true, {0x0F, 0xAF}, d, s); }
+  void imul(unsigned d, unsigned s, bool w = true) { rr(w, {0x0F, 0xAF}, d, s); }
   void neg(unsigned d) { rr(true, {0xF7}, 3, d); }
   void not_(unsigned d) { rr(true, {0xF7}, 2, d); }
   void mulRdx(unsigned s) { rr(true, {0xF7}, 4, s); }  // rdx:rax = rax * s (unsigned)
@@ -180,12 +181,12 @@ public:
   }
   // Group 1 with an immediate (kind 0 add, 1 or, 4 and, 5 sub, 6 xor, 7
   // cmp): simm8 when it fits, else simm32.
-  void aluImm(unsigned kind, unsigned d, int32_t v) {
+  void aluImm(unsigned kind, unsigned d, int32_t v, bool w = true) {
     if (v >= -128 && v <= 127) {
-      rr(true, {0x83}, kind, d);
+      rr(w, {0x83}, kind, d);
       u8(uint8_t(int8_t(v)));
     } else {
-      rr(true, {0x81}, kind, d);
+      rr(w, {0x81}, kind, d);
       u32(uint32_t(v));
     }
   }

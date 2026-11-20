@@ -478,28 +478,42 @@ void Emitter::cmpFlags(const Inst &c) {
   a.cmp(l, r);
 }
 
+// MARMOT_TIER0_ALU32=1: a 32-bit add, sub, and, or, xor or mul uses the
+// 32-bit instruction, which zero extends its result, instead of the 64-bit
+// one and a mov to zero extend (operands are canonical, so the low 32 bits
+// agree).
+static const bool alu32On = [] {
+  const char *e = getenv("MARMOT_TIER0_ALU32");
+  return e && *e == '1';
+}();
+
 void Emitter::binop(const Inst &in) {
   unsigned d = dstG(in.dst, S0);
   uint64_t k;
   bool ck = konst(in.b, k);
   switch (in.op) {
   case Op::Add: case Op::Sub: case Op::And: case Op::Or: case Op::Xor: case Op::Mul: {
+    const bool w = !(alu32On && in.w == 32);
     unsigned x = gp(in.a, S0);
     if (ck && int64_t(k) == int64_t(int32_t(k)) && in.op != Op::Mul) {
       if (d != x) a.mov(d, x);
       unsigned kind = in.op == Op::Add ? 0 : in.op == Op::Or ? 1 : in.op == Op::And ? 4 : in.op == Op::Sub ? 5 : 6;
-      a.aluImm(kind, d, int32_t(k));
+      a.aluImm(kind, d, int32_t(k), w);
     } else {
       unsigned y = gp(in.b, S1);
       if (d != x) a.mov(d, x);
       switch (in.op) {
-      case Op::Add: a.add(d, y); break;
-      case Op::Sub: a.sub(d, y); break;
-      case Op::And: a.and_(d, y); break;
-      case Op::Or: a.or_(d, y); break;
-      case Op::Xor: a.xor_(d, y); break;
-      default: a.imul(d, y); break;
+      case Op::Add: a.add(d, y, w); break;
+      case Op::Sub: a.sub(d, y, w); break;
+      case Op::And: a.and_(d, y, w); break;
+      case Op::Or: a.or_(d, y, w); break;
+      case Op::Xor: a.xor_(d, y, w); break;
+      default: a.imul(d, y, w); break;
       }
+    }
+    if (!w) {  // already zero extended from 32 bits
+      finG(in.dst, d);
+      return;
     }
     break;
   }
