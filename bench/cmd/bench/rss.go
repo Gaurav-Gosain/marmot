@@ -74,6 +74,16 @@ func setupRSS(dir string) {
 	fmt.Fprintln(os.Stderr, "bench: cc cannot build rsswrap: peak RSS on Linux comes from the timed runs and has a floor of the bench process RSS")
 }
 
+// marmotJobs describes the marmot build parallelism of the run: MARMOT_MAX_JOBS from the
+// environment, else the driver's default of one job per CPU. Until 2026-11-20 the bench set
+// MARMOT_MAX_JOBS=2, while go build used every core.
+func marmotJobs() string {
+	if v := os.Getenv("MARMOT_MAX_JOBS"); v != "" {
+		return "MARMOT_MAX_JOBS=" + v + " from the environment"
+	}
+	return fmt.Sprintf("driver default: one job per CPU (%d)", runtime.NumCPU())
+}
+
 // rssMethod describes how the results file measured peak RSS.
 func rssMethod() string {
 	switch {

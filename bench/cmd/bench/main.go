@@ -179,6 +179,7 @@ type Meta struct {
 	GitRev     string            `json:"git_rev"`
 	Hyperfine  string            `json:"hyperfine"`
 	RSSMethod  string            `json:"rss_method,omitempty"`
+	MarmotJobs string            `json:"marmot_jobs,omitempty"`
 	Notes      string            `json:"notes"`
 	TimeoutSec int               `json:"program_timeout_sec"`
 }
@@ -384,7 +385,8 @@ func measure(p Program, t Toolchain) Result {
 	check(os.MkdirAll(dir, 0o755))
 	out := filepath.Join(dir, p.Name)
 	os.Remove(out)
-	env := append(append(os.Environ(), "GOCACHE="+gocacheDir(), "MARMOT_MAX_JOBS=2", "MARMOT_CACHE_MAX_MB=512"), append(tier1Off(), t.Env...)...)
+	// marmot builds with its default job count (one per CPU), as go build uses every core.
+	env := append(append(os.Environ(), "GOCACHE="+gocacheDir(), "MARMOT_CACHE_MAX_MB=512"), append(tier1Off(), t.Env...)...)
 
 	if *sizeOnly || *rssOnly {
 		c := exec.Command(t.Build(root, p.Pkg, out, len(t.Env) > 0)[0], t.Build(root, p.Pkg, out, len(t.Env) > 0)[1:]...)
@@ -655,6 +657,7 @@ func collectMeta(tcl []Toolchain) Meta {
 	}
 	m.Hyperfine = "built-in timer: wall clock, rusage CPU time and Maxrss, no external tools"
 	m.RSSMethod = rssMethod()
+	m.MarmotJobs = marmotJobs()
 	m.Versions["go"] = sh("go", "version")
 	m.Versions["tinygo"] = sh("tinygo", "version")
 	if v := sh(marmotBin(root), "version"); v != "" {
