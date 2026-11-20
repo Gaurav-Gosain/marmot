@@ -682,13 +682,78 @@ bool Builder::decideByDominators() {
     }
     return false;
   };
-  std::function<bool(VId)> nonneg = [&](VId v) -> bool {
+  // MARMOT_TIER0_RANGELOOP=1: a block parameter p is at least -1 when
+  // every value it receives is a constant of at least -1, a nonnegative
+  // value, or p + 1 passed on from a block where p + 1 is signed less than
+  // something (so p + 1 never wraps). Then p + 1 is nonnegative, and the
+  // signed loop test i < n decides the unsigned bounds check i < len.
+  static const bool rangeLoopOn = [] {
+    const char *e = getenv("MARMOT_TIER0_RANGELOOP");
+    return e && *e == '1';
+  }();
+  std::function<bool(VId)> nonneg;
+  llvm::DenseMap<VId, char> m1;  // 1 yes, 0 no, 2 in progress (taken as no)
+  std::function<bool(VId)> atLeastMinus1 = [&](VId p) -> bool {
+    uint64_t k;
+    if (isConst(p, k)) return int64_t(k) >= -1;
+    const Val &x = f.vals[p];
+    if (x.cls != Cls::Int || x.def != ~0u) return false;
+    if (paramBlock.empty()) {
+      paramBlock.assign(f.vals.size(), ~0u);
+      for (uint32_t b = 0; b < nb; b++)
+        for (VId q : f.blocks[b].params) paramBlock[q] = b;
+    }
+    uint32_t h = paramBlock[p];
+    if (h == ~0u || h == 0 || order[h] == ~0u) return false;
+    auto [it, fresh] = m1.try_emplace(p, 2);
+    if (!fresh) return it->second == 1;
+    uint32_t idx = 0;
+    while (f.blocks[h].params[idx] != p) idx++;
+    bool ok = true;
+    auto arg = [&](uint32_t e, uint32_t src) {
+      const Edge &ed = f.edges[e];
+      if (ed.block != h || !ok) return;
+      VId a = f.edgeArgs[ed.argBegin + idx];
+      if (a == p) return;
+      uint64_t c;
+      if (isConst(a, c)) {
+        ok = int64_t(c) >= -1;
+        return;
+      }
+      if (const Inst *d = defOf(a); d && d->op == Op::Add && d->w == 64 && d->a == p && isConst(d->b, c) && c == 1) {
+        ok = guardedBelow(a, src);
+        return;
+      }
+      ok = nonneg(a);
+    };
+    for (uint32_t pr : f.blocks[h].preds) {
+      if (order[pr] == ~0u) continue;
+      const Inst &t = f.insts[f.blocks[pr].end - 1];
+      if (t.op == Op::Br) arg(t.extra, pr);
+      else if (t.op == Op::CondBr) {
+        arg(t.extra, pr);
+        arg(t.aux2, pr);
+      } else if (t.op == Op::Switch) {
+        for (uint32_t e : f.switches[t.extra].edges) arg(e, pr);
+      } else ok = false;
+    }
+    m1[p] = ok ? 1 : 0;
+    return ok;
+  };
+  nonneg = [&](VId v) -> bool {
     uint64_t k;
     if (isConst(v, k)) return int64_t(k) >= 0;
     const Val &x = f.vals[v];
     if (x.cls != Cls::Int) return false;
     if (x.width < 64) return true;
-    if (x.def != ~0u) return false;
+    if (x.def != ~0u) {
+      // A range loop's index: i = p + 1 with p at least -1 (Go's range
+      // loops start the counter at -1 and add 1 at the top).
+      const Inst &d = f.insts[x.def];
+      uint64_t one;
+      return rangeLoopOn && !d.dead && d.op == Op::Add && d.w == 64 && isConst(d.b, one) && one == 1 &&
+             atLeastMinus1(d.a);
+    }
     if (paramBlock.empty()) {
       paramBlock.assign(f.vals.size(), ~0u);
       for (uint32_t b = 0; b < nb; b++)
