@@ -1164,7 +1164,10 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback, 
         keepLocal.insert(gv);
     }
   }
-  const bool byReach = splitReachOn();
+  // byCalls: a group gets only the copyable definitions it reaches, as with
+  // MARMOT_SPLIT_REACH (the runtime's available_externally bodies are
+  // linked in before the split, and each group needs few of them).
+  const bool byReach = splitReachOn() || byCalls;
   DenseMap<const GlobalValue *, SmallVector<const GlobalValue *, 4>> refs;
   if (byReach) {
     DenseSet<const Constant *> seen;
@@ -2829,6 +2832,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   struct Group {
     unsigned job, index;
     std::string bitcode, key;
+    bool rtLinked = false; // the runtime bitcode is linked in already (-split-adapt)
   };
   std::vector<Group> groups;
   auto partPath = [&](unsigned i, unsigned g) {
@@ -2853,7 +2857,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     if (cacheObjects) {
       std::string k = info.keyB + "|wpo|" + byTypeKey + "|" + prunableKey + "|";
       if (adaptBytes)
-        k += "adapt-calls5" + std::to_string(adaptBytes) + "|";
+        k += "adapt-calls6" + std::to_string(adaptBytes) + "|";
       std::vector<std::string> liveDefs;
       for (const Def &d : info.defs)
         if (isLive(d.qname))
@@ -3060,6 +3064,22 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
       }
       unsigned limit = splitThreshold(n, info.bitcode.size());
       if (n > limit) {
+        // -split-adapt: the runtime bitcode is linked in before the split,
+        // so its internal helpers (lock_slow and the like, which the runtime
+        // archive keeps as local symbols) are cut like the module's own
+        // locals: one definition in one group, the other groups call it.
+        // Linked in each group instead, every group carried its own copy
+        // (pingpong -release: lock_slow in 5 objects, 5% slower).
+        bool rtLinked = false;
+        if (adaptBytes && opts.rtBitcode) {
+          std::string rterr;
+          const RuntimeLib *rt = opts.rtBitcode->get(rterr);
+          if (!rt || !linkRuntimeBitcode(*m, *rt, rterr)) {
+            es << info.job.in << ": " << rterr << "\n";
+            return;
+          }
+          rtLinked = true;
+        }
         unsigned half = std::max(1u, limit / 2);
         unsigned k = std::min({16u, nfuncs, (n + half - 1) / half});
         auto bcs = splitModule(*m, k, info.keyB, adaptBytes != 0);
@@ -3068,7 +3088,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         for (unsigned g = 0; g < k; ++g) {
           std::string gk = hashHex(fp + "|wpo-group|" + bcs[g]);
           list += gk + "\n";
-          groups.push_back({i, g, std::move(bcs[g]), gk});
+          groups.push_back({i, g, std::move(bcs[g]), gk, rtLinked});
         }
         ++stats.splitModules;
         stats.groups += k;
@@ -3090,6 +3110,8 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
   });
   // D: the groups, largest first, on all threads.
   if (!groups.empty()) {
+    CompileOptions noRt = opts; // for groups with the runtime linked in
+    noRt.rtBitcode = nullptr;
     llvm::stable_sort(groups, [](const Group &a, const Group &b) {
       return a.bitcode.size() > b.bitcode.size();
     });
@@ -3126,7 +3148,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           auto mOr = parseBitcodeFile(MemoryBufferRef(gp->bitcode, name), ctx);
           if (!tm || !mOr) {
             es << name << ": " << (tm ? toString(mOr.takeError()) : err) << "\n";
-          } else if (optimizeAndEmit(**mOr, *tm, name, out, opts, t, es)) {
+          } else if (optimizeAndEmit(**mOr, *tm, name, out, gp->rtLinked ? noRt : opts, t, es)) {
             ++stats.compiled;
             if (auto obj = MemoryBuffer::getFile(out, false, false)) {
               if (cacheObjects)
