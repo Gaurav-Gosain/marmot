@@ -63,7 +63,12 @@ func TestSemaHandsUnitsToWaiters(t *testing.T) {
 }
 
 func TestNotifyListLayout(t *testing.T) {
-	// sync.notifyList: wait, notify uint32, lock word, head, tail.
+	// sync.notifyList: wait, notify uint32, lock word, head, tail. The
+	// layout holds with marmot's 4-byte runtime mutex; the host's mutex
+	// wraps a sync.Mutex (8 bytes) and moves head.
+	if unsafe.Sizeof(mutex{}) != 4 {
+		t.Skipf("host mutex is %d bytes", unsafe.Sizeof(mutex{}))
+	}
 	if unsafe.Sizeof(notifyList{}) != 32 || unsafe.Offsetof(notifyList{}.head) != 16 {
 		t.Errorf("notifyList size %d head at %d", unsafe.Sizeof(notifyList{}), unsafe.Offsetof(notifyList{}.head))
 	}

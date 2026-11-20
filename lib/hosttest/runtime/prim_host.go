@@ -157,11 +157,11 @@ func gopark(unlockf func(unsafe.Pointer), lock unsafe.Pointer) {
 	<-hg.wake
 }
 
-func goparkunlock(l *mutex) { gopark(parkunlock, unsafe.Pointer(l)) }
+func goparkunlock(l *mutex, reason waitReason) { gopark(parkunlock, unsafe.Pointer(l)) }
 
 func goparkselect(gp *g) { gopark(selparkcommit, unsafe.Pointer(gp)) }
 
-func goparkForever() { select {} }
+func goparkForever(reason waitReason) { select {} }
 
 func goready(gp *g) {
 	(*hostG)(gp.handle).wake <- struct{}{}
@@ -213,4 +213,41 @@ func printTraceback(fp uintptr) {}
 // testing/synctest bubbles exist only in marmot programs.
 type bubble struct{}
 
-func goparkunlockDurable(l *mutex) { goparkunlock(l) }
+func goparkunlockDurable(l *mutex, reason waitReason) { goparkunlock(l, reason) }
+
+// Why a goroutine waits (prim_marmot.go); the host does not report it.
+type waitReason uint8
+
+const (
+	waitReasonZero waitReason = iota
+	waitReasonChanReceive
+	waitReasonChanSend
+	waitReasonSelect
+	waitReasonSelectNoCases
+	waitReasonChanReceiveNilChan
+	waitReasonChanSendNilChan
+	waitReasonSleep
+	waitReasonSemacquire
+	waitReasonSyncCondWait
+)
+
+// Panic reports: the host prints the plain form only.
+const (
+	panicPlain = iota
+	panicJSON
+	panicHuman
+)
+
+func panicMode() int                                    { return panicPlain }
+func printPanicJSON(p *_panic, goid int64, fp uintptr)  {}
+func printPanicHuman(p *_panic, goid int64, fp uintptr) {}
+
+var printCapture *[]byte
+
+type cgoPointerError struct{ detail string }
+
+// map.go frees a map's old array through the C core (rt_free_idle); on the
+// host the Go collector frees it.
+//
+//go:linkname hostFreeIdle rt_free_idle
+func hostFreeIdle(p unsafe.Pointer, size uintptr) {}
