@@ -217,6 +217,23 @@ void allocate(const Func &f, const TargetRegs &t, Alloc &a) {
     }
   }
 
+  // MARMOT_TIER0_TIEPARAM=1: loop counters (below). Block parameters by value.
+  static const bool tieParam = [] {
+    const char *e = getenv("MARMOT_TIER0_TIEPARAM");
+    return e && *e == '1';
+  }();
+  std::vector<uint32_t> paramOf, paramIdx;
+  std::vector<char> pinned;
+  if (tieParam) {
+    pinned.assign(nv, 0);
+    paramOf.assign(nv, ~0u);
+    paramIdx.assign(nv, 0);
+    for (uint32_t b = 0; b < nb; b++)
+      for (uint32_t i = 0; i < f.blocks[b].params.size(); i++) {
+        paramOf[f.blocks[b].params[i]] = b;
+        paramIdx[f.blocks[b].params[i]] = i;
+      }
+  }
   // Linear scan per register class.
   std::vector<VId> order;
   for (VId v = 0; v < nv; v++)
@@ -269,6 +286,58 @@ void allocate(const Func &f, const TargetRegs &t, Alloc &a) {
       }
       bool cross = crosses(v);
       cur = v;
+      // A loop counter: v = x op y computed in the block of x, a block
+      // parameter used only here, and every edge into that block either
+      // passes v back as x or comes from a block before v. x is otherwise live to the back edge only
+      // because the edge writes it, and the value written is v: v in x's
+      // register makes the copy before the operation and the move on the
+      // back edge disappear.
+      if (tieParam && !fp && f.vals[v].def != ~0u) {
+        const Inst &d = f.insts[f.vals[v].def];
+        VId x = d.a;
+        bool two = d.op == Op::Add || d.op == Op::Sub || d.op == Op::And || d.op == Op::Or || d.op == Op::Xor ||
+                   d.op == Op::Mul || d.op == Op::Shl || d.op == Op::LShr || d.op == Op::AShr;
+        if (two && d.dst == v && x != None && x < nv && x != d.b && paramOf[x] != ~0u && f.vals[x].uses == 1 &&
+            a.loc[x].k == Loc::Reg && f.vals[x].cls == Cls::Int && !(cross && !(calleeMask >> a.loc[x].reg & 1))) {
+          uint32_t h = paramOf[x], idx = paramIdx[x];
+          // v must be computed in x's own block: then each computation of v
+          // follows a fresh x. A use of x further on (in a loop body after
+          // the block, or for a function argument, x in the entry block) can
+          // run many times for one x, and v would overwrite x on the first.
+          bool ok = h != 0 && defBlock[v] == h;
+          for (uint32_t pr : f.blocks[h].preds) {
+            const BB &pb = f.blocks[pr];
+            if (pb.end == pb.begin) continue;
+            const Inst &term = f.insts[pb.end - 1];
+            auto chk = [&](uint32_t e) {
+              const Edge &ed = f.edges[e];
+              if (ed.block != h) return;
+              if (f.edgeArgs[ed.argBegin + idx] == v) return;
+              if (span[pr].second < start[v]) return;  // an edge from before v (the loop entry)
+              ok = false;
+            };
+            if (term.op == Op::Br) chk(term.extra);
+            else if (term.op == Op::CondBr) {
+              chk(term.extra);
+              chk(term.aux2);
+            } else if (term.op == Op::Switch) {
+              for (uint32_t e : f.switches[term.extra].edges) chk(e);
+            }
+          }
+          auto it = std::find(active.begin(), active.end(), x);
+          if (ok && it != active.end()) {
+            *it = active.back();
+            active.pop_back();
+            a.loc[v].k = Loc::Reg;
+            a.loc[v].reg = a.loc[x].reg;
+            active.push_back(v);
+            // v now also holds x's register for x's write on the back
+            // edge: never give it up to a later interval.
+            pinned[v] = 1;
+            continue;
+          }
+        }
+      }
       // A two-address result in the register of its first operand, which
       // ends here: no copy before the operation (and none at a loop's back
       // edge when the operand is the loop counter).
@@ -304,6 +373,7 @@ void allocate(const Func &f, const TargetRegs &t, Alloc &a) {
       for (size_t k = 0; k < active.size(); k++) {
         VId x = active[k];
         if (cross && !(calleeMask >> a.loc[x].reg & 1)) continue;
+        if (!pinned.empty() && pinned[x]) continue;
         if (fk < 0 || end[x] > end[active[size_t(fk)]]) fk = int(k);
       }
       if (fk >= 0 && end[active[size_t(fk)]] > end[v]) {
