@@ -63,7 +63,16 @@ NOINLINE void memprof_maybe(void *p, uintptr_t size, void *fp) {
   uintptr_t stk[MP_FRAMES];
   uint32_t n = 0;
   uintptr_t f = (uintptr_t)fp;
-  while (n < MP_FRAMES && f && !(f & 7)) {
+  // Only frames on the running goroutine's stack: code built without frame
+  // pointers (C tests, linked C code) leaves a register value in the chain.
+  // On a thread with no goroutine no frame is recorded.
+  uintptr_t lo = 0, hi = 0;
+  rt_m *m = getm();
+  if (m && m->curg) {
+    lo = m->curg->stack_lo;
+    hi = m->curg->stack_hi;
+  }
+  while (n < MP_FRAMES && f >= lo && f + 16 <= hi && !(f & 7)) {
     uintptr_t up = ((uintptr_t *)f)[0], pc = ((uintptr_t *)f)[1];
     if (!pc) break;
     stk[n++] = pc;
