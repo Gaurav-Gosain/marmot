@@ -3,9 +3,8 @@
 // Nothing links against CUDA: the first rt_gpu_* call dlopens libcuda and
 // resolves the few entry points used here. Without the library, a device,
 // or with MARMOT_GPU=0, every query reports no GPU and callers stay on the
-// CPU. Offload decisions (rt_gpu_should_offload) are opt-in: they say yes
-// only with MARMOT_GPU=1, until float results are settled with the loop
-// compiler.
+// CPU. Loop offload (rt_gpu_for) is on in programs built with -gpu unless
+// MARMOT_GPU=0. rt_gpu_should_offload stays opt-in (MARMOT_GPU=1).
 //
 // One context (the device's primary context) is shared by all threads; it
 // is made current on each entry because goroutines move between threads.
@@ -725,9 +724,17 @@ RT_API int64_t rt_gpu_break_even(double ops, double bytes_in, double bytes_out) 
 // those buffers, and the written bytes of each range are copied back. See
 // rt.h for the contract.
 
+static int nreg;  // registered kernel images (rt_gpu_register, below)
+
+// Loop offload is on in programs built with -gpu (they register their
+// kernel images from a constructor, before main) unless MARMOT_GPU=0.
+// MARMOT_GPU=1 turns it on for any caller (runtime tests call rt_gpu_for
+// without a registered image).
 static bool gpu_for_enabled(void) {
   const char *e = rt_getenv("MARMOT_GPU");
-  return e && e[0] == '1';
+  if (e && e[0] == '0') return false;
+  if (e && e[0] == '1') return true;
+  return __atomic_load_n(&nreg, __ATOMIC_ACQUIRE) > 0;
 }
 
 // Test switches: MARMOT_GPU_WAIT=1 waits for setup instead of running early
@@ -756,7 +763,7 @@ typedef struct regent {
 // 16 entries live in static storage, more go to mapped memory.
 static regent reg_static[16];
 static regent *reg = reg_static;
-static int nreg, capreg = 16;
+static int capreg = 16;
 static int prewarm_busy;  // 1 while the prewarm thread runs
 
 RT_API void rt_gpu_register(const void *image, uintptr_t len) {
@@ -785,7 +792,7 @@ static void prewarm_thread(void *arg) {
 }
 
 // Called at startup (entry.c, weak reference: only programs that link
-// rt_gpu_for have it). With MARMOT_GPU=1, CUDA setup and the cost model
+// rt_gpu_for have it). When loop offload is on, CUDA setup and the cost model
 // calibration (0.1 to 0.4 s) run on a separate thread while the program
 // starts; rt_gpu_for leaves loops on the CPU until they are done.
 void rt_gpu_prewarm(void) {

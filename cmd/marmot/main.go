@@ -89,7 +89,7 @@ func newBuildFlags(name string) (*flag.FlagSet, *buildFlags) {
 	b.allocs = fs.Bool("allocs", false, "report the allocation sites of the main module: heap or stack, and why (rebuilds without the object cache)")
 	b.allocsAll = fs.Bool("allocs-all", false, "like -allocs, for every package")
 	b.gpu = &gpuFlag{}
-	fs.Var(b.gpu, "gpu", "offload parallel loops to an NVIDIA GPU when one is present at run time (PTX for sm_75, or -gpu=sm_XX; run with MARMOT_GPU=1)")
+	fs.Var(b.gpu, "gpu", "offload parallel loops to an NVIDIA GPU when one is present at run time (PTX for sm_75, or -gpu=sm_XX; MARMOT_GPU=0 at run time keeps loops on the CPU)")
 	b.gpuRemarks = fs.Bool("gpu-remarks", false, "with -gpu: print, for each parallel loop, whether it became a GPU kernel and why not (rebuilds without the object cache)")
 	b.static = fs.Bool("static", false, "link a static executable (Linux: with the musl C library, after marmot sysroot add -libc musl GOOS/GOARCH)")
 	b.gc = fs.String("gc", "precise", "garbage collector: precise or none")

@@ -31,6 +31,16 @@
 // RUN: grep -v '^gpu: ' %t.trace > %t.gpu; diff %t.gpu %S/Inputs/gpu_cases.expected
 // RUN: if nvidia-smi -L > /dev/null 2>&1; then %FileCheck %s < %t.trace; fi
 // RUN: ! grep -q "evens.* on the GPU" %t.trace
+// A -gpu binary offloads without MARMOT_GPU set. Without a CUDA driver it
+// runs every loop on the CPU with the same output (nolib below, and a
+// library path that holds no libcuda).
+// RUN: env -u MARMOT_GPU MARMOT_GPU_WAIT=1 MARMOT_GPU_FORCE=1 MARMOT_GPUTRACE=1 %t > %t.def 2>&1
+// RUN: grep -v '^gpu: ' %t.def > %t.def.out; diff %t.def.out %S/Inputs/gpu_cases.expected
+// RUN: if nvidia-smi -L > /dev/null 2>&1; then grep -q "saxpyOff.* on the GPU" %t.def; fi
+// RUN: env -u MARMOT_GPU MARMOT_GPU_FAULT=nolib MARMOT_GPUTRACE=1 %t > %t.nodrv 2>&1; ! grep -q " on the GPU" %t.nodrv
+// RUN: grep -v '^gpu: ' %t.nodrv > %t.nodrv.out; diff %t.nodrv.out %S/Inputs/gpu_cases.expected
+// MARMOT_GPU=0 keeps everything on the CPU.
+// RUN: MARMOT_GPU=0 MARMOT_GPUTRACE=1 %t > %t.off 2>&1; ! grep -q " on the GPU" %t.off
 // RUN: MARMOT_GPU=1 MARMOT_GPU_WAIT=1 MARMOT_GPU_FORCE=1 MARMOT_GPU_FAULT=watchdog %t > %t.wd 2>&1 && diff %t.wd %S/Inputs/gpu_cases.expected
 // RUN: for f in nolib nodevice badptx oom; do MARMOT_GPU=1 MARMOT_GPU_WAIT=1 MARMOT_GPU_FORCE=1 MARMOT_GPU_FAULT=$f %t > %t.$f 2>&1 && diff %t.$f %S/Inputs/gpu_cases.expected || exit 1; done
 // A kernel failure after the launch is fatal.

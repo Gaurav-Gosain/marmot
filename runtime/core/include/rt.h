@@ -359,7 +359,8 @@ int64_t rt_gpu_break_even(double ops, double bytes_in, double bytes_out);
 // 4096 bytes) is copied to the device and back (words the kernel changed are
 // kept).
 //
-// Returns false, having done nothing, unless MARMOT_GPU=1, a GPU is present,
+// Returns false, having done nothing, unless offload is on (programs built
+// with -gpu, unless MARMOT_GPU=0; MARMOT_GPU=1 for any caller), a GPU is present,
 // no base is nil, no written range overlaps another, the cost model (cost =
 // operations per iteration) prefers the GPU and setup succeeds; the caller
 // then runs its CPU loop. Failures after the first launch are fatal. A call
