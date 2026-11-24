@@ -2857,7 +2857,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
     if (cacheObjects) {
       std::string k = info.keyB + "|wpo|" + byTypeKey + "|" + prunableKey + "|";
       if (adaptBytes)
-        k += "adapt-calls6" + std::to_string(adaptBytes) + "|";
+        k += "adapt-calls8" + std::to_string(adaptBytes) + "|";
       std::vector<std::string> liveDefs;
       for (const Def &d : info.defs)
         if (isLive(d.qname))
@@ -3063,6 +3063,14 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         nfuncs += !f.isDeclaration();
       }
       unsigned limit = splitThreshold(n, info.bitcode.size());
+      // -split-adapt keeps the runtime module whole when it holds the
+      // channel core (runtime.chanrecv live): split, it lost a scheduler-
+      // heavy program's interprocedural optimization and code locality
+      // (pingpong -release 7% slower; a third of that was link order). A
+      // program without channels (hello) still splits it.
+      if (adaptBytes)
+        if (Function *rf = m->getFunction("runtime.chanrecv"); rf && !rf->isDeclaration())
+          limit = opts.splitInstrs;
       if (n > limit) {
         // -split-adapt: the runtime bitcode is linked in before the split,
         // so its internal helpers (lock_slow and the like, which the runtime
