@@ -3,6 +3,7 @@
 
 #include "llvm/ADT/StringMap.h"
 #include "llvm/DebugInfo/DWARF/DWARFContext.h"
+#include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/MachO.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/FileSystem.h"
@@ -101,12 +102,22 @@ const char *dieName(const DWARFDie &d) {
 // indices only matter in relocatable ELF objects (a section per function, all
 // at address 0); elsewhere addresses are unique and section indices of rows
 // and functions need not agree.
+//
+// symbols (relocatable ELF objects): the object's function symbols. A
+// function with rows but no DWARF subprogram gets its range from its symbol:
+// LLVM writes no subprogram for a function without inlined calls in a
+// line-tables-only unit (DwarfDebug::endFunctionImpl, every target but
+// Darwin), so without this its rows were dropped. Such a function is kept
+// only when it gets rows, so objects whose DWARF has every function read the
+// same as before.
 void readUnits(DWARFContext &dwarf, unsigned version, std::vector<Raw> &raws,
                const std::function<uint32_t(const std::string &)> &fileId, bool useSections,
-               std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> *orphans = nullptr) {
+               std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> *orphans = nullptr,
+               const std::vector<Raw> *symbols = nullptr) {
   auto normSec = [&](uint64_t s) {
     return !useSections || s == object::SectionedAddress::UndefSection ? 0 : s;
   };
+  bool symbolsAdded = false;
   for (const auto &cu : dwarf.compile_units()) {
     const DWARFDebugLine::LineTable *lt = dwarf.getLineTableForUnit(cu.get());
     if (!lt)
@@ -157,6 +168,18 @@ void readUnits(DWARFContext &dwarf, unsigned version, std::vector<Raw> &raws,
         walk(die, -1, 0);
       raws.push_back(std::move(r));
     }
+    // The symbols no subprogram covers, once (MLIR modules have one unit).
+    size_t firstSym = raws.size();
+    if (symbols && !symbolsAdded) {
+      symbolsAdded = true;
+      for (const Raw &s : *symbols) {
+        bool covered = false;
+        for (size_t i = 0; i < firstSym && !covered; ++i)
+          covered = raws[i].sec == s.sec && raws[i].lo < s.hi && s.lo < raws[i].hi;
+        if (!covered)
+          raws.push_back(s);
+      }
+    }
     // Rows go to the function of this unit whose range holds them.
     std::map<std::pair<uint64_t, uint64_t>, size_t> byStart;
     for (size_t i = first; i < raws.size(); ++i)
@@ -182,7 +205,39 @@ void readUnits(DWARFContext &dwarf, unsigned version, std::vector<Raw> &raws,
       else
         orphans->push_back({row.Address.Address, row.Line, fileId(fname)});
     }
+    raws.erase(std::remove_if(raws.begin() + firstSym, raws.end(),
+                              [](const Raw &r) { return r.f.rows.empty(); }),
+               raws.end());
   }
+}
+
+// The function symbols of a relocatable ELF object as functions without rows
+// (readUnits).
+std::vector<Raw> objectFunctions(const ObjectFile &obj) {
+  std::vector<Raw> out;
+  for (const SymbolRef &sym : obj.symbols()) {
+    auto type = sym.getType();
+    auto addr = sym.getAddress();
+    auto name = sym.getName();
+    auto sec = sym.getSection();
+    if (!type || !addr || !name || !sec) {
+      consumeError(type.takeError());
+      consumeError(addr.takeError());
+      consumeError(name.takeError());
+      consumeError(sec.takeError());
+      continue;
+    }
+    uint64_t size = ELFSymbolRef(sym).getSize();
+    if (*type != SymbolRef::ST_Function || *sec == obj.section_end() || !(*sec)->isText() ||
+        size == 0 || name->empty())
+      continue;
+    Raw r{(*sec)->getIndex(), *addr, *addr + size, {}};
+    r.f.lo = r.lo;
+    r.f.hi = r.hi;
+    r.f.name = name->str();
+    out.push_back(std::move(r));
+  }
+  return out;
 }
 
 } // namespace
@@ -275,6 +330,9 @@ bool makeFragment(MemoryBufferRef object, unsigned version, std::string &out,
   std::map<std::string, uint32_t> fileIndex;
   std::vector<Raw> raws;
   bool elfObject = (*objOr)->isELF() && (*objOr)->isRelocatableObject();
+  std::vector<Raw> symbols;
+  if (elfObject)
+    symbols = objectFunctions(**objOr);
   readUnits(
       *dwarf, version, raws,
       [&](const std::string &f) {
@@ -283,7 +341,7 @@ bool makeFragment(MemoryBufferRef object, unsigned version, std::string &out,
           files.push_back(f);
         return it->second;
       },
-      elfObject);
+      elfObject, nullptr, elfObject ? &symbols : nullptr);
   raw_string_ostream os(out);
   for (const std::string &f : files)
     os << "P\t" << f << "\n";
