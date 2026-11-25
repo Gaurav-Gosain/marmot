@@ -900,17 +900,18 @@ RT_API void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uint
 }
 
 #if RT_OS_LINUX
-// MARMOT_NOHUGE=1 (Linux): no transparent huge pages for the card table and
-// the heap metadata (page map, heap bits). With THP=always, the first touch
-// of a 2 MiB-aligned region commits a whole huge page, so a program that
-// uses a few hundred KiB of heap pays 2 MiB or more for each sparse table.
+// Linux, unless MARMOT_NOHUGE=0: no transparent huge pages for the card
+// table and the heap metadata (page map, heap bits). With THP=always, the
+// first touch of a 2 MiB-aligned region commits a whole huge page, so a
+// program that uses a few hundred KiB of heap pays 2 MiB or more for each
+// sparse table.
 static bool rt_nohuge;
 #endif
 
 void malloc_init(void) {
 #if RT_OS_LINUX
   const char *nh = rt_getenv("MARMOT_NOHUGE");
-  rt_nohuge = nh && nh[0] == '1';
+  rt_nohuge = !(nh && nh[0] == '0');
 #endif
   cards_init();
   os_data_segments_init();
