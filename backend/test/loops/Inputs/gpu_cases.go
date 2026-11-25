@@ -65,7 +65,7 @@ func mmul64(a, b, c []float64, n int) {
 		for j := 0; j < n; j++ {
 			s := 0.0
 			for k := 0; k < n; k++ {
-				s += a[i*n+k] * b[k*n+j]
+				s += float64(a[i*n+k] * b[k*n+j])
 			}
 			c[i*n+j] = s
 		}
@@ -78,7 +78,7 @@ func mmul32(a, b, c []float32, n int) {
 		for j := 0; j < n; j++ {
 			var s float32
 			for k := 0; k < n; k++ {
-				s += a[i*n+k] * b[k*n+j]
+				s += float32(a[i*n+k] * b[k*n+j])
 			}
 			c[i*n+j] = s
 		}

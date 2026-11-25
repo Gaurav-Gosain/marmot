@@ -12,8 +12,8 @@
 // The kernel's objects: x read (flags 1, nothing written), y read and written
 // (flags 3); two pointer words of ctx mapped to them.
 // CHECK-LABEL: define void @saxpy_off(
-// CHECK: store i64 1, ptr
-// CHECK: store i64 3, ptr
+// CHECK: store {{(<2 x i64> <)?}}i64 1{{(, i64 0>)?}}, ptr
+// CHECK: store {{(<2 x i64> <)?}}i64 3{{(, i64 0>)?}}, ptr
 // CHECK: call i1 @rt_gpu_for({{.*}}, i64 2, i64 {{[0-9]+}}, ptr {{.*}}%par.ptrs{{.*}}, i64 2, i64 0)
 // CHECK-LABEL: define void @fields(
 // CHECK: call i1 @rt_gpu_for(
