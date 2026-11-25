@@ -57,6 +57,11 @@ func contentID(memo, path string) string {
 		mf = filepath.Join(memo, hex.EncodeToString(h[:12]))
 		if data, err := os.ReadFile(mf); err == nil {
 			if s, id, ok := strings.Cut(strings.TrimSpace(string(data)), "="); ok && s == sig && len(id) == 64 {
+				// A hit marks the memo used, as a hit on any cache entry
+				// does: the cache trim deletes the least recently used
+				// files first, and a memo written once would always look
+				// the oldest and go first.
+				touch(mf)
 				contentIDs.Store(abs, sig+"="+id)
 				return id
 			}
