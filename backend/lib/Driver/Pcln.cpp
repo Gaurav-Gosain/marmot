@@ -14,6 +14,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #ifdef __APPLE__
 #include <fcntl.h>
@@ -330,8 +331,13 @@ bool makeFragment(MemoryBufferRef object, unsigned version, std::string &out,
   std::map<std::string, uint32_t> fileIndex;
   std::vector<Raw> raws;
   bool elfObject = (*objOr)->isELF() && (*objOr)->isRelocatableObject();
+  // MARMOT_PCLN_SYMFUNCS=1: functions from the symbol table too (readUnits).
+  static const bool symFuncs = [] {
+    const char *e = std::getenv("MARMOT_PCLN_SYMFUNCS");
+    return e && *e == '1';
+  }();
   std::vector<Raw> symbols;
-  if (elfObject)
+  if (elfObject && symFuncs)
     symbols = objectFunctions(**objOr);
   readUnits(
       *dwarf, version, raws,
@@ -341,7 +347,7 @@ bool makeFragment(MemoryBufferRef object, unsigned version, std::string &out,
           files.push_back(f);
         return it->second;
       },
-      elfObject, nullptr, elfObject ? &symbols : nullptr);
+      elfObject, nullptr, elfObject && symFuncs ? &symbols : nullptr);
   raw_string_ostream os(out);
   for (const std::string &f : files)
     os << "P\t" << f << "\n";
