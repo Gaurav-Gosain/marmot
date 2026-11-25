@@ -97,10 +97,11 @@ func (b *build) backendBuildArgs(emit string) []string {
 		}
 		if split != "0" && b.cfg.Emit == "exe" {
 			a = append(a, "-split-large="+split)
-			// MARMOT_SPLIT_ADAPT=1: under -wpo the threshold follows the
-			// program size, so a small program's largest module (the
-			// runtime package for hello) is cut into groups too.
-			if b.wpo() && os.Getenv("MARMOT_SPLIT_ADAPT") == "1" {
+			// Under -wpo the threshold follows the program size, so a
+			// small program's largest module (the runtime package for
+			// hello) is cut into groups too. MARMOT_SPLIT_ADAPT=0 turns
+			// it off.
+			if b.wpo() && os.Getenv("MARMOT_SPLIT_ADAPT") != "0" {
 				a = append(a, "-split-adapt")
 			}
 		}
