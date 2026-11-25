@@ -308,6 +308,7 @@ func cmdTest(args []string) int {
 	if len(pkgs) == 0 {
 		pkgs = []string{"."}
 	}
+	testArgs = withTestTimeout(testArgs)
 	status := 0
 	for _, p := range expandTestPatterns(pkgs) {
 		if p.noTests {
@@ -319,6 +320,23 @@ func cmdTest(args []string) int {
 		}
 	}
 	return status
+}
+
+// defaultTestTimeout is the -timeout of a test binary when the command line
+// has none, as go test: a test that hangs panics with every goroutine's stack
+// instead of holding its job until an outer limit kills it. -timeout 0 turns
+// the limit off.
+const defaultTestTimeout = "10m0s"
+
+// withTestTimeout adds -test.timeout=defaultTestTimeout to the test binary's
+// arguments unless they have a -test.timeout.
+func withTestTimeout(testArgs []string) []string {
+	for _, a := range testArgs {
+		if a == "-test.timeout" || strings.HasPrefix(a, "-test.timeout=") {
+			return testArgs
+		}
+	}
+	return append([]string{"-test.timeout=" + defaultTestTimeout}, testArgs...)
 }
 
 type testPkg struct {
