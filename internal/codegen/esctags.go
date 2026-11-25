@@ -22,7 +22,7 @@ import (
 // (driver/stamp.go), and the driver caches the tags of a package next to
 // its export data, keyed by the same key.
 //
-// On with MARMOT_ESCAPE_SUMMARY=1 MARMOT_XPKG_ESCAPE=1 (lifetime switches).
+// On unless MARMOT_ESCAPE_SUMMARY=0 or MARMOT_XPKG_ESCAPE=0 (lifetime switches).
 // MARMOT_CHECK_TAGS=1 makes a missing tag of a function in a package that
 // has tags a build failure (tests).
 

@@ -19,11 +19,14 @@ import (
 //	MARMOT_FRAME_REGIONS frame regions (region-parametric callees)
 //	MARMOT_ALLOCSINK     allocation sinking
 //	MARMOT_ESCAPE_SUMMARY heap to stack through escape summaries of callees and
-//	                     closures (summary based stack allocation)
-//	MARMOT_XPKG_ESCAPE   also use summaries of callees in other packages
+//	                     closures (summary based stack allocation); on by
+//	                     default since its gate, =0 turns it off
+//	MARMOT_XPKG_ESCAPE   also use summaries of callees in other packages; on by
+//	                     default, =0 turns it off
 //	MARMOT_ESCAPE_EXT    escape rules added 2026-11-12 (results, variadic, byte
 //	                     reads, string ranges, map keys, unsafe builtins, append,
-//	                     //go:noescape body-less functions)
+//	                     //go:noescape body-less functions); on by default, =0
+//	                     turns it off
 //	MARMOT_STACKCONV     frame buffers for string(b), []byte(s) and small make
 //	MARMOT_BYVALUE       closures capture settled variables by value
 //	MARMOT_STACKBOX      interface boxes on the stack when the interface value
@@ -54,14 +57,20 @@ func lifetimeOn(name string) bool {
 	return lifetimeAll || os.Getenv(name) == "1"
 }
 
+// lifetimeDefault is a switch that passed its gate and is on by default;
+// setting it to 0 turns it off (MARMOT_LIFETIME=all keeps it on).
+func lifetimeDefault(name string) bool {
+	return lifetimeAll || os.Getenv(name) != "0"
+}
+
 var (
 	optReuse        = lifetimeOn("MARMOT_REUSE")
 	optRegions      = lifetimeOn("MARMOT_REGIONS")
 	optFrameRegions = lifetimeOn("MARMOT_FRAME_REGIONS")
 	optAllocSink    = lifetimeOn("MARMOT_ALLOCSINK")
-	optEscSummary   = lifetimeOn("MARMOT_ESCAPE_SUMMARY")
-	optXPkgEscape   = lifetimeOn("MARMOT_XPKG_ESCAPE")
-	optEscapeExt    = lifetimeOn("MARMOT_ESCAPE_EXT")
+	optEscSummary   = lifetimeDefault("MARMOT_ESCAPE_SUMMARY")
+	optXPkgEscape   = lifetimeDefault("MARMOT_XPKG_ESCAPE")
+	optEscapeExt    = lifetimeDefault("MARMOT_ESCAPE_EXT")
 	optStackConv    = lifetimeOn("MARMOT_STACKCONV")
 	optByValue      = lifetimeOn("MARMOT_BYVALUE")
 	optStackBox     = lifetimeOn("MARMOT_STACKBOX")

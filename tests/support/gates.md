@@ -12,7 +12,7 @@ forced on. Update a row when the switch or the default changes.
 | Region inference (region.go) | MARMOT_REGIONS | off |
 | Frame regions (frameregion.go) | MARMOT_FRAME_REGIONS | off |
 | Allocation sinking (allocsink.go) | MARMOT_ALLOCSINK | off |
-| Escape summaries, cross package, extended rules | MARMOT_ESCAPE_SUMMARY, MARMOT_XPKG_ESCAPE, MARMOT_ESCAPE_EXT | off |
+| Escape summaries, cross package, extended rules | MARMOT_ESCAPE_SUMMARY, MARMOT_XPKG_ESCAPE, MARMOT_ESCAPE_EXT (=0 turns each off) | on |
 | Conversion and make frame buffers (stackconv.go) | MARMOT_STACKCONV | off |
 | Intraprocedural escape (default path) | on | on |
 | go-strings S3 no-copy (backend) | -no-strings-nocopy | on |

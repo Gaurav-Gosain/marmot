@@ -19,7 +19,7 @@ func TestCodegenSwitchesInKeys(t *testing.T) {
 	if err != nil || len(files) == 0 {
 		t.Fatalf("codegen sources: %v", err)
 	}
-	re := regexp.MustCompile(`Getenv\("(MARMOT_[A-Z0-9_]+)"\)|lifetimeOn\("(MARMOT_[A-Z0-9_]+)"\)`)
+	re := regexp.MustCompile(`Getenv\("(MARMOT_[A-Z0-9_]+)"\)|lifetime(?:On|Default)\("(MARMOT_[A-Z0-9_]+)"\)`)
 	seen := map[string]bool{}
 	for _, f := range files {
 		data, err := os.ReadFile(f)
