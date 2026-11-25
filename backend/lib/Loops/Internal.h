@@ -34,10 +34,14 @@ struct Term {
 // recurrence is also listed. Returns false when S is not of that form.
 // With latchOnly, inner trip counts are their latch exit counts (possibly
 // under predicates, appended to preds) instead of the bound over all exits.
+// With signChecks set, an inner recurrence whose step has unknown sign (an
+// L-invariant run time n) counts as nonnegative and its step is appended:
+// the caller must check 0 <= step at run time (-loops-rtsign).
 bool decomposeAffine(llvm::ScalarEvolution &SE, const llvm::SCEV *S, const llvm::Loop *L,
                      const llvm::SCEV *&coef, const llvm::SCEV *&lo, const llvm::SCEV *&hi,
                      llvm::SmallVectorImpl<Term> *terms, bool latchOnly = false,
-                     llvm::SmallVectorImpl<const llvm::SCEVPredicate *> *preds = nullptr);
+                     llvm::SmallVectorImpl<const llvm::SCEVPredicate *> *preds = nullptr,
+                     llvm::SmallVectorImpl<const llvm::SCEV *> *signChecks = nullptr);
 
 // Bounds check versioning (Versioning.cpp, Rule V). Returns true after
 // versioning L; why gets a summary or the reason it did not.
@@ -62,7 +66,7 @@ void addMaskedJam(llvm::FunctionPassManager &fpm, const Options &opts);
 void addTile(llvm::FunctionPassManager &fpm, const Options &opts);
 // Rules that -par uses only when their switch is on (Rules.cpp): the ones
 // verify has not signed off yet.
-enum class Rule { RtChecks, Privatize, BcvGrowth, BcvLoaded, BcvPin, BcvStride, ByteCount, Scan, Interchange, Jam, MaskedJam };
+enum class Rule { RtChecks, Privatize, BcvGrowth, BcvLoaded, BcvPin, BcvStride, ByteCount, Scan, Interchange, Jam, MaskedJam, RtSign };
 bool ruleOn(Rule r);
 // While one is alive on this thread, ruleOn turns on the rule V forms the
 // versioning-only pass uses (BcvLoaded, BcvPin, BcvStride), unless the

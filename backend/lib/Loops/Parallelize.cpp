@@ -334,8 +334,11 @@ private:
   bool rowAccess(Loop *L, Plan &P, Access &a);
   void privatize(Loop *L, Plan &P, std::vector<Access> &accs);
   const char *gpuUnitProblem(Loop *L, const std::vector<Access *> &accs, bool &twoD);
+  bool positiveOrChecked(Loop *L, Plan &P, const SCEV *c);
   bool gpuInner(Loop *L, Plan &P);
   bool interleaved(Loop *L, Plan &P, Access &x, Access &y);
+  bool decompose(const SCEV *S, Loop *L, const SCEV *&coef, const SCEV *&lo, const SCEV *&hi,
+                 Plan *P);
   bool decompose(const SCEV *S, Loop *L, const SCEV *&coef, const SCEV *&lo,
                  const SCEV *&hi);
   bool liveOuts(Loop *L, Plan &P);
@@ -901,6 +904,31 @@ bool Parallelizer::decompose(const SCEV *S, Loop *L, const SCEV *&coef, const SC
   return preds.empty();
 }
 
+// decompose, and with -loops-rtsign an inner step of unknown sign counts as
+// nonnegative under a run time check 0 <= step in the preheader.
+bool Parallelizer::decompose(const SCEV *S, Loop *L, const SCEV *&coef, const SCEV *&lo,
+                             const SCEV *&hi, Plan *P) {
+  if (!P || !ruleOn(Rule::RtSign))
+    return decompose(S, L, coef, lo, hi);
+  SmallVector<const SCEVPredicate *, 2> preds;
+  SmallVector<const SCEV *, 2> signs;
+  if (!decomposeAffine(SE, S, L, coef, lo, hi, nullptr, ignoreExits, ignoreExits ? &preds : nullptr,
+                       &signs) ||
+      !preds.empty())
+    return false;
+  for (const SCEV *s : signs) {
+    if (!s->getType()->isIntegerTy())
+      return false;
+    const SCEV *zero = SE.getZero(s->getType());
+    bool have = false;
+    for (auto &lc : P->leChecks)
+      have |= lc.first == zero && lc.second == s;
+    if (!have)
+      P->leChecks.push_back({zero, s});
+  }
+  return true;
+}
+
 // Rule P, memory part: different iterations touch disjoint bytes of every
 // object some iteration writes.
 // A load or store through a row pointer loaded in L (c[i][j] with c a
@@ -1245,6 +1273,23 @@ const char *Parallelizer::gpuUnitProblem(Loop *L, const std::vector<Access *> &a
   return nullptr;
 }
 
+// A stride c that is positive, or (-loops-rtsign) invariant in L, so that a
+// run time check 1 <= c in the preheader can make it so: c[i*n+j] with a run
+// time n has stride 8n, whose sign SCEV cannot tell. When the check fails
+// the loop runs serially, as it is.
+bool Parallelizer::positiveOrChecked(Loop *L, Plan &P, const SCEV *c) {
+  if (SE.isKnownPositive(c))
+    return true;
+  if (!ruleOn(Rule::RtSign) || !SE.isLoopInvariant(c, L) || !c->getType()->isIntegerTy())
+    return false;
+  const SCEV *one = SE.getOne(c->getType());
+  for (auto &lc : P.leChecks)
+    if (lc.first == one && lc.second == c)
+      return true;
+  P.leChecks.push_back({one, c});
+  return true;
+}
+
 // 2-D GPU offer: L's one inner loop J must count j from 0 by 1 to a bound
 // set before L (so the second body can run any one j), carry nothing from
 // one j to the next but j itself, and hold every store of L.
@@ -1299,7 +1344,7 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
     const SCEV *off = SE.getMinusSCEV(s, base);
     if (isa<SCEVCouldNotCompute>(off) || off->getType() != ity)
       continue;
-    if (!decompose(off, L, a.coef, a.lo, a.hi))
+    if (!decompose(off, L, a.coef, a.lo, a.hi, &P))
       continue;
     a.affine = true;
     a.baseValue = bu->getValue();
@@ -1343,7 +1388,7 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
       const SCEV *c = x.coef;
       if (SE.isKnownNegative(c))
         c = SE.getNegativeSCEV(c);
-      else if (!SE.isKnownPositive(c))
+      else if (!positiveOrChecked(L, P, c))
         return reject("store to the same location in every iteration, or "
                       "stride of unknown sign");
       // x.hi + x.size - y.lo <= c and y.hi + y.size - x.lo <= c
@@ -1420,7 +1465,8 @@ bool Parallelizer::analyzeMemory(Loop *L, Plan &P, std::vector<Access> &accs) {
       g = &units.back();
       g->base = a.baseValue;
     }
-    if (!a.coef || (!SE.isKnownNonNegative(a.coef) && !SE.isKnownNegative(a.coef)))
+    if (!a.coef || (!SE.isKnownNonNegative(a.coef) && !SE.isKnownNegative(a.coef) &&
+                    !positiveOrChecked(L, P, a.coef)))
       return reject("stride of unknown sign");
     auto [s, e] = range(a);
     g->s = g->s ? SE.getUMinExpr(g->s, s) : s;
@@ -1594,6 +1640,10 @@ uint64_t Parallelizer::cost(Loop *L) {
     uint64_t mult = 1;
     for (Loop *in = LI.getLoopFor(bb); in && in != L; in = in->getParentLoop()) {
       unsigned tc = SE.getSmallConstantMaxTripCount(in);
+      // -loops-rtsign: a run time size bounded only by a versioning
+      // condition (n <= 2^30) is as unknown as no bound at all.
+      if (tc > (1u << 20) && ruleOn(Rule::RtSign))
+        tc = 0;
       mult = std::min<uint64_t>(mult * (tc ? tc : UnknownInnerTrips), 1ull << 40);
     }
     uint64_t c = 0;

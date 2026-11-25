@@ -306,14 +306,18 @@ int Versioner::loadBound(Loop *L, LoadInst *ld) {
   const SCEV *coef, *lo, *hi;
   SmallVector<Term, 2> terms;
   SmallVector<const SCEVPredicate *, 4> p;
+  SmallVector<const SCEV *, 2> signs;
   if (isa<SCEVCouldNotCompute>(off) ||
-      !decomposeAffine(SE, off, L, coef, lo, hi, &terms, /*latchOnly=*/true, &p)) {
+      !decomposeAffine(SE, off, L, coef, lo, hi, &terms, /*latchOnly=*/true, &p,
+                       ruleOn(Rule::RtSign) ? &signs : nullptr)) {
     reject("loaded bound address is not affine");
     return -1;
   }
   for (const SCEVPredicate *q : p)
     if (!is_contained(preds, q))
       preds.push_back(q);
+  for (const SCEV *s : signs)
+    conds.push_back({ICmpInst::ICMP_SGE, s, SE.getZero(s->getType())});
   LoadBound lb{ld, base, lo, nullptr, nullptr};
   if (coef->isZero() && terms.empty()) {
     // One address for all of L (the load could not be hoisted because it
@@ -385,8 +389,12 @@ bool Versioner::range(Loop *L, const SCEV *S, const SCEV *&mn, const SCEV *&mx) 
   const SCEV *coef, *lo, *hi;
   SmallVector<Term, 4> terms;
   SmallVector<const SCEVPredicate *, 4> p;
-  if (!decomposeAffine(SE, S, L, coef, lo, hi, &terms, /*latchOnly=*/true, &p))
+  SmallVector<const SCEV *, 2> signs;
+  if (!decomposeAffine(SE, S, L, coef, lo, hi, &terms, /*latchOnly=*/true, &p,
+                       ruleOn(Rule::RtSign) ? &signs : nullptr))
     return reject("checked value is not affine in the loop");
+  for (const SCEV *s : signs)
+    conds.push_back({ICmpInst::ICMP_SGE, s, SE.getZero(s->getType())});
   for (const SCEVPredicate *q : p)
     if (!is_contained(preds, q))
       preds.push_back(q);
@@ -432,6 +440,16 @@ bool Versioner::range(Loop *L, const SCEV *S, const SCEV *&mn, const SCEV *&mx) 
   } else if (SE.isKnownNegative(coef)) {
     mn = SE.getAddExpr(lo, span);
     mx = hi;
+  } else if (ruleOn(Rule::RtSign)) {
+    // -loops-rtsign: the guard checks coef >= 1 (c[i*n+j] with a run time
+    // n), so the range is the one of a positive stride.
+    // coef <= 2^30 and the count <= 2^30 keep coef * count from wrapping.
+    int64_t half = int64_t(1) << 30;
+    conds.push_back({ICmpInst::ICMP_SGE, coef, SE.getOne(ty)});
+    conds.push_back({ICmpInst::ICMP_SLE, coef, SE.getConstant(ty, half)});
+    conds.push_back({ICmpInst::ICMP_ULE, btc, SE.getConstant(ty, half)});
+    mn = lo;
+    mx = SE.getAddExpr(hi, span);
   } else {
     return reject("stride of unknown sign");
   }

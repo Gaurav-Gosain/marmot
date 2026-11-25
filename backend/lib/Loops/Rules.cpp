@@ -36,6 +36,9 @@ static cl::opt<bool> Scan("loops-scan", cl::Hidden, cl::desc("Rule D: parallel p
 static cl::opt<bool> InterchangeOn("loops-interchange", cl::Hidden,
                                    cl::desc("Rule I: reduction interchange"));
 static cl::opt<bool> JamOn("loops-jam", cl::Hidden, cl::desc("loop-jam of chunk loops"));
+static cl::opt<bool> RtSign("loops-rtsign", cl::Hidden,
+                            cl::desc("Rule P: a stride of unknown sign (c[i*n+j] with a run time n) "
+                                     "is checked positive at run time"));
 static cl::opt<bool> MaskedJamOn("loops-masked-jam", cl::Hidden,
                                  cl::desc("Rule M: masked jam (outer loop vectorization)"));
 
@@ -81,6 +84,8 @@ bool ruleOn(Rule r) {
     return JamOn;
   case Rule::MaskedJam:
     return MaskedJamOn;
+  case Rule::RtSign:
+    return RtSign;
   }
   return false;
 }
@@ -109,6 +114,8 @@ const char *ruleFlag(Rule r) {
     return "-loops-jam";
   case Rule::MaskedJam:
     return "-loops-masked-jam";
+  case Rule::RtSign:
+    return "-loops-rtsign";
   }
   return "";
 }
@@ -126,6 +133,8 @@ std::string cacheKey() {
     k += "pin";
   if (ruleOn(Rule::BcvStride))
     k += "stride";
+  if (ruleOn(Rule::RtSign))
+    k += "rtsign";
   // Later options: only when on, so default keys stay the same.
   if (unsigned vs = versionShortOption())
     k += "vs" + std::to_string(vs);

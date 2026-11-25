@@ -30,7 +30,8 @@ static const SCEV *innerCount(ScalarEvolution &SE, const Loop *al, bool latchOnl
 
 bool decomposeAffine(ScalarEvolution &SE, const SCEV *S, const Loop *L, const SCEV *&coef,
                      const SCEV *&lo, const SCEV *&hi, SmallVectorImpl<Term> *terms,
-                     bool latchOnly, SmallVectorImpl<const SCEVPredicate *> *preds) {
+                     bool latchOnly, SmallVectorImpl<const SCEVPredicate *> *preds,
+                     SmallVectorImpl<const SCEV *> *signChecks) {
   Type *ty = S->getType();
   if (SE.isLoopInvariant(S, L)) {
     coef = SE.getZero(ty);
@@ -54,18 +55,24 @@ bool decomposeAffine(ScalarEvolution &SE, const SCEV *S, const Loop *L, const SC
     if (!L->contains(al))
       return false;
     const SCEV *c, *l, *h;
-    if (!decomposeAffine(SE, ar->getStart(), L, c, l, h, terms, latchOnly, preds))
+    if (!decomposeAffine(SE, ar->getStart(), L, c, l, h, terms, latchOnly, preds, signChecks))
       return false;
     const SCEV *maxBtc = innerCount(SE, al, latchOnly, preds);
     if (isa<SCEVCouldNotCompute>(maxBtc) || !SE.isLoopInvariant(maxBtc, L))
       return false;
     const SCEV *ext = SE.getMulExpr(step, SE.getTruncateOrZeroExtend(maxBtc, ty));
-    if (SE.isKnownNonNegative(step))
+    if (SE.isKnownNonNegative(step)) {
       h = SE.getAddExpr(h, ext);
-    else if (SE.isKnownNonPositive(step))
+    } else if (SE.isKnownNonPositive(step)) {
       l = SE.getAddExpr(l, ext);
-    else
+    } else if (signChecks) {
+      // The caller checks 0 <= step before the loop.
+      if (!is_contained(*signChecks, step))
+        signChecks->push_back(step);
+      h = SE.getAddExpr(h, ext);
+    } else {
       return false;
+    }
     if (terms)
       terms->push_back({step, maxBtc});
     coef = c;
@@ -77,7 +84,7 @@ bool decomposeAffine(ScalarEvolution &SE, const SCEV *S, const Loop *L, const SC
     const SCEV *c = SE.getZero(ty), *l = SE.getZero(ty), *h = SE.getZero(ty);
     for (const SCEV *op : add->operands()) {
       const SCEV *oc, *ol, *oh;
-      if (!decomposeAffine(SE, op, L, oc, ol, oh, terms, latchOnly, preds))
+      if (!decomposeAffine(SE, op, L, oc, ol, oh, terms, latchOnly, preds, signChecks))
         return false;
       c = SE.getAddExpr(c, oc);
       l = SE.getAddExpr(l, ol);
@@ -96,7 +103,7 @@ bool decomposeAffine(ScalarEvolution &SE, const SCEV *S, const Loop *L, const SC
       return false;
     size_t first = terms ? terms->size() : 0;
     const SCEV *oc, *ol, *oh;
-    if (!decomposeAffine(SE, mul->getOperand(1), L, oc, ol, oh, terms, latchOnly, preds))
+    if (!decomposeAffine(SE, mul->getOperand(1), L, oc, ol, oh, terms, latchOnly, preds, signChecks))
       return false;
     if (terms)
       for (size_t i = first; i < terms->size(); i++)
