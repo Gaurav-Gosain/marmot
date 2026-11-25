@@ -84,6 +84,9 @@ bool marmotParkClearLinked();
 
 namespace marmot {
 
+// Defined below; fingerprint() puts its value in the cache key.
+bool splitReachOn();
+
 namespace {
 
 // Bump when the meaning of a cache entry changes.
@@ -662,6 +665,8 @@ std::string fingerprint(const CompileOptions &opts) {
       os << "|" << e << "=" << v;
   // On by default since the perfcmp gate; objects cached before had it off.
   os << "|parkclear=" << marmotParkClearLinked();
+  // Split reach is on by default too: objects cached before had it off.
+  os << "|reach=" << splitReachOn();
   // Only when not the default, so the default keeps its keys.
   if (opts.wpoImportBudget != 400 || !opts.wpoImportTransitive)
     os << "|ib" << opts.wpoImportBudget << "t" << opts.wpoImportTransitive;
@@ -864,7 +869,7 @@ bool importBodies(Module &m, const std::map<unsigned, std::set<std::string>> &im
 bool splitReachOn() {
   static const bool on = [] {
     const char *e = std::getenv("MARMOT_SPLIT_REACH");
-    return e && *e == '1';
+    return !(e && *e == '0');
   }();
   return on;
 }
@@ -1114,7 +1119,7 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback, 
       work = std::move(next);
     }
   }
-  // MARMOT_SPLIT_REACH=1: the copyable (linkonce, weak,
+  // Split reach (on by default, MARMOT_SPLIT_REACH=0 turns it off): the copyable (linkonce, weak,
   // available_externally) definitions each group reaches from what it
   // defines and imports, through code, initializers and other copyable
   // definitions. Only those are cloned into the group; without the switch
