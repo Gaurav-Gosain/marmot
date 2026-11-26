@@ -346,7 +346,7 @@ func (b *build) run1() (string, error) {
 	if cfg.TrimPath {
 		fileNames = trimNames(lp.GOROOT, lp.All)
 	}
-	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, FilePkgs: filePkgs, FileNames: fileNames, GoDialect: cfg.Dialect == "go", Release: cfg.Release, LineLocs: !b.tier0() && cfg.OptLevel != "0" && os.Getenv("MARMOT_LOC_COLS") != "1", NoptrSections: b.noptr(), GCVars: b.noptr() && !b.tier0() && os.Getenv("MARMOT_GCVARS") != "0", InitSections: os.Getenv("MARMOT_INITSECT") == "1", HomeInstances: b.homeInstances(), MergedGOROOT: lp.GOROOT, StdPkgs: stdPkgs(lp), XDefs: b.xdefs(),
+	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, FilePkgs: filePkgs, FileNames: fileNames, GoDialect: cfg.Dialect == "go", Release: cfg.Release, LineLocs: !b.tier0() && cfg.OptLevel != "0" && os.Getenv("MARMOT_LOC_COLS") != "1", NoptrSections: b.noptr(), GCVars: b.noptr() && !b.tier0() && os.Getenv("MARMOT_GCVARS") != "0", InitSections: initSections(goos), HomeInstances: b.homeInstances(), MergedGOROOT: lp.GOROOT, StdPkgs: stdPkgs(lp), XDefs: b.xdefs(),
 		Separate: b.incr, Facts: incrementalFacts(lp), KeepExported: keepExported, ReflectCall: reflectCall,
 		AllocReport: b.allocReport(), Race: cfg.Race})
 	if err != nil {
@@ -1228,4 +1228,18 @@ func declaresGeneric(pkg *types.Package) bool {
 		}
 	}
 	return false
+}
+
+// initSections reports whether package init code goes in its own text
+// section (codegen/initsect.go). On by default for ELF targets since its
+// gate (perfcmp dev, O2 and release, exit 0); MARMOT_INITSECT=0 turns it
+// off. Mach-O targets keep it opt-in (MARMOT_INITSECT=1) until a Mac gate.
+func initSections(goos string) bool {
+	switch os.Getenv("MARMOT_INITSECT") {
+	case "0":
+		return false
+	case "1":
+		return true
+	}
+	return goos != "darwin" && goos != "ios"
 }
