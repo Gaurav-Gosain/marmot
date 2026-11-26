@@ -386,7 +386,7 @@ func exportsGo(out *strings.Builder, exports []*ast.FuncDecl, hash string, types
 			w := widen(results[0], types)
 			ret = " " + w
 			if isBool(results[0], types) {
-				body = "\treturn _cgo_b2u(" + call + ")\n"
+				body = "\treturn _cgo_b2u(bool(" + call + "))\n" // a Go bool or a C.bool
 			} else {
 				body = "\treturn " + w + "(" + call + ")\n"
 			}
