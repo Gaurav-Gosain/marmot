@@ -85,8 +85,9 @@ bool marmotParkClearLinked();
 
 namespace marmot {
 
-// Defined below; fingerprint() puts its value in the cache key.
+// Defined below; fingerprint() puts their values in the cache key.
 bool splitReachOn();
+bool splitNameHashOn();
 
 namespace {
 
@@ -668,6 +669,8 @@ std::string fingerprint(const CompileOptions &opts) {
   os << "|parkclear=" << marmotParkClearLinked();
   // Split reach is on by default too: objects cached before had it off.
   os << "|reach=" << splitReachOn();
+  // Split name hash too: objects cached before were named by their key.
+  os << "|namehash=" << splitNameHashOn();
   // Symbol functions in fragments too: fragments cached before had none.
   os << "|symfuncs=" << pcln::symFuncsOn();
   // Only when not the default, so the default keeps its keys.
@@ -876,11 +879,20 @@ bool splitReachOn() {
   }();
   return on;
 }
+// On by default since the perfcmp gate; MARMOT_SPLIT_NAMEHASH=0 names a
+// module without an external definition by its cache key again.
+bool splitNameHashOn() {
+  static const bool on = [] {
+    const char *e = std::getenv("MARMOT_SPLIT_NAMEHASH");
+    return !(e && *e == '0');
+  }();
+  return on;
+}
 
 // byCalls (-split-adapt): functions are grouped by call graph instead of by
 // name hash (clusterByCalls), so a caller and the callees the inliner would
 // take stay in one group.
-// pkg (MARMOT_SPLIT_NAMEHASH): the module's Go package, which tells apart
+// pkg (name hash): the module's Go package, which tells apart
 // two packages whose modules define the same names with the same code.
 std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback, bool byCalls = false,
                                      StringRef pkg = "") {
@@ -891,17 +903,13 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback, 
     if (!gv.isDeclaration() && gv.hasExternalLinkage() && gv.hasName() &&
         (anchor.empty() || gv.getName() < anchor))
       anchor = gv.getName().str();
-  // MARMOT_SPLIT_NAMEHASH=1: a module without one (most modules under
+  // Name hash (on unless MARMOT_SPLIT_NAMEHASH=0): a module without one (most modules under
   // -wpo, after internalization) is named by the sorted names of what it
   // defines, so the suffix follows the code alone. The fallback (the
   // module's cache key) holds the options, the env switches and the root
   // path: with it a key-only change renamed every local symbol, moved
   // globals between groups and changed the layout (tuios -O 2, t12).
-  static const bool nameHash = [] {
-    const char *e = std::getenv("MARMOT_SPLIT_NAMEHASH");
-    return e && *e == '1';
-  }();
-  if (anchor.empty() && nameHash) {
+  if (anchor.empty() && splitNameHashOn()) {
     std::vector<std::string> names;
     for (GlobalValue &gv : m.global_values())
       if (!gv.isDeclaration() && gv.hasName() && !gv.getName().starts_with("."))
