@@ -89,7 +89,7 @@ func _cgo_b2u(b bool) uint32 {
 type _cgo_Incomplete struct{ _ [0]func() }
 `
 
-var reWrapper = regexp.MustCompile(`^_cgo_([0-9a-f]+)_(Cfunc|C2func)_(\w+)$`)
+var reWrapper = regexp.MustCompile(`^_cgo_([0-9a-f]+)_(Cfunc|C2func|Cmacro)_(\w+)$`)
 
 // cProto is a C wrapper's prototype, as cgo writes it.
 type cProto struct {
@@ -516,11 +516,13 @@ func splitNonEmpty(s string) []string {
 }
 
 var (
-	reCfuncCall = regexp.MustCompile(`_C2?func_(\w+)\(`)
+	reCfuncCall = regexp.MustCompile(`_C(?:2?func|macro)_(\w+)\(`)
 	reCheckCall = regexp.MustCompile(`_cgoCheckPointer\((_cgo(?:Base)?(\d+))`)
 )
 
-var reCfunc = regexp.MustCompile(`^_(Cfunc|C2func)_(\w+)$`)
+// Cmacro: a macro that expands to an expression which is not a constant
+// (a function call, say), read through a C wrapper with no parameters.
+var reCfunc = regexp.MustCompile(`^_(Cfunc|C2func|Cmacro)_(\w+)$`)
 
 func fileExists(p string) bool {
 	_, err := os.Stat(p)
@@ -767,7 +769,7 @@ func callC(w, cname, kind string, ext, d *ast.FuncDecl, proto cProto, types map[
 	return b.String(), cText, nil
 }
 
-var reProto = regexp.MustCompile(`(?m)^(.+)\n(_cgo_[0-9a-f]+_C2?func_\w+)\((.*)\)\n\{`)
+var reProto = regexp.MustCompile(`(?m)^(.+)\n(_cgo_[0-9a-f]+_C(?:2?func|macro)_\w+)\((.*)\)\n\{`)
 
 // readProtos reads the C wrapper prototypes of the .cgo2.c files.
 func readProtos(dir string) (map[string]cProto, error) {
@@ -814,7 +816,7 @@ func splitParams(s string) []string {
 	return append(out, strings.TrimSpace(s[start:]))
 }
 
-var reBody = regexp.MustCompile(`(?ms)^(_cgo_[0-9a-f]+_(C2?func)_(\w+))\(.*?\n\}\n`)
+var reBody = regexp.MustCompile(`(?ms)^(_cgo_[0-9a-f]+_(C2?func|Cmacro)_(\w+))\(.*?\n\}\n`)
 
 // bracket replaces cgo's thread sanitizer hooks in each wrapper with the
 // runtime's entry and exit.
