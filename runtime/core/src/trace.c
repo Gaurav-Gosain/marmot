@@ -52,6 +52,21 @@ static uint64_t image_base(void) {
 void trace_init(void) {
   const char *v = rt_getenv("MARMOT_TRACE"), *path;
   if (!v || !prefix(v, "wakeups=", &path) || !*path) return;
+  // A path that ends in / names a directory: each process writes its own
+  // file there, wakeups.PID (a program and the children it starts).
+  char buf[512];
+  size_t n = __builtin_strlen(path);
+  if (path[n - 1] == '/' && n + 32 < sizeof buf) {
+    __builtin_memcpy(buf, path, n);
+    __builtin_memcpy(buf + n, "wakeups.", 8);
+    n += 8;
+    char d[12];
+    int k = 0;
+    for (uint32_t p = (uint32_t)getpid(); k == 0 || p; p /= 10) d[k++] = (char)('0' + p % 10);
+    while (k) buf[n++] = d[--k];
+    buf[n] = 0;
+    path = buf;
+  }
   int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND | O_CLOEXEC, 0644);
   if (fd < 0) {
     rt_print("marmot: MARMOT_TRACE: cannot open the trace file\n");
