@@ -70,6 +70,56 @@ func TestNoise(t *testing.T) {
 	}
 }
 
+func TestPlan(t *testing.T) {
+	for _, c := range []struct {
+		runs   int
+		first  time.Duration
+		rounds int
+		keep0  bool
+	}{
+		{7, 100 * time.Millisecond, 8, false},
+		{7, 5 * time.Second, 8, false}, // at the limit: not slow
+		{7, 5*time.Second + 1, 4, true},
+		{7, 40 * time.Second, 4, true},
+		{35, 6 * time.Second, 4, true}, // a slow startup program too
+		{3, 6 * time.Second, 3, true},  // never more rounds than -runs asks for
+		{2, 6 * time.Second, 2, true},
+		{1, 6 * time.Second, 2, false}, // -runs 1: one warm-up, one timed run, as before
+	} {
+		rounds, keep0 := plan(c.runs, c.first)
+		if rounds != c.rounds || keep0 != c.keep0 {
+			t.Errorf("plan(%d, %v) = %d, %v, want %d, %v", c.runs, c.first, rounds, keep0, c.rounds, c.keep0)
+		}
+	}
+}
+
+// TestSlowSamples: the 4 samples a side of a slow program give the noise line
+// its halves, and one slow run of 4 is not the median.
+func TestSlowSamples(t *testing.T) {
+	s := func(ns ...int) []sample {
+		var ss []sample
+		for _, n := range ns {
+			ss = append(ss, sample{wall: time.Duration(n) * time.Millisecond})
+		}
+		return ss
+	}
+	rounds, keep0 := plan(7, 12500*time.Millisecond)
+	if !keep0 || rounds != 4 {
+		t.Fatalf("plan: %d, %v", rounds, keep0)
+	}
+	got := s(12500, 14000, 12600, 12550) // one slow run, as matmul shows
+	if len(got) < 4 {
+		t.Fatal("a slow program has fewer samples than the noise line needs")
+	}
+	if m := median(got).wall; m != 12600*time.Millisecond {
+		t.Errorf("median = %v, want 12.6s", m)
+	}
+	ev, od := halves(got)
+	if ev.wall != 12600*time.Millisecond || od.wall != 14000*time.Millisecond {
+		t.Errorf("halves: %v %v", ev.wall, od.wall)
+	}
+}
+
 func TestVerdict(t *testing.T) {
 	quiet := outcome{maxLoad: 1, cpus: 16}
 	for _, c := range []struct {

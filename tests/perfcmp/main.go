@@ -12,7 +12,9 @@
 // time, or uses more than 3% more memory; the geomean line gives the
 // verdict for the whole set. Programs: hello and a subset of bench/programs
 // (time), sketch rendering its pinned diagrams (time), tuios --version
-// (startup).
+// (startup). A program whose first A run takes more than 5 s runs 4 rounds
+// a side in all, the first one included, instead of a dropped warm-up round
+// and -runs timed ones.
 //
 // A verdict needs a machine quiet enough to see 2%. Each mode prints a noise
 // line, each side against itself (its odd runs over its even ones); with A=B
@@ -205,8 +207,9 @@ func main() {
 				runs *= 5 // short runs: more samples
 			}
 			note := ""
+			rounds, keep0 := runs+1, false // by default the first round warms caches and is dropped
 			b0, t0 := cpuBusy(pinned), time.Now()
-			for r := 0; r < runs+1; r++ { // the first round warms caches and is dropped
+			for r := 0; r < rounds; r++ {
 				order := []int{0, 1}
 				if r%2 == 1 {
 					order = []int{1, 0}
@@ -220,16 +223,19 @@ func main() {
 						break
 					}
 					used += sm.cpu.Seconds()
-					if r > 0 {
+					if r == 0 && i == 0 {
+						rounds, keep0 = plan(runs, sm.wall)
+					}
+					if r > 0 || keep0 {
 						got[i] = append(got[i], sm)
 					}
 				}
 				if !ok {
 					break
 				}
-				if r == 1 && got[0][0].wall > 5*time.Second && runs > 1 {
-					runs, note = 1, " (1 run: slow)" // a slow program in a slow mode: one sample a side
-				}
+			}
+			if keep0 {
+				note = fmt.Sprintf(" (%d runs: slow)", rounds)
 			}
 			if b1 := cpuBusy(pinned); b0 >= 0 && b1 >= 0 {
 				busy, wall = busy+b1-b0, wall+time.Since(t0).Seconds()
@@ -534,6 +540,26 @@ func runOnce(s side, p program, bin string) (sample, error) {
 		}
 	}
 	return sample{wall, cpu, rss}, nil
+}
+
+// slowWall and slowRounds: a program whose first A run takes more than slowWall
+// runs slowRounds rounds a side in all. A run that long warms its own caches, so
+// the first round is a timed sample, and 4 samples a side give a median that one
+// slow run cannot move and the odd and even halves the noise line needs.
+const (
+	slowWall   = 5 * time.Second
+	slowRounds = 4
+)
+
+// plan returns how many rounds a program runs and whether round 0 is a timed
+// sample, from -runs and the wall time of its first A run. A program at or under
+// slowWall runs runs+1 rounds and drops round 0. A slower one runs at most
+// slowRounds rounds and keeps round 0. With -runs 1 nothing changes.
+func plan(runs int, first time.Duration) (rounds int, keep0 bool) {
+	if runs > 1 && first > slowWall {
+		return min(runs, slowRounds), true
+	}
+	return runs + 1, false
 }
 
 func median(ss []sample) sample {
