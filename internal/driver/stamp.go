@@ -70,6 +70,10 @@ func (b *build) buildStamp(goos, goarch string) string {
 	for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_NO_BACKEND", "MARMOT_DIALECT", "MARMOT_KEEP_SYMBOLS", "MARMOT_LINKMAP", "MARMOT_WPO", "MARMOT_SPEC", "MARMOT_BACKEND_FLAGS", "MARMOT_PCLN_VERSION", "MARMOT_DWARF", "MARMOT_ESCAPE_ROUNDS", "GOAMD64"} {
 		fmt.Fprintf(h, "%s=%s\n", k, os.Getenv(k))
 	}
+	// Only when set: stamps of builds that leave it alone stay as they were.
+	if v := os.Getenv("MARMOT_BRANCH_ALIGN"); v != "" {
+		fmt.Fprintf(h, "MARMOT_BRANCH_ALIGN=%s\n", v)
+	}
 	writeNoFlags(h)
 	b.writeXDefs(h)
 	for _, f := range files {

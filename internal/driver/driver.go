@@ -871,6 +871,15 @@ func (b *build) backendArgs(emitKind, batch string) []string {
 	if cpu := b.amd64CPU(); cpu != "" && !strings.Contains(os.Getenv("MARMOT_BACKEND_FLAGS"), "-mcpu") {
 		args = append(args, "-mcpu="+cpu)
 	}
+	// x86-64 builds other than dev: no branch crosses or ends on a 32-byte
+	// boundary, so a hot loop's macro-fused cmp+jcc does not take the JCC
+	// erratum slowdown of Skylake-derived cores (bench iface at -O 2 ran 17%
+	// slower when a smaller runtime moved its loop onto a boundary). The
+	// padding adds about 2% code. MARMOT_BRANCH_ALIGN=0 turns it off.
+	if b.goarch == "amd64" && !b.tier0() && os.Getenv("MARMOT_BRANCH_ALIGN") != "0" &&
+		!strings.Contains(os.Getenv("MARMOT_BACKEND_FLAGS"), "branches-within-32B") {
+		args = append(args, "-x86-branches-within-32B-boundaries")
+	}
 	if b.cfg.GPU != "" {
 		args = append(args, "-gpu="+b.cfg.GPU)
 		if b.cfg.GPURemarks {
