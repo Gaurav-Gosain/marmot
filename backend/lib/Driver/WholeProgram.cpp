@@ -35,6 +35,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ModuleSlotTracker.h"
+#include "llvm/IR/StructuralHash.h"
 #include "llvm/Linker/Linker.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -877,10 +878,7 @@ bool splitReachOn() {
 // byCalls (-split-adapt): functions are grouped by call graph instead of by
 // name hash (clusterByCalls), so a caller and the callees the inliner would
 // take stay in one group.
-// stableName (MARMOT_SPLIT_NAMEHASH): the module's object name and package,
-// which tell apart two modules that define the same names.
-std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback, bool byCalls = false,
-                                     StringRef stableName = "") {
+std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback, bool byCalls = false) {
   // Stable suffix: the smallest strong external definition of the module
   // (a symbol only this module defines).
   std::string anchor;
@@ -904,7 +902,11 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback, 
       if (!gv.isDeclaration() && gv.hasName() && !gv.getName().starts_with("."))
         names.push_back(gv.getName().str());
     std::sort(names.begin(), names.end());
-    anchor = stableName.str() + "\n";
+    // The structural hash (code and constants, no names, no debug info)
+    // tells apart two modules that define the same names with other
+    // bodies. Object names (m046.o) are no help: split parts are numbered
+    // in the order they finish.
+    anchor = std::to_string(StructuralHash(m, /*DetailedHash=*/true)) + "\n";
     for (const std::string &n : names)
       anchor += n + "\n";
   }
@@ -2414,8 +2416,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           auto t0 = std::chrono::steady_clock::now();
           unsigned half = std::max(1u, opts.splitInstrs / 2);
           unsigned k = std::min({16u, nfuncs, (n + half - 1) / half});
-          auto bcs = splitModule(**mOr, k, m.keyB, false,
-                                     (sys::path::filename(m.job.out) + "|" + m.pkg).str());
+          auto bcs = splitModule(**mOr, k, m.keyB);
           std::string list;
           std::lock_guard<std::mutex> lock(mu);
           for (unsigned g = 0; g < k; ++g) {
@@ -3119,8 +3120,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         }
         unsigned half = std::max(1u, limit / 2);
         unsigned k = std::min({16u, nfuncs, (n + half - 1) / half});
-        auto bcs = splitModule(*m, k, info.keyB, adaptBytes != 0,
-                                     (sys::path::filename(info.job.out) + "|" + info.pkg).str());
+        auto bcs = splitModule(*m, k, info.keyB, adaptBytes != 0);
         std::string list;
         std::lock_guard<std::mutex> lock(mu);
         for (unsigned g = 0; g < k; ++g) {

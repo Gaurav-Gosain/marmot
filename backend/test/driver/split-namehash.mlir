@@ -1,6 +1,6 @@
 // MARMOT_SPLIT_NAMEHASH=1: a split module without an external definition is
-// named by its object name, its package and the names it defines, never by its
-// cache key. Two modules that define the same names with other bodies (this
+// named by the names it defines and its structural hash (code and constants),
+// never by its cache key. Two modules that define the same names with other bodies (this
 // file and Inputs/split_namehash_c.mlir, both only internal definitions) get
 // different suffixes, so their groups link into one program.
 // RUN: rm -rf %t && mkdir -p %t
