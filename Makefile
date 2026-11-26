@@ -24,6 +24,7 @@ backend:
 rtcore:
 	$(MAKE) -C runtime/core
 
+# Slow tests (several minutes each) run only with MARMOT_TEST_SLOW=1: make test MARMOT_TEST_SLOW=1.
 test: all
 	go test ./...
 	$(MAKE) conform
