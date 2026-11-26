@@ -164,7 +164,7 @@ var features = []feature{
 }
 
 var staticFeatures = [][3]string{
-	{"Race detector (-race)", "missing", "non-goal for v1"},
+	{"Race detector (-race)", "works", "348 of 362 Opt-in, native linux/amd64 only. docs/usage.md lists the races not found yet."},
 	{"plugin package", "missing", "non-goal for v1"},
 	{"DWARF debug info", "missing", "non-goal for v1"},
 	{"Windows", "missing", "non-goal for v1"},
@@ -474,7 +474,7 @@ func main() {
 	w("- Slice growth capacities and map iteration order are not guaranteed to equal gc's.\n")
 	w("- Evaluation order: variables are read after the calls of the same expression; open cases are tracked in `tests/run/audit/evalorder_gaps`.\n")
 	w("- Unexported methods of embedded types from different packages with the same name: see `world/audit_unexported` under open failures.\n")
-	w("- The race detector, plugins, DWARF and Windows are not supported.\n")
+	w("- Plugins, DWARF and Windows are not supported. The race detector (`-race`) is opt-in.\n")
 	w("- `reflect`: see the open failures below for the current gaps.\n\n")
 
 	kb, err := os.ReadFile(*flKnown)

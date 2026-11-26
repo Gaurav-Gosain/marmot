@@ -120,6 +120,10 @@ static cl::opt<bool> pclnFrags(
 static cl::opt<bool> mergeFunctions(
     "merge-functions",
     cl::desc("MergeFunctions at -Os/-Oz (off by default: merged defer thunks break recover)"));
+static cl::opt<bool> race(
+    "race",
+    cl::desc("instrument functions marked sanitize_thread with ThreadSanitizer (the race detector)"),
+    cl::init(false));
 static cl::opt<bool> serve(
     "serve", cl::desc("Serve batch requests: one JSON object per line on stdin "
                       "({\"batch\":FILE,\"threads\":N,\"cache\":DIR}), one reply line "
@@ -345,6 +349,7 @@ int main(int argc, char **argv) {
   opts.keepCallSites = keepCallSites;
   opts.optionKey = optionKey(argc, argv);
   opts.mergeFunctions = mergeFunctions;
+  opts.race = race;
   opts.pclnFragments = pclnFrags;
   opts.wpoClosedWorld = !noClosedWorld;
   opts.wpoPruneTypes = !noPruneTypes;

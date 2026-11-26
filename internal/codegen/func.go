@@ -642,6 +642,9 @@ func (f *funcGen) instr(instr ssa.Instruction) {
 			f.vals[v] = r
 		}
 	case *ssa.Store:
+		if f.m.p.opts.Race && f.fn != nil && raceSelfStore(v) {
+			break
+		}
 		addr := f.value(v.Addr)
 		if needsNilCheck(v.Addr) {
 			f.nilCheckOf(v.Addr, addr)

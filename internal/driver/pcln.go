@@ -79,7 +79,7 @@ func (b *build) pclnFrags() bool {
 // tier0 reports whether the backend compiles with tier0 (-tier0): dev builds
 // with no -O level, never -release; MARMOT_TIER0=0 turns it off.
 func (b *build) tier0() bool {
-	return !b.wpo() && !b.cfg.Release && !b.cfg.OptSet && os.Getenv("MARMOT_TIER0") != "0"
+	return !b.wpo() && !b.cfg.Release && !b.cfg.OptSet && !b.cfg.Race && os.Getenv("MARMOT_TIER0") != "0"
 }
 
 // backendBuildArgs are the backend options that follow from the build mode.

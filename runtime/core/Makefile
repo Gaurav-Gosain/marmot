@@ -132,7 +132,7 @@ S_OBJS  := $(patsubst src/%.S,$(OBJ)/%.o,$(S_SRCS))
 BCS     := $(patsubst %.c,$(OBJ)/%.bc,$(notdir $(C_SRCS)))
 HDRS    := $(wildcard src/*.h) include/rt.h
 
-.PHONY: all test test-asan test-tsan bench clean check-targets
+.PHONY: all test test-asan test-tsan bench clean check-targets race
 
 all: $(OUT)/librtcore.a $(OUT)/rtcore.bc $(if $(WASM),$(OUT)/wasm-callers.o)
 
@@ -219,3 +219,13 @@ check-targets:
 
 clean:
 	rm -rf $(OBJ) $(OUT)/librtcore.a $(OUT)/rtcore.bc
+
+# ---- race detector (marmot build -race) ----
+# build/lib/race: librtcore.a and rtcore.bc built with RT_RACE=1 (src/race.c),
+# and the Go flavor of the TSan runtime, race_GOOS_GOARCH.o, built from an LLVM
+# source tree: make race COMPILER_RT=<llvm-project>/compiler-rt (race/build-tsan.sh).
+RACE_OUT := $(OUT)/race
+race:
+	@test -n "$(COMPILER_RT)" || { echo "make race: set COMPILER_RT to the compiler-rt directory of an LLVM source tree"; exit 2; }
+	$(MAKE) OUT=$(RACE_OUT) OBJ=$(OBJ)-race CFLAGS="$(CFLAGS) -DRT_RACE=1" all
+	CC=$(CC) OBJCOPY=$(LLVM)/bin/llvm-objcopy sh race/build-tsan.sh $(COMPILER_RT) $(RACE_OUT)

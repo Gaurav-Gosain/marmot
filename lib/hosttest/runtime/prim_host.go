@@ -251,3 +251,18 @@ type cgoPointerError struct{ detail string }
 //
 //go:linkname hostFreeIdle rt_free_idle
 func hostFreeIdle(p unsafe.Pointer, size uintptr) {}
+
+// The race hooks of the pure files (race_off.go without its build tag):
+// the host test runs under go test -race with the host's own detector.
+const raceenabled = false
+
+func raceAcquire(addr unsafe.Pointer)            {}
+func raceRelease(addr unsafe.Pointer)            {}
+func raceReleaseMerge(addr unsafe.Pointer)       {}
+func raceReleaseAcquire(addr unsafe.Pointer)     {}
+func raceFingo()                                 {}
+func raceSkip(d int32)                           {}
+func raceReadAddr(p unsafe.Pointer)              {}
+func raceWriteAddr(p unsafe.Pointer)             {}
+func raceReadRange(p unsafe.Pointer, n uintptr)  {}
+func raceWriteRange(p unsafe.Pointer, n uintptr) {}

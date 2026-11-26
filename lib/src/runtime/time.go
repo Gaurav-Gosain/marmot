@@ -76,6 +76,9 @@ func time_newTimer(when, period int64, f func(any, uintptr, int64), arg any, cp 
 	t.f = f
 	t.arg = arg
 	t.ch = (*hchan)(cp)
+	if raceenabled {
+		raceRelease(unsafe.Pointer(t))
+	}
 	lock(&t.mu)
 	t.start(when, period)
 	unlock(&t.mu)
@@ -153,6 +156,11 @@ func timerFire(p unsafe.Pointer, armed uintptr) {
 	// f is sendTime (a non-blocking channel send) or goFunc (starts a
 	// goroutine); neither blocks, so it runs under t.mu, which orders it
 	// with Stop and Reset.
+	if raceenabled {
+		// Whatever happened before the timer was set or reset happens before
+		// its function (gc: racerelease in modtimer, raceacquire before f).
+		raceAcquire(unsafe.Pointer(t))
+	}
 	t.f(t.arg, seq, delta)
 	unlock(&t.mu)
 }
@@ -167,6 +175,9 @@ func time_stopTimer(t *timeTimer) bool {
 
 //go:linkname time_resetTimer time.resetTimer
 func time_resetTimer(t *timeTimer, when, period int64) bool {
+	if raceenabled {
+		raceRelease(unsafe.Pointer(t))
+	}
 	lock(&t.mu)
 	pending := t.stop()
 	t.start(when, period)

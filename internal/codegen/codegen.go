@@ -77,6 +77,10 @@ type Options struct {
 	// AllocReport, when not nil, receives one JSON line per allocation
 	// decision (allocreport.go). Writes are serialized by the Program.
 	AllocReport io.Writer
+	// Race: functions of the packages gc instruments for the race detector
+	// get sanitize_thread, and the backend's ThreadSanitizer pass
+	// instruments them (marmot build -race; race.go).
+	Race bool
 }
 
 // Module is the MLIR text for one Go package (or the synthetic entry module).

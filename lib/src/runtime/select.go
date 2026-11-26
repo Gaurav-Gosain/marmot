@@ -98,6 +98,13 @@ func selectgo(cases *scase, ncases int, block bool) (chosen int, recvOK bool) {
 	}
 	norder := len(pollorder)
 	lockorder = lockorder[:norder]
+	if raceenabled {
+		for _, casei := range pollorder {
+			if cas := cases.at(int(casei)); cas.send {
+				raceReadAddr(unsafe.Pointer(cas.c))
+			}
+		}
+	}
 
 	// Lock-free pass over the leading buffered cases in poll order: their
 	// rings need no channel lock, so a ready one completes without
@@ -130,6 +137,9 @@ func selectgo(cases *scase, ncases int, block bool) (chosen int, recvOK bool) {
 			return casi, true
 		}
 		if c.ringClosedDrained() {
+			if raceenabled {
+				raceAcquire(unsafe.Pointer(c))
+			}
 			if cas.elem != nil {
 				typedmemclr(c.elemtype, cas.elem)
 			}
@@ -215,6 +225,9 @@ func selectgo(cases *scase, ncases int, block bool) (chosen int, recvOK bool) {
 					}
 					if c.ringClosedDrained() {
 						selunlock(cases, lockorder)
+						if raceenabled {
+							raceAcquire(unsafe.Pointer(c))
+						}
 						if cas.elem != nil {
 							typedmemclr(c.elemtype, cas.elem)
 						}
@@ -241,6 +254,9 @@ func selectgo(cases *scase, ncases int, block bool) (chosen int, recvOK bool) {
 				}
 				if c.closed != 0 {
 					selunlock(cases, lockorder)
+					if raceenabled {
+						raceAcquire(unsafe.Pointer(c))
+					}
 					if cas.elem != nil {
 						typedmemclr(c.elemtype, cas.elem)
 					}
@@ -270,6 +286,9 @@ func selectgo(cases *scase, ncases int, block bool) (chosen int, recvOK bool) {
 			sg.caseIndex = casi
 			*nextp = sg
 			nextp = &sg.waitlink
+			if raceenabled {
+				raceRelease(unsafe.Pointer(sg))
+			}
 			if cas.send {
 				c.sendq.enqueue(sg)
 			} else {
@@ -314,6 +333,12 @@ func selectgo(cases *scase, ncases int, block bool) (chosen int, recvOK bool) {
 		casi := win.caseIndex
 		winCase := cases.at(casi)
 		recvOK = win.success
+		if raceenabled && !notified {
+			raceAcquire(unsafe.Pointer(win))
+			if !recvOK {
+				raceAcquire(unsafe.Pointer(winCase.c))
+			}
+		}
 		selectWithdraw(gp, cases, win)
 		selunlock(cases, lockorder)
 		if notified {

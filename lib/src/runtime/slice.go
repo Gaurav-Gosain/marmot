@@ -50,6 +50,9 @@ func growslice(et *_type, oldPtr unsafe.Pointer, oldLen, oldCap, newLen int) sli
 		// length. Use zerobase.
 		return slice{mallocgc(0, nil), newLen, newLen}
 	}
+	if raceenabled && oldLen > 0 {
+		raceReadRange(oldPtr, uintptr(oldLen)*et.size)
+	}
 
 	newcap := nextslicecap(newLen, oldCap)
 
@@ -140,6 +143,10 @@ func slicecopy(dst unsafe.Pointer, dstLen int, src unsafe.Pointer, srcLen int, e
 		return n
 	}
 	size := uintptr(n) * elemSize
+	if raceenabled {
+		raceReadRange(src, size)
+		raceWriteRange(dst, size)
+	}
 	if size == 1 {
 		*(*byte)(dst) = *(*byte)(src)
 	} else {

@@ -475,6 +475,13 @@ func (m *moduleGen) funcAttrs(fn *ssa.Function, sym string, decl bool) string {
 		// For the backend's cost policies only; no pass reads it to change code.
 		pass = append(pass, `"marmot-std"`)
 	}
+	if m.p.opts.Race && local && len(fn.Blocks) > 0 && raceInstrumented(fn) {
+		pass = append(pass, `"sanitize_thread"`)
+	} else if m.p.opts.Race && local && len(fn.Blocks) > 0 && raceAtomicsOnly(fn) {
+		// The backend leaves these atomics instrumented; every other
+		// function without sanitize_thread gets no instrumentation at all.
+		pass = append(pass, `"marmot-race-atomics"`)
+	}
 	if optGCPtr && local && len(fn.Blocks) > 0 && m.p.conservativeFunc(fn) {
 		pass = append(pass, `"marmot-conservative-stack"`)
 	}

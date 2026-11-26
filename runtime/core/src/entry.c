@@ -36,6 +36,10 @@ RT_API uintptr_t *rt_auxv(intptr_t *n) {
 // exits directly, as gc does there. Fatal errors use os_exit, which never
 // runs user code (it can be reached from a signal handler).
 RT_API void rt_exit(int32_t code) {
+#if RT_RACE
+  // gc: a program that found races exits 66 (TSan's fini may exit itself).
+  if (race_fini() && code == 0) code = 66;
+#endif
 #if RT_OS_DARWIN
   exit(code);
 #else
@@ -103,6 +107,9 @@ static void rt_init(int argc, char **argv, char **envp) {
   os_init();
   trace_init();
   malloc_init();
+#if RT_RACE
+  race_init();  // after the arena exists, before any goroutine
+#endif
   sched_init();
   gc_init();
 #if RT_OS_LINUX

@@ -54,6 +54,7 @@ type Config struct {
 	// GPURemarks: -gpu-remarks, print the loop and GPU remarks.
 	GPU        string
 	GPURemarks bool
+	Race       bool // -race: the race detector (race.go)
 	// BuildMode: "exe" (default) or "pie", a position independent ELF
 	// executable (pie.go).
 	BuildMode string
@@ -264,6 +265,9 @@ func (b *build) run1() (string, error) {
 	if cfg.GPURemarks && cfg.GPU == "" {
 		return "", fmt.Errorf("-gpu-remarks reports on -gpu builds: add -gpu")
 	}
+	if err := b.checkRace(); err != nil {
+		return "", err
+	}
 	if cfg.Static && goos != "linux" {
 		return "", fmt.Errorf("-static links Linux executables (with musl); %s executables link the system C library dynamically: add -target linux/%s", goos, goarch)
 	}
@@ -281,9 +285,12 @@ func (b *build) run1() (string, error) {
 	}
 	defer releaseSlot()
 	lcfg := loader.Config{
-		Dir: cfg.Dir, Root: cfg.Root, Tags: cfg.Tags, GOOS: goos, GOARCH: goarch, Patterns: cfg.Patterns,
+		Dir: cfg.Dir, Root: cfg.Root, Tags: b.loaderTags(), GOOS: goos, GOARCH: goarch, Patterns: cfg.Patterns,
 		Log: b.logf, Tests: cfg.Test, AllErrors: cfg.AllErrors, Overlay: cfg.Overlay, CC: llvmTool("clang"), CCFlags: b.cgoLoaderFlags(),
 		BeforeSSA: func(all []*packages.Package) error {
+			if !cfg.Race {
+				dropRaceOff(all)
+			}
 			return specialize.BeforeSSA(&specialize.Input{Packages: all, Release: cfg.Release, GOOS: goos, GOARCH: goarch, Log: b.logf})
 		},
 		AfterSSA: func(prog *ssa.Program, pkgs []*ssa.Package) error {
@@ -341,7 +348,7 @@ func (b *build) run1() (string, error) {
 	}
 	cg, err := codegen.NewProgram(lp.SSA, ssaPkgs, files, codegen.Options{GOOS: goos, GOARCH: goarch, Sizes: lp.Sizes, FilePkgs: filePkgs, FileNames: fileNames, GoDialect: cfg.Dialect == "go", Release: cfg.Release, LineLocs: !b.tier0() && cfg.OptLevel != "0" && os.Getenv("MARMOT_LOC_COLS") != "1", NoptrSections: b.noptr(), GCVars: b.noptr() && !b.tier0() && os.Getenv("MARMOT_GCVARS") != "0", InitSections: os.Getenv("MARMOT_INITSECT") == "1", HomeInstances: b.homeInstances(), MergedGOROOT: lp.GOROOT, StdPkgs: stdPkgs(lp), XDefs: b.xdefs(),
 		Separate: b.incr, Facts: incrementalFacts(lp), KeepExported: keepExported, ReflectCall: reflectCall,
-		AllocReport: b.allocReport()})
+		AllocReport: b.allocReport(), Race: cfg.Race})
 	if err != nil {
 		return "", err
 	}
@@ -741,7 +748,9 @@ func (b *build) link(objs []string, out string) error {
 func (b *build) link1(objs []string, rt, out string, extra []string) error {
 	args := []string{"-o", out}
 	args = append(args, objs...)
-	args = append(args, rt, "-lpthread")
+	args = append(args, rt)
+	args = append(args, b.raceLinkArgs()...)
+	args = append(args, "-lpthread")
 	if b.cfg.PGOGen {
 		args = append(args, "-fprofile-generate")
 	}
@@ -834,6 +843,9 @@ func (b *build) backendArgs(emitKind, batch string) []string {
 	args := []string{"-O", b.cfg.OptLevel, "--emit=" + emitKind, "--batch=" + batch, "-j", fmt.Sprint(jobs)}
 	if b.wpo() {
 		args = append(args, "-wpo")
+	}
+	if b.cfg.Race {
+		args = append(args, "-race")
 	}
 	if b.cfg.PGOGen {
 		out := b.cfg.Output
@@ -1004,6 +1016,9 @@ func (b *build) cross() bool { return b.goos != runtime.GOOS || b.goarch != runt
 
 // rtLib returns the runtime core library file for the target.
 func (b *build) rtLib(name string) string {
+	if b.cfg.Race {
+		return filepath.Join(b.cfg.Root, "build", "lib", "race", name) // race.go
+	}
 	if b.cfg.Static {
 		// The runtime of static builds is compiled against musl.
 		return filepath.Join(b.cfg.Root, "build", "lib", b.goos+"-"+b.goarch+"-musl", name)

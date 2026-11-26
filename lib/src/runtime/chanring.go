@@ -92,6 +92,9 @@ func (c *hchan) ringPush(ep unsafe.Pointer) int {
 		case dif == 0:
 			if atomicCas64(c.enqp(), pos, pos+1) {
 				typedmemmove(c.elemtype, c.ringSlot(pos), ep)
+				if raceenabled {
+					raceReleaseAcquire(unsafe.Pointer(c.ringSeq(pos)))
+				}
 				atomicStore64(c.ringSeq(pos), 2*pos+1)
 				return ringOK
 			}
@@ -113,6 +116,9 @@ func (c *hchan) ringPop(ep unsafe.Pointer) bool {
 		case dif == 0:
 			if atomicCas64(c.deqp(), pos, pos+1) {
 				slot := c.ringSlot(pos)
+				if raceenabled {
+					raceReleaseAcquire(unsafe.Pointer(c.ringSeq(pos)))
+				}
 				if ep != nil {
 					typedmemmove(c.elemtype, ep, slot)
 				}
@@ -236,6 +242,9 @@ func chanrecvBuf(c *hchan, ep unsafe.Pointer, block bool) (selected, received bo
 			return true, true
 		}
 		if c.ringClosedDrained() {
+			if raceenabled {
+				raceAcquire(unsafe.Pointer(c))
+			}
 			if ep != nil {
 				typedmemclr(c.elemtype, ep)
 			}

@@ -45,6 +45,7 @@ struct CompileOptions {
   // Batch: write a pc table fragment OUT.pcln next to each object.
   bool pclnFragments = false;
   bool mergeFunctions = false; // MergeFunctions at -Os/-Oz (off: recover frames)
+  bool race = false;           // -race: ThreadSanitizer instrumentation of sanitize_thread functions
   bool stringsNoCopy = false; // go-strings rule S3 (off until the matrix passes with it)
   bool wpoPruneTypes = true;   // -wpo: drop reflection tables nobody can read
   bool wpoClosedWorld = true;  // -wpo: devirtualized indirect calls lose their fallback

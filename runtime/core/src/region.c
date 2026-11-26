@@ -207,6 +207,12 @@ NOINLINE void *rt_region_alloc_slow(rt_region *r, uintptr_t size) {
   return p;
 }
 
+#if RT_RACE
+// Race builds: rt_region_alloc below becomes the inner function of a wrapper
+// (end of file) that tells TSan about each new object.
+#define rt_region_alloc rt_region_alloc_norace
+#endif
+
 // Zeroed memory, 16-byte aligned. Inlinable from rtcore.bc.
 RT_API void *rt_region_alloc(rt_region *r, uintptr_t size) {
   size = (size + 15) & ~(uintptr_t)15;
@@ -232,6 +238,9 @@ RT_API void rt_region_free(rt_region *r) {
   r->chunks = NULL;
   while (c) {
     rchunk *next = c->next;
+#if RT_RACE
+    race_free((void *)chunk_data(c), c->size);  // the chunk's objects die here
+#endif
     if (UNLIKELY(rt_poison)) {
       chunk_poison(c);
     } else if (!c->big) {
@@ -286,6 +295,9 @@ RT_API void rt_region_reset(rt_region *r) {
   rchunk *keep = NULL, *c = r->chunks;
   while (c) {
     rchunk *next = c->next;
+#if RT_RACE
+    race_free((void *)chunk_data(c), c->size);  // the chunk's objects die here
+#endif
     if (UNLIKELY(rt_poison)) {
       chunk_poison(c);  // keep none: the next allocation takes a fresh chunk
     } else if (!keep && !c->big && next == NULL) {
@@ -314,3 +326,13 @@ RT_API void rt_region_reset(rt_region *r) {
   }
   if (m) m->locks--;
 }
+
+#if RT_RACE
+#undef rt_region_alloc
+// A region object starts with clean shadow, as a heap object does (rt_alloc).
+RT_API void *rt_region_alloc(rt_region *r, uintptr_t size) {
+  void *p = rt_region_alloc_norace(r, size);
+  if (size) race_malloc(p, size, __builtin_return_address(0));
+  return p;
+}
+#endif

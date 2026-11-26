@@ -193,6 +193,43 @@ Programs built by marmot record CPU profiles with the standard `runtime/pprof` A
 (`pprof.StartCPUProfile`), so the same profile can be read with `marmot prof` or `go tool
 pprof`. On Linux each thread is sampled on its own CPU clock; on macOS the process timer is used.
 
+## Race detector
+
+`-race` builds the program with the data race detector, as `go build -race` does. Use it with
+`marmot build`, `marmot run` and `marmot test`. It works for native linux/amd64 builds only, and
+not with `-static`. Build the race runtime once first:
+
+    make -C runtime/core race COMPILER_RT=DIR
+
+DIR is the `compiler-rt` directory of an LLVM source tree. Get it from the `llvm-project` source
+archive of an LLVM release (github.com/llvm/llvm-project/releases), or clone that repository.
+
+A race build reports each data race on stderr in gc's format, with the stack of both accesses
+and the place where the memory was allocated. The program exits with status 66 when it found a
+race. Builds without `-race` do not change.
+
+gc's race tests (`runtime/race/testdata`) are listed in `tests/race/list.txt` with their status.
+marmot finds the races of 348 of the 362 that run. No test reports a race that is not there.
+These races are not found yet:
+
+- A struct value that a goroutine sends on a channel while another goroutine writes a field
+  of it (`TestRaceNestedStruct`).
+- A write of a whole struct through a pointer against a write of one field
+  (`TestRaceStructInd`).
+- A value that a conversion to an interface reads while another goroutine writes it
+  (`TestRaceIssue12664_2`, `_3`, `_4`).
+- Reads and writes through `reflect.Value` (`Set`, `Int`, `reflect.Copy`:
+  `TestRaceReflectRW`, `WW`, `CopyWW`).
+- A buffer that `os.File.Read` or `ReadAt` fills while another goroutine reads it
+  (`TestRaceIssue5567`, `TestRaceIssue51618`).
+- `string(b)` against `copy` into the same byte slice (`TestRaceSlice4`).
+- A method call through an embedded pointer field against a write of that field
+  (`TestRaceMethodThunk3`).
+- A read and a write of package variables by two goroutines that `go f()` starts directly
+  (`TestRaceIntRWGlobalFuncs`).
+- Two cleanups (`runtime.AddCleanup`) that write the same variable
+  (`TestRaceBetweenCleanups`).
+
 ## Binary size
 
 `marmot size app` lists the sections of the executable, the code of each package and the

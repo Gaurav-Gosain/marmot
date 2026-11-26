@@ -548,9 +548,15 @@ func SetFinalizer(obj any, finalizer any) {
 		argIface = ft.inCount == 1 && ft.param(0).kind == kindInterface
 	}
 	lock(&finLock)
+	if raceenabled {
+		raceSkip(1) // the finTable bookkeeping makes no race annotations
+	}
 	if f.typ == nil {
 		if ent := finTable[^uintptr(e.data)]; ent != nil {
 			ent.fn = nil
+		}
+		if raceenabled {
+			raceSkip(-1)
 		}
 		unlock(&finLock)
 		return
@@ -559,6 +565,9 @@ func SetFinalizer(obj any, finalizer any) {
 	ent.fn = finalizer
 	ent.argIface = argIface
 	ent.typ = e.typ
+	if raceenabled {
+		raceSkip(-1)
+	}
 	unlock(&finLock)
 }
 
@@ -611,12 +620,21 @@ func runFinalizer(obj unsafe.Pointer) {
 	atomicXadd64(&finRunning, 1)
 	defer atomicXadd64(&finRunning, -1)
 	lock(&finLock)
+	if raceenabled {
+		raceSkip(1) // the finTable bookkeeping makes no race annotations
+	}
 	key := ^uintptr(obj)
 	ent := finTable[key]
 	delete(finTable, key)
+	if raceenabled {
+		raceSkip(-1)
+	}
 	unlock(&finLock)
 	if ent == nil {
 		return
+	}
+	if raceenabled {
+		raceFingo()
 	}
 	for _, c := range ent.cleanups {
 		c.fn()
@@ -656,10 +674,16 @@ func AddCleanup[T, S any](ptr *T, cleanup func(S), arg S) Cleanup {
 	p := unsafe.Pointer(ptr)
 	fn := func() { cleanup(arg) }
 	lock(&finLock)
+	if raceenabled {
+		raceSkip(1) // the finTable bookkeeping makes no race annotations
+	}
 	cleanupNextID++
 	id := cleanupNextID
 	ent := finEntryFor(p)
 	ent.cleanups = append(ent.cleanups, cleanupEntry{id: id, fn: fn})
+	if raceenabled {
+		raceSkip(-1)
+	}
 	unlock(&finLock)
 	return Cleanup{id: id, key: ^uintptr(p)}
 }
@@ -670,6 +694,9 @@ func (c Cleanup) Stop() {
 		return
 	}
 	lock(&finLock)
+	if raceenabled {
+		raceSkip(1) // the finTable bookkeeping makes no race annotations
+	}
 	if ent := finTable[c.key]; ent != nil {
 		for i, ce := range ent.cleanups {
 			if ce.id == c.id {
@@ -677,6 +704,9 @@ func (c Cleanup) Stop() {
 				break
 			}
 		}
+	}
+	if raceenabled {
+		raceSkip(-1)
 	}
 	unlock(&finLock)
 }

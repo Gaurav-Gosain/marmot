@@ -40,7 +40,7 @@ func main() {
 type buildFlags struct {
 	out, opt, trace, pgo, emit, tags, gc, target, dialect, buildmode            *string
 	strip, pgoGen, release, work, verbose, printCmd, nocache, allocs, allocsAll *bool
-	static, trimpath, gpuRemarks                                                *bool
+	static, trimpath, gpuRemarks, race                                          *bool
 	gpu                                                                         *gpuFlag
 	output                                                                      outputFlags
 }
@@ -76,6 +76,7 @@ func newBuildFlags(name string) (*flag.FlagSet, *buildFlags) {
 	b.opt = fs.String("O", "", "optimization level: 0, 1, 2, 3, s, z (default 2, 3 with -release)")
 	b.trace = fs.String("trace", "", "traceback detail of -release builds: full keeps the inlined frames of each call site apart (as dev builds do)")
 	b.strip = fs.Bool("s", false, "omit the pc table (tracebacks without file:line)")
+	b.race = fs.Bool("race", false, "enable the race detector (linux/amd64): reports data races as go build -race does, exit status 66 when one was found")
 	b.trimpath = fs.Bool("trimpath", false, "record no directory of this machine in the output: standard library files as runtime/proc.go, module files as module path plus file (as go build -trimpath)")
 	b.pgoGen = fs.Bool("pgo-gen", false, "build an instrumented binary that writes marmot-<id>.profraw next to itself")
 	b.pgo = fs.String("pgo", "", "profile guided optimization with this indexed profile (llvm-profdata merge -o FILE *.profraw)")
@@ -173,7 +174,7 @@ func cmdBuild(args []string, run bool) int {
 		Root: root, Dir: wd, Output: *out, OptLevel: *opt, OptSet: optSet, Emit: *emit, Work: *work,
 		Verbose: *verbose, PrintCmd: *printCmd, NoCache: *nocache, GC: *gc, Target: *target,
 		Dialect: *dialect, Patterns: patterns, Stderr: os.Stderr, Release: *release, PGOGen: *pgoGen, PGO: *pgo, Strip: *strip, Trace: *trace,
-		Static: *b.static, TrimPath: *b.trimpath, BuildMode: *b.buildmode,
+		Static: *b.static, TrimPath: *b.trimpath, BuildMode: *b.buildmode, Race: *b.race,
 		GPU: b.gpu.arch, GPURemarks: *b.gpuRemarks,
 	}
 	if cfg.GPURemarks {
@@ -393,6 +394,7 @@ type testBuildFlags struct {
 	schedule                         *string
 	opt, tags, dialect, out, overlay *string
 	printCmd, work, release, compile *bool
+	race                             *bool
 	output                           outputFlags
 }
 
@@ -407,6 +409,7 @@ func newTestFlags() (*flag.FlagSet, *testBuildFlags) {
 	t.dialect = fs.String("dialect", os.Getenv("MARMOT_DIALECT"), "MLIR dialect level: llvm or go")
 	t.out = fs.String("o", "", "write the test binary here and do not run it")
 	t.compile = fs.Bool("c", false, "write the test binary (to -o, default pkg.test) and do not run it, as go test -c")
+	t.race = fs.Bool("race", false, "enable the race detector (linux/amd64), as go test -race")
 	t.overlay = fs.String("overlay", "", "JSON file of source files to replace or add, as go build -overlay ({\"Replace\": {path: file}})")
 	fs.Var(&t.explore, "explore", "explore schedules of synctest bubbles: random or pct, with an optional number of runs (random:1000, pct:500). It stops at the first failing schedule and prints how to replay it")
 	t.schedule = fs.String("schedule", "", "run synctest bubbles under one explored schedule, as printed by -explore (random:17)")
@@ -473,7 +476,7 @@ func testOne(buildArgs []string, pkg string, testArgs []string) int {
 	cfg := driver.Config{
 		Root: root, Dir: wd, Output: exe, OptLevel: *opt, OptSet: optSet, Emit: "exe", Work: *work,
 		PrintCmd: *printCmd, Dialect: *dialect, Release: *release, Patterns: []string{pkg}, Stderr: os.Stderr,
-		AllErrors: rep.Mode == diag.ModeJSON, Overlay: overlay,
+		AllErrors: rep.Mode == diag.ModeJSON, Overlay: overlay, Race: *t.race,
 	}
 	if *tags != "" {
 		cfg.Tags = strings.Split(*tags, ",")

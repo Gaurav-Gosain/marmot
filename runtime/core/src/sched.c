@@ -844,6 +844,9 @@ static void gstart(void *arg) {
   g->arg = NULL;
   fn(a);
   if (g == rt_main_g) rt_exit(0);
+#if RT_RACE
+  race_go_end(g);
+#endif
   mcall(REQ_EXIT);
   __builtin_unreachable();
 }
@@ -1347,6 +1350,11 @@ INLINE void group_wake(rt_g *g) {
 
 // ---- public goroutine API ----
 
+#if RT_RACE
+// The go statement's pc, for the goroutine's creation stack (set by rt_go).
+static _Thread_local void *race_gopc;
+#endif
+
 static rt_g *newproc(void (*fn)(void *), void *arg, bool system) {
   rt_m *m = getm();
   m->locks++;
@@ -1370,6 +1378,9 @@ static rt_g *newproc(void (*fn)(void *), void *arg, bool system) {
   g->sp = NULL;  // context built by execute
   if (!g->slot) glive_set(g, true);  // a kept slot kept the bit set
   if (!system) ngo_add(p, 1);
+#if RT_RACE
+  race_go_start(g, race_gopc);
+#endif
   atomic_store_explicit(&g->status, G_RUNNABLE, memory_order_release);
   if (p && atomic_load(&p->status) == P_RUNNING) {
     runqput(p, g, true);
@@ -1395,6 +1406,9 @@ void sched_multi(void) {
 }
 
 RT_API void rt_go(void (*fn)(void *), void *arg) {
+#if RT_RACE
+  race_gopc = __builtin_return_address(0);
+#endif
   sched_multi();
   newproc(fn, arg, false);
 }
@@ -1489,6 +1503,9 @@ RT_API void rt_ready(rt_g *g) {
 }
 
 RT_API void rt_goexit(void) {
+#if RT_RACE
+  race_go_end(getm()->curg);
+#endif
   mcall(REQ_EXIT);
   __builtin_unreachable();
 }
@@ -2458,6 +2475,9 @@ void sched_start_main(void) {
   glive_set(g, true);
   atomic_fetch_add(&sched.ngoroutines, 1);
   atomic_store(&g->status, G_RUNNABLE);
+#if RT_RACE
+  race_go_start(g, (void *)main_entry);  // goroutine 1, from the initial context, as gc
+#endif
   rt_main_g = g;
   runqput(m->p, g, true);
 #if !RT_OS_WASI

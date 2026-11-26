@@ -162,6 +162,11 @@ func getg() *g {
 // gostart calls it for every new goroutine even when the handle matches.
 func initg(gp *g, cur unsafe.Pointer) {
 	sc, so := gp.sudogcache, gp.selorder
+	if raceenabled {
+		// A g is reused for the next goroutine: its fields (defer and panic
+		// state that instrumented code writes) start over.
+		raceReset(unsafe.Pointer(gp), unsafe.Sizeof(g{}))
+	}
 	*gp = g{}
 	gp.sudogcache, gp.selorder = sc, so
 	gp.handle = cur

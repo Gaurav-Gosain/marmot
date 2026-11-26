@@ -33,6 +33,9 @@
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/StandardInstrumentations.h"
+#include "llvm/Transforms/Instrumentation/ThreadSanitizer.h"
+#include "llvm/Analysis/CaptureTracking.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Support/PGOOptions.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/SourceMgr.h"
@@ -50,6 +53,79 @@
 #include <thread>
 #include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringMap.h"
+
+namespace {
+// -race: functions outside the instrumented code (no sanitize_thread) and
+// outside sync's atomics ("marmot-race-atomics") get
+// disable_sanitizer_instrumentation, so ThreadSanitizerPass leaves them as
+// they are, atomics included.
+//
+// In the instrumented functions, a load or store of a size the pass skips
+// (not 1, 2, 4, 8 or 16 bytes: a slice header, a 3-word struct, an array
+// value) gets a __tsan_read_range or __tsan_write_range call before it, as
+// gc instruments such accesses as ranges. Accesses to an alloca whose
+// address does not escape are left out, as the pass leaves them out.
+struct RaceScopePass : llvm::PassInfoMixin<RaceScopePass> {
+  static bool passSize(uint64_t n) { return n == 1 || n == 2 || n == 4 || n == 8 || n == 16; }
+
+  static void ranges(llvm::Function &f) {
+    llvm::Module &m = *f.getParent();
+    const llvm::DataLayout &dl = m.getDataLayout();
+    llvm::LLVMContext &ctx = m.getContext();
+    llvm::Type *ptrTy = llvm::PointerType::getUnqual(ctx);
+    llvm::Type *intptr = dl.getIntPtrType(ctx);
+    llvm::FunctionCallee readFn, writeFn;
+    llvm::SmallVector<llvm::Instruction *, 16> todo;
+    for (llvm::BasicBlock &bb : f)
+      for (llvm::Instruction &in : bb) {
+        llvm::Type *ty;
+        llvm::Value *addr;
+        if (auto *ld = llvm::dyn_cast<llvm::LoadInst>(&in)) {
+          if (ld->isAtomic()) continue;
+          ty = ld->getType(); addr = ld->getPointerOperand();
+        } else if (auto *st = llvm::dyn_cast<llvm::StoreInst>(&in)) {
+          if (st->isAtomic()) continue;
+          ty = st->getValueOperand()->getType(); addr = st->getPointerOperand();
+        } else {
+          continue;
+        }
+        if (!ty->isSized() || ty->isScalableTy() || addr->getType()->getPointerAddressSpace() != 0)
+          continue;
+        uint64_t n = dl.getTypeStoreSize(ty).getFixedValue();
+        if (n == 0 || passSize(n)) continue;
+        const llvm::Value *obj = llvm::getUnderlyingObject(addr);
+        if (llvm::isa<llvm::AllocaInst>(obj) && !llvm::PointerMayBeCaptured(obj, true))
+          continue;
+        todo.push_back(&in);
+      }
+    for (llvm::Instruction *in : todo) {
+      bool store = llvm::isa<llvm::StoreInst>(in);
+      llvm::Type *ty = store ? llvm::cast<llvm::StoreInst>(in)->getValueOperand()->getType() : in->getType();
+      llvm::Value *addr = llvm::getLoadStorePointerOperand(in);
+      llvm::FunctionCallee &fn = store ? writeFn : readFn;
+      if (!fn)
+        fn = m.getOrInsertFunction(store ? "__tsan_write_range" : "__tsan_read_range",
+                                   llvm::Type::getVoidTy(ctx), ptrTy, intptr);
+      llvm::IRBuilder<> b(in);
+      b.CreateCall(fn, {addr, llvm::ConstantInt::get(intptr, dl.getTypeStoreSize(ty).getFixedValue())});
+    }
+  }
+
+  llvm::PreservedAnalyses run(llvm::Module &m, llvm::ModuleAnalysisManager &) {
+    bool changed = false;
+    for (llvm::Function &f : m) {
+      if (f.isDeclaration()) continue;
+      if (f.hasFnAttribute(llvm::Attribute::SanitizeThread)) {
+        ranges(f);
+        changed = true;
+      } else if (!f.hasFnAttribute("marmot-race-atomics")) {
+        f.addFnAttr(llvm::Attribute::DisableSanitizerInstrumentation);
+      }
+    }
+    return changed ? llvm::PreservedAnalyses::none() : llvm::PreservedAnalyses::all();
+  }
+};
+} // namespace
 
 // ParkClear.cpp: registers its code generation callback on the first call and
 // reports whether the pass is on (MARMOT_PARKCLEAR=0 turns it off).
@@ -287,6 +363,24 @@ void runLLVMPipeline(llvm::Module &m, llvm::TargetMachine &tm, char level,
   pb.crossRegisterProxies(lam, fam, cgam, mam);
   llvm::ModulePassManager mpm;
   llvm::OptimizationLevel ol = passLevel(level);
+  // -race: ThreadSanitizer at the start of the pipeline, before any
+  // optimization, as gc instruments before its SSA passes: a read whose value
+  // is unused (_ = p.x, an empty if) is still a read the detector must see.
+  // clang adds it after the optimizations instead, which would drop those.
+  // It instruments only functions with the sanitize_thread attribute, which
+  // codegen sets under -race on the packages gc instruments. No
+  // ModuleThreadSanitizerPass: its constructor calls the C runtime's
+  // __tsan_init, and race builds link the Go flavor, which the runtime starts
+  // itself (runtime/core/src/race.c).
+  // A function with neither sanitize_thread nor "marmot-race-atomics" (the
+  // runtime, wrappers, linked C code) gets no instrumentation: the pass
+  // would otherwise instrument its atomics, which gc's runtime never
+  // reports, and the race runtime would see orderings gc does not.
+  if (opts.race)
+    pb.registerPipelineStartEPCallback([](llvm::ModulePassManager &mpm, llvm::OptimizationLevel) {
+      mpm.addPass(RaceScopePass());
+      mpm.addPass(llvm::createModuleToFunctionPassAdaptor(llvm::ThreadSanitizerPass()));
+    });
   if (ol == llvm::OptimizationLevel::O0) {
     mpm = pb.buildO0DefaultPipeline(ol);
   } else {

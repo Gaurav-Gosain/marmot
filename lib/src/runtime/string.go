@@ -131,6 +131,9 @@ func slicebytetostring(b []byte) string {
 	if len(b) == 0 {
 		return ""
 	}
+	if raceenabled {
+		raceReadRange(unsafe.Pointer(&b[0]), uintptr(len(b)))
+	}
 	if len(b) == 1 {
 		// As gc: a one-byte string points into staticuint64s and needs no
 		// allocation (fmt.Sprint("n") and the like). The value's byte is the
@@ -180,6 +183,9 @@ func stringtoslicerune(s string) []rune {
 
 // slicerunetostring implements string(r).
 func slicerunetostring(a []rune) string {
+	if raceenabled && len(a) > 0 {
+		raceReadRange(unsafe.Pointer(&a[0]), uintptr(len(a))*4)
+	}
 	size1 := 0
 	for _, r := range a {
 		size1 += runelen(r)

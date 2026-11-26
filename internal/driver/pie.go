@@ -19,6 +19,9 @@ func (b *build) pieArgs() []string {
 	if b.cfg.Static {
 		return nil // static executables are position dependent already
 	}
+	if b.cfg.Race {
+		return []string{"-no-pie"} // TSan's Go mapping wants globals low (race.go)
+	}
 	switch b.cfg.BuildMode {
 	case "pie":
 		return []string{"-pie", "-Wl,-z,pack-relative-relocs"}

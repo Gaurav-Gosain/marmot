@@ -1382,6 +1382,16 @@ static void sweep_span(mspan *s, uint64_t *fb, uint64_t *fo) {
   }
   *fb += freed * s->elemsize;
   *fo += freed;
+#if RT_RACE
+  // The race runtime forgets the accesses to each freed object, so the
+  // next object at that address does not race with the old one.
+  for (uint32_t w = 0; freed && w < nw; w++) {
+    for (uint64_t f = s->allocbits[w] & ~s->markbits[w]; f; f &= f - 1) {
+      uintptr_t i = (uintptr_t)w * 64 + (uintptr_t)__builtin_ctzll(f);
+      race_free((void *)(s->base + i * s->elemsize), s->elemsize);
+    }
+  }
+#endif
   uint64_t *t = s->allocbits;
   s->allocbits = s->markbits;
   s->markbits = t;

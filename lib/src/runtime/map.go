@@ -495,6 +495,9 @@ func zeroFor(t *_type) unsafe.Pointer {
 // mapaccess1 implements v := m[k]. It never returns nil: a missing key
 // yields a pointer to a zero value that must not be written.
 func mapaccess1(t *maptype, m *hmap, key unsafe.Pointer) unsafe.Pointer {
+	if raceenabled && m != nil {
+		raceReadAddr(unsafe.Pointer(m))
+	}
 	if m == nil {
 		mapNilHashCheck(t, key)
 		return zeroFor(t.elem)
@@ -507,6 +510,9 @@ func mapaccess1(t *maptype, m *hmap, key unsafe.Pointer) unsafe.Pointer {
 
 // mapaccess2 implements v, ok := m[k].
 func mapaccess2(t *maptype, m *hmap, key unsafe.Pointer) (unsafe.Pointer, bool) {
+	if raceenabled && m != nil {
+		raceReadAddr(unsafe.Pointer(m))
+	}
 	if m == nil {
 		mapNilHashCheck(t, key)
 		return zeroFor(t.elem), false
@@ -528,6 +534,9 @@ func mapNilHashCheck(t *maptype, key unsafe.Pointer) {
 // mapassign implements m[k] = v: it returns the slot where the caller
 // stores the element. The key is stored by mapassign.
 func mapassign(t *maptype, m *hmap, key unsafe.Pointer) unsafe.Pointer {
+	if raceenabled && m != nil {
+		raceWriteAddr(unsafe.Pointer(m))
+	}
 	if m == nil {
 		panicnilmap()
 	}
@@ -849,6 +858,9 @@ func (m *hmap) insertNew(k, e unsafe.Pointer, hash uintptr) {
 
 // mapdelete implements delete(m, k).
 func mapdelete(t *maptype, m *hmap, key unsafe.Pointer) {
+	if raceenabled && m != nil {
+		raceWriteAddr(unsafe.Pointer(m))
+	}
 	if m == nil || m.count == 0 {
 		if m == nil {
 			mapNilHashCheck(t, key)
@@ -881,11 +893,18 @@ func maplen(m *hmap) int {
 	if m == nil {
 		return 0
 	}
+	// gc instruments len(m) as a read of the map.
+	if raceenabled {
+		raceReadAddr(unsafe.Pointer(m))
+	}
 	return m.count
 }
 
 // mapclear implements clear(m).
 func mapclear(t *maptype, m *hmap) {
+	if raceenabled && m != nil {
+		raceWriteAddr(unsafe.Pointer(m))
+	}
 	if m == nil || m.groups == nil {
 		return
 	}
@@ -904,6 +923,9 @@ func mapclear(t *maptype, m *hmap) {
 
 // mapiterinit starts an iteration over m. it must be zeroed.
 func mapiterinit(t *maptype, m *hmap, it *hiter) {
+	if raceenabled && m != nil {
+		raceReadAddr(unsafe.Pointer(m))
+	}
 	it.t = t
 	it.m = m
 	it.key = nil
@@ -930,6 +952,9 @@ func mapiterinit(t *maptype, m *hmap, it *hiter) {
 // mapiternext advances it to the next entry; it.key is nil at the end.
 func mapiternext(it *hiter) {
 	m := it.m
+	if raceenabled && m != nil {
+		raceReadAddr(unsafe.Pointer(m))
+	}
 	if m == nil || it.groups == nil {
 		it.key = nil
 		it.elem = nil
@@ -980,6 +1005,9 @@ func mapiternext(it *hiter) {
 // the generic entry points.
 
 func mapaccess1_fast32(t *maptype, m *hmap, key uint32) unsafe.Pointer {
+	if raceenabled && m != nil {
+		raceReadAddr(unsafe.Pointer(m))
+	}
 	if m != nil && m.count != 0 {
 		if e := m.find32(key); e != nil {
 			return e
@@ -989,6 +1017,9 @@ func mapaccess1_fast32(t *maptype, m *hmap, key uint32) unsafe.Pointer {
 }
 
 func mapaccess2_fast32(t *maptype, m *hmap, key uint32) (unsafe.Pointer, bool) {
+	if raceenabled && m != nil {
+		raceReadAddr(unsafe.Pointer(m))
+	}
 	if m != nil && m.count != 0 {
 		if e := m.find32(key); e != nil {
 			return e, true
@@ -998,6 +1029,9 @@ func mapaccess2_fast32(t *maptype, m *hmap, key uint32) (unsafe.Pointer, bool) {
 }
 
 func mapassign_fast32(t *maptype, m *hmap, key uint32) unsafe.Pointer {
+	if raceenabled && m != nil {
+		raceWriteAddr(unsafe.Pointer(m))
+	}
 	if m == nil {
 		panicnilmap()
 	}
@@ -1009,6 +1043,9 @@ func mapdelete_fast32(t *maptype, m *hmap, key uint32) {
 }
 
 func mapaccess1_fast64(t *maptype, m *hmap, key uint64) unsafe.Pointer {
+	if raceenabled && m != nil {
+		raceReadAddr(unsafe.Pointer(m))
+	}
 	if m != nil && m.count != 0 {
 		if e := m.find64(key); e != nil {
 			return e
@@ -1018,6 +1055,9 @@ func mapaccess1_fast64(t *maptype, m *hmap, key uint64) unsafe.Pointer {
 }
 
 func mapaccess2_fast64(t *maptype, m *hmap, key uint64) (unsafe.Pointer, bool) {
+	if raceenabled && m != nil {
+		raceReadAddr(unsafe.Pointer(m))
+	}
 	if m != nil && m.count != 0 {
 		if e := m.find64(key); e != nil {
 			return e, true
@@ -1027,6 +1067,9 @@ func mapaccess2_fast64(t *maptype, m *hmap, key uint64) (unsafe.Pointer, bool) {
 }
 
 func mapassign_fast64(t *maptype, m *hmap, key uint64) unsafe.Pointer {
+	if raceenabled && m != nil {
+		raceWriteAddr(unsafe.Pointer(m))
+	}
 	if m == nil {
 		panicnilmap()
 	}
@@ -1041,6 +1084,9 @@ func mapdelete_fast64(t *maptype, m *hmap, key uint64) {
 // passed as the first and second 8 bytes of the key in memory.
 
 func mapaccess1_fast128(t *maptype, m *hmap, k0, k1 uint64) unsafe.Pointer {
+	if raceenabled && m != nil {
+		raceReadAddr(unsafe.Pointer(m))
+	}
 	if m != nil && m.keyKind != keyMem128 {
 		key := [2]uint64{k0, k1}
 		return mapaccess1(t, m, unsafe.Pointer(&key))
@@ -1054,6 +1100,9 @@ func mapaccess1_fast128(t *maptype, m *hmap, k0, k1 uint64) unsafe.Pointer {
 }
 
 func mapaccess2_fast128(t *maptype, m *hmap, k0, k1 uint64) (unsafe.Pointer, bool) {
+	if raceenabled && m != nil {
+		raceReadAddr(unsafe.Pointer(m))
+	}
 	if m != nil && m.keyKind != keyMem128 {
 		key := [2]uint64{k0, k1}
 		return mapaccess2(t, m, unsafe.Pointer(&key))
@@ -1067,6 +1116,9 @@ func mapaccess2_fast128(t *maptype, m *hmap, k0, k1 uint64) (unsafe.Pointer, boo
 }
 
 func mapassign_fast128(t *maptype, m *hmap, k0, k1 uint64) unsafe.Pointer {
+	if raceenabled && m != nil {
+		raceWriteAddr(unsafe.Pointer(m))
+	}
 	if m == nil {
 		panicnilmap()
 	}
@@ -1085,6 +1137,9 @@ func mapdelete_fast128(t *maptype, m *hmap, k0, k1 uint64) {
 }
 
 func mapaccess1_faststr(t *maptype, m *hmap, key string) unsafe.Pointer {
+	if raceenabled && m != nil {
+		raceReadAddr(unsafe.Pointer(m))
+	}
 	if m != nil && m.count != 0 {
 		if e := m.findstr(key); e != nil {
 			return e
@@ -1094,6 +1149,9 @@ func mapaccess1_faststr(t *maptype, m *hmap, key string) unsafe.Pointer {
 }
 
 func mapaccess2_faststr(t *maptype, m *hmap, key string) (unsafe.Pointer, bool) {
+	if raceenabled && m != nil {
+		raceReadAddr(unsafe.Pointer(m))
+	}
 	if m != nil && m.count != 0 {
 		if e := m.findstr(key); e != nil {
 			return e, true
@@ -1103,6 +1161,9 @@ func mapaccess2_faststr(t *maptype, m *hmap, key string) (unsafe.Pointer, bool) 
 }
 
 func mapassign_faststr(t *maptype, m *hmap, key string) unsafe.Pointer {
+	if raceenabled && m != nil {
+		raceWriteAddr(unsafe.Pointer(m))
+	}
 	if m == nil {
 		panicnilmap()
 	}
@@ -1120,6 +1181,9 @@ func mapdelete_faststr(t *maptype, m *hmap, key string) {
 // mapaccess_faststr_bytes returns the element slot of key string(b), or
 // nil if it is absent.
 func mapaccess_faststr_bytes(t *maptype, m *hmap, b []byte) unsafe.Pointer {
+	if raceenabled && m != nil {
+		raceReadAddr(unsafe.Pointer(m))
+	}
 	if m == nil || m.count == 0 {
 		return nil
 	}
@@ -1129,6 +1193,9 @@ func mapaccess_faststr_bytes(t *maptype, m *hmap, b []byte) unsafe.Pointer {
 // mapkeys_faststr appends the keys of the string keyed map m to dst, in
 // table order (unspecified). A nil or empty map leaves dst unchanged.
 func mapkeys_faststr(t *maptype, m *hmap, dst []string) []string {
+	if raceenabled && m != nil {
+		raceReadAddr(unsafe.Pointer(m))
+	}
 	if m == nil || m.count == 0 {
 		return dst
 	}
@@ -1146,6 +1213,9 @@ func mapkeys_faststr(t *maptype, m *hmap, dst []string) []string {
 // is stored at index i of the element array dv, which has room for
 // len(m) elements.
 func mapentries_faststr(t *maptype, m *hmap, dst []string, dv unsafe.Pointer) []string {
+	if raceenabled && m != nil {
+		raceReadAddr(unsafe.Pointer(m))
+	}
 	if m == nil || m.count == 0 {
 		return dst
 	}
@@ -1165,6 +1235,9 @@ func mapentries_faststr(t *maptype, m *hmap, dst []string, dv unsafe.Pointer) []
 // mapassign_faststr_bytes is m[string(b)] = v: it returns the element
 // slot and allocates the key string only when the key is new.
 func mapassign_faststr_bytes(t *maptype, m *hmap, b []byte) unsafe.Pointer {
+	if raceenabled && m != nil {
+		raceWriteAddr(unsafe.Pointer(m))
+	}
 	if m == nil {
 		panicnilmap()
 	}

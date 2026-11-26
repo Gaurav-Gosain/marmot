@@ -140,7 +140,12 @@ static void arena_init(void) {
   uintptr_t size = (uintptr_t)64 << 30;
 #endif
   void *p = NULL;
-  while (size >= ((uintptr_t)256 << 20)) {
+#if RT_RACE
+  // TSan's Go mapping: the heap lies in 0xc000000000-0xe000000000.
+  p = os_reserve_at((uintptr_t)0xc000000000, size);
+  if (!p) rt_throw("race: cannot reserve the heap arena at 0xc000000000");
+#endif
+  while (!p && size >= ((uintptr_t)256 << 20)) {
     p = os_reserve(size);
     if (p) break;
     size >>= 1;
@@ -787,6 +792,13 @@ NOINLINE void *rt_alloc_nozero_slow(uintptr_t size) {
   return p;
 }
 
+#if RT_RACE
+// Race builds: rt_alloc and rt_alloc_nozero below become the inner functions
+// of wrappers (end of file) that tell TSan about each new object.
+#define rt_alloc rt_alloc_norace
+#define rt_alloc_nozero rt_alloc_nozero_norace
+#endif
+
 // A NOSCAN object whose contents are not zeroed: the caller overwrites all
 // of it before reading (string and slice copies, conversion buffers).
 // Inlinable from rtcore.bc.
@@ -1038,6 +1050,9 @@ RT_API void rt_free(void *ptr, uintptr_t size) {
   if (!s || s->state != SPAN_INUSE || p < s->base || p >= s->limit) return;
   if (s->cls == 0) {
     if (p != s->base) return;
+#if RT_RACE
+    race_free(ptr, s->elemsize);
+#endif
     // A concurrent mark may be reading this span's bits; the sweep frees it.
     if (rt_gc_marking) return;
     spin_lock(&heap_lock);
@@ -1065,6 +1080,9 @@ RT_API void rt_free(void *ptr, uintptr_t size) {
   }
   uintptr_t off = p - s->base;
   if (off % s->elemsize != 0) return;
+#if RT_RACE
+  race_free(ptr, s->elemsize);
+#endif
   if (UNLIKELY(rt_poison)) {
     poison_free_small(p, s->elemsize);
     atomic_fetch_add(&stat_frees, 1);
@@ -1079,3 +1097,20 @@ RT_API void rt_free(void *ptr, uintptr_t size) {
   m->locks--;
   (void)size;
 }
+
+#if RT_RACE
+#undef rt_alloc
+#undef rt_alloc_nozero
+// gc's racemalloc: a new object starts with clean shadow, so a reused
+// address does not race with the previous object's accesses.
+RT_API void *rt_alloc(uintptr_t size, uint32_t kind, const uint8_t *ptrmap, uintptr_t elemsize) {
+  void *p = rt_alloc_norace(size, kind, ptrmap, elemsize);
+  if (size) race_malloc(p, size, __builtin_return_address(0));
+  return p;
+}
+RT_API void *rt_alloc_nozero(uintptr_t size) {
+  void *p = rt_alloc_nozero_norace(size);
+  if (size) race_malloc(p, size, __builtin_return_address(0));
+  return p;
+}
+#endif

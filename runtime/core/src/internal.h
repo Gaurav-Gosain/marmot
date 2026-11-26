@@ -552,4 +552,18 @@ extern uint32_t sm_nex;
 
 #pragma GCC visibility pop
 
+
+#if RT_RACE
+// Race builds (race.c): the heap arena lies where TSan's Go mapping wants it,
+// 0xc000000000 on linux/amd64. At the end of the header: declarations earlier
+// would shift the source offsets that inline assembly records in the bitcode.
+void *os_reserve_at(uintptr_t addr, uintptr_t n);
+void race_init(void);
+void race_go_start(rt_g *child, void *pc);
+void race_go_end(rt_g *g);
+void race_malloc(void *p, uintptr_t size, void *pc);
+void race_free(void *p, uintptr_t size);
+int race_fini(void);
+#endif
+
 #endif

@@ -105,6 +105,9 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool) bool {
 		goparkForever(waitReasonChanSendNilChan)
 		throw("unreachable")
 	}
+	if raceenabled {
+		raceReadAddr(unsafe.Pointer(c))
+	}
 	if c.dataqsiz != 0 {
 		return chansendBuf(c, ep, block)
 	}
@@ -136,10 +139,19 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool) bool {
 	mysg.isSelect = false
 	mysg.c = c
 	gp.param = nil
+	if raceenabled {
+		raceRelease(unsafe.Pointer(mysg))
+	}
 	c.sendq.enqueue(mysg)
 	goparkunlockDurable(&c.lock, waitReasonChanSend)
 
 	closed := !mysg.success
+	if raceenabled {
+		raceAcquire(unsafe.Pointer(mysg))
+		if closed {
+			raceAcquire(unsafe.Pointer(c))
+		}
+	}
 	gp.param = nil
 	mysg.c = nil
 	releaseSudog(gp, mysg)
@@ -155,6 +167,9 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool) bool {
 // send completes a send to the waiting receiver sg of an unbuffered
 // channel. c is locked.
 func send(c *hchan, sg *sudog, ep unsafe.Pointer) {
+	if raceenabled {
+		raceReleaseAcquire(unsafe.Pointer(sg))
+	}
 	if sg.elem != nil {
 		typedmemmove(c.elemtype, sg.elem, ep)
 		sg.elem = nil
@@ -173,6 +188,9 @@ func closechan(c *hchan) {
 	if c == nil {
 		panic(plainError("close of nil channel"))
 	}
+	if raceenabled {
+		raceWriteAddr(unsafe.Pointer(c))
+	}
 
 	lock(&c.lock)
 	if c.closed != 0 {
@@ -180,6 +198,9 @@ func closechan(c *hchan) {
 		panic(plainError("close of closed channel"))
 	}
 	c.closed = 1
+	if raceenabled {
+		raceReleaseMerge(unsafe.Pointer(c))
+	}
 
 	// Collect all waiters, then wake them after releasing the lock.
 	var glist *sudog
@@ -257,6 +278,9 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 
 	if c.closed != 0 {
 		unlock(&c.lock)
+		if raceenabled {
+			raceAcquire(unsafe.Pointer(c))
+		}
 		if ep != nil {
 			typedmemclr(c.elemtype, ep)
 		}
@@ -280,10 +304,19 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 	mysg.isSelect = false
 	mysg.c = c
 	gp.param = nil
+	if raceenabled {
+		raceRelease(unsafe.Pointer(mysg))
+	}
 	c.recvq.enqueue(mysg)
 	goparkunlockDurable(&c.lock, waitReasonChanReceive)
 
 	success := mysg.success
+	if raceenabled {
+		raceAcquire(unsafe.Pointer(mysg))
+		if !success {
+			raceAcquire(unsafe.Pointer(c))
+		}
+	}
 	gp.param = nil
 	mysg.c = nil
 	releaseSudog(gp, mysg)
@@ -293,6 +326,9 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 // recv completes a receive from the waiting sender sg of an unbuffered
 // channel. c is locked.
 func recv(c *hchan, sg *sudog, ep unsafe.Pointer) {
+	if raceenabled {
+		raceReleaseAcquire(unsafe.Pointer(sg))
+	}
 	if ep != nil {
 		typedmemmove(c.elemtype, ep, sg.elem)
 	}

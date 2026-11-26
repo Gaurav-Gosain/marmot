@@ -88,6 +88,13 @@ void os_release(void *p, uintptr_t n) {
   if (hi > lo) madvise((void *)lo, hi - lo, MADV_DONTNEED);
 }
 
+#if RT_RACE
+void *os_reserve_at(uintptr_t addr, uintptr_t n) {
+  void *p = mmap((void *)addr, n, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
+  return p == (void *)addr ? p : NULL;
+}
+#endif
+
 void os_protect_none(void *p, uintptr_t n) { mprotect(p, n, PROT_NONE); }
 
 int32_t os_ncpu(void) {

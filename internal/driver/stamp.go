@@ -37,7 +37,7 @@ func (b *build) buildStamp(goos, goarch string) string {
 		return "" // overlay contents are not files the stamp can sign
 	}
 	lcfg := loader.Config{
-		Dir: b.cfg.Dir, Root: b.cfg.Root, Tags: b.cfg.Tags, GOOS: goos, GOARCH: goarch, Patterns: b.cfg.Patterns,
+		Dir: b.cfg.Dir, Root: b.cfg.Root, Tags: b.loaderTags(), GOOS: goos, GOARCH: goarch, Patterns: b.cfg.Patterns,
 	}
 	files, goroot, ok := []string(nil), "", false
 	if b.incremental() {
@@ -227,6 +227,10 @@ func (b *build) initKeyBase() {
 		fmt.Fprintf(exeSig, "%s %s %s %s %v tier0=%v %s/%s trimpath=%v\n", b.cfg.OptLevel, b.cfg.Emit, b.cfg.Dialect, b.cfg.GC, b.cfg.Release, b.tier0(), b.goos, b.goarch, b.cfg.TrimPath)
 		if b.cfg.GPU != "" {
 			fmt.Fprintf(exeSig, "gpu=%s\n", b.cfg.GPU)
+		}
+		if b.cfg.Race {
+			// Only race builds add to the line, so other keys stay as they were.
+			fmt.Fprintf(exeSig, "race\n")
 		}
 		for _, k := range []string{"MARMOT_LIBSRC", "MARMOT_DIALECT", "MARMOT_SPEC"} {
 			fmt.Fprintf(exeSig, "%s=%s\n", k, os.Getenv(k))
