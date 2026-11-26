@@ -885,6 +885,25 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback, 
     if (!gv.isDeclaration() && gv.hasExternalLinkage() && gv.hasName() &&
         (anchor.empty() || gv.getName() < anchor))
       anchor = gv.getName().str();
+  // MARMOT_SPLIT_NAMEHASH=1: a module without one (most modules under
+  // -wpo, after internalization) is named by the sorted names of what it
+  // defines, so the suffix follows the code alone. The fallback (the
+  // module's cache key) holds the options, the env switches and the root
+  // path: with it a key-only change renamed every local symbol, moved
+  // globals between groups and changed the layout (tuios -O 2, t12).
+  static const bool nameHash = [] {
+    const char *e = std::getenv("MARMOT_SPLIT_NAMEHASH");
+    return e && *e == '1';
+  }();
+  if (anchor.empty() && nameHash) {
+    std::vector<std::string> names;
+    for (GlobalValue &gv : m.global_values())
+      if (!gv.isDeclaration() && gv.hasName() && !gv.getName().starts_with("."))
+        names.push_back(gv.getName().str());
+    std::sort(names.begin(), names.end());
+    for (const std::string &n : names)
+      anchor += n + "\n";
+  }
   if (anchor.empty())
     anchor = fallback.str();
   std::string suffix = ".g" + hashHex(anchor).substr(0, 8);

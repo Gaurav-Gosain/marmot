@@ -41,6 +41,8 @@ MARMOT_ENV_KEY(MARMOT_TIER0_TIEPARAM)
 MARMOT_ENV_KEY(MARMOT_STACKMAPS)
 // pc table fragments of ELF objects take functions from the symbol table (Pcln.cpp).
 MARMOT_ENV_KEY(MARMOT_PCLN_SYMFUNCS)
+// splitModule names a module without an external definition by its definitions (WholeProgram.cpp).
+MARMOT_ENV_KEY(MARMOT_SPLIT_NAMEHASH)
 
 MARMOT_ENV_OWN(MARMOT_PARKCLEAR)
 MARMOT_ENV_OWN(MARMOT_BACKEND_FLAGS)
