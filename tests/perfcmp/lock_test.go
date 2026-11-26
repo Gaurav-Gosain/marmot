@@ -120,6 +120,36 @@ func TestSlowSamples(t *testing.T) {
 	}
 }
 
+func TestDisturbed(t *testing.T) {
+	s := func(ns ...uint64) []sample {
+		var ss []sample
+		for _, n := range ns {
+			ss = append(ss, sample{llc: n})
+		}
+		return ss
+	}
+	for _, c := range []struct {
+		name string
+		ss   []sample
+		i    int
+		lo   uint64
+	}{
+		{"none", nil, -1, 0},
+		{"no counters", s(0, 0, 0, 0), -1, 0},
+		{"quiet matmul", s(14_000_000, 7_400_000, 9_000_000, 12_000_000), -1, 7_400_000},
+		{"matmul next to other work", s(10_000_000, 669_000_000, 9_000_000, 8_000_000), 1, 8_000_000},
+		{"exactly 10 times", s(2_000_000, 20_000_000), 1, 2_000_000},
+		{"under 10 times", s(2_000_000, 19_999_999), -1, 2_000_000},
+		{"first run disturbed", s(584_000_000, 14_000_000, 7_000_000), 0, 7_000_000},
+		{"short program under the floor", s(1_000, 900_000), -1, 1_000},
+	} {
+		i, lo := disturbed(c.ss)
+		if i != c.i || lo != c.lo {
+			t.Errorf("%s: disturbed = %d, %d, want %d, %d", c.name, i, lo, c.i, c.lo)
+		}
+	}
+}
+
 func TestVerdict(t *testing.T) {
 	quiet := outcome{maxLoad: 1, cpus: 16}
 	for _, c := range []struct {
@@ -132,6 +162,8 @@ func TestVerdict(t *testing.T) {
 		{"worse", func(o outcome) outcome { o.worse = true; return o }, exitWorse, "WORSE"},
 		{"noisy", func(o outcome) outcome { o.noisy = true; o.worse = true; return o }, exitInconclusive, "would have said WORSE"},
 		{"loaded", func(o outcome) outcome { o.maxLoad = 9; return o }, exitInconclusive, "load reached 9.0"},
+		{"disturbed after the retries", func(o outcome) outcome { o.disturbed = []string{"matmul O2 B"}; return o }, exitInconclusive, "after 2 retries: matmul O2 B"},
+		{"disturbed on A=B", func(o outcome) outcome { o.disturbed, o.same = []string{"matmul dev A"}, true; return o }, exitInconclusive, "would have said ok"},
 		{"failed beats all", func(o outcome) outcome {
 			o.failed = []string{"nbody release: build A failed"}
 			o.worse, o.noisy, o.maxLoad, o.same = true, true, 30, true

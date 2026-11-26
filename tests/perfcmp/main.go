@@ -84,8 +84,9 @@ type program struct {
 }
 
 type sample struct {
-	wall, cpu time.Duration
-	rss       int64
+	wall, cpu   time.Duration
+	rss         int64
+	cycles, llc uint64 // user-mode counts, 0 without perf counters
 }
 
 type side struct {
@@ -141,6 +142,12 @@ func main() {
 	fmt.Printf("perfcmp %s/%s, %d runs; A=%s %s; B=%s %s\n", runtime.GOOS, runtime.GOARCH, *flRuns,
 		sides[0].root, strings.Join(sides[0].env, " "), sides[1].root, strings.Join(sides[1].env, " "))
 	fmt.Printf("load at start: %s\n", loadavg())
+	if c, err := openCounters(); err != nil {
+		fmt.Printf("LLC check: off (%v)\n", err)
+	} else {
+		c.close()
+		fmt.Printf("LLC check: on (a run with %d times the LLC misses of its side's least, and at least %d, runs again, at most %d times a program)\n", llcFactor, llcFloor, llcRetries)
+	}
 	if pinned != nil {
 		fmt.Printf("cpus: the timed runs use CPUs %s only\n", *flCPUs)
 	}
@@ -237,6 +244,31 @@ func main() {
 			if keep0 {
 				note = fmt.Sprintf(" (%d runs: slow)", rounds)
 			}
+			for i, retries := 0, 0; ok && i < len(got); i++ {
+				for {
+					j, lo := disturbed(got[i])
+					if j < 0 {
+						break
+					}
+					what := fmt.Sprintf("%-12s %s run %d had %d LLC misses, %.0f times the side's least (%d)", p.name, sides[i].label, j+1, got[i][j].llc, float64(got[i][j].llc)/float64(max(lo, 1)), lo)
+					if retries == llcRetries {
+						fmt.Printf("%s: no retry left, the run stays and the verdict is INCONCLUSIVE\n", what)
+						o.disturbed = append(o.disturbed, fmt.Sprintf("%s %s %s", p.name, mode, sides[i].label))
+						break
+					}
+					retries++
+					sm, err := runOnce(sides[i], p, bins[i])
+					if err != nil {
+						fmt.Printf("%-12s run %s failed: %v\n", p.name, sides[i].label, err)
+						o.failed = append(o.failed, fmt.Sprintf("%s %s: run %s failed", p.name, mode, sides[i].label))
+						ok = false
+						break
+					}
+					used += sm.cpu.Seconds()
+					fmt.Printf("%s: retry %d of %d replaces it (%s wall, was %s; %d LLC misses)\n", what, retries, llcRetries, ms(sm.wall), ms(got[i][j].wall), sm.llc)
+					got[i][j] = sm
+				}
+			}
 			if b1 := cpuBusy(pinned); b0 >= 0 && b1 >= 0 {
 				busy, wall = busy+b1-b0, wall+time.Since(t0).Seconds()
 			}
@@ -330,6 +362,7 @@ const (
 // outcome is what a run found; verdict turns it into the last line and the exit status.
 type outcome struct {
 	failed             []string // builds or runs that failed, ratios that are not numbers
+	disturbed          []string // program, mode and side with a disturbed run after the retries
 	worse, noisy, same bool
 	maxLoad            float64
 	cpus               int
@@ -342,13 +375,16 @@ func (o outcome) verdict() (string, int) {
 		return fmt.Sprintf("verdict: FAILED (%d %s, so B was not judged against A: %s)", len(o.failed), plural(len(o.failed), "failure", "failures"), strings.Join(o.failed, "; ")), exitFailed
 	}
 	loaded := o.maxLoad > float64(o.cpus)/2
-	if loaded || o.noisy {
+	if loaded || o.noisy || len(o.disturbed) > 0 {
 		why := []string{}
 		if loaded {
 			why = append(why, fmt.Sprintf("the load reached %.1f on %d CPUs", o.maxLoad, o.cpus))
 		}
 		if o.noisy {
 			why = append(why, "the noise line of a mode is above 1.02, the 2% the rule judges")
+		}
+		if len(o.disturbed) > 0 {
+			why = append(why, fmt.Sprintf("other work shared the LLC in a run after %d retries: %s", llcRetries, strings.Join(o.disturbed, ", ")))
 		}
 		would := "ok"
 		if o.worse {
@@ -521,6 +557,14 @@ func runOnce(s side, p program, bin string) (sample, error) {
 	cmd.Dir = p.dir
 	cmd.Env = append(os.Environ(), s.env...)
 	cmd.Stdout, cmd.Stderr = nil, nil
+	// The counters count the child through inherit: open them on this thread, fork
+	// from it, and keep it locked until the child is reaped. Without counters
+	// (no perf, or not Linux) cycles and llc stay 0 and the LLC check is off.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	pc, _ := openCounters()
+	defer pc.close()
+	c0, l0 := pc.read()
 	t0 := time.Now()
 	if err := startPinned(cmd, pinned); err != nil {
 		return sample{}, err
@@ -529,6 +573,8 @@ func runOnce(s side, p program, bin string) (sample, error) {
 		return sample{}, err
 	}
 	wall := time.Since(t0)
+	c1, l1 := pc.read()
+	cycles, llc := c1-c0, l1-l0
 	ru, _ := cmd.ProcessState.SysUsage().(*syscall.Rusage)
 	var cpu time.Duration
 	var rss int64
@@ -539,7 +585,7 @@ func runOnce(s side, p program, bin string) (sample, error) {
 			rss *= 1024 // KiB there, bytes on darwin
 		}
 	}
-	return sample{wall, cpu, rss}, nil
+	return sample{wall: wall, cpu: cpu, rss: rss, cycles: cycles, llc: llc}, nil
 }
 
 // slowWall and slowRounds: a program whose first A run takes more than slowWall
@@ -562,6 +608,36 @@ func plan(runs int, first time.Duration) (rounds int, keep0 bool) {
 	return runs + 1, false
 }
 
+// llcFactor, llcFloor and llcRetries: a run whose LLC misses are at least
+// llcFactor times the least of its side, and at least llcFloor, shared the last
+// level cache with other work (matmul: 600 M misses next to a memory-heavy job,
+// 10 M alone). It runs again, at most llcRetries times a program. The floor keeps
+// short programs, whose few misses vary a lot, out of the check.
+const (
+	llcFactor  = 10
+	llcFloor   = 1_000_000
+	llcRetries = 2
+)
+
+// disturbed returns the index of the first sample whose LLC misses are at least
+// llcFactor times the least of ss and at least llcFloor, or -1, and that least.
+// Without perf counters every count is 0 and nothing is disturbed.
+func disturbed(ss []sample) (int, uint64) {
+	if len(ss) == 0 {
+		return -1, 0
+	}
+	lo := ss[0].llc
+	for _, s := range ss {
+		lo = min(lo, s.llc)
+	}
+	for i, s := range ss {
+		if s.llc >= llcFloor && s.llc >= llcFactor*lo {
+			return i, lo
+		}
+	}
+	return -1, lo
+}
+
 func median(ss []sample) sample {
 	w := make([]time.Duration, len(ss))
 	c := make([]time.Duration, len(ss))
@@ -572,7 +648,7 @@ func median(ss []sample) sample {
 	slices.Sort(w)
 	slices.Sort(c)
 	slices.Sort(r)
-	return sample{w[len(w)/2], c[len(c)/2], r[len(r)/2]}
+	return sample{wall: w[len(w)/2], cpu: c[len(c)/2], rss: r[len(r)/2]}
 }
 
 // halves splits a side's runs into the even and odd ones and returns their medians.
