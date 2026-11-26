@@ -878,7 +878,10 @@ bool splitReachOn() {
 // byCalls (-split-adapt): functions are grouped by call graph instead of by
 // name hash (clusterByCalls), so a caller and the callees the inliner would
 // take stay in one group.
-std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback, bool byCalls = false) {
+// pkg (MARMOT_SPLIT_NAMEHASH): the module's Go package, which tells apart
+// two packages whose modules define the same names with the same code.
+std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback, bool byCalls = false,
+                                     StringRef pkg = "") {
   // Stable suffix: the smallest strong external definition of the module
   // (a symbol only this module defines).
   std::string anchor;
@@ -906,7 +909,7 @@ std::vector<std::string> splitModule(Module &m, unsigned k, StringRef fallback, 
     // tells apart two modules that define the same names with other
     // bodies. Object names (m046.o) are no help: split parts are numbered
     // in the order they finish.
-    anchor = std::to_string(StructuralHash(m, /*DetailedHash=*/true)) + "\n";
+    anchor = pkg.str() + "\n" + std::to_string(StructuralHash(m, /*DetailedHash=*/true)) + "\n";
     for (const std::string &n : names)
       anchor += n + "\n";
   }
@@ -2416,7 +2419,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
           auto t0 = std::chrono::steady_clock::now();
           unsigned half = std::max(1u, opts.splitInstrs / 2);
           unsigned k = std::min({16u, nfuncs, (n + half - 1) / half});
-          auto bcs = splitModule(**mOr, k, m.keyB);
+          auto bcs = splitModule(**mOr, k, m.keyB, false, m.pkg);
           std::string list;
           std::lock_guard<std::mutex> lock(mu);
           for (unsigned g = 0; g < k; ++g) {
@@ -3120,7 +3123,7 @@ bool compileWholeProgram(const std::vector<WpoJob> &jobs, const CompileOptions &
         }
         unsigned half = std::max(1u, limit / 2);
         unsigned k = std::min({16u, nfuncs, (n + half - 1) / half});
-        auto bcs = splitModule(*m, k, info.keyB, adaptBytes != 0);
+        auto bcs = splitModule(*m, k, info.keyB, adaptBytes != 0, info.pkg);
         std::string list;
         std::lock_guard<std::mutex> lock(mu);
         for (unsigned g = 0; g < k; ++g) {
