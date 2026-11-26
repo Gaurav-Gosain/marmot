@@ -80,12 +80,13 @@ func (b *build) linkCross(objs []string, rt, out string) (ok bool, err error) {
 		if g := b.gccDir(sr); g != "" {
 			args = append(args, "--gcc-install-dir="+g)
 		}
+		target := append([]string{}, args...) // what picks the target, the C library and the linker
 		args = append(args, "-o", o)
 		args = append(args, objs...)
 		args = append(args, rt, "-lpthread", "-Wl,--gc-sections", "-Wl,-z,start-stop-gc")
 		if b.goos != "darwin" {
 			args = append(args, b.noptrLinkArgs()...)
-			args = append(args, b.pieArgs()...)
+			args = append(args, b.pieArgs(pieLink{clang: target})...)
 		}
 		if b.cfg.Static {
 			args = append(args, "-static")

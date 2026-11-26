@@ -80,6 +80,9 @@ func (b *build) buildStamp(goos, goarch string) string {
 		fileSig(h, f)
 	}
 	fmt.Fprintf(h, "pgo-gen=%v strip=%v static=%v %s trace=%s trimpath=%v buildmode=%s\n", b.cfg.PGOGen, b.cfg.Strip, b.cfg.Static, os.Getenv("MARMOT_STRIP"), b.cfg.Trace, b.cfg.TrimPath, b.cfg.BuildMode)
+	if b.cfg.BuildMode == "pie" && goos == "linux" { // what relrOK found for the native link
+		fmt.Fprintf(h, "relr=%v\n", b.relrOK(linuxLinker()))
+	}
 	if b.cfg.GPU != "" { // only then: stamps of builds without -gpu stay as they were
 		fmt.Fprintf(h, "gpu=%s\n", b.cfg.GPU)
 	}

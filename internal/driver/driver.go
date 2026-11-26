@@ -782,7 +782,7 @@ func (b *build) link1(objs []string, rt, out string, extra []string) error {
 		args = append(args, "-Wl,--gc-sections", "-Wl,-z,start-stop-gc")
 		args = append(args, linuxLinker()...)
 		args = append(args, b.noptrLinkArgs()...)
-		args = append(args, b.pieArgs()...)
+		args = append(args, b.pieArgs(pieLink{clang: linuxLinker()})...)
 		if !b.wantPcln() {
 			args = append(args, "-s")
 		}
@@ -1057,7 +1057,7 @@ func (b *build) linkBundle(objs []string, rt, out string) error {
 		noptr = " -Wl,-T,noptr.ld"
 	}
 	if b.goos != "darwin" {
-		for _, a := range b.pieArgs() {
+		for _, a := range b.pieArgs(pieLink{bundle: true}) {
 			noptr += " " + a
 		}
 	}
