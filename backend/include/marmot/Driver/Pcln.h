@@ -75,6 +75,10 @@ void addTextSymbols(const llvm::object::ObjectFile &obj, Table &t);
 // The same from text symbols already read: address -> name, section end.
 void addTextSymbols(std::map<uint64_t, std::pair<std::string, uint64_t>> &syms, Table &t);
 
+// Fragments take functions from the symbol table too (unless
+// MARMOT_PCLN_SYMFUNCS=0).
+bool symFuncsOn();
+
 // A fragment: the functions of one relocatable object with pcs relative to
 // their own start, keyed by symbol name. The
 // backend writes one next to each object; the linker step turns fragments

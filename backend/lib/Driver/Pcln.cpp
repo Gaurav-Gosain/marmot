@@ -319,6 +319,16 @@ void addTextSymbols(std::map<uint64_t, std::pair<std::string, uint64_t>> &syms, 
 //   R <offset> <line> <file>         row (only where line or file changes)
 //   N <parent+1> <file> <line> <name>  inlined call
 //   G <offset> <end>                 a range of the last N
+// Functions from the symbol table too (readUnits). On by default since the
+// perfcmp gate; MARMOT_PCLN_SYMFUNCS=0 turns it off.
+bool symFuncsOn() {
+  static const bool on = [] {
+    const char *e = std::getenv("MARMOT_PCLN_SYMFUNCS");
+    return !(e && *e == '0');
+  }();
+  return on;
+}
+
 bool makeFragment(MemoryBufferRef object, unsigned version, std::string &out,
                   std::string &err) {
   auto objOr = ObjectFile::createObjectFile(object);
@@ -331,13 +341,8 @@ bool makeFragment(MemoryBufferRef object, unsigned version, std::string &out,
   std::map<std::string, uint32_t> fileIndex;
   std::vector<Raw> raws;
   bool elfObject = (*objOr)->isELF() && (*objOr)->isRelocatableObject();
-  // MARMOT_PCLN_SYMFUNCS=1: functions from the symbol table too (readUnits).
-  static const bool symFuncs = [] {
-    const char *e = std::getenv("MARMOT_PCLN_SYMFUNCS");
-    return e && *e == '1';
-  }();
   std::vector<Raw> symbols;
-  if (elfObject && symFuncs)
+  if (elfObject && symFuncsOn())
     symbols = objectFunctions(**objOr);
   readUnits(
       *dwarf, version, raws,
@@ -347,7 +352,7 @@ bool makeFragment(MemoryBufferRef object, unsigned version, std::string &out,
           files.push_back(f);
         return it->second;
       },
-      elfObject, nullptr, elfObject && symFuncs ? &symbols : nullptr);
+      elfObject, nullptr, elfObject && symFuncsOn() ? &symbols : nullptr);
   raw_string_ostream os(out);
   for (const std::string &f : files)
     os << "P\t" << f << "\n";

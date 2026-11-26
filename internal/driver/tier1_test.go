@@ -54,9 +54,9 @@ func TestTier1Traceback(t *testing.T) {
 		}
 	}
 	t.Setenv("MARMOT_TIER1", "sync") // the build waits for the runner
-	// Tier 1 objects keep their rows only with symbol functions (opt-in until
-	// the gate passes).
-	t.Setenv("MARMOT_PCLN_SYMFUNCS", "1")
+	// The default keeps the rows of tier 1 objects (symbol functions).
+	t.Setenv("MARMOT_PCLN_SYMFUNCS", "") // restored after the test
+	os.Unsetenv("MARMOT_PCLN_SYMFUNCS")
 	for _, n := range []string{"first", "second"} {
 		out := filepath.Join(dir, n)
 		cfg := Config{Root: root, Dir: src, Output: out, OptLevel: "2", Emit: "exe", GC: "precise", Dialect: "llvm",

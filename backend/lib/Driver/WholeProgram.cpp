@@ -668,6 +668,8 @@ std::string fingerprint(const CompileOptions &opts) {
   os << "|parkclear=" << marmotParkClearLinked();
   // Split reach is on by default too: objects cached before had it off.
   os << "|reach=" << splitReachOn();
+  // Symbol functions in fragments too: fragments cached before had none.
+  os << "|symfuncs=" << pcln::symFuncsOn();
   // Only when not the default, so the default keeps its keys.
   if (opts.wpoImportBudget != 400 || !opts.wpoImportTransitive)
     os << "|ib" << opts.wpoImportBudget << "t" << opts.wpoImportTransitive;
