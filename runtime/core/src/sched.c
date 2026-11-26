@@ -1992,6 +1992,12 @@ static void sysmon(void *arg) {
   setm(&sysmon_m);
   uint32_t delay = 20;
   int idle = 0;
+  // MARMOT_SYSMON_EAGER=1: sleep as soon as there is nothing to watch, as
+  // gc's sysmon does, rather than after 50 idle rounds. A goroutine that
+  // wakes and makes a system call kicks sysmon; without this each kick costs
+  // 50 more polls (a futex wait each) before sysmon sleeps again.
+  const char *ev = rt_getenv("MARMOT_SYSMON_EAGER");
+  bool eager = ev && ev[0] == '1' && ev[1] == 0;
   for (;;) {
     uint32_t w = atomic_load(&sysmon_wake);
     int64_t ns = (int64_t)delay * 1000;
@@ -1999,7 +2005,7 @@ static void sysmon(void *arg) {
     // starts or a signal arrives. sysmon_sleeping is
     // set before the check, and acquirep reads it after it took its P.
     bool idle_gc = false;  // sleeping to start the idle collection
-    if (idle > 50 && sysmon_nothing()) {
+    if ((idle > 50 || eager) && sysmon_nothing()) {
       atomic_store(&sysmon_sleeping, 1);
       if (sysmon_nothing()) {
         // No timer deadline: with every P idle, an idle M always waits for
