@@ -64,6 +64,7 @@ typedef struct rt_p rt_p;
 typedef struct mcache mcache;
 typedef struct mspan mspan;
 typedef struct rt_timer rt_timer;
+typedef struct tv2buf tv2buf;
 
 // ---- wakeup trace (trace.c, MARMOT_TRACE=wakeups=PATH) ----
 
@@ -187,6 +188,84 @@ typedef struct rt_spin { _Atomic uint32_t v; } rt_spin;
 void spin_lock(rt_spin *l);
 void spin_unlock(rt_spin *l);
 
+// ---- Go execution trace (tracev2.c, runtime/trace, MARMOT_TRACE_V2=1) ----
+
+enum {
+  TV2_EV_EVENT_BATCH = 1,
+  TV2_EV_PROC_START = 10,
+  TV2_EV_PROC_STOP = 11,
+  TV2_EV_PROC_STEAL = 12,
+  TV2_EV_PROC_STATUS = 13,
+  TV2_EV_GO_CREATE = 14,
+  TV2_EV_GO_CREATE_SYSCALL = 15,
+  TV2_EV_GO_START = 16,
+  TV2_EV_GO_DESTROY = 17,
+  TV2_EV_GO_STOP = 19,
+  TV2_EV_GO_BLOCK = 20,
+  TV2_EV_GO_UNBLOCK = 21,
+  TV2_EV_GO_SYSCALL_BEGIN = 22,
+  TV2_EV_GO_SYSCALL_END = 23,
+  TV2_EV_GO_SYSCALL_END_BLOCKED = 24,
+  TV2_EV_GO_STATUS = 25,
+  TV2_EV_GO_STATUS_STACK = 48,
+};
+// Statuses (tracev2.GoStatus, tracev2.ProcStatus).
+enum { TV2_G_RUNNABLE = 1, TV2_G_RUNNING, TV2_G_SYSCALL, TV2_G_WAITING };
+enum { TV2_P_RUNNING = 1, TV2_P_IDLE, TV2_P_SYSCALL };
+// String IDs the runtime core uses; trace_marmot.go writes their text.
+// A block reason is TV2_STR_WAIT + the goroutine's WAIT_* reason.
+enum { TV2_STR_WAIT = 1, TV2_STR_GOSCHED = 64, TV2_STR_YIELD, TV2_STR_FIRST_FREE = 128 };
+#define TV2_NOM ((uint64_t)0x7fffffff)  // the M ID of a thread without an rt_m
+#define TV2_FRAMES 32
+#define TV2_EVMAX 64                   // the most bytes one event takes
+
+struct tv2buf {
+  tv2buf *next;
+  uint64_t gen;
+  uint64_t last;   // the time of the last event (trace clock)
+  uint32_t len;    // bytes used in data
+  uint32_t lenat;  // offset of the reserved batch length
+  uint32_t start;  // offset of the first event
+  uint8_t data[(64 << 10) - 40];
+};
+
+typedef struct tv2clock {
+  uint64_t ts;
+  int64_t mono;
+  int64_t sec;
+  int32_t nsec;
+} tv2clock;
+
+extern _Atomic uint32_t tv2_on;
+#if RT_OS_WASI
+static inline bool tv2_active(void) { return false; }
+#else
+static inline bool tv2_active(void) {
+  return __builtin_expect(atomic_load_explicit(&tv2_on, memory_order_relaxed) != 0, 0);
+}
+#endif
+extern _Atomic uint64_t tv2_gen;
+extern rt_spin tv2_plock;
+uint64_t tv2_now(void);
+uint64_t tv2_mid(rt_m *m);
+void tv2_ev(rt_m *m, uint8_t t, int n, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3);
+void tv2_close_m(rt_m *m);
+tv2buf *tv2_take_full(void);
+void tv2_table_reset(uint64_t gen);
+uint64_t tv2_stack_id(const uintptr_t *pc, int32_t n);
+int32_t tv2_walk(uintptr_t first, uintptr_t fp, uintptr_t lo, uintptr_t hi, uintptr_t *pc);
+uint64_t tv2_stack_here(rt_g *g, void *fp);
+uint64_t tv2_stack_parked(rt_g *g);
+uint64_t tv2_stack_start(rt_g *g);
+void tv2_clock_snapshot(void);
+tv2clock tv2_clock(void);
+// What rt_tv2_switch hands to trace_marmot.go.
+typedef struct rt_tv2_out {
+  tv2buf *bufs;
+  uint64_t gen;
+  tv2clock clock;
+} rt_tv2_out;
+
 // One-shot sleep/wakeup for an M. notesleep blocks the OS thread.
 typedef struct note { _Atomic uint32_t key; } note;
 void noteclear(note *n);
@@ -270,6 +349,8 @@ struct rt_g {
   _Atomic bool durable;   // parked with rt_park_durable (not counted as running)
   int32_t cgo_errno;      // errno after the last C call (cgo.c)
   rt_m *lockedm;          // runs only on this M (a cgo callback is in progress), or NULL
+  uint64_t tv2_seq;       // tracev2: the sequence number of its last GoStart or GoUnblock
+  rt_m *tv2_sm;           // tracev2: the M of its last syscall
 };
 
 // Request from a goroutine to its M's scheduler after switching to g0.
@@ -317,6 +398,8 @@ struct rt_p {
   int32_t ngfree;
   uintptr_t stackcache[32];      // free stacks: mapping base addresses
   int32_t nstackcache;
+  uint64_t tv2_seq;              // tracev2: the sequence number of its last ProcStart, ProcSteal or syscall
+  uint64_t tv2_sysm;             // tracev2: the M of its last syscall
 };
 
 struct rt_m {
@@ -374,6 +457,8 @@ struct rt_m {
   // goroutine stack).
   _Atomic uint32_t nsigurg, nsigstop;
   _Atomic int32_t sigurg_why;
+  tv2buf *tv2b;              // tracev2: the open batch
+  uint64_t tv2_ts;           // tracev2: the time of its last event
 };
 
 // Current M. The thread pointer is read with volatile asm on every call, so

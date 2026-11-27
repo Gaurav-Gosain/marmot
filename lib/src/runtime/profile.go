@@ -287,17 +287,8 @@ func goroutineleakcount() int { return 0 }
 //go:linkname goroutineLeakGC runtime/pprof.runtime_goroutineLeakGC
 func goroutineLeakGC() {}
 
-// Execution tracing. marmot has no tracer: StartTrace fails, and the user
-// annotations of runtime/trace are dropped.
-
-// StartTrace enables tracing. marmot does not support it.
-func StartTrace() error { return errorString("tracing is not supported by marmot") }
-
-// StopTrace stops tracing, if it was enabled.
-func StopTrace() {}
-
-// ReadTrace returns the next chunk of trace data; there is none.
-func ReadTrace() []byte { return nil }
+// Execution tracing is in trace_marmot.go. The user annotations of
+// runtime/trace are dropped.
 
 //go:linkname trace_userTaskCreate runtime/trace.userTaskCreate
 func trace_userTaskCreate(id, parentID uint64, taskType string) {}
@@ -310,10 +301,3 @@ func trace_userRegion(id, mode uint64, regionType string) {}
 
 //go:linkname trace_userLog runtime/trace.userLog
 func trace_userLog(id uint64, category, message string) {}
-
-//go:linkname traceClockUnitsPerSecond runtime/trace.runtime_traceClockUnitsPerSecond
-func traceClockUnitsPerSecond() uint64 { return 1e9 }
-
-func traceAdvance(stopTrace bool) {}
-
-func traceClockNow() uint64 { return uint64(nanotime()) }

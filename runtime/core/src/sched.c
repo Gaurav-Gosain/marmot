@@ -487,10 +487,12 @@ static void acquirep(rt_m *m, rt_p *p) {
   m->mcache = p->mcache;
   __atomic_store_n(&p->m, m, __ATOMIC_RELAXED);  // stop_the_world reads it without sched.lock
   atomic_store(&p->status, P_RUNNING);
+  if (tv2_active()) tv2_ev(m, TV2_EV_PROC_START, 2, (uint64_t)p->id, ++p->tv2_seq, 0, 0);
 }
 
 static rt_p *releasep(rt_m *m) {
   rt_p *p = m->p;
+  if (tv2_active()) tv2_ev(m, TV2_EV_PROC_STOP, 0, 0, 0, 0, 0);
   m->p = NULL;
   m->mcache = NULL;
   __atomic_store_n(&p->m, NULL, __ATOMIC_RELAXED);
@@ -695,9 +697,14 @@ void sched_stop_self(void *sp, uintptr_t hi, void *fp) {
   }
   atomic_store(&p->status, P_GCSTOP);
   uint32_t gen = atomic_load(&sched.worldgen);
+  // Before the count: once it is done the stopper may switch generations.
+  m->locks++;
+  if (tv2_active()) tv2_ev(m, TV2_EV_PROC_STOP, 0, 0, 0, 0, 0);
   stop_count(p, 5);
   spin_unlock(&sched.lock);
   while (atomic_load(&sched.worldgen) == gen) os_futex_wait(&sched.worldgen, gen, -1);
+  if (tv2_active()) tv2_ev(m, TV2_EV_PROC_START, 2, (uint64_t)p->id, ++p->tv2_seq, 0, 0);
+  m->locks--;
 }
 
 NOINLINE void rt_safepoint(void) {
@@ -730,6 +737,7 @@ void stop_the_world(void) {
     if (atomic_compare_exchange_strong(&p->status, &s, P_GCSTOP)) {
       p->m = NULL;
       atomic_fetch_add(&p->syscalltick, 1);
+      if (tv2_active()) tv2_ev(m, TV2_EV_PROC_STEAL, 3, (uint64_t)p->id, ++p->tv2_seq, p->tv2_sysm, 0);
       stop_count(p, 2);
     }
   }
@@ -749,6 +757,7 @@ void stop_the_world(void) {
       if (atomic_compare_exchange_strong(&q->status, &s, P_GCSTOP)) {
         q->m = NULL;
         atomic_fetch_add(&q->syscalltick, 1);
+        if (tv2_active()) tv2_ev(m, TV2_EV_PROC_STEAL, 3, (uint64_t)q->id, ++q->tv2_seq, q->tv2_sysm, 0);
         stop_count(q, 4);
       } else if (s == P_RUNNING) {
         // q->m is written by an M leaving a syscall without sched.lock; a
@@ -859,6 +868,7 @@ static void execute(rt_m *m, rt_g *g) {
   }
   m->curg = g;
   g->m = m;
+  if (tv2_active()) tv2_ev(m, TV2_EV_GO_START, 2, (uint64_t)g->id, ++g->tv2_seq, 0, 0);
   atomic_store_explicit(&g->status, G_RUNNING, memory_order_relaxed);
   atomic_fetch_add_explicit(&m->p->schedtick, 1, memory_order_relaxed);
   m->locks++;
@@ -1204,6 +1214,7 @@ static void sched_req(rt_m *m, rt_g *g) {
   {
     switch (m->req) {
       case REQ_GOSCHED:
+        if (tv2_active()) tv2_ev(m, TV2_EV_GO_STOP, 2, TV2_STR_GOSCHED, tv2_stack_parked(g), 0, 0);
         atomic_store(&g->status, G_RUNNABLE);
         spin_lock(&sched.lock);
         globrunqput(g);
@@ -1221,6 +1232,9 @@ static void sched_req(rt_m *m, rt_g *g) {
         // the count drops after: a wakeup in between adds first, so the
         // count never reaches 0 for a goroutine that is already runnable.
         if (grp && durable) atomic_store_explicit(&g->durable, true, memory_order_release);
+        // Before the unlock: after it another M may ready g.
+        if (tv2_active())
+          tv2_ev(m, TV2_EV_GO_BLOCK, 2, TV2_STR_WAIT + (g->waitreason < 60 ? g->waitreason : 0), tv2_stack_parked(g), 0, 0);
         atomic_store_explicit(&g->status, G_WAITING, memory_order_release);
         m->in_park = true;
         if (f) f(arg);
@@ -1236,10 +1250,12 @@ static void sched_req(rt_m *m, rt_g *g) {
           atomic_fetch_sub(&grp->alive, 1);
           group_leave_running(grp);
         }
+        if (tv2_active() && m->p) tv2_ev(m, TV2_EV_GO_DESTROY, 0, 0, 0, 0, 0);
         goexit_final(g);
         if (m->p) gfput(m->p, g);
         break;
       case REQ_YIELD:
+        if (tv2_active() && m->p) tv2_ev(m, TV2_EV_GO_STOP, 2, TV2_STR_YIELD, tv2_stack_parked(g), 0, 0);
         atomic_store(&g->status, G_RUNNABLE);
         if (m->p)
           runqput(m->p, g, false);
@@ -1254,6 +1270,8 @@ static void sched_req(rt_m *m, rt_g *g) {
         void *arg = m->unlockarg;
         m->unlockf = NULL;
         m->unlockarg = NULL;
+        if (tv2_active())
+          tv2_ev(m, TV2_EV_GO_BLOCK, 2, TV2_STR_WAIT + (g->waitreason < 60 ? g->waitreason : 0), tv2_stack_parked(g), 0, 0);
         atomic_store_explicit(&g->status, G_WAITING, memory_order_release);
         if (f) f(arg);
         // m->handoff_g runs next (findrunnable takes it first).
@@ -1264,13 +1282,18 @@ static void sched_req(rt_m *m, rt_g *g) {
         // same critical section: a P that sysmon hands off (handoffp) after
         // an earlier failed pidleget would otherwise go idle while g sits in
         // the global queue and every M sleeps (lost wakeup).
+        // Without a P, beside a generation switch: tv2_plock covers the
+        // status change and its event (tracev2.c).
+        spin_lock(&tv2_plock);
+        if (tv2_active()) tv2_ev(m, TV2_EV_GO_SYSCALL_END_BLOCKED, 0, 0, 0, 0, 0);
         atomic_store(&g->status, G_RUNNABLE);
         spin_lock(&sched.lock);
         rt_p *p = atomic_load(&sched.gcwaiting) ? NULL : pidleget();
         if (!p) globrunqput(g);
         spin_unlock(&sched.lock);
+        if (p) acquirep(m, p);
+        spin_unlock(&tv2_plock);
         if (p) {
-          acquirep(m, p);
           if (m->lockedg == g)
             m->locked_ready = true;  // runs next, here
           else
@@ -1376,6 +1399,11 @@ static rt_g *newproc(void (*fn)(void *), void *arg, bool system) {
   g->preempt = false;
   g->id = new_goid(p);
   g->sp = NULL;  // context built by execute
+  if (tv2_active() && p && atomic_load(&p->status) == P_RUNNING) {
+    g->tv2_seq = 0;
+    tv2_ev(m, TV2_EV_GO_CREATE, 3, (uint64_t)g->id, tv2_stack_start(g),
+           tv2_stack_here(parent, __builtin_frame_address(0)), 0);
+  }
   if (!g->slot) glive_set(g, true);  // a kept slot kept the bit set
   if (!system) ngo_add(p, 1);
 #if RT_RACE
@@ -1458,11 +1486,16 @@ RT_API void rt_park(void (*unlock)(void *), void *lock) {
 }
 
 RT_API void rt_handoff(rt_g *target, void (*unlock)(void *), void *lock) {
+  rt_m *m = getm();
+  m->locks++;
   uint32_t s = G_WAITING;
   if (!atomic_compare_exchange_strong(&target->status, &s, G_RUNNABLE))
     rt_throw("rt_handoff: goroutine is not waiting");
+  if (tv2_active())
+    tv2_ev(m, TV2_EV_GO_UNBLOCK, 3, (uint64_t)target->id, ++target->tv2_seq,
+           tv2_stack_here(m->curg, __builtin_frame_address(0)), 0);
+  m->locks--;
   group_wake(target);
-  rt_m *m = getm();
   m->handoff_g = target;
   m->unlockf = unlock;
   m->unlockarg = lock;
@@ -1471,11 +1504,21 @@ RT_API void rt_handoff(rt_g *target, void (*unlock)(void *), void *lock) {
 }
 
 RT_API void rt_ready(rt_g *g) {
+  rt_m *m = getm();
+  // An M without a P runs beside a generation switch: tv2_plock covers the
+  // status change and its event. With a P, m->locks keeps a stop out.
+  bool pless = !m || !m->p;
+  if (m) m->locks++;
+  if (pless) spin_lock(&tv2_plock);
   uint32_t s = G_WAITING;
   if (!atomic_compare_exchange_strong(&g->status, &s, G_RUNNABLE))
     rt_throw("rt_ready: goroutine is not waiting");
+  if (tv2_active())
+    tv2_ev(m, TV2_EV_GO_UNBLOCK, 3, (uint64_t)g->id, ++g->tv2_seq,
+           m ? tv2_stack_here(m->curg, __builtin_frame_address(0)) : 0, 0);
+  if (pless) spin_unlock(&tv2_plock);
+  if (m) m->locks--;
   group_wake(g);
-  rt_m *m = getm();
   bool why = m && trace_on() && m->wake_next.cause == 0;  // a timer may have set it
   if (why) {
     const uint64_t *tf = timer_firing_frames();
@@ -1638,6 +1681,7 @@ RT_API int32_t rt_gomaxprocs(int32_t n) {
     rt_p *p = pnew(i);
     atomic_store(&p->status, P_GCSTOP);
     sched.allp[i] = p;
+    if (tv2_active()) tv2_ev(getm(), TV2_EV_PROC_STATUS, 2, (uint64_t)i, TV2_P_IDLE, 0, 0);
   }
   if (n > na) atomic_store(&sched.nallp, n);
   for (int32_t i = 0; i < na && i < n; i++) {
@@ -1667,6 +1711,15 @@ RT_API void rt_entersyscall(void) {
     return;
   }
   g->syscallsp = rt_spill_regs(g->syscallregs);
+  // From here to the P_SYSCALL store no stop may land: the event and the
+  // state change go together (tracev2.c).
+  m->locks++;
+  if (tv2_active()) {
+    rt_p *tp = m->p;
+    tp->tv2_sysm = tv2_mid(m);
+    tv2_ev(m, TV2_EV_GO_SYSCALL_BEGIN, 2, ++tp->tv2_seq, tv2_stack_here(g, __builtin_frame_address(0)), 0, 0);
+  }
+  g->tv2_sm = m;
   // Release stores, not seq_cst (each a locked instruction on x86): the
   // collector reads syscallsp after it sees G_SYSCALL, and whoever takes
   // the P (acquire CAS on P_SYSCALL) sees this goroutine's state. Only the
@@ -1694,10 +1747,13 @@ RT_API void rt_entersyscall(void) {
     if (atomic_load(&sched.gcwaiting) &&
         atomic_compare_exchange_strong(&p->status, &s, P_GCSTOP)) {
       p->m = NULL;
+      // Before the count, which lets the stopper switch generations.
+      if (tv2_active()) tv2_ev(m, TV2_EV_PROC_STEAL, 3, (uint64_t)p->id, ++p->tv2_seq, tv2_mid(m), 0);
       stop_count(p, 6);
     }
     spin_unlock(&sched.lock);
   }
+  m->locks--;
 }
 
 RT_API void rt_exitsyscall(void) {
@@ -1711,23 +1767,37 @@ RT_API void rt_exitsyscall(void) {
   }
   rt_p *p = m->p;
   uint32_t s = P_SYSCALL;
+  m->locks++;  // no stop between the P coming back and its event
   if (p && atomic_compare_exchange_strong_explicit(&p->status, &s, P_RUNNING, memory_order_acquire,
                                                     memory_order_relaxed)) {
     __atomic_store_n(&p->m, m, __ATOMIC_RELAXED);  // ours again (m->p, m->mcache still point at it)
+    if (tv2_active()) tv2_ev(m, TV2_EV_GO_SYSCALL_END, 0, 0, 0, 0, 0);
     atomic_store_explicit(&g->status, G_RUNNING, memory_order_release);
+    m->locks--;
     return;
   }
-  // The P was retaken. Try an idle one, else queue this goroutine.
+  // The P was retaken. Try an idle one, else queue this goroutine. Without
+  // a P this M runs beside a generation switch: tv2_plock covers the state
+  // changes and their events.
   m->p = NULL;
   m->mcache = NULL;
+  spin_lock(&tv2_plock);
   spin_lock(&sched.lock);
   p = atomic_load(&sched.gcwaiting) ? NULL : pidleget();
   spin_unlock(&sched.lock);
   if (p) {
     acquirep(m, p);
+    if (tv2_active()) {
+      tv2_ev(m, TV2_EV_GO_SYSCALL_END_BLOCKED, 0, 0, 0, 0, 0);
+      tv2_ev(m, TV2_EV_GO_START, 2, (uint64_t)g->id, ++g->tv2_seq, 0, 0);
+    }
     atomic_store(&g->status, G_RUNNING);
+    spin_unlock(&tv2_plock);
+    m->locks--;
     return;
   }
+  spin_unlock(&tv2_plock);
+  m->locks--;
   mcall(REQ_EXITSYSCALL);
 }
 
@@ -1868,8 +1938,15 @@ static void cgo_needm(rt_m *m) {
   lock_to_m(m, g);
   m->p = NULL;
   g->syscallsp = rt_spill_regs(g->syscallregs);
+  g->tv2_sm = m;
+  spin_lock(&tv2_plock);  // a new goroutine in a syscall, beside a generation switch
+  if (tv2_active()) {
+    g->tv2_seq = 0;
+    tv2_ev(m, TV2_EV_GO_CREATE_SYSCALL, 1, (uint64_t)g->id, 0, 0, 0);
+  }
   atomic_store(&g->status, G_SYSCALL);
   glive_set(g, true);
+  spin_unlock(&tv2_plock);
   rt_exitsyscall();
 }
 
@@ -1879,6 +1956,7 @@ static void cgo_dropm(rt_m *m) {
   m->locks++;
   // With the P still held the world cannot be stopped, so no collection
   // sees the goroutine half gone.
+  if (tv2_active()) tv2_ev(m, TV2_EV_GO_DESTROY, 0, 0, 0, 0, 0);
   atomic_store(&g->status, G_DEAD);
   glive_set(g, false);
   unlock_from_m(m, g);
@@ -1948,11 +2026,16 @@ static int retake(int64_t now) {
       continue;
     if (now - p->sysmon_when < 20000) continue;
     uint32_t s = P_SYSCALL;
+    spin_lock(&tv2_plock);  // sysmon has no P: see tracev2.c
     if (atomic_compare_exchange_strong(&p->status, &s, P_IDLE)) {
       p->m = NULL;
       atomic_fetch_add(&p->syscalltick, 1);
+      if (tv2_active()) tv2_ev(getm(), TV2_EV_PROC_STEAL, 3, (uint64_t)p->id, ++p->tv2_seq, p->tv2_sysm, 0);
+      spin_unlock(&tv2_plock);
       n++;
       handoffp(p);
+    } else {
+      spin_unlock(&tv2_plock);
     }
   }
   return n;
@@ -2066,6 +2149,94 @@ void sysmon_start(void) {
     __atomic_store_n(&sysmon_started, true, __ATOMIC_RELEASE);
   }
   spin_unlock(&sysmon_lock);
+}
+
+// ---- execution trace generations (tracev2.c) ----
+
+// The statuses that open a generation, with the world stopped: every P not
+// dead (only the caller's runs; the others stopped with a ProcStop or a
+// ProcSteal, or were idle) and every live goroutine. A running or
+// syscalling goroutine's status goes in the batch of its M, which binds it.
+static void tv2_statuses(rt_m *self) {
+  const uint64_t nom = ~(uint64_t)0;
+  int32_t na = atomic_load(&sched.nallp);
+  for (int32_t i = 0; i < na; i++) {
+    rt_p *p = sched.allp[i];
+    p->tv2_seq = 0;
+    if (atomic_load(&p->status) == P_DEAD) continue;
+    tv2_ev(self, TV2_EV_PROC_STATUS, 2, (uint64_t)p->id, p == self->p ? TV2_P_RUNNING : TV2_P_IDLE, 0, 0);
+  }
+  uint32_t total = __atomic_load_n(&nallg, __ATOMIC_ACQUIRE);
+  for (uint32_t i = 0; i < total && gchunks; i++) {
+    gchunk *c = gchunks[i / GCHUNK];
+    if (!c) break;
+    uint64_t live = atomic_load_explicit(&c->live[(i % GCHUNK) / 64], memory_order_relaxed);
+    if (!(live >> (i % 64) & 1)) continue;
+    rt_g *g = c->g[i % GCHUNK];
+    if (!g) continue;
+    g->tv2_seq = 0;
+    uint64_t id = (uint64_t)g->id;
+    switch (atomic_load(&g->status)) {
+      case G_RUNNING:
+        if (!g->m) rt_throw("tracev2: a running goroutine without an M");
+        tv2_ev(g->m, TV2_EV_GO_STATUS, 3, id, tv2_mid(g->m), TV2_G_RUNNING, 0);
+        break;
+      case G_SYSCALL: {
+        rt_m *sm = g->m ? g->m : g->tv2_sm;
+        if (!sm) rt_throw("tracev2: a goroutine in a syscall without an M");
+        tv2_ev(sm, TV2_EV_GO_STATUS, 3, id, tv2_mid(sm), TV2_G_SYSCALL, 0);
+        break;
+      }
+      case G_RUNNABLE:
+        tv2_ev(self, TV2_EV_GO_STATUS, 3, id, nom, TV2_G_RUNNABLE, 0);
+        break;
+      case G_WAITING:
+        tv2_ev(self, TV2_EV_GO_STATUS_STACK, 4, id, nom, TV2_G_WAITING, tv2_stack_parked(g));
+        break;
+      default:
+        break;
+    }
+  }
+}
+
+// Starts tracing (mode 0), ends a generation and starts the next (1), or
+// ends the last one (2), with the world stopped. out gets the batches of
+// the generation that ended, oldest first, its number and its clock
+// snapshot. Returns -1 if tracing is already on (mode 0) or off (1, 2).
+RT_API int32_t rt_tv2_switch(int32_t mode, rt_tv2_out *out) {
+  out->bufs = NULL;
+  out->gen = 0;
+  rt_m *self = getm();
+  stop_the_world();
+  spin_lock(&tv2_plock);
+  int32_t r = 0;
+  bool on = atomic_load(&tv2_on) != 0;
+  if ((mode == 0) == on) {
+    r = -1;
+  } else {
+    if (on) {
+      // Ms not on allm write too: sysmon, and threads without an rt_m.
+      for (rt_m *m = sched.allm; m; m = m->alllink) tv2_close_m(m);
+      tv2_close_m(&sysmon_m);
+      tv2_close_m(NULL);
+      out->gen = atomic_load(&tv2_gen);
+      out->clock = tv2_clock();
+      out->bufs = tv2_take_full();
+    }
+    if (mode == 2) {
+      atomic_store(&tv2_on, 0);
+    } else {
+      uint64_t gen = atomic_load(&tv2_gen) + 1;
+      tv2_table_reset(gen);
+      atomic_store(&tv2_gen, gen);
+      tv2_clock_snapshot();
+      atomic_store(&tv2_on, 1);
+      tv2_statuses(self);
+    }
+  }
+  spin_unlock(&tv2_plock);
+  start_the_world();
+  return r;
 }
 
 // ---- MARMOT_DEADLOCK_DEBUG ----
