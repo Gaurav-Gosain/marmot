@@ -38,7 +38,7 @@ func main() {
 
 // buildFlags are the flags of build and run.
 type buildFlags struct {
-	out, opt, trace, pgo, emit, tags, gc, target, dialect, buildmode            *string
+	out, opt, trace, pgo, emit, tags, gc, target, dialect, buildmode, buildvcs  *string
 	strip, pgoGen, release, work, verbose, printCmd, nocache, allocs, allocsAll *bool
 	static, trimpath, gpuRemarks, race                                          *bool
 	gpu                                                                         *gpuFlag
@@ -94,6 +94,7 @@ func newBuildFlags(name string) (*flag.FlagSet, *buildFlags) {
 	b.gpuRemarks = fs.Bool("gpu-remarks", false, "with -gpu: print, for each parallel loop, whether it became a GPU kernel and why not (rebuilds without the object cache)")
 	b.static = fs.Bool("static", false, "link a static executable (Linux: with the musl C library, after marmot sysroot add -libc musl GOOS/GOARCH)")
 	b.gc = fs.String("gc", "precise", "garbage collector: precise or none")
+	b.buildvcs = fs.String("buildvcs", "auto", "stamp the main module's version control state into the build info: auto (in a git repository), true or false (as go build -buildvcs)")
 	b.buildmode = fs.String("buildmode", "exe", "exe, or pie: a position independent executable on Linux (with packed relative relocations)")
 	b.target = fs.String("target", "", "target triple (default: host)")
 	b.dialect = fs.String("dialect", os.Getenv("MARMOT_DIALECT"), "MLIR dialect level: llvm or go (default: go with -release, llvm otherwise, or $MARMOT_DIALECT)")
@@ -174,7 +175,7 @@ func cmdBuild(args []string, run bool) int {
 		Root: root, Dir: wd, Output: *out, OptLevel: *opt, OptSet: optSet, Emit: *emit, Work: *work,
 		Verbose: *verbose, PrintCmd: *printCmd, NoCache: *nocache, GC: *gc, Target: *target,
 		Dialect: *dialect, Patterns: patterns, Stderr: os.Stderr, Release: *release, PGOGen: *pgoGen, PGO: *pgo, Strip: *strip, Trace: *trace,
-		Static: *b.static, TrimPath: *b.trimpath, BuildMode: *b.buildmode, Race: *b.race,
+		Static: *b.static, TrimPath: *b.trimpath, BuildMode: *b.buildmode, Race: *b.race, BuildVCS: *b.buildvcs,
 		GPU: b.gpu.arch, GPURemarks: *b.gpuRemarks,
 	}
 	if cfg.GPURemarks {

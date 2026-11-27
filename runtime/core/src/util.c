@@ -146,3 +146,22 @@ void fixalloc_free(fixalloc *f, void *p) {
   f->list = p;
   f->inuse--;
 }
+
+// Build info. The driver links an object that defines both symbols when it
+// stamps build info; modinfo.S has weak defaults (an empty string). The
+// declarations carry no initializer, so an inlined rt_modinfo reads the
+// symbols at run time. wasm builds carry no build info yet.
+#if !defined(__wasm__)
+extern const char marmot_modinfo[];
+extern const uint64_t marmot_modinfo_len;
+#endif
+
+intptr_t rt_modinfo(const char **p) {
+#if defined(__wasm__)
+  *p = 0;
+  return 0;
+#else
+  *p = marmot_modinfo;
+  return (intptr_t)marmot_modinfo_len;
+#endif
+}

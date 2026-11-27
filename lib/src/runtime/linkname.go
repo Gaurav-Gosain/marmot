@@ -339,7 +339,7 @@ func debug_readGCStats(pauses *[]int64) {
 }
 
 //go:linkname debug_modinfo runtime/debug.modinfo
-func debug_modinfo() string { return "" }
+func debug_modinfo() string { return modinfoText }
 
 //go:linkname debug_WriteHeapDump runtime/debug.WriteHeapDump
 func debug_WriteHeapDump(fd uintptr) {}

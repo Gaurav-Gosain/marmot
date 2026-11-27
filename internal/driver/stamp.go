@@ -58,6 +58,15 @@ func (b *build) buildStamp(goos, goarch string) string {
 	}
 	fileSig(h, filepath.Join(b.cfg.Root, "build", "bin", "marmot-backend"))
 	fileSig(h, filepath.Join(b.cfg.Root, "build", "bin", "marmot-pcln"))
+	// The build info's version control state and settings (buildinfo.go):
+	// a new commit changes no source file but must not reuse the old
+	// executable.
+	if buildInfoOn() {
+		fmt.Fprintf(h, "%s buildvcs=%s trimpath=%v buildmode=%s\n", b.stampVCSKey(), b.buildVCS(), b.cfg.TrimPath, b.cfg.BuildMode)
+	}
+	for _, k := range []string{"CGO_ENABLED", "CGO_CFLAGS", "CGO_CPPFLAGS", "CGO_CXXFLAGS", "CGO_LDFLAGS", "GOEXPERIMENT", "GOAMD64", "GOARM64"} {
+		fmt.Fprintf(h, "%s=%s\n", k, os.Getenv(k))
+	}
 	fileSig(h, b.rtLib("librtcore.a"))
 	fileSig(h, b.rtLib("rtcore.bc"))
 	// Tier 1: the runner touches its epoch file when it has cached new -O2

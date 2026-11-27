@@ -38,7 +38,7 @@ func TestCodegenSwitchesInKeys(t *testing.T) {
 	// order, sections): the driver also reads switches that only set paths
 	// or limits, so these are listed.
 	for _, name := range []string{"MARMOT_NOPTR", "MARMOT_GCVARS", "MARMOT_INITSECT", "MARMOT_NOPIE", "MARMOT_PART_ORDER",
-		"MARMOT_HOME_INSTANCES", "MARMOT_LOC_COLS", "MARMOT_WASM_HOSTCALLERS", "MARMOT_LD", "MARMOT_LDFLAGS", "MARMOT_SPLIT", "MARMOT_PART_INSTRS"} {
+		"MARMOT_HOME_INSTANCES", "MARMOT_LOC_COLS", "MARMOT_WASM_HOSTCALLERS", "MARMOT_LD", "MARMOT_LDFLAGS", "MARMOT_SPLIT", "MARMOT_PART_INSTRS", "MARMOT_BUILDINFO"} {
 		if noCodeEffect[name] {
 			t.Errorf("the driver output switch %s is in noCodeEffect", name)
 		}

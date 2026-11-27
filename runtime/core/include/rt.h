@@ -127,6 +127,9 @@ typedef struct rt_memstats {
   uint64_t num_forced_gc;  // collections forced by runtime.GC or debug.FreeOSMemory
 } rt_memstats;
 void rt_gc_stats(rt_memstats *out);
+// The build info text (runtime/debug.modinfo): *p and its length, 0 when the
+// program was linked without build info.
+intptr_t rt_modinfo(const char **p);
 // Why the current goroutine is about to park (runtime.Stack prints it).
 void rt_set_waitreason(uint32_t reason);
 // The write barrier, for concurrent marking (MARMOT_GC_CONC=1). Compiled code

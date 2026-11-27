@@ -49,7 +49,10 @@ type Config struct {
 	PGO      string // indexed profile to optimize with
 	Strip    bool   // -s: no pc table
 	TrimPath bool   // -trimpath: no directory of this machine in the output (trimNames)
-	Static   bool   // -static: a static executable (Linux: musl)
+	// BuildVCS: -buildvcs, auto (default), true or false: stamp the main
+	// module's version control state into the build info (buildinfo.go).
+	BuildVCS string
+	Static   bool // -static: a static executable (Linux: musl)
 	// GPU: -gpu, the NVIDIA architecture of the embedded PTX ("" without it).
 	// GPURemarks: -gpu-remarks, print the loop and GPU remarks.
 	GPU        string
@@ -563,6 +566,13 @@ func (b *build) run1() (string, error) {
 	}
 	b.dylibs = cg.DynamicLibraries()
 	objs = append(objs, b.cgoObjs...)
+	if text := b.buildInfoText(lp); text != "" {
+		obj, err := b.buildInfoObject(goVersion(lp.GOROOT), text)
+		if err != nil {
+			return "", err
+		}
+		objs = append(objs, obj)
+	}
 	if err := b.link(objs, out); err != nil {
 		return "", err
 	}
