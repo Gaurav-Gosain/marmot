@@ -285,7 +285,7 @@ func godebug_setNewIncNonDefault(newIncNonDefault func(string) func()) {}
 func debug_setGCPercent(in int32) int32 { return rt_gc_set_percent(in) }
 
 //go:linkname debug_freeOSMemory runtime/debug.freeOSMemory
-func debug_freeOSMemory() { rt_gc_collect() }
+func debug_freeOSMemory() { rt_gc_free_os_memory() }
 
 var maxStack = 1 << 30
 

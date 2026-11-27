@@ -1759,7 +1759,25 @@ static NOINLINE void gc_collect_body(bool forced, void *sp, void *fp) {
   if (wake) rt_ready(fing);
 }
 
-RT_API void rt_gc_collect(void) { gc_collect(true); }
+// Collections the program forced (runtime.GC, debug.FreeOSMemory):
+// MemStats.NumForcedGC.
+static _Atomic uint64_t num_forced_gc;
+
+RT_API void rt_gc_collect(void) {
+  atomic_fetch_add(&num_forced_gc, 1);
+  gc_collect(true);
+}
+
+// debug.FreeOSMemory: a forced collection, then every free page goes back
+// to the OS, as in gc. The collection's own scavenge keeps free pages up to
+// the heap goal (with GOGC=off, up to the live heap) and spans under 64 KiB.
+RT_API void rt_gc_free_os_memory(void) {
+  rt_gc_collect();
+  spin_lock(&heap_lock);
+  heap_scavenge_min(0, rt_pagesize);
+  heap_scavenge_partial();
+  spin_unlock(&heap_lock);
+}
 
 void gc_parallel_enable(void) {
   if (__atomic_load_n(&helpers_init_fn, __ATOMIC_ACQUIRE)) return;
@@ -1785,6 +1803,7 @@ RT_API void rt_gc_stats(rt_memstats *out) {
   out->pause_total_ns = pause_total_ns;
   out->last_live = last_live;
   out->heap_released = heap_released;
+  out->num_forced_gc = atomic_load(&num_forced_gc);
 }
 
 RT_API int32_t rt_gc_set_percent(int32_t percent) {

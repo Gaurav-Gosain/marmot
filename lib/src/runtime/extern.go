@@ -475,6 +475,12 @@ func ReadMemStats(m *MemStats) {
 	m.Sys = s.heapSys
 	m.HeapSys = s.heapSys
 	m.HeapInuse = s.heapAlloc
+	// Idle: obtained from the OS and holding no objects, returned or not.
+	if s.heapSys > s.heapAlloc {
+		m.HeapIdle = s.heapSys - s.heapAlloc
+	}
+	m.HeapReleased = s.heapReleased
+	m.NumForcedGC = uint32(s.numForcedGC)
 	m.Mallocs = s.mallocs
 	m.Frees = s.frees
 	m.HeapObjects = s.mallocs - s.frees

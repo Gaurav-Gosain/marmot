@@ -26,6 +26,7 @@ type rtMemstats struct {
 	pauseTotalNs uint64
 	lastLive     uint64 // heap marked live by the last collection
 	heapReleased uint64 // part of heapSys returned to the OS
+	numForcedGC  uint64 // collections forced by runtime.GC or debug.FreeOSMemory
 }
 
 // Allocation kinds for rt_alloc.
@@ -61,6 +62,9 @@ func rt_alloc(size uintptr, kind uint32, ptrmap unsafe.Pointer, elemsize uintptr
 
 //go:linkname rt_gc_collect rt_gc_collect
 func rt_gc_collect()
+
+//go:linkname rt_gc_free_os_memory rt_gc_free_os_memory
+func rt_gc_free_os_memory()
 
 //go:linkname rt_gc_add_roots rt_gc_add_roots
 func rt_gc_add_roots(start, end unsafe.Pointer)

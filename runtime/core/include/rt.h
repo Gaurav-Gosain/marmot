@@ -69,6 +69,8 @@ void *rt_alloc_nozero(uintptr_t size);
 void rt_free(void *p, uintptr_t size);
 
 void rt_gc_collect(void);
+// debug.FreeOSMemory: collect, then return every free page to the OS.
+void rt_gc_free_os_memory(void);
 // Parallel marking and sweeping are linked only into programs that start a
 // goroutine (rt_go) or link this function; others collect on one thread,
 // which saves about 2.3 KB of text. Linking it is enough (its object file
@@ -122,6 +124,7 @@ typedef struct rt_memstats {
   uint64_t pause_total_ns;
   uint64_t last_live;      // bytes live after the last collection (marked)
   uint64_t heap_released;  // part of heap_sys returned to the OS
+  uint64_t num_forced_gc;  // collections forced by runtime.GC or debug.FreeOSMemory
 } rt_memstats;
 void rt_gc_stats(rt_memstats *out);
 // Why the current goroutine is about to park (runtime.Stack prints it).
