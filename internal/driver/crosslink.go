@@ -70,17 +70,12 @@ func ldLLD() string {
 // linkCross links an executable for the target. ok is false when it
 // cannot (no sysroot or no ld.lld).
 func (b *build) linkCross(objs []string, rt, out string) (ok bool, err error) {
-	sr, lld := b.crossSysroot(), ldLLD()
-	triple := b.cTriple()
-	if sr == "" || lld == "" || triple == "" {
+	target := b.crossTarget()
+	if target == nil {
 		return false, nil
 	}
 	link := func(extra []string, o string) error {
-		args := []string{"--target=" + triple, "--sysroot=" + sr, "-fuse-ld=" + lld}
-		if g := b.gccDir(sr); g != "" {
-			args = append(args, "--gcc-install-dir="+g)
-		}
-		target := append([]string{}, args...) // what picks the target, the C library and the linker
+		args := append([]string{}, target...)
 		args = append(args, "-o", o)
 		args = append(args, objs...)
 		args = append(args, rt, "-lpthread", "-Wl,--gc-sections", "-Wl,-z,start-stop-gc")
@@ -102,6 +97,21 @@ func (b *build) linkCross(objs []string, rt, out string) (ok bool, err error) {
 		return true, b.linkWithPcln(objs, link, out)
 	}
 	return true, link(nil, out)
+}
+
+// crossTarget is the clang arguments of a cross link that pick the target,
+// the sysroot (so the C library), the linker and gcc's files, or nil when
+// the build cannot link here (no sysroot, no ld.lld or no triple).
+func (b *build) crossTarget() []string {
+	sr, lld, triple := b.crossSysroot(), ldLLD(), b.cTriple()
+	if sr == "" || lld == "" || triple == "" {
+		return nil
+	}
+	args := []string{"--target=" + triple, "--sysroot=" + sr, "-fuse-ld=" + lld}
+	if g := b.gccDir(sr); g != "" {
+		args = append(args, "--gcc-install-dir="+g)
+	}
+	return args
 }
 
 // crossLinkNote says how to get a linked executable when a bundle was

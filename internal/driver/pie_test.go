@@ -92,3 +92,29 @@ func TestPieArgsNativeRELR(t *testing.T) {
 		}
 	}
 }
+
+// The stamp and the link use the same link: a cross build with a sysroot
+// gets the PIE arguments of that sysroot's link, never the native answer.
+func TestPieTargetCross(t *testing.T) {
+	if _, err := os.Stat(llvmTool("clang")); err != nil {
+		t.Skip("no clang")
+	}
+	other := "arm64"
+	if runtime.GOARCH == "arm64" {
+		other = "amd64"
+	}
+	sr := t.TempDir()
+	t.Setenv("MARMOT_SYSROOT", sr)
+	b := &build{cfg: Config{Root: t.TempDir(), BuildMode: "pie"}, goos: "linux", goarch: other}
+	l := b.pieTarget()
+	if ldLLD() == "" {
+		if !l.bundle {
+			t.Fatalf("no ld.lld: %+v, want a bundle", l)
+		}
+	} else if l.bundle || !slices.Contains(l.clang, "--sysroot="+sr) {
+		t.Fatalf("cross link: %+v, want the sysroot's link", l)
+	}
+	if got := b.pieArgs(l); !slices.Equal(got, []string{"-pie"}) {
+		t.Errorf("cross link to a sysroot without libc.so.6: %q, want [-pie]", got)
+	}
+}

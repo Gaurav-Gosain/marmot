@@ -46,6 +46,18 @@ func (b *build) pieArgs(l pieLink) []string {
 	return nil
 }
 
+// pieTarget is the link that link makes for this build: the native link, a
+// cross link here with a sysroot, or a bundle.
+func (b *build) pieTarget() pieLink {
+	if !b.cross() && !b.cfg.Static {
+		return pieLink{clang: linuxLinker()}
+	}
+	if t := b.crossTarget(); t != nil {
+		return pieLink{clang: t}
+	}
+	return pieLink{bundle: true}
+}
+
 // pieLink says which link pieArgs is for. clang holds the arguments that
 // pick the target, the sysroot and the linker (--target, --sysroot,
 // -fuse-ld, --ld-path); bundle is a link.sh bundle.
@@ -63,7 +75,7 @@ const relrDT = "GLIBC_ABI_DT_RELR"
 // dtRELR is the DT_RELR dynamic tag (debug/elf has no name for it).
 const dtRELR = elf.DynTag(36)
 
-var relrMemo sync.Map // key -> bool
+var relrMemo sync.Map // the joined clang arguments -> bool, for this process
 
 // relrOK reports whether a link with these clang arguments can make packed
 // relative relocations that the target loads: the C library the link uses
@@ -73,6 +85,10 @@ var relrMemo sync.Map // key -> bool
 // The answer is cached in build/cache, keyed by clang, the arguments, the
 // C library and the linker the arguments name.
 func (b *build) relrOK(args []string) bool {
+	mk := strings.Join(args, "\x00")
+	if v, ok := relrMemo.Load(mk); ok {
+		return v.(bool) // the clang and file lookups below run once per process
+	}
 	clang := llvmTool("clang")
 	libc := clangFile(clang, args, "libc.so.6")
 	h := sha256.New()
@@ -83,14 +99,11 @@ func (b *build) relrOK(args []string) bool {
 		fileSig(h, p)
 	}
 	key := hex.EncodeToString(h.Sum(nil))[:24]
-	if v, ok := relrMemo.Load(key); ok {
-		return v.(bool)
-	}
 	dir := filepath.Join(b.cfg.Root, "build", "cache")
 	cache := filepath.Join(dir, "relr-"+key)
 	if data, err := os.ReadFile(cache); err == nil {
 		ok := strings.TrimSpace(string(data)) == "1"
-		relrMemo.Store(key, ok)
+		relrMemo.Store(mk, ok)
 		return ok
 	}
 	ok := libcHasRELR(libc) && probeRELR(clang, args)
@@ -101,7 +114,7 @@ func (b *build) relrOK(args []string) bool {
 		}
 		_ = os.WriteFile(cache, []byte(v+"\n"), 0o644)
 	}
-	relrMemo.Store(key, ok)
+	relrMemo.Store(mk, ok)
 	if !ok {
 		b.logf("-buildmode=pie: a PIE without packed relative relocations (the C library or the linker of this link has no DT_RELR)")
 	}
