@@ -8,8 +8,12 @@
 // strings and stacks batches, adds the sync batch and queues it all for
 // ReadTrace: one batch per chunk, then a one-byte EvEndOfGeneration chunk.
 //
-// While the writer is new, StartTrace works only with MARMOT_TRACE_V2=1 in
-// the environment; without it StartTrace returns an error, as before.
+// Only a build with MARMOT_TRACE_V2=1 in the environment of marmot build has
+// the tracer (the marmot_tracev2 tag, and the trace build of the runtime
+// core, build/lib/tracev2). Every other build has the stubs in profile.go:
+// StartTrace fails, and no binary pays for the tracer.
+
+//go:build marmot_tracev2
 
 package runtime
 
@@ -93,9 +97,6 @@ func traceInit() {
 
 // StartTrace enables tracing for the current process.
 func StartTrace() error {
-	if gogetenv("MARMOT_TRACE_V2") != "1" {
-		return errorString("tracing is not supported by marmot (MARMOT_TRACE_V2=1 enables the trace writer in progress)")
-	}
 	traceInit()
 	tracer.sem <- struct{}{}
 	defer func() { <-tracer.sem }()

@@ -64,7 +64,9 @@ typedef struct rt_p rt_p;
 typedef struct mcache mcache;
 typedef struct mspan mspan;
 typedef struct rt_timer rt_timer;
+#if RT_TRACE
 typedef struct tv2buf tv2buf;
+#endif
 
 // ---- wakeup trace (trace.c, MARMOT_TRACE=wakeups=PATH) ----
 
@@ -188,7 +190,12 @@ typedef struct rt_spin { _Atomic uint32_t v; } rt_spin;
 void spin_lock(rt_spin *l);
 void spin_unlock(rt_spin *l);
 
-// ---- Go execution trace (tracev2.c, runtime/trace, MARMOT_TRACE_V2=1) ----
+// ---- Go execution trace (tracev2.c, runtime/trace) ----
+// Only in the trace build of the runtime core (RT_TRACE=1, build/lib/tracev2),
+// which the driver links when MARMOT_TRACE_V2=1 is set at build time. The
+// default build has none of it: no hooks, no fields, the code of before.
+
+#if RT_TRACE
 
 enum {
   TV2_EV_EVENT_BATCH = 1,
@@ -265,6 +272,7 @@ typedef struct rt_tv2_out {
   uint64_t gen;
   tv2clock clock;
 } rt_tv2_out;
+#endif  // RT_TRACE
 
 // One-shot sleep/wakeup for an M. notesleep blocks the OS thread.
 typedef struct note { _Atomic uint32_t key; } note;
@@ -349,8 +357,10 @@ struct rt_g {
   _Atomic bool durable;   // parked with rt_park_durable (not counted as running)
   int32_t cgo_errno;      // errno after the last C call (cgo.c)
   rt_m *lockedm;          // runs only on this M (a cgo callback is in progress), or NULL
+#if RT_TRACE
   uint64_t tv2_seq;       // tracev2: the sequence number of its last GoStart or GoUnblock
   rt_m *tv2_sm;           // tracev2: the M of its last syscall
+#endif
 };
 
 // Request from a goroutine to its M's scheduler after switching to g0.
@@ -398,8 +408,10 @@ struct rt_p {
   int32_t ngfree;
   uintptr_t stackcache[32];      // free stacks: mapping base addresses
   int32_t nstackcache;
+#if RT_TRACE
   uint64_t tv2_seq;              // tracev2: the sequence number of its last ProcStart, ProcSteal or syscall
   uint64_t tv2_sysm;             // tracev2: the M of its last syscall
+#endif
 };
 
 struct rt_m {
@@ -457,8 +469,10 @@ struct rt_m {
   // goroutine stack).
   _Atomic uint32_t nsigurg, nsigstop;
   _Atomic int32_t sigurg_why;
+#if RT_TRACE
   tv2buf *tv2b;              // tracev2: the open batch
   uint64_t tv2_ts;           // tracev2: the time of its last event
+#endif
 };
 
 // Current M. The thread pointer is read with volatile asm on every call, so

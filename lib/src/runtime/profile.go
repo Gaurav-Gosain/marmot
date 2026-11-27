@@ -2,8 +2,8 @@
 // allocation per MemProfileRate bytes from its allocation slow path); the
 // other profiles exist so that runtime/pprof and testing (which imports it)
 // build, and they report empty profiles. Goroutine profile labels are
-// kept, so pprof.Do and pprof.Label work within a goroutine. Compiled only
-// by marmot.
+// kept, so pprof.Do and pprof.Label work within a goroutine. marmot only.
+//go:build !marmot_tracev2
 
 package runtime
 
@@ -287,8 +287,17 @@ func goroutineleakcount() int { return 0 }
 //go:linkname goroutineLeakGC runtime/pprof.runtime_goroutineLeakGC
 func goroutineLeakGC() {}
 
-// Execution tracing is in trace_marmot.go. The user annotations of
-// runtime/trace are dropped.
+// Execution tracing: none in this build. profile_tracev2.go is this file for a build with
+// MARMOT_TRACE_V2=1 (keep the two in step); here StartTrace fails, as before the tracer.
+
+// StartTrace enables tracing. marmot does not support it.
+func StartTrace() error { return errorString("tracing is not supported by marmot") }
+
+// StopTrace stops tracing, if it was enabled.
+func StopTrace() {}
+
+// ReadTrace returns the next chunk of trace data; there is none.
+func ReadTrace() []byte { return nil }
 
 //go:linkname trace_userTaskCreate runtime/trace.userTaskCreate
 func trace_userTaskCreate(id, parentID uint64, taskType string) {}
@@ -301,3 +310,10 @@ func trace_userRegion(id, mode uint64, regionType string) {}
 
 //go:linkname trace_userLog runtime/trace.userLog
 func trace_userLog(id uint64, category, message string) {}
+
+//go:linkname traceClockUnitsPerSecond runtime/trace.runtime_traceClockUnitsPerSecond
+func traceClockUnitsPerSecond() uint64 { return 1e9 }
+
+func traceAdvance(stopTrace bool) {}
+
+func traceClockNow() uint64 { return uint64(nanotime()) }

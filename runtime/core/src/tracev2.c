@@ -1,5 +1,7 @@
 // tracev2.c: the Go execution trace that runtime/trace reads (format
-// version Go126), opt-in with MARMOT_TRACE_V2=1 while it is in progress.
+// version Go126). Only in the trace build of the runtime core (RT_TRACE=1,
+// build/lib/tracev2): the driver links it when MARMOT_TRACE_V2=1 is set at
+// build time. In the default build this file is empty.
 //
 // Each M writes its events into its own buffer, one EvEventBatch batch of
 // the current generation. A generation ends under stop the world
@@ -21,6 +23,8 @@
 // - The switching M writes the statuses of stopped Ms into their buffers.
 
 #include "internal.h"
+
+#if RT_TRACE
 
 _Atomic uint32_t tv2_on;
 _Atomic uint64_t tv2_gen;
@@ -322,3 +326,5 @@ void tv2_clock_snapshot(void) {
 }
 
 tv2clock tv2_clock(void) { return clock_now; }
+
+#endif  // RT_TRACE

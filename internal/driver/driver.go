@@ -271,6 +271,9 @@ func (b *build) run1() (string, error) {
 	if err := b.checkRace(); err != nil {
 		return "", err
 	}
+	if err := b.checkTraceV2(); err != nil {
+		return "", err
+	}
 	if cfg.Static && goos != "linux" {
 		return "", fmt.Errorf("-static links Linux executables (with musl); %s executables link the system C library dynamically: add -target linux/%s", goos, goarch)
 	}
@@ -1028,6 +1031,9 @@ func (b *build) cross() bool { return b.goos != runtime.GOOS || b.goarch != runt
 func (b *build) rtLib(name string) string {
 	if b.cfg.Race {
 		return filepath.Join(b.cfg.Root, "build", "lib", "race", name) // race.go
+	}
+	if b.traceV2() && !b.cfg.Static && !b.cross() {
+		return filepath.Join(b.cfg.Root, "build", "lib", "tracev2", name) // tracev2.go
 	}
 	if b.cfg.Static {
 		// The runtime of static builds is compiled against musl.

@@ -132,7 +132,7 @@ S_OBJS  := $(patsubst src/%.S,$(OBJ)/%.o,$(S_SRCS))
 BCS     := $(patsubst %.c,$(OBJ)/%.bc,$(notdir $(C_SRCS)))
 HDRS    := $(wildcard src/*.h) include/rt.h
 
-.PHONY: all test test-asan test-tsan bench clean check-targets race
+.PHONY: all test test-asan test-tsan bench clean check-targets race tracev2
 
 all: $(OUT)/librtcore.a $(OUT)/rtcore.bc $(if $(WASM),$(OUT)/wasm-callers.o)
 
@@ -230,3 +230,10 @@ race:
 	@test -n "$(COMPILER_RT)" || { echo "make race: set COMPILER_RT to the compiler-rt directory of an LLVM source tree"; exit 2; }
 	$(MAKE) OUT=$(RACE_OUT) OBJ=$(OBJ)-race CFLAGS="$(CFLAGS) -DRT_RACE=1" all
 	CC=$(CC) OBJCOPY=$(LLVM)/bin/llvm-objcopy sh race/build-tsan.sh $(COMPILER_RT) $(RACE_OUT)
+
+# ---- execution tracer (MARMOT_TRACE_V2=1 marmot build) ----
+# build/lib/tracev2: librtcore.a and rtcore.bc built with RT_TRACE=1 (the
+# scheduler's trace hooks and src/tracev2.c). The default build has none of it.
+TRACEV2_OUT := $(OUT)/tracev2
+tracev2:
+	$(MAKE) OUT=$(TRACEV2_OUT) OBJ=$(OBJ)-tracev2 CFLAGS="$(CFLAGS) -DRT_TRACE=1" all

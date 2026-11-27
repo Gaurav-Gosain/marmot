@@ -49,8 +49,9 @@ func (b *build) raceLinkArgs() []string {
 	return []string{b.raceObject()}
 }
 
-// loaderTags are the build tags: -tags, and race under -race (internal/race
-// and the standard library's race annotations).
+// loaderTags are the build tags: -tags, race under -race (internal/race
+// and the standard library's race annotations), and marmot_tracev2 under
+// MARMOT_TRACE_V2=1 (tracev2.go).
 func (b *build) loaderTags() []string {
 	tags := b.cfg.Tags
 	if b.cfg.Race && !slices.Contains(tags, "race") {
@@ -61,7 +62,7 @@ func (b *build) loaderTags() []string {
 	if buildInfoOn() {
 		tags = append(slices.Clip(tags), "marmot_buildinfo")
 	}
-	return tags
+	return b.traceV2Tags(tags)
 }
 
 // dropRaceOff removes, in package runtime, every statement
