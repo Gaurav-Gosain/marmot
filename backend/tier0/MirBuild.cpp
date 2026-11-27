@@ -682,14 +682,14 @@ bool Builder::decideByDominators() {
     }
     return false;
   };
-  // MARMOT_TIER0_RANGELOOP=1: a block parameter p is at least -1 when
+  // Range loops (on by default, MARMOT_TIER0_RANGELOOP=0 off): a block parameter p is at least -1 when
   // every value it receives is a constant of at least -1, a nonnegative
   // value, or p + 1 passed on from a block where p + 1 is signed less than
   // something (so p + 1 never wraps). Then p + 1 is nonnegative, and the
   // signed loop test i < n decides the unsigned bounds check i < len.
   static const bool rangeLoopOn = [] {
     const char *e = getenv("MARMOT_TIER0_RANGELOOP");
-    return e && *e == '1';
+    return !(e && *e == '0');  // on by default; =0 turns it off
   }();
   std::function<bool(VId)> nonneg;
   llvm::DenseMap<VId, char> m1;  // 1 yes, 0 no, 2 in progress (taken as no)

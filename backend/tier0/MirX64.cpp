@@ -478,13 +478,13 @@ void Emitter::cmpFlags(const Inst &c) {
   a.cmp(l, r);
 }
 
-// MARMOT_TIER0_ALU32=1: a 32-bit add, sub, and, or, xor or mul uses the
+// 32-bit ALU (on by default, MARMOT_TIER0_ALU32=0 off): a 32-bit add, sub, and, or, xor or mul uses the
 // 32-bit instruction, which zero extends its result, instead of the 64-bit
 // one and a mov to zero extend (operands are canonical, so the low 32 bits
 // agree).
 static const bool alu32On = [] {
   const char *e = getenv("MARMOT_TIER0_ALU32");
-  return e && *e == '1';
+  return !(e && *e == '0');  // on by default; =0 turns it off
 }();
 
 void Emitter::binop(const Inst &in) {

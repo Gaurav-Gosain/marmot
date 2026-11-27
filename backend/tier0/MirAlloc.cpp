@@ -217,10 +217,10 @@ void allocate(const Func &f, const TargetRegs &t, Alloc &a) {
     }
   }
 
-  // MARMOT_TIER0_TIEPARAM=1: loop counters (below). Block parameters by value.
+  // Tied loop counters (on by default, MARMOT_TIER0_TIEPARAM=0 off): loop counters (below). Block parameters by value.
   static const bool tieParam = [] {
     const char *e = getenv("MARMOT_TIER0_TIEPARAM");
-    return e && *e == '1';
+    return !(e && *e == '0');  // on by default; =0 turns it off
   }();
   std::vector<uint32_t> paramOf, paramIdx;
   std::vector<char> pinned;
