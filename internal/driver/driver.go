@@ -1231,9 +1231,9 @@ func declaresGeneric(pkg *types.Package) bool {
 }
 
 // initSections reports whether package init code goes in its own text
-// section (codegen/initsect.go). On by default for ELF targets since its
-// gate (perfcmp dev, O2 and release, exit 0); MARMOT_INITSECT=0 turns it
-// off. Mach-O targets keep it opt-in (MARMOT_INITSECT=1) until a Mac gate.
+// section (codegen/initsect.go). On by default for ELF and macOS targets
+// since their gates (perfcmp dev, O2 and release, exit 0, on each host);
+// MARMOT_INITSECT=0 turns it off. ios keeps it opt-in (MARMOT_INITSECT=1).
 func initSections(goos string) bool {
 	switch os.Getenv("MARMOT_INITSECT") {
 	case "0":
@@ -1241,5 +1241,5 @@ func initSections(goos string) bool {
 	case "1":
 		return true
 	}
-	return goos != "darwin" && goos != "ios"
+	return goos != "ios"
 }
