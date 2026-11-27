@@ -207,8 +207,9 @@ bench: all
 # ---- cross compile checks (untested targets) ----
 
 # Compile every source for another target (needs that target's C headers;
-# darwin targets use the macOS SDK). Example: make check-targets TARGETS=x86_64-apple-macosx
-TARGETS ?= x86_64-apple-macosx
+# darwin targets use the macOS SDK). Example: make check-targets TARGETS=x86_64-apple-macosx11.0
+# A darwin triple needs a version: without one, clang assumes a macOS too old for TLS.
+TARGETS ?= x86_64-apple-macosx11.0
 check-targets:
 	@for t in $(TARGETS); do \
 		echo "== $$t"; \
