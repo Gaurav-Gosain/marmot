@@ -155,14 +155,14 @@ func readSums(file string) map[string]string {
 	return sums
 }
 
-// buildInfoOn reports MARMOT_BUILDINFO=1: stamp build info (opt-in until
-// its gate). Without it the runtime and the link are as before: no build
-// info object, and debug_modinfo returns the constant "" (lib/src/runtime
-// modinfo_off.go).
-func buildInfoOn() bool { return os.Getenv("MARMOT_BUILDINFO") == "1" }
+// buildInfoOn reports whether builds stamp build info: on by default,
+// MARMOT_BUILDINFO=0 turns it off. Off, the runtime and the link are as
+// before build info existed: no build info object, and debug_modinfo
+// returns the constant "" (lib/src/runtime/modinfo_off.go).
+func buildInfoOn() bool { return os.Getenv("MARMOT_BUILDINFO") != "0" }
 
 // buildInfoText returns the build info of the program (with its markers),
-// or "" for a build that carries none: MARMOT_BUILDINFO unset, not an
+// or "" for a build that carries none: MARMOT_BUILDINFO=0, not an
 // executable, not a main package, or a test binary.
 func (b *build) buildInfoText(lp *loader.Program) string {
 	if !buildInfoOn() || b.cfg.Emit != "exe" || b.cfg.Test || len(lp.Packages) != 1 || lp.Packages[0].Name != "main" || b.goarch == "wasm" {

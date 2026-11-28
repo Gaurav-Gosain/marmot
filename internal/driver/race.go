@@ -56,7 +56,7 @@ func (b *build) loaderTags() []string {
 	if b.cfg.Race && !slices.Contains(tags, "race") {
 		tags = append(slices.Clip(tags), "race")
 	}
-	// MARMOT_BUILDINFO=1: package runtime reads the linked build info
+	// Build info (on unless MARMOT_BUILDINFO=0): package runtime reads the linked build info
 	// (modinfo_on.go); without it the runtime is as before (buildinfo.go).
 	if buildInfoOn() {
 		tags = append(slices.Clip(tags), "marmot_buildinfo")

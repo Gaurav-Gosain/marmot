@@ -251,7 +251,7 @@ Vendored at a pinned version under `tests/world` (see `tests/world/README.md`), 
 | go-strings S3 no-copy (backend) | -no-strings-nocopy | on |
 | Defer record elision (panics.go) | MARMOT_DEFERELIDE | off |
 | Dead initializer removal (staticinit.go) | MARMOT_DEADINIT | off |
-| Build info for runtime/debug.ReadBuildInfo and go version -m (buildinfo.go) | MARMOT_BUILDINFO | off |
+| Build info for runtime/debug.ReadBuildInfo and go version -m (buildinfo.go) | MARMOT_BUILDINFO (=0 turns it off) | on |
 | Allocation without zeroing (rtcore rt_alloc_nozero, 569d095; poison fill c8e0a15) | callers only | on |
 | API module keys of incremental dev builds (driver/stamp.go moduleKey) | MARMOT_API_KEYS=0 turns off | on |
 

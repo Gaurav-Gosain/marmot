@@ -4,7 +4,7 @@ package runtime
 
 import "unsafe"
 
-// MARMOT_BUILDINFO=1 builds (the driver adds the marmot_buildinfo tag):
+// Builds with build info (the default; the driver adds the marmot_buildinfo tag):
 // the build info comes from the object the driver links
 // (internal/driver/buildinfo.go), read through rt_modinfo; the weak
 // defaults in runtime/core/src/modinfo.S give "" without that object.
