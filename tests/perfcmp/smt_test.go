@@ -50,8 +50,10 @@ func TestCPUTicks(t *testing.T) {
 	if len(got) != 3 || got[0] != 116 || got[1] != 0 || got[2] != 54 {
 		t.Errorf("got %v, want [116 0 54]", got)
 	}
-	if d := ticksSince([]uint64{100, 5}, []uint64{150, 4, 9}); len(d) != 3 || d[0] != 50 || d[1] != 0 || d[2] != 9 {
-		t.Errorf("ticksSince got %v, want [50 0 9]", d)
+	// A counter that went down gives 0. A CPU that is not in the start sample gives 0: its
+	// ticks count from boot, not from the start of the run.
+	if d := ticksSince([]uint64{100, 5}, []uint64{150, 4, 9}); len(d) != 3 || d[0] != 50 || d[1] != 0 || d[2] != 0 {
+		t.Errorf("ticksSince got %v, want [50 0 0]", d)
 	}
 	if ticksSince(nil, got) != nil {
 		t.Error("ticksSince with no start gave counts")
