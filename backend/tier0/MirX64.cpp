@@ -40,10 +40,10 @@ const TargetRegs &regs() {
     // Two-address results in their first operand's register (MARMOT_TIER0_TIE=0 turns it off).
     const char *tie = getenv("MARMOT_TIER0_TIE");
     r.tieFirst = !(tie && *tie == '0');
-    // MARMOT_TIER0_CALLSAVE=1: values over calls may stay in caller saved
-    // registers, stored and reloaded around each call (Alloc::saves).
+    // Values over calls may stay in caller saved registers, stored and reloaded
+    // around each call (Alloc::saves; on by default, MARMOT_TIER0_CALLSAVE=0 off).
     const char *e = getenv("MARMOT_TIER0_CALLSAVE");
-    r.callSave = e && *e == '1';
+    r.callSave = !(e && *e == '0');
     return r;
   }();
   return t;

@@ -25,12 +25,12 @@ namespace {
 
 using Pieces = llvm::SmallVector<VId, 4>;
 
-// MARMOT_TIER0_SATNARROW=1: llvm.fptosi.sat and llvm.fptoui.sat to i8, i16
-// and i32 in MIR (without it the function takes the older emitters).
+// llvm.fptosi.sat and llvm.fptoui.sat to i8, i16 and i32 in MIR (on by
+// default; MARMOT_TIER0_SATNARROW=0 sends the function to the older emitters).
 bool satNarrowOn() {
   static const bool on = [] {
     const char *e = getenv("MARMOT_TIER0_SATNARROW");
-    return e && *e == '1';
+    return !(e && *e == '0');  // on by default; =0 turns it off
   }();
   return on;
 }
@@ -57,12 +57,12 @@ void pieceTypes(MLIRContext *ctx, Type t, uint64_t base, std::vector<std::pair<u
   out.push_back({base, t});
 }
 
-// Aggregates of at most this many pieces go to MIR: 32, or 64 with
-// MARMOT_TIER0_PIECES64=1.
+// Aggregates of at most this many pieces go to MIR: 64 (on by default), or 32
+// with MARMOT_TIER0_PIECES64=0.
 size_t maxPieces() {
   static const size_t n = [] {
     const char *e = getenv("MARMOT_TIER0_PIECES64");
-    return size_t(e && *e == '1' ? 64 : 32);
+    return size_t(e && *e == '0' ? 32 : 64);
   }();
   return n;
 }
@@ -1434,14 +1434,14 @@ void Builder::gep(LL::GEPOp g) {
   set(g.getResult(), acc);
 }
 
-// MARMOT_TIER0_INLINE=1: a direct call to a small leaf of this module (one
+// Leaf inlining (on by default, MARMOT_TIER0_INLINE=0 off): a direct call to a small leaf of this module (one
 // block ending in a return, no calls, no memory access, at most kInlineOps
 // operations, a body final at link) is replaced by the callee's operations,
 // translated in the caller's block at the call's location. The callee cannot
 // call, fault or panic, so no traceback or safe point falls inside it.
 static const bool inlineOn = [] {
   const char *e = getenv("MARMOT_TIER0_INLINE");
-  return e && *e == '1';
+  return !(e && *e == '0');  // on by default; =0 turns it off
 }();
 constexpr unsigned kInlineOps = 24;
 
@@ -1627,7 +1627,7 @@ void Builder::intrinsic(LL::CallIntrinsicOp c) {
     set(res, unary(k, val(args[0]), Cls::Int, 64, args[0].getType().isF64() ? 64 : 32));
   } else if (satNarrowOn() && (name.starts_with("llvm.fptosi.sat.i") || name.starts_with("llvm.fptoui.sat.i")) &&
              (name.ends_with(".f64") || name.ends_with(".f32")) && intWidth(rt) < 64) {
-    // A narrower result (MARMOT_TIER0_SATNARROW=1): the 64-bit saturating
+    // A narrower result (MARMOT_TIER0_SATNARROW, on by default): the 64-bit saturating
     // conversion, clamped to the result's range. NaN gives 0 there, which is
     // in every range.
     bool s = name.starts_with("llvm.fptosi");

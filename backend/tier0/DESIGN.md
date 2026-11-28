@@ -132,7 +132,7 @@ The second code generator, on its own IR (`Mir.h`), for both targets:
   where the calling convention wants them, and an aggregate load whose only use is a store is
   one memory copy. On the way: copies forwarded, constants folded, identities applied, pure
   operations shared within a block (CSE), constant offsets folded into loads and stores,
-  unused pure operations removed. Functions with an aggregate of more than 32 pieces (64 with MARMOT_TIER0_PIECES64=1), i128 in
+  unused pure operations removed. Functions with an aggregate of more than 64 pieces (32 with MARMOT_TIER0_PIECES64=0), i128 in
   calls or compares, or an operation MIR lacks take the older emitters (per function).
 - `MirAlloc.cpp`: liveness over the blocks and one interval per value; a linear scan gives
   each interval a caller saved register when no call lies strictly inside it, else a callee
