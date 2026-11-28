@@ -433,8 +433,8 @@ func (rn *runner) checkLog(src string) (why, detail string) {
 		return fmt.Sprintf("exit %d, want %d", got.code, want.code), runs()
 	case got.stdout != want.stdout:
 		return "stdout differs", runs()
-	case got.stderr != want.stderr:
-		return "stderr differs: " + diffLine(want.stderr, got.stderr), runs()
+	case normStderr(got.stderr) != normStderr(want.stderr):
+		return "stderr differs: " + diffLine(normStderr(want.stderr), normStderr(got.stderr)), runs()
 	}
 	return "", ""
 }
@@ -458,6 +458,23 @@ func failLog(seed int64, why, detail, shrunkWhy, shrunkDetail string) []byte {
 		out = out[:failLogMax-len(note)] + note
 	}
 	return []byte(out)
+}
+
+// normStderr keeps stderr up to and including the first panic or fatal
+// error line, as tests/conform does: the traceback after it holds
+// addresses and frame details that differ between the toolchains.
+func normStderr(s string) string {
+	var b strings.Builder
+	for _, l := range strings.SplitAfter(s, "\n") {
+		b.WriteString(l)
+		if strings.HasPrefix(l, "panic: ") || strings.HasPrefix(l, "fatal error: ") {
+			if !strings.HasSuffix(l, "\n") {
+				b.WriteString("\n")
+			}
+			break
+		}
+	}
+	return b.String()
 }
 
 func firstLine(s string) string {
