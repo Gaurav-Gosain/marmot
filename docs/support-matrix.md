@@ -249,7 +249,7 @@ Vendored at a pinned version under `tests/world` (see `tests/world/README.md`), 
 | Conversion and make frame buffers (stackconv.go) | MARMOT_STACKCONV | off |
 | Intraprocedural escape (default path) | on | on |
 | go-strings S3 no-copy (backend) | -no-strings-nocopy | on |
-| Defer record elision (panics.go) | MARMOT_DEFERELIDE | off |
+| Defer record elision (panics.go) | MARMOT_DEFERELIDE (=0 turns it off) | on |
 | Dead initializer removal (staticinit.go) | MARMOT_DEADINIT | off |
 | Build info for runtime/debug.ReadBuildInfo and go version -m (buildinfo.go) | MARMOT_BUILDINFO (=0 turns it off) | on |
 | Allocation without zeroing (rtcore rt_alloc_nozero, 569d095; poison fill c8e0a15) | callers only | on |

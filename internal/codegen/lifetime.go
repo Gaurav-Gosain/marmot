@@ -40,7 +40,7 @@ import (
 //	MARMOT_MAPFUSE       v := m[k]; ...; m[k] = w as one mapassign
 //	MARMOT_APPENDMAKE    append(s, make([]T, n)...) without the temporary
 //	MARMOT_DEFERELIDE    open-coded defers without the _defer record when
-//	                     nothing may panic
+//	                     nothing may panic; on by default, =0 turns it off
 //	MARMOT_ROCONV        []byte(s) passed to a callee that only reads it aliases
 //	                     the string (roconv.go)
 //	MARMOT_DEVIRT1       invokes on an interface with one dynamic type use that
@@ -77,7 +77,7 @@ var (
 	optLoopTemp     = lifetimeOn("MARMOT_LOOPTEMP")
 	optMapFuse      = lifetimeOn("MARMOT_MAPFUSE")
 	optAppendMake   = lifetimeOn("MARMOT_APPENDMAKE")
-	optDeferElide   = lifetimeOn("MARMOT_DEFERELIDE")
+	optDeferElide   = lifetimeDefault("MARMOT_DEFERELIDE")
 	optDeadInit     = lifetimeOn("MARMOT_DEADINIT")
 	optROConv       = lifetimeOn("MARMOT_ROCONV")
 	optDevirt1      = lifetimeOn("MARMOT_DEVIRT1")
