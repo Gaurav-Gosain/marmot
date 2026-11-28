@@ -188,9 +188,24 @@ static void enableWasmSjLj() {
   });
 }
 
+// -loop-align=N (MARMOT_BACKEND_FLAGS): every loop starts on an N-byte
+// boundary, overriding the target's preferred loop alignment (x86: 16). A
+// hot loop that starts across a cache line boundary can take one more line
+// in the decoded-uop cache than it needs (rtcore: release iface 413 against
+// 601 ms from a loop start at +32 against +0 of a 64-byte line). 0 keeps the
+// target's default. As a command line option it is in optionKey, so object
+// caches key on it.
+static llvm::cl::opt<unsigned> loopAlign("loop-align",
+                                         llvm::cl::desc("Align loop starts to N bytes (a power of 2; 0: the target's default)"),
+                                         llvm::cl::init(0));
+
 std::unique_ptr<llvm::TargetMachine>
 makeTargetMachine(const CompileOptions &opts, llvm::Triple &triple,
                   std::string &err) {
+  if (loopAlign != 0 && (loopAlign & (loopAlign - 1)) != 0) {
+    err = "-loop-align=" + std::to_string(loopAlign) + ": the alignment must be a power of 2";
+    return nullptr;
+  }
   triple = targetTriple(opts.triple);
   if (!initTargetFor(triple, err))
     return nullptr;
@@ -224,6 +239,7 @@ makeTargetMachine(const CompileOptions &opts, llvm::Triple &triple,
   }
   to.FunctionSections = true;
   to.DataSections = true;
+  to.LoopAlignment = loopAlign;
   // With a profile, split cold blocks of hot functions into a cold section.
   // LLVM supports the splitter for ELF only (it crashes the Mach-O asm printer).
   to.EnableMachineFunctionSplitter = !opts.pgoUse.empty() && triple.isOSBinFormatELF();
