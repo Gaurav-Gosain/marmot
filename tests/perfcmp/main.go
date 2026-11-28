@@ -43,6 +43,11 @@
 // print "ready", times, and closes its stdin when the timing ends, which gives the
 // host back. Without the variable perfcmp times right after its builds.
 //
+// When the load passes half the CPUs or a run shares the LLC, perfcmp logs the outside
+// load since its last sample (Linux): the 5 processes outside its own cgroup with the most
+// CPU (pid, percent of one CPU, cgroup unit, the first 60 characters of the command
+// line), the CPU of kswapd and the pages swapped in and out. It only adds log lines.
+//
 // Exit status: 0 ok, 1 WORSE, 2 usage, 3 no quiet window in -wait,
 // 4 INCONCLUSIVE, 5 FAILED.
 package main
@@ -254,6 +259,11 @@ func main() {
 		seeLoad := func() {
 			l := load1()
 			maxLoad, modeLoad = max(maxLoad, l), max(modeLoad, l)
+			if lim := float64(runtime.NumCPU()) / 2; l > lim {
+				outsideReport(os.Stdout, fmt.Sprintf("load %.1f, above %.0f", l, lim))
+			} else {
+				outsideMark()
+			}
 			if prev != nil && time.Since(start) < time.Minute {
 				prev.load = max(prev.load, l)
 			}
@@ -333,6 +343,7 @@ func main() {
 						break
 					}
 					what := fmt.Sprintf("%-12s %s run %d had %d LLC misses, %.0f times the side's least (%d)", p.name, sides[i].label, j+1, got[i][j].llc, float64(got[i][j].llc)/float64(max(lo, 1)), lo)
+					outsideReport(os.Stdout, fmt.Sprintf("%s %s run %d shared the LLC", p.name, sides[i].label, j+1))
 					if retries == llcRetries {
 						fmt.Printf("%s: no retry left, the run stays and this try of %s gives no verdict\n", what, mode)
 						disturbedRuns = append(disturbedRuns, fmt.Sprintf("%s %s %s", p.name, mode, sides[i].label))
