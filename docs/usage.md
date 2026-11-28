@@ -57,6 +57,7 @@ Release builds never use tier 0.
 | `-s` | Leave out file and line tables. Smaller binary, but panics show no source lines. |
 | `-trimpath` | Record no directory of the build machine: standard library files as `runtime/proc.go`, module files as the module path plus the file (`example.com/app/main.go`, with `@version` for a dependency), as `go build -trimpath` does. Use it for binaries you publish. |
 | `-static` | Link a static Linux executable with musl (needs `marmot sysroot add -libc musl linux/ARCH`). |
+| `-buildmode=pie` | Link a position independent Linux executable. The executable image then gets a random address (ASLR). The default Linux executable has a fixed address, as `go build` makes it, and starts faster. |
 | `-target triple` | Build for another platform, for example `linux/amd64`. |
 | `-tags a,b` | Build tags. |
 | `-pgo-gen`, `-pgo file` | Profile guided optimization: build an instrumented binary, run it, then build again with the profile. |

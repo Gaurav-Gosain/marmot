@@ -18,10 +18,27 @@ func TestPieArgsBundle(t *testing.T) {
 	if got := b.pieArgs(pieLink{bundle: true}); !slices.Equal(got, []string{"-pie"}) {
 		t.Errorf("bundle: %q, want [-pie]", got)
 	}
-	b.cfg.BuildMode = ""
-	if got := b.pieArgs(pieLink{bundle: true}); len(got) != 0 {
-		t.Errorf("bundle, default mode: %q, want none", got)
+	for _, m := range []string{"", "exe"} {
+		b.cfg.BuildMode = m
+		if got := b.pieArgs(pieLink{bundle: true}); !slices.Equal(got, []string{"-no-pie"}) {
+			t.Errorf("bundle, mode %q: %q, want [-no-pie]", m, got)
+		}
 	}
+	t.Setenv("MARMOT_NOPIE", "0")
+	if got := b.pieArgs(pieLink{bundle: true}); len(got) != 0 {
+		t.Errorf("MARMOT_NOPIE=0: %q, want none (the old PIE)", got)
+	}
+	t.Setenv("MARMOT_NOPIE", "")
+	b.cfg.BuildMode = "c-shared" // checkBuildMode rejects it today; a later mode must not fall into -no-pie
+	if got := b.pieArgs(pieLink{bundle: true}); len(got) != 0 {
+		t.Errorf("mode c-shared: %q, want none", got)
+	}
+	b.cfg.BuildMode = ""
+	b.cfg.Race = true
+	if got := b.pieArgs(pieLink{bundle: true}); !slices.Equal(got, []string{"-no-pie"}) {
+		t.Errorf("race: %q, want [-no-pie]", got)
+	}
+	b.cfg.Race = false
 	b.cfg.Static = true
 	b.cfg.BuildMode = "pie"
 	if got := b.pieArgs(pieLink{bundle: true}); len(got) != 0 {
@@ -141,7 +158,7 @@ func lastPie(args []string) string {
 // A -pie or -no-pie in #cgo LDFLAGS or MARMOT_LDFLAGS comes after marmot's
 // PIE arguments on the native and the cross link, so the user's flag wins.
 func TestUserPieFlagWins(t *testing.T) {
-	t.Setenv("MARMOT_NOPIE", "1") // marmot's own argument: -no-pie
+	t.Setenv("MARMOT_NOPIE", "") // marmot's own argument: -no-pie, the default
 	t.Setenv("MARMOT_LDFLAGS", "")
 	b := &build{cfg: Config{Root: t.TempDir()}, goos: "linux", goarch: runtime.GOARCH}
 	cross := []string{"--target=x86_64-unknown-linux-gnu"}
@@ -208,5 +225,100 @@ func TestClangLastPieWins(t *testing.T) {
 			t.Errorf("%s: %v, want %v", c.name, f.Type, c.want)
 		}
 		f.Close()
+	}
+}
+
+// The default executable on Linux is position dependent: ELF type EXEC, no
+// relative relocations, and the image base the backend gives the pc table
+// (Pcln.cpp imageBase: the lowest text, data or bss section, page masked)
+// is the lowest PT_LOAD address, the base the runtime (pcln.c) and the
+// traceback (__ehdr_start) use. A wrong base gives a wrong file:line in
+// every traceback.
+func TestDefaultExeNoPIE(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("ELF host only")
+	}
+	if testing.Short() {
+		t.Skip("builds a program")
+	}
+	root := os.Getenv("MARMOT_ROOT") // a checkout with an installed build (a worktree has none)
+	if root == "" {
+		r, err := filepath.Abs("../..")
+		if err != nil {
+			t.Fatal(err)
+		}
+		root = r
+	}
+	if _, err := os.Stat(filepath.Join(root, "build", "bin", "marmot-backend")); err != nil {
+		t.Skip("no installed backend")
+	}
+	t.Setenv("MARMOT_NOPIE", "")
+	src := filepath.Join(t.TempDir(), "prog")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, text := range map[string]string{
+		"go.mod":  "module example.com/nopie\n\ngo 1.24\n",
+		"main.go": "package main\n\nimport \"fmt\"\n\nvar p = &x\nvar x = 7\n\nfunc main() { fmt.Println(*p) }\n",
+	} {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, mode := range []string{"dev", "release"} {
+		t.Run(mode, func(t *testing.T) {
+			out := filepath.Join(src, "p-"+mode)
+			cfg := Config{Root: root, Dir: src, Output: out, OptLevel: "2", Emit: "exe", GC: "precise", Dialect: "llvm",
+				Patterns: []string{"."}, Stderr: os.Stderr}
+			if mode == "release" {
+				cfg.OptLevel, cfg.Dialect, cfg.Release = "3", "go", true
+			}
+			if _, err := Build(cfg); err != nil {
+				t.Fatal(err)
+			}
+			if msg, err := exec.Command(out).CombinedOutput(); err != nil || string(msg) != "7\n" {
+				t.Fatalf("run: %v, %q", err, msg)
+			}
+			f, err := elf.Open(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			if f.Type != elf.ET_EXEC {
+				t.Errorf("ELF type %v, want ET_EXEC", f.Type)
+			}
+			for _, s := range f.Sections {
+				if s.Type != elf.SHT_RELA || s.Flags&elf.SHF_ALLOC == 0 {
+					continue
+				}
+				data, err := s.Data()
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i := 0; i+24 <= len(data); i += 24 {
+					if typ := elf.R_X86_64(f.ByteOrder.Uint64(data[i+8:]) & 0xffffffff); f.Machine == elf.EM_X86_64 && typ == elf.R_X86_64_RELATIVE {
+						t.Fatalf("%s holds R_X86_64_RELATIVE", s.Name)
+					}
+				}
+			}
+			load := uint64(1<<64 - 1)
+			for _, p := range f.Progs {
+				if p.Type == elf.PT_LOAD {
+					load = min(load, p.Vaddr)
+				}
+			}
+			base := uint64(1<<64 - 1)
+			for _, s := range f.Sections {
+				text := s.Flags&elf.SHF_EXECINSTR != 0
+				data := s.Flags&elf.SHF_ALLOC != 0 && !text && s.Type == elf.SHT_PROGBITS
+				bss := s.Flags&elf.SHF_ALLOC != 0 && s.Flags&elf.SHF_WRITE != 0 && s.Type == elf.SHT_NOBITS
+				if text || data || bss {
+					base = min(base, s.Addr)
+				}
+			}
+			if base&^0xfff != load {
+				t.Errorf("backend image base %#x, lowest PT_LOAD %#x: tracebacks would name wrong lines", base&^0xfff, load)
+			}
+		})
 	}
 }

@@ -95,7 +95,7 @@ func newBuildFlags(name string) (*flag.FlagSet, *buildFlags) {
 	b.static = fs.Bool("static", false, "link a static executable (Linux: with the musl C library, after marmot sysroot add -libc musl GOOS/GOARCH)")
 	b.gc = fs.String("gc", "precise", "garbage collector: precise or none")
 	b.buildvcs = fs.String("buildvcs", "auto", "stamp the main module's version control state into the build info: auto (in a git repository), true or false (as go build -buildvcs)")
-	b.buildmode = fs.String("buildmode", "exe", "exe, or pie: a position independent executable on Linux (with packed relative relocations)")
+	b.buildmode = fs.String("buildmode", "exe", "exe (on Linux at a fixed address), or pie: a position independent executable on Linux, with ASLR of the image")
 	b.target = fs.String("target", "", "target triple (default: host)")
 	b.dialect = fs.String("dialect", os.Getenv("MARMOT_DIALECT"), "MLIR dialect level: llvm or go (default: go with -release, llvm otherwise, or $MARMOT_DIALECT)")
 	b.output = addOutputFlags(fs)

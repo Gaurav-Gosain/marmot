@@ -18,7 +18,9 @@ import (
 // address in its data (tuios: 556k entries, a 13 MB .rela.dyn that ld.so
 // reads at startup, and all of .data written while relocating). A position
 // dependent one (-no-pie, as go build makes on linux) resolves them at link
-// time; MARMOT_NOPIE=1 asks for it, for now (the default once measured).
+// time: the default executable (tuios -release: 6.1 ms to start against
+// 9.1 for a RELR PIE, 6.9 MB private memory against 12.9). MARMOT_NOPIE=0
+// gives the old executable (clang's default, a PIE on most distributions).
 // The objects stay position independent; the linker relaxes their GOT
 // references. -buildmode=pie keeps a PIE, with packed relative relocations
 // (RELR: the table shrinks to a few KB; .data is still written at startup)
@@ -39,11 +41,13 @@ func (b *build) pieArgs(l pieLink) []string {
 			return []string{"-pie", "-Wl,-z,pack-relative-relocs"}
 		}
 		return []string{"-pie"}
-	}
-	if os.Getenv("MARMOT_NOPIE") == "1" {
+	case "", "exe":
+		if os.Getenv("MARMOT_NOPIE") == "0" {
+			return nil
+		}
 		return []string{"-no-pie"}
 	}
-	return nil
+	return nil // a later mode (c-shared, plugin) never falls into -no-pie
 }
 
 // pieTarget is the link that link makes for this build: the native link, a

@@ -59,8 +59,8 @@ type Config struct {
 	GPU        string
 	GPURemarks bool
 	Race       bool // -race: the race detector (race.go)
-	// BuildMode: "exe" (default) or "pie", a position independent ELF
-	// executable (pie.go).
+	// BuildMode: "exe" (default; position dependent on Linux) or "pie", a
+	// position independent ELF executable (pie.go).
 	BuildMode string
 	Trace     string // -trace=full: release builds keep the inlined frames of each call site apart
 	Tags      []string
