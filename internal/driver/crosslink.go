@@ -75,28 +75,33 @@ func (b *build) linkCross(objs []string, rt, out string) (ok bool, err error) {
 		return false, nil
 	}
 	link := func(extra []string, o string) error {
-		args := append([]string{}, target...)
-		args = append(args, "-o", o)
-		args = append(args, objs...)
-		args = append(args, rt, "-lpthread", "-Wl,--gc-sections", "-Wl,-z,start-stop-gc")
-		if b.goos != "darwin" {
-			args = append(args, b.noptrLinkArgs()...)
-			args = append(args, b.pieArgs(pieLink{clang: target})...)
-		}
-		if b.cfg.Static {
-			args = append(args, "-static")
-		}
-		if !b.wantPcln() {
-			args = append(args, "-s")
-		}
-		args = append(args, b.cgoLDFLAGS...)
-		args = append(args, extra...)
-		return b.run(llvmTool("clang"), args...)
+		return b.run(llvmTool("clang"), b.crossArgs(target, objs, rt, o, extra)...)
 	}
 	if b.wantPcln() {
 		return true, b.linkWithPcln(objs, link, out)
 	}
 	return true, link(nil, out)
+}
+
+// crossArgs is the clang arguments of a cross link to o. The user's
+// #cgo LDFLAGS come after the PIE arguments, so a -pie or -no-pie there wins.
+func (b *build) crossArgs(target, objs []string, rt, o string, extra []string) []string {
+	args := append([]string{}, target...)
+	args = append(args, "-o", o)
+	args = append(args, objs...)
+	args = append(args, rt, "-lpthread", "-Wl,--gc-sections", "-Wl,-z,start-stop-gc")
+	if b.goos != "darwin" {
+		args = append(args, b.noptrLinkArgs()...)
+		args = append(args, b.pieArgs(pieLink{clang: target})...)
+	}
+	if b.cfg.Static {
+		args = append(args, "-static")
+	}
+	if !b.wantPcln() {
+		args = append(args, "-s")
+	}
+	args = append(args, b.cgoLDFLAGS...)
+	return append(args, extra...)
 }
 
 // crossTarget is the clang arguments of a cross link that pick the target,

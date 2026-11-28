@@ -763,6 +763,11 @@ func (b *build) link(objs []string, out string) error {
 
 // link1 runs the linker once.
 func (b *build) link1(objs []string, rt, out string, extra []string) error {
+	return b.link1Run(b.link1Args(objs, rt, out, extra), objs, out)
+}
+
+// link1Args is the clang arguments of link1.
+func (b *build) link1Args(objs []string, rt, out string, extra []string) []string {
 	args := []string{"-o", out}
 	args = append(args, objs...)
 	args = append(args, rt)
@@ -772,6 +777,12 @@ func (b *build) link1(objs []string, rt, out string, extra []string) error {
 		args = append(args, "-fprofile-generate")
 	}
 	args = append(args, linkLibraries(b.dylibs)...)
+	if runtime.GOOS != "darwin" {
+		// Before the user's flags: a -pie or -no-pie in #cgo LDFLAGS or
+		// MARMOT_LDFLAGS comes later and wins (clang takes the last one),
+		// as in the cross link.
+		args = append(args, b.pieArgs(pieLink{clang: linuxLinker()})...)
+	}
 	args = append(args, b.cgoLDFLAGS...)
 	// MARMOT_LDFLAGS: extra linker flags (measurements, for example
 	// -Wl,--icf=all).
@@ -799,7 +810,6 @@ func (b *build) link1(objs []string, rt, out string, extra []string) error {
 		args = append(args, "-Wl,--gc-sections", "-Wl,-z,start-stop-gc")
 		args = append(args, linuxLinker()...)
 		args = append(args, b.noptrLinkArgs()...)
-		args = append(args, b.pieArgs(pieLink{clang: linuxLinker()})...)
 		if !b.wantPcln() {
 			args = append(args, "-s")
 		}
@@ -812,7 +822,12 @@ func (b *build) link1(objs []string, rt, out string, extra []string) error {
 			args = append(args, "-Wl,-u,rt_gc_parallel_enable")
 		}
 	}
-	args = append(args, extra...)
+	return append(args, extra...)
+}
+
+// link1Run links with args: through the cached ld command when there is
+// one, else through clang.
+func (b *build) link1Run(args, objs []string, out string) error {
 	if os.Getenv("MARMOT_LINK_VIA_CLANG") == "" {
 		if ld, ok := b.ldCommand(args, objs, out); ok {
 			if err := b.run(ld[0], ld[1:]...); err == nil {

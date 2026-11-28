@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"debug/elf"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -123,5 +124,89 @@ func TestPieTargetCross(t *testing.T) {
 	}
 	if got := b.pieArgs(l); !slices.Equal(got, []string{"-pie"}) {
 		t.Errorf("cross link to a sysroot without libc.so.6: %q, want [-pie]", got)
+	}
+}
+
+// lastPie is the last -pie or -no-pie in args: the one clang uses.
+func lastPie(args []string) string {
+	p := ""
+	for _, a := range args {
+		if a == "-pie" || a == "-no-pie" {
+			p = a
+		}
+	}
+	return p
+}
+
+// A -pie or -no-pie in #cgo LDFLAGS or MARMOT_LDFLAGS comes after marmot's
+// PIE arguments on the native and the cross link, so the user's flag wins.
+func TestUserPieFlagWins(t *testing.T) {
+	t.Setenv("MARMOT_NOPIE", "1") // marmot's own argument: -no-pie
+	t.Setenv("MARMOT_LDFLAGS", "")
+	b := &build{cfg: Config{Root: t.TempDir()}, goos: "linux", goarch: runtime.GOARCH}
+	cross := []string{"--target=x86_64-unknown-linux-gnu"}
+	if runtime.GOOS == "linux" {
+		if got := lastPie(b.link1Args([]string{"a.o"}, "rt.a", "out", nil)); got != "-no-pie" {
+			t.Errorf("native, no user flag: %q, want -no-pie", got)
+		}
+	}
+	if got := lastPie(b.crossArgs(cross, []string{"a.o"}, "rt.a", "out", nil)); got != "-no-pie" {
+		t.Errorf("cross, no user flag: %q, want -no-pie", got)
+	}
+	b.cgoLDFLAGS = []string{"-pie"}
+	if runtime.GOOS == "linux" {
+		if got := lastPie(b.link1Args([]string{"a.o"}, "rt.a", "out", nil)); got != "-pie" {
+			t.Errorf("native, #cgo LDFLAGS: -pie: %q, want -pie", got)
+		}
+	}
+	if got := lastPie(b.crossArgs(cross, []string{"a.o"}, "rt.a", "out", nil)); got != "-pie" {
+		t.Errorf("cross, #cgo LDFLAGS: -pie: %q, want -pie", got)
+	}
+	b.cgoLDFLAGS = nil
+	t.Setenv("MARMOT_LDFLAGS", "-pie")
+	if runtime.GOOS == "linux" {
+		if got := lastPie(b.link1Args([]string{"a.o"}, "rt.a", "out", nil)); got != "-pie" {
+			t.Errorf("native, MARMOT_LDFLAGS=-pie: %q, want -pie", got)
+		}
+	}
+}
+
+// clang takes the last of -no-pie and -pie: the argument order above decides
+// the ELF type.
+func TestClangLastPieWins(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("ELF host only")
+	}
+	clang := llvmTool("clang")
+	if _, err := os.Stat(clang); err != nil {
+		t.Skip("no clang")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(dir, "p.c")
+	if err := os.WriteFile(src, []byte("int main(void) { return 0; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name  string
+		flags []string
+		want  elf.Type
+	}{
+		{"user-pie", []string{"-no-pie", "-pie"}, elf.ET_DYN},
+		{"user-nopie", []string{"-pie", "-no-pie"}, elf.ET_EXEC},
+	} {
+		exe := filepath.Join(dir, c.name)
+		args := append([]string{"-fPIE", "-o", exe, src}, c.flags...)
+		args = append(args, linuxLinker()...)
+		if out, err := exec.Command(clang, args...).CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v\n%s", c.name, err, out)
+		}
+		f, err := elf.Open(exe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f.Type != c.want {
+			t.Errorf("%s: %v, want %v", c.name, f.Type, c.want)
+		}
+		f.Close()
 	}
 }
