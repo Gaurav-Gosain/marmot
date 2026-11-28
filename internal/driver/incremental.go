@@ -10,6 +10,7 @@ import (
 
 	"github.com/Gaurav-Gosain/marmot/internal/codegen"
 	"github.com/Gaurav-Gosain/marmot/internal/loader"
+	"github.com/Gaurav-Gosain/marmot/internal/rootdir"
 	"github.com/Gaurav-Gosain/marmot/internal/specialize"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
@@ -103,7 +104,7 @@ func (b *build) moduleCached(p *packages.Package, base string) bool {
 	if apiKeys {
 		k = b.moduleKey(base)
 	}
-	return fileExists(filepath.Join(b.cfg.Root, "build", "cache", "mlir", k+".mlir"))
+	return rootdir.Use(b.cfg.Root, filepath.Join(b.cfg.Root, "build", "cache", "mlir", k+".mlir"))
 }
 
 // typesCache is the export data and go list cache of incremental loads.

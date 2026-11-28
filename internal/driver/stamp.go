@@ -13,6 +13,7 @@ import (
 
 	"github.com/Gaurav-Gosain/marmot/internal/codegen"
 	"github.com/Gaurav-Gosain/marmot/internal/loader"
+	"github.com/Gaurav-Gosain/marmot/internal/rootdir"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 )
@@ -290,11 +291,9 @@ func (b *build) srcKeyLocked(p *packages.Package) string {
 // cachedModule returns the cached MLIR file of the package with key k.
 func (b *build) cachedModule(k string) (string, bool) {
 	p := filepath.Join(b.cfg.Root, "build", "cache", "mlir", k+".mlir")
-	if !fileExists(p) {
-		return p, false
-	}
-	touch(p)
-	return p, true
+	// Use touches it where no cache trim can run in between: the backend
+	// reads the file later, by path (rootdir.Use).
+	return p, rootdir.Use(b.cfg.Root, p)
 }
 
 // saveModule stores the MLIR text of the package with key k and returns

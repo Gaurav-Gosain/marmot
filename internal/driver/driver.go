@@ -23,6 +23,7 @@ import (
 
 	"github.com/Gaurav-Gosain/marmot/internal/codegen"
 	"github.com/Gaurav-Gosain/marmot/internal/loader"
+	"github.com/Gaurav-Gosain/marmot/internal/rootdir"
 	"github.com/Gaurav-Gosain/marmot/internal/specialize"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
@@ -247,6 +248,9 @@ func (b *build) run1() (string, error) {
 			b.logf("cache trimmed: %s -> %s", fmtMB(before), fmtMB(after))
 		}
 	}()
+	// Trims by other builds keep what this one uses while it runs; the
+	// registration ends before this build's own trim above.
+	defer rootdir.BeginBuild(cfg.Root)()
 	if cfg.Work {
 		fmt.Fprintf(cfg.Stderr, "WORK=%s\n", work)
 	} else {

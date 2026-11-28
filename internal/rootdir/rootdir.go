@@ -38,10 +38,16 @@ func Find() (string, error) {
 // cache) shares one cap, MARMOT_CACHE_MAX_MB (default DefaultCacheMB; 0 means
 // no cap). Hits touch their entry; after a build, when the cache is over the
 // cap, the least recently used files are deleted until it is under 80% of
-// the cap. Files used in the last minEntryAge are never deleted, so an entry
-// another marmot process has just looked up stays until it is read. One
-// process trims at a time (flock on build/cache/.trim.lock), at most once
-// per trimInterval unless forced.
+// the cap. One process trims at a time (exclusive flock on
+// build/cache/.trim.lock), at most once per trimInterval unless forced.
+//
+// A trim must not delete an entry that a running build has looked up and
+// reads later (the backend opens cached MLIR files by path). Builds look
+// entries up with Use, which touches the entry under a shared lock on the
+// same file, so no trim runs between the lookup and the touch. A trim keeps
+// every file used in the last minEntryAge, and every file used since the
+// start of the oldest running build (BeginBuild registers builds in
+// build/cache/.builds), so a long build keeps what it looked up.
 
 // DefaultCacheMB is the cache cap when MARMOT_CACHE_MAX_MB is unset.
 const DefaultCacheMB = 4096
@@ -49,7 +55,75 @@ const DefaultCacheMB = 4096
 const (
 	minEntryAge  = 10 * time.Minute
 	trimInterval = 30 * time.Second
+	buildsDir    = ".builds" // under the cache: one file per running build
 )
+
+// trimHook, for tests, runs in TrimCache between listing the entries and
+// deleting them.
+var trimHook func()
+
+// Use looks up the cache entry p of the repository at root for a build
+// that reads it later: it touches p and reports whether p exists, under a
+// shared lock on the trim lock, so that a trim, which holds it exclusively,
+// either finishes before (and p is gone) or starts after and sees p as just
+// used.
+func Use(root, p string) bool {
+	if f, err := os.OpenFile(filepath.Join(CacheDir(root), ".trim.lock"), os.O_RDWR|os.O_CREATE, 0o666); err == nil {
+		defer func() { _ = f.Close() }() // the lock file holds nothing
+		if lockShared(f) {
+			defer unlockFile(f)
+		}
+	}
+	Touch(p)
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// BeginBuild registers a running build of the repository at root, so that
+// trims keep the cache files it uses for as long as it runs; the returned
+// function ends the registration.
+func BeginBuild(root string) func() {
+	dir := filepath.Join(CacheDir(root), buildsDir)
+	if os.MkdirAll(dir, 0o755) != nil {
+		return func() {}
+	}
+	p := filepath.Join(dir, fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()))
+	if os.WriteFile(p, nil, 0o644) != nil {
+		return func() {}
+	}
+	return func() { _ = os.Remove(p) } // a file left behind is dropped once its process is gone
+}
+
+// oldestBuild is the start of the oldest running build registered in the
+// cache dir. It removes the files of builds whose process is gone.
+func oldestBuild(dir string) (time.Time, bool) {
+	dir = filepath.Join(dir, buildsDir)
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return time.Time{}, false
+	}
+	var oldest time.Time
+	found := false
+	for _, e := range ents {
+		pid, _, _ := strings.Cut(e.Name(), "-")
+		n, err := strconv.Atoi(pid)
+		if err != nil {
+			continue
+		}
+		if !processAlive(n) {
+			_ = os.Remove(filepath.Join(dir, e.Name())) // stale: its build died
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if !found || info.ModTime().Before(oldest) {
+			oldest, found = info.ModTime(), true
+		}
+	}
+	return oldest, found
+}
 
 // CacheCap is the cap in bytes, 0 for none.
 func CacheCap() int64 {
@@ -84,6 +158,9 @@ func cacheEntries(dir string) ([]cacheEntry, int64) {
 			return nil
 		}
 		if d.IsDir() {
+			if p == filepath.Join(dir, buildsDir) {
+				return filepath.SkipDir // registrations of running builds, not entries
+			}
 			if p == filepath.Join(dir, "sysroot") {
 				// Installed by marmot sysroot add, not a cache: its files
 				// keep the packages' old times and would go first.
@@ -140,12 +217,18 @@ func TrimCache(root string, force bool) (before, after int64, err error) {
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].mod.Before(entries[j].mod) })
 	goal := limit / 10 * 8
-	now := time.Now()
+	keep := time.Now().Add(-minEntryAge) // files used since then stay
+	if t, ok := oldestBuild(dir); ok && t.Before(keep) {
+		keep = t
+	}
+	if trimHook != nil {
+		trimHook()
+	}
 	for _, e := range entries {
 		if after <= goal {
 			break
 		}
-		if now.Sub(e.mod) < minEntryAge {
+		if !e.mod.Before(keep) {
 			break // sorted: everything after is newer
 		}
 		if os.Remove(e.path) == nil {

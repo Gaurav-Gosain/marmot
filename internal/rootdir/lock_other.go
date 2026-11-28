@@ -8,3 +8,7 @@ import "os"
 func lockFile(*os.File, bool) bool { return true }
 
 func unlockFile(*os.File) {}
+
+func lockShared(*os.File) bool { return true }
+
+func processAlive(int) bool { return true }
