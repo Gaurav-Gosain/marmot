@@ -57,6 +57,18 @@ func TestPieArgsNativeRELR(t *testing.T) {
 	if !libcHasRELR(clangFile(clang, nil, "libc.so.6")) {
 		t.Skip("the host C library has no GLIBC_ABI_DT_RELR (glibc older than 2.36)")
 	}
+	// A linker without -z pack-relative-relocs (gold, lld before 15, GNU ld
+	// before 2.38) fails the probe link: then -buildmode=pie rightly gives a
+	// plain PIE, and this host cannot test the RELR case.
+	dir := t.TempDir()
+	src := filepath.Join(dir, "p.c")
+	if err := os.WriteFile(src, []byte(relrProbe), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	try := append(append([]string{}, linuxLinker()...), "-pie", "-fPIE", "-Wl,-z,pack-relative-relocs", "-o", filepath.Join(dir, "try"), src)
+	if out, err := exec.Command(clang, try...).CombinedOutput(); err != nil {
+		t.Skipf("the linker of %s has no -z pack-relative-relocs: %s", clang, out)
+	}
 	b := &build{cfg: Config{Root: t.TempDir(), BuildMode: "pie"}, goos: "linux", goarch: runtime.GOARCH}
 	want := []string{"-pie", "-Wl,-z,pack-relative-relocs"}
 	if got := b.pieArgs(pieLink{clang: linuxLinker()}); !slices.Equal(got, want) {
@@ -65,11 +77,6 @@ func TestPieArgsNativeRELR(t *testing.T) {
 	// The answer is cached: a second build reads it back.
 	if m, _ := filepath.Glob(filepath.Join(b.cfg.Root, "build", "cache", "relr-*")); len(m) != 1 {
 		t.Errorf("cache files: %q, want one", m)
-	}
-	dir := t.TempDir()
-	src := filepath.Join(dir, "p.c")
-	if err := os.WriteFile(src, []byte(relrProbe), 0o644); err != nil {
-		t.Fatal(err)
 	}
 	for _, c := range []struct {
 		name string
