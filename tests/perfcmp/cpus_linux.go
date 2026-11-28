@@ -60,6 +60,32 @@ func startPinned(cmd *exec.Cmd, set cpuSet) error {
 	return err
 }
 
+// lastCPU waits for the exit of pid without reaping it and returns the CPU it last ran
+// on (field 39 of /proc/PID/stat), or -1. The caller reaps it after.
+func lastCPU(pid int) int {
+	var info unix.Siginfo
+	if err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WNOWAIT, nil); err != nil {
+		return -1
+	}
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return -1
+	}
+	i := strings.LastIndexByte(string(b), ')')
+	if i < 0 {
+		return -1
+	}
+	f := strings.Fields(string(b[i+1:]))
+	if len(f) < 37 { // state is field 3, processor field 39
+		return -1
+	}
+	c, err := strconv.Atoi(f[36])
+	if err != nil {
+		return -1
+	}
+	return c
+}
+
 // cpuBusy returns the busy time of the CPUs in set (all but idle and iowait), from
 // /proc/stat, or -1 without -cpus or when it cannot be read.
 func cpuBusy(set cpuSet) float64 {

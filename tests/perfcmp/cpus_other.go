@@ -20,3 +20,5 @@ func parseCPUs(s string) (cpuSet, error) {
 func startPinned(cmd *exec.Cmd, _ cpuSet) error { return cmd.Start() }
 
 func cpuBusy(cpuSet) float64 { return -1 }
+
+func lastCPU(int) int { return -1 }

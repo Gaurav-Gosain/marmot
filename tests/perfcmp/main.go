@@ -111,7 +111,9 @@ type program struct {
 type sample struct {
 	wall, cpu   time.Duration
 	rss         int64
-	cycles, llc uint64 // user-mode counts, 0 without perf counters
+	cycles, llc uint64   // user-mode counts, 0 without perf counters
+	ran         int      // the CPU the run ended on, -1 when unknown
+	busy        []uint64 // busy ticks of each CPU during the run, nil when unknown
 }
 
 type side struct {
@@ -343,7 +345,7 @@ func main() {
 						break
 					}
 					what := fmt.Sprintf("%-12s %s run %d had %d LLC misses, %.0f times the side's least (%d)", p.name, sides[i].label, j+1, got[i][j].llc, float64(got[i][j].llc)/float64(max(lo, 1)), lo)
-					outsideReport(os.Stdout, fmt.Sprintf("%s %s run %d shared the LLC", p.name, sides[i].label, j+1))
+					outsideReport(os.Stdout, fmt.Sprintf("%s %s run %d shared the LLC", p.name, sides[i].label, j+1), smtLine(got[i][j]))
 					if retries == llcRetries {
 						fmt.Printf("%s: no retry left, the run stays and this try of %s gives no verdict\n", what, mode)
 						disturbedRuns = append(disturbedRuns, fmt.Sprintf("%s %s %s", p.name, mode, sides[i].label))
@@ -361,6 +363,13 @@ func main() {
 					logSample(mode, n, p.name, sides[i].label, retries, "llc-retry", sm)
 					fmt.Printf("%s: retry %d of %d replaces it (%s wall, was %s; %d LLC misses)\n", what, retries, llcRetries, ms(sm.wall), ms(got[i][j].wall), sm.llc)
 					got[i][j] = sm
+				}
+			}
+			for i := 0; ok && i < len(got); i++ {
+				if j, lo := slowCycles(got[i]); j >= 0 {
+					c := got[i][j].cycles
+					fmt.Printf("%-12s %s run %d used %d cycles, %.1f%% more than the side's least (%d)\n", p.name, sides[i].label, j+1, c, 100*(float64(c)/float64(lo)-1), lo)
+					outsideReport(os.Stdout, fmt.Sprintf("%s %s run %d used %.0f%% more cycles", p.name, sides[i].label, j+1, 100*(float64(c)/float64(lo)-1)), smtLine(got[i][j]))
 				}
 			}
 			if b1 := cpuBusy(pinned); b0 >= 0 && b1 >= 0 {
@@ -748,7 +757,7 @@ func logSample(mode string, try int, prog, side string, round int, kind string, 
 	}
 	b, _ := json.Marshal(map[string]any{"mode": mode, "try": try, "program": prog, "side": side,
 		"round": round, "kind": kind, "wall_ns": s.wall.Nanoseconds(), "cpu_ns": s.cpu.Nanoseconds(), "rss": s.rss,
-		"cycles": s.cycles, "llc": s.llc})
+		"cycles": s.cycles, "llc": s.llc, "cpu": s.ran})
 	samplesOut.Write(append(b, '\n'))
 }
 
@@ -1003,16 +1012,19 @@ func runOnce(s side, p program, bin string) (sample, error) {
 	defer runtime.UnlockOSThread()
 	pc, _ := openCounters()
 	defer pc.close()
+	k0 := cpuTicks()
 	c0, l0 := pc.read()
 	t0 := time.Now()
 	if err := startPinned(cmd, pinned); err != nil {
 		return sample{}, err
 	}
+	ran := lastCPU(cmd.Process.Pid)
 	if err := cmd.Wait(); err != nil {
 		return sample{}, err
 	}
 	wall := time.Since(t0)
 	c1, l1 := pc.read()
+	busy := ticksSince(k0, cpuTicks())
 	cycles, llc := c1-c0, l1-l0
 	ru, _ := cmd.ProcessState.SysUsage().(*syscall.Rusage)
 	var cpu time.Duration
@@ -1024,7 +1036,7 @@ func runOnce(s side, p program, bin string) (sample, error) {
 			rss *= 1024 // KiB there, bytes on darwin
 		}
 	}
-	return sample{wall: wall, cpu: cpu, rss: rss, cycles: cycles, llc: llc}, nil
+	return sample{wall: wall, cpu: cpu, rss: rss, cycles: cycles, llc: llc, ran: ran, busy: busy}, nil
 }
 
 // slowWall and slowRounds: a program whose first A run takes more than slowWall

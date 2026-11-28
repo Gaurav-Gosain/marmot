@@ -36,11 +36,17 @@ var outsideLast *procSnap
 // outsideMark takes the sample that the next report counts from.
 func outsideMark() { outsideLast = takeSnap() }
 
-// outsideReport writes the outside load since the last sample to w, then takes a new one.
-func outsideReport(w io.Writer, why string) {
+// outsideReport writes the outside load since the last sample to w, then the extra
+// lines that are not "", then takes a new sample.
+func outsideReport(w io.Writer, why string, extra ...string) {
 	cur := takeSnap()
 	if outsideLast != nil && cur != nil {
 		for _, l := range outsideLines(outsideLast, cur, why, ownCgroup()) {
+			fmt.Fprintln(w, l)
+		}
+	}
+	for _, l := range extra {
+		if l != "" {
 			fmt.Fprintln(w, l)
 		}
 	}
