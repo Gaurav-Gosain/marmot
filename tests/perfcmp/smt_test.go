@@ -1,10 +1,12 @@
 package main
 
 import (
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 	"time"
 )
@@ -72,11 +74,11 @@ func TestSMTLine(t *testing.T) {
 	busy := make([]uint64, 16)
 	busy[3], busy[11], busy[5], busy[6] = 990, 450, 1000, 20
 	s := sample{wall: 10 * time.Second, ran: 3, busy: busy}
-	if got, want := smtLine(s), "  SMT: the run ended on cpu 3, busy 99% of the run; its sibling cpu 11 was busy 45%"; got != want {
+	if got, want := smtLine(s), "  SMT: the run ended on cpu 3, busy 99% of the run; its sibling cpu 11 was busy 45%; other work on the core: 144% of a CPU"; got != want {
 		t.Errorf("got  %q\nwant %q", got, want)
 	}
 	s.ran = 5
-	if got, want := smtLine(s), "  SMT: the run ended on cpu 5, busy 100% of the run; its sibling cpu 6 was busy 2%"; got != want {
+	if got, want := smtLine(s), "  SMT: the run ended on cpu 5, busy 100% of the run; its sibling cpu 6 was busy 2%; other work on the core: 102% of a CPU"; got != want {
 		t.Errorf("range list: got %q, want %q", got, want)
 	}
 	s.ran = 4
@@ -87,6 +89,60 @@ func TestSMTLine(t *testing.T) {
 		if l := smtLine(u); l != "" {
 			t.Errorf("unknown CPU, ticks or wall gave %q, want nothing", l)
 		}
+	}
+}
+
+// fakeSys writes thread_siblings_list files into a fake sysfs and points sysRoot at it.
+func fakeSys(t *testing.T, lists map[string]string) {
+	t.Helper()
+	dir := t.TempDir()
+	old := sysRoot
+	t.Cleanup(func() { sysRoot = old })
+	sysRoot = dir
+	for cpu, sib := range lists {
+		d := filepath.Join(dir, "devices/system/cpu", cpu, "topology")
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "thread_siblings_list"), []byte(sib), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestCoreOther(t *testing.T) {
+	fakeSys(t, map[string]string{"cpu3": "3,11\n", "cpu4": "4\n"})
+	busy := make([]uint64, 16)
+	s := func(ran int, b3, b11 uint64, cpu, wall time.Duration) sample {
+		b := slices.Clone(busy)
+		b[3], b[11] = b3, b11
+		return sample{ran: ran, busy: b, cpu: cpu, wall: wall}
+	}
+	for _, c := range []struct {
+		name string
+		s    sample
+		want float64
+	}{
+		{"quiet core", s(3, 500, 0, 5*time.Second, 5*time.Second), 0},
+		{"sibling 40% busy", s(3, 500, 200, 5*time.Second, 5*time.Second), 40},
+		{"time-shared on its own CPU", s(3, 1000, 0, 5*time.Second, 10*time.Second), 50},
+		{"moved off the core: never above 0", s(3, 200, 0, 5*time.Second, 5*time.Second), 0},
+		{"too short", s(3, 50, 50, 100*time.Millisecond, 100*time.Millisecond), -1},
+		{"no SMT sibling", s(4, 500, 500, 5*time.Second, 5*time.Second), -1},
+		{"no CPU", s(-1, 500, 500, 5*time.Second, 5*time.Second), -1},
+		{"no ticks", sample{ran: 3, cpu: 5 * time.Second, wall: 5 * time.Second}, -1},
+	} {
+		if got := coreOther(c.s); math.Abs(got-c.want) > 0.01 {
+			t.Errorf("%s: coreOther = %.2f, want %.2f", c.name, got, c.want)
+		}
+	}
+	quiet, shared := s(3, 500, 0, 5*time.Second, 5*time.Second), s(3, 500, 200, 5*time.Second, 5*time.Second)
+	if j, p := coreShared([]sample{quiet, quiet, shared, shared}); j != 2 || math.Abs(p-40) > 0.01 {
+		t.Errorf("coreShared = %d, %.1f, want 2, 40", j, p)
+	}
+	at := s(3, 500, 150, 5*time.Second, 5*time.Second) // exactly 30%: not above the limit
+	if j, _ := coreShared([]sample{quiet, at}); j != -1 {
+		t.Errorf("a core at exactly %d%% counted as shared (run %d)", smtBusy, j)
 	}
 }
 

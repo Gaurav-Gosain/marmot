@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Core sharing: a busy SMT sibling thread, or other work on the same core, slows a run
@@ -16,6 +17,14 @@ import (
 const (
 	cyclesFactor = 1.08
 	cyclesFloor  = 1_000_000_000
+)
+
+// smtBusy and smtMinWall: a run of at least smtMinWall whose core had other work above
+// smtBusy percent of a CPU shared its core, and runs again (see coreShared). Busy ticks
+// count in 10 ms steps, so shorter runs give no usable figure.
+const (
+	smtBusy    = 30
+	smtMinWall = 200 * time.Millisecond
 )
 
 var sysRoot = "/sys" // a var for the tests
@@ -115,6 +124,40 @@ func siblings(cpu int) []int {
 	return s
 }
 
+// coreOther is the other work on the core of run s, in percent of a CPU: the busy time of
+// the CPU the run ended on and of its SMT siblings, minus the CPU time of the run, over
+// its wall time. A run that moved to another core counts less of its own time there, so
+// the figure can only come out low, never high. -1 when unknown (no CPU, no ticks, no
+// siblings, a run under smtMinWall).
+func coreOther(s sample) float64 {
+	if s.ran < 0 || s.ran >= len(s.busy) || s.wall < smtMinWall {
+		return -1
+	}
+	sib := siblings(s.ran)
+	if len(sib) == 0 {
+		return -1
+	}
+	t := float64(s.busy[s.ran])
+	for _, c := range sib {
+		if c < len(s.busy) {
+			t += float64(s.busy[c])
+		}
+	}
+	other := 100 * (t/clkTck - s.cpu.Seconds()) / s.wall.Seconds()
+	return max(other, 0)
+}
+
+// coreShared returns the index of the first sample whose core had other work above
+// smtBusy percent of a CPU, or -1, and that figure.
+func coreShared(ss []sample) (int, float64) {
+	for i, s := range ss {
+		if p := coreOther(s); p > smtBusy {
+			return i, p
+		}
+	}
+	return -1, 0
+}
+
 // smtLine says how busy the CPU a run ended on and its SMT siblings were during the
 // run, "" when that is unknown.
 func smtLine(s sample) string {
@@ -131,6 +174,9 @@ func smtLine(s sample) string {
 		if c < len(s.busy) {
 			l += fmt.Sprintf("; its sibling cpu %d was busy %.0f%%", c, pct(c))
 		}
+	}
+	if o := coreOther(s); o >= 0 {
+		l += fmt.Sprintf("; other work on the core: %.0f%% of a CPU", o)
 	}
 	return l
 }

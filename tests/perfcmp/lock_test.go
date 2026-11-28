@@ -158,6 +158,7 @@ var (
 	tNoisy  = try{n: 1, gw: 1, gc: 1, gr: 1, ew: 1.03, ec: 1.01, load: 1}
 	tLoaded = try{n: 1, gw: 1, gc: 1, gr: 1, ew: 1.01, ec: 1.01, load: 9}
 	tLLC    = try{n: 1, gw: 1, gc: 1, gr: 1, ew: 1.01, ec: 1.01, load: 1, disturbed: []string{"matmul O2 B"}}
+	tCore   = try{n: 1, gw: 1, gc: 1, gr: 1, ew: 1.01, ec: 1.01, load: 1, disturbed: []string{"spectralnorm release A (core)"}}
 )
 
 // nth returns t as try n.
@@ -181,6 +182,7 @@ func TestVerdict(t *testing.T) {
 		{"noisy", one(noisyWorse), exitInconclusive, "would have said WORSE", "tries"},
 		{"loaded", one(tLoaded), exitInconclusive, "load reached 9.0", ""},
 		{"disturbed after the retries", one(tLLC), exitInconclusive, "after 2 retries: matmul O2 B", ""},
+		{"core shared after the retries", one(tCore), exitInconclusive, "the LLC or the core of a run after 2 retries: spectralnorm release A (core)", ""},
 		{"disturbed on A=B", func() outcome { o := one(tLLC); o.same = true; return o }(), exitInconclusive, "would have said ok", ""},
 		{"a quiet try 2 after a disturbed try 1 decides", one(tLLC, nth(tOK, 2)), exitOK, "dev by try 2", "LLC"},
 		{"every program identical", one(try{n: 1, ident: true}), exitOK, "verdict: ok", ""},

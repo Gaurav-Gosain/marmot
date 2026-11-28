@@ -60,6 +60,50 @@ func startPinned(cmd *exec.Cmd, set cpuSet) error {
 	return err
 }
 
+// moveOff moves every thread of perfcmp off the CPUs of set and their SMT siblings, so
+// its own timers and goroutines do not wake the timed CPUs. Threads made later inherit
+// the mask (Go makes threads from an unpinned template thread). It returns the CPUs
+// perfcmp keeps, "" when none would be left (nothing changes then).
+func moveOff(set cpuSet) (string, error) {
+	var cur unix.CPUSet
+	if err := unix.SchedGetaffinity(0, &cur); err != nil {
+		return "", err
+	}
+	off := cur
+	for c := range 1024 {
+		if !set.IsSet(c) {
+			continue
+		}
+		off.Clear(c)
+		for _, s := range siblings(c) {
+			off.Clear(s)
+		}
+	}
+	if off.Count() == 0 {
+		return "", nil
+	}
+	ents, err := os.ReadDir("/proc/self/task")
+	if err != nil {
+		return "", err
+	}
+	for _, e := range ents {
+		tid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		if err := unix.SchedSetaffinity(tid, &off); err != nil && err != unix.ESRCH {
+			return "", err
+		}
+	}
+	var l []string
+	for c := range 1024 {
+		if off.IsSet(c) {
+			l = append(l, strconv.Itoa(c))
+		}
+	}
+	return strings.Join(l, ","), nil
+}
+
 // lastCPU waits for the exit of pid without reaping it and returns the CPU it last ran
 // on (field 39 of /proc/PID/stat), or -1. The caller reaps it after.
 func lastCPU(pid int) int {

@@ -22,3 +22,5 @@ func startPinned(cmd *exec.Cmd, _ cpuSet) error { return cmd.Start() }
 func cpuBusy(cpuSet) float64 { return -1 }
 
 func lastCPU(int) int { return -1 }
+
+func moveOff(cpuSet) (string, error) { return "", nil }

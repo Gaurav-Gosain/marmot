@@ -28,10 +28,16 @@
 // sees only those CPUs: its CPU count, and so its thread count, differ from an
 // unpinned run. Compare A with B in the same run, not with numbers taken without
 // -cpus. Each mode then prints how much other work ran on those CPUs during the
-// timed runs (information only, not part of the verdict).
+// timed runs (information only, not part of the verdict). perfcmp itself then runs
+// off those CPUs and their SMT siblings, when any CPU is left.
+//
+// The SMT check (Linux): a run of at least 200 ms whose core (the CPU it ended on and
+// its SMT siblings) had other work above 30% of a CPU during the run runs again, like
+// a run that shared the LLC. Both checks share the same 2 retries a program. A run that
+// still shares its core after them makes the try give no verdict.
 //
 // -retries N times a mode again when its try was too noisy or too loaded to judge, or
-// kept a run that shared the LLC after its LLC retries,
+// kept a run that shared the LLC or its core after its retries,
 // up to N more times, with the binaries already built. Before each retry perfcmp waits
 // for the load to stay below a quarter of the CPUs for a minute (at most -retry-wait).
 // Such a try carries no verdict: the first conclusive try of a mode decides
@@ -43,7 +49,8 @@
 // print "ready", times, and closes its stdin when the timing ends, which gives the
 // host back. Without the variable perfcmp times right after its builds.
 //
-// When the load passes half the CPUs or a run shares the LLC, perfcmp logs the outside
+// When the load passes half the CPUs, a run shares the LLC or its core, or a run uses 8%
+// more cycles than the least of its side, perfcmp logs the outside
 // load since its last sample (Linux): the 5 processes outside its own cgroup with the most
 // CPU (pid, percent of one CPU, cgroup unit, the first 60 characters of the command
 // line), the CPU of kswapd and the pages swapped in and out. It only adds log lines.
@@ -175,8 +182,14 @@ func main() {
 		c.close()
 		fmt.Printf("LLC check: on (a run with %d times the LLC misses of its side's least, and at least %d, runs again, at most %d times a program)\n", llcFactor, llcFloor, llcRetries)
 	}
+	fmt.Printf("SMT check: on where the kernel reports SMT siblings (a run of at least %v whose core had other work above %d%% of a CPU runs again, within the same %d retries a program)\n", smtMinWall, smtBusy, llcRetries)
 	if pinned != nil {
 		fmt.Printf("cpus: the timed runs use CPUs %s only\n", *flCPUs)
+		if off, err := moveOff(pinned); err != nil {
+			fmt.Printf("cpus: perfcmp stays on every CPU (%v)\n", err)
+		} else if off != "" {
+			fmt.Printf("cpus: perfcmp itself runs on CPUs %s, off the timed CPUs and their SMT siblings\n", off)
+		}
 	}
 	fmt.Println("rss: each binary runs as a fresh copy (new file, out of the page cache); rss from perfcmp before this is suspect")
 	same := sides[0].root == sides[1].root && slices.Equal(sides[0].env, sides[1].env)
@@ -276,7 +289,7 @@ func main() {
 		var nw, nc []float64         // per side and program: median of the odd runs over the even ones
 		var busy, used, wall float64 // -cpus: busy time of those CPUs, the runs' CPU time, wall time (s)
 		nIdent := 0                  // -skip-identical: programs left out as byte-identical
-		var disturbedRuns []string   // runs that shared the LLC after their retries
+		var disturbedRuns []string   // runs that shared the LLC or their core after their retries
 		if n == 1 {
 			for _, l := range buildFails[mi] {
 				fmt.Println(l)
@@ -340,15 +353,25 @@ func main() {
 			}
 			for i, retries := 0, 0; ok && i < len(got); i++ {
 				for {
-					j, lo := disturbed(got[i])
-					if j < 0 {
+					// A run that shared the LLC, or else a run whose core had other work, runs again.
+					// Both share the budget of llcRetries runs a program.
+					var what, why, kind, tag string
+					var j int
+					if d, lo := disturbed(got[i]); d >= 0 {
+						j = d
+						what = fmt.Sprintf("%-12s %s run %d had %d LLC misses, %.0f times the side's least (%d)", p.name, sides[i].label, j+1, got[i][j].llc, float64(got[i][j].llc)/float64(max(lo, 1)), lo)
+						why, kind, tag = "shared the LLC", "llc-retry", ""
+					} else if c, pct := coreShared(got[i]); c >= 0 {
+						j = c
+						what = fmt.Sprintf("%-12s %s run %d shared its core: other work used %.0f%% of a CPU there (limit %d%%)", p.name, sides[i].label, j+1, pct, smtBusy)
+						why, kind, tag = "shared its core", "smt-retry", " (core)"
+					} else {
 						break
 					}
-					what := fmt.Sprintf("%-12s %s run %d had %d LLC misses, %.0f times the side's least (%d)", p.name, sides[i].label, j+1, got[i][j].llc, float64(got[i][j].llc)/float64(max(lo, 1)), lo)
-					outsideReport(os.Stdout, fmt.Sprintf("%s %s run %d shared the LLC", p.name, sides[i].label, j+1), smtLine(got[i][j]))
+					outsideReport(os.Stdout, fmt.Sprintf("%s %s run %d %s", p.name, sides[i].label, j+1, why), smtLine(got[i][j]))
 					if retries == llcRetries {
 						fmt.Printf("%s: no retry left, the run stays and this try of %s gives no verdict\n", what, mode)
-						disturbedRuns = append(disturbedRuns, fmt.Sprintf("%s %s %s", p.name, mode, sides[i].label))
+						disturbedRuns = append(disturbedRuns, fmt.Sprintf("%s %s %s%s", p.name, mode, sides[i].label, tag))
 						break
 					}
 					retries++
@@ -360,7 +383,7 @@ func main() {
 						break
 					}
 					used += sm.cpu.Seconds()
-					logSample(mode, n, p.name, sides[i].label, retries, "llc-retry", sm)
+					logSample(mode, n, p.name, sides[i].label, retries, kind, sm)
 					fmt.Printf("%s: retry %d of %d replaces it (%s wall, was %s; %d LLC misses)\n", what, retries, llcRetries, ms(sm.wall), ms(got[i][j].wall), sm.llc)
 					got[i][j] = sm
 				}
@@ -508,7 +531,7 @@ type try struct {
 	load       float64   // the highest 1 minute load seen while the try ran
 	worse      bool      // the geomean line said WORSE
 	forced     bool      // PERFCMP_TEST_NOISY counted the try as noisy (tests only)
-	disturbed  []string  // program, mode and side of a run that shared the LLC after its retries
+	disturbed  []string  // program, mode and side of a run that shared the LLC or its core after its retries
 	ident      bool      // -skip-identical left every program out: nothing to judge
 }
 
@@ -547,7 +570,7 @@ func (t try) result(cpus int, decides bool) string {
 		why = append(why, fmt.Sprintf("load %.1f", t.load))
 	}
 	if len(t.disturbed) > 0 {
-		why = append(why, "LLC shared: "+strings.Join(t.disturbed, ", "))
+		why = append(why, "LLC or core shared: "+strings.Join(t.disturbed, ", "))
 	}
 	s := "no verdict: " + strings.Join(why, ", ")
 	if t.worse {
@@ -647,7 +670,7 @@ func (o outcome) verdict() (string, int) {
 			why = append(why, "the noise line of a mode is above 1.02, the 2% the rule judges")
 		}
 		if len(dist) > 0 {
-			why = append(why, fmt.Sprintf("other work shared the LLC in a run after %d retries: %s", llcRetries, strings.Join(dist, ", ")))
+			why = append(why, fmt.Sprintf("other work shared the LLC or the core of a run after %d retries: %s", llcRetries, strings.Join(dist, ", ")))
 		}
 		if n := o.tryCount(); n > 1 {
 			why = append(why, fmt.Sprintf("%s after %d tries", strings.Join(names, ", "), n))
@@ -750,14 +773,16 @@ func (o outcome) printTries() {
 var samplesOut *os.File
 
 // logSample writes one run to -samples. kind is warm-up (round 0, dropped), timed, or
-// llc-retry (a run again for a timed run that shared the LLC; round is then the retry).
+// llc-retry or smt-retry (a run again for a timed run that shared the LLC or its core;
+// round is then the retry). core_other_pct is the other work on the core of the run in
+// percent of a CPU, -1 when unknown.
 func logSample(mode string, try int, prog, side string, round int, kind string, s sample) {
 	if samplesOut == nil {
 		return
 	}
 	b, _ := json.Marshal(map[string]any{"mode": mode, "try": try, "program": prog, "side": side,
 		"round": round, "kind": kind, "wall_ns": s.wall.Nanoseconds(), "cpu_ns": s.cpu.Nanoseconds(), "rss": s.rss,
-		"cycles": s.cycles, "llc": s.llc, "cpu": s.ran})
+		"cycles": s.cycles, "llc": s.llc, "cpu": s.ran, "core_other_pct": coreOther(s)})
 	samplesOut.Write(append(b, '\n'))
 }
 
