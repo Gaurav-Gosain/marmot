@@ -383,6 +383,13 @@ type runner struct {
 // check compiles and runs src with both toolchains. It returns a description of the difference,
 // or "" when they agree or when stock Go rejects the program.
 func (rn *runner) check(src string) string {
+	why, _ := rn.checkLog(src)
+	return why
+}
+
+// checkLog is check that also returns, for a difference, the full output
+// of the marmot build and of both runs, for the failure log (failLog).
+func (rn *runner) checkLog(src string) (why, detail string) {
 	rn.mu.Lock()
 	rn.n++
 	id := rn.n
@@ -392,13 +399,13 @@ func (rn *runner) check(src string) string {
 	defer os.RemoveAll(dir)
 	file := filepath.Join(dir, "p.go")
 	os.WriteFile(file, []byte(src), 0o644)
-	ref, why := sh(2*time.Minute, rn.root, nil, "go", "build", "-o", filepath.Join(dir, "ref"), file)
-	if why != "" || ref.code != 0 {
-		return ""
+	ref, bad := sh(2*time.Minute, rn.root, nil, "go", "build", "-o", filepath.Join(dir, "ref"), file)
+	if bad != "" || ref.code != 0 {
+		return "", ""
 	}
-	want, why := sh(10*time.Second, dir, nil, filepath.Join(dir, "ref"))
-	if why != "" {
-		return ""
+	want, bad := sh(10*time.Second, dir, nil, filepath.Join(dir, "ref"))
+	if bad != "" {
+		return "", ""
 	}
 	args := []string{"build", "-o", filepath.Join(dir, "got")}
 	if *flRel {
@@ -408,23 +415,49 @@ func (rn *runner) check(src string) string {
 		args = append(args, "-O", *flO)
 	}
 	args = append(args, file)
-	b, why := sh(2*time.Minute, rn.root, append(append([]string{"MARMOT_ROOT=" + rn.mroot, "MARMOT_CACHE_MAX_MB=512"}, tier1Off()...), stressEnv()...), rn.marmot, args...)
-	if why != "" || b.code != 0 {
-		return "compile error: " + firstLine(b.stdout+b.stderr+why)
+	env := append(append([]string{"MARMOT_ROOT=" + rn.mroot, "MARMOT_CACHE_MAX_MB=512"}, tier1Off()...), stressEnv()...)
+	b, bad := sh(2*time.Minute, rn.root, env, rn.marmot, args...)
+	build := fmt.Sprintf("marmot %s\nenv %s\nexit %d %s\n%s%s", strings.Join(args, " "), strings.Join(env, " "), b.code, bad, b.stdout, b.stderr)
+	if bad != "" || b.code != 0 {
+		return "compile error: " + firstLine(b.stdout+b.stderr+bad), build
 	}
-	got, why := sh(10*time.Second, dir, stressEnv(), filepath.Join(dir, "got"))
-	if why != "" {
-		return "run: " + why
+	got, bad := sh(10*time.Second, dir, stressEnv(), filepath.Join(dir, "got"))
+	runs := func() string {
+		return fmt.Sprintf("%s\n== go run: exit %d\n-- stdout\n%s-- stderr\n%s\n== marmot run: exit %d %s\n-- stdout\n%s-- stderr\n%s",
+			build, want.code, want.stdout, want.stderr, got.code, bad, got.stdout, got.stderr)
 	}
 	switch {
+	case bad != "":
+		return "run: " + bad, runs()
 	case got.code != want.code:
-		return fmt.Sprintf("exit %d, want %d", got.code, want.code)
+		return fmt.Sprintf("exit %d, want %d", got.code, want.code), runs()
 	case got.stdout != want.stdout:
-		return "stdout differs"
+		return "stdout differs", runs()
 	case got.stderr != want.stderr:
-		return "stderr differs: " + diffLine(want.stderr, got.stderr)
+		return "stderr differs: " + diffLine(want.stderr, got.stderr), runs()
 	}
-	return ""
+	return "", ""
+}
+
+// failLogMax caps a failure log: a build that prints without end must not
+// fill the disk.
+const failLogMax = 64 << 10
+
+// failLog is the text of fail_seedN.log: the difference and the full output
+// of the first failing check, then, when the program was shrunk, those of
+// the shrunk program (which may fail another way). Capped at failLogMax.
+func failLog(seed int64, why, detail, shrunkWhy, shrunkDetail string) []byte {
+	var s strings.Builder
+	fmt.Fprintf(&s, "seed %d: %s\n== build and runs\n%s\n", seed, why, detail)
+	if shrunkWhy != "" || shrunkDetail != "" {
+		fmt.Fprintf(&s, "\n== shrunk program: %s\n%s\n", shrunkWhy, shrunkDetail)
+	}
+	out := s.String()
+	if len(out) > failLogMax {
+		const note = "\n[cut: the log is longer than 64 KB]\n"
+		out = out[:failLogMax-len(note)] + note
+	}
+	return []byte(out)
 }
 
 func firstLine(s string) string {
@@ -517,18 +550,22 @@ func main() {
 			if *flKeep {
 				os.WriteFile(filepath.Join(work, fmt.Sprintf("seed%d.go", seed)), []byte(src), 0o644)
 			}
-			why := rn.check(src)
+			why, detail := rn.checkLog(src)
 			if why == "" {
 				return
 			}
+			var swhy, sdetail string
 			if *flShr {
 				src = rn.shrink(src)
+				swhy, sdetail = rn.checkLog(src)
 			}
 			path := filepath.Join(work, fmt.Sprintf("fail_seed%d.go", seed))
 			os.WriteFile(path, []byte(src), 0o644)
+			logPath := filepath.Join(work, fmt.Sprintf("fail_seed%d.log", seed))
+			os.WriteFile(logPath, failLog(seed, why, detail, swhy, sdetail), 0o644)
 			mu.Lock()
 			fails++
-			fmt.Printf("FAIL seed %d: %s\n  program: %s (%d lines)\n", seed, why, path, strings.Count(src, "\n"))
+			fmt.Printf("FAIL seed %d: %s\n  program: %s (%d lines)\n  log: %s\n", seed, why, path, strings.Count(src, "\n"), logPath)
 			mu.Unlock()
 		}()
 	}
